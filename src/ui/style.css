@@ -520,3 +520,55 @@ input[type=range]{width:64px;height:22px;accent-color:var(--accent)}
 .clg-ul{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:5px}
 .clg-ul li{font-size:13px;line-height:1.45;padding-left:14px;position:relative;color:var(--text)}
 .clg-ul li::before{content:"";position:absolute;left:2px;top:8px;width:4px;height:4px;border-radius:50%;background:var(--dim)}
+
+/* ---- micro-animations for recently added controls (changelog / ref-pick / menu) ---- */
+@keyframes clgRise{from{opacity:0;transform:translateY(6px) scale(.97)}to{opacity:1;transform:none}}
+@keyframes clgFadeUp{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+@keyframes clgStrike{0%{transform:scaleY(0)}60%{transform:scaleY(1.08)}100%{transform:scaleY(1)}}
+@keyframes refPulse{0%,100%{box-shadow:0 0 0 0 rgba(96,165,250,.6)}55%{box-shadow:0 0 0 7px rgba(96,165,250,0)}}
+
+/* changelog version chips: staggered entrance + press feedback */
+.clg-vers .clg-v{animation:clgRise .2s cubic-bezier(.2,.85,.25,1) both;transition:transform .12s ease,border-color .15s ease}
+.clg-vers .clg-v:nth-child(1){animation-delay:.04s}
+.clg-vers .clg-v:nth-child(2){animation-delay:.09s}
+.clg-vers .clg-v:nth-child(3){animation-delay:.14s}
+.clg-vers .clg-v:nth-child(4){animation-delay:.19s}
+.clg-vers .clg-v:nth-child(5){animation-delay:.24s}
+.clg-vers .clg-v:nth-child(6){animation-delay:.29s}
+.clg-vers .clg-v:active{transform:scale(.93)}
+.clg-v.on{transform-origin:center;animation:clgStrike .18s ease both}
+.clg-curtag{animation:clgRise .25s .2s cubic-bezier(.2,.85,.25,1) both}
+
+/* version content: fade+rise every time the selected version changes */
+.clg-view{animation:clgFadeUp .28s cubic-bezier(.2,.85,.25,1) both}
+.clg-view .clg-sec{animation:clgFadeUp .3s ease both}
+.clg-view .clg-sec:nth-child(2){animation-delay:.05s}
+.clg-view .clg-sec:nth-child(3){animation-delay:.1s}
+.clg-view .clg-sec:nth-child(4){animation-delay:.15s}
+.clg-sec-h i{transition:transform .2s ease}
+.clg-sec:hover .clg-sec-h i{transform:scale(1.35)}
+
+/* menu entries: gentle staggered rise when the menu opens */
+.dlg-body.col .menuitem{animation:clgRise .16s ease both;animation-delay:calc(1.5s * var(--mi,0) + .02s)}
+.dlg-body.col .menuitem:nth-child(1){--mi:.02}
+.dlg-body.col .menuitem:nth-child(2){--mi:.05}
+.dlg-body.col .menuitem:nth-child(3){--mi:.08}
+.dlg-body.col .menuitem:nth-child(4){--mi:.11}
+.dlg-body.col .menuitem:nth-child(5){--mi:.14}
+.dlg-body.col .menuitem:nth-child(6){--mi:.17}
+.dlg-body.col .menuitem:nth-child(7){--mi:.2}
+.dlg-body.col .menuitem:nth-child(8){--mi:.23}
+.dlg-body.col .menuitem:nth-child(9){--mi:.26}
+.dlg-body.col .menuitem:nth-child(10){--mi:.29}
+.dlg-body.col .menuitem:nth-child(11){--mi:.32}
+.dlg-body.col .menuitem:nth-child(12){--mi:.35}
+.dlg-body.col .menuitem:nth-child(13){--mi:.38}
+.dlg-body.col .menuitem:nth-child(14){--mi:.41}
+.dlg-body.col .menuitem:nth-child(15){--mi:.44}
+.dlg-body.col .menuitem:nth-child(16){--mi:.47}
+
+/* reference-image eyedropper chip: press + armed pulse */
+.ref-pick{transition:transform .12s ease,background .15s ease,color .15s ease,border-color .15s ease}
+.ref-pick:active{transform:scale(.88)}
+.ref-pick.on{animation:refPulse 1.5s ease-in-out infinite}
+.prevbox.picking .prev-grab{transition:background .2s ease}

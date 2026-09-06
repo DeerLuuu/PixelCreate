@@ -92,6 +92,7 @@ export function ChangelogModal({ onClose }: { onClose: () => void }) {
               </button>
             ))}
           </div>
+          <div className="clg-view" key={"v" + ver.v}>
           <div className="clg-title">PixelCraft {ver.v} <span className="clg-date">· {ver.date}</span></div>
           <div className="clg-list">
             {secs.map(([kind, label]) => {
@@ -106,6 +107,7 @@ export function ChangelogModal({ onClose }: { onClose: () => void }) {
                 </div>
               );
             })}
+          </div>
           </div>
         </div>
       </div>
