@@ -28,7 +28,7 @@ import { TimelineBar } from "./timeline";
 import { PreviewBox } from "./preview";
 import { RefImageBox } from "./refimg";
 import type { RefImg } from "./refimg";
-import { PalettePanel, MenuModal, SizeModal, SheetModal, NewDocModal, ExportModal, AdjustModal, SettingsModal, HelpModal, FrameModal, HistoryModal, histName, saveProject } from "./modals";
+import { PalettePanel, MenuModal, SizeModal, SheetModal, NewDocModal, ExportModal, AdjustModal, SettingsModal, FrameModal, HistoryModal, histName, saveProject } from "./modals";
 import { ChangelogModal, changelogNeedsShow } from "./changelog";
 import type { ModalId, SizeMode, SheetData } from "./modals";
 
@@ -89,7 +89,6 @@ export function App() {
       <Keep on={modal === "export"} el={modal === "export" ? <ExportModal t={t} snap={snap} onClose={() => setModal(null)} /> : null} />
       <Keep on={modal === "settings"} el={modal === "settings" ? <SettingsModal t={t} onClose={() => setModal(null)} /> : null} />
       <Keep on={modal === "adjust"} el={modal === "adjust" ? <AdjustModal t={t} onClose={() => setModal(null)} /> : null} />
-      <Keep on={modal === "help"} el={modal === "help" ? <HelpModal t={t} onClose={() => setModal(null)} /> : null} />
       <Keep on={frameDlgIdx !== null} el={frameDlgIdx !== null ? <FrameModal t={t} snap={snap} fi={frameDlgIdx} onClose={() => setFrameDlgIdx(null)} /> : null} />
       <Keep on={modal === "history"} el={modal === "history" ? <HistoryModal t={t} snap={snap} onClose={() => setModal(null)} onReplay={() => { setModal(null); setReplayOn(true); }} /> : null} />
       <Keep on={modal === "changelog"} el={modal === "changelog" ? <ChangelogModal onClose={() => setModal(null)} /> : null} />
@@ -110,7 +109,7 @@ export function App() {
 
 /** short function descriptions shown by the global long-press tooltip */
 const B_DESC = {
-  menu: { zh: "打开主功能菜单（新建 / 打开 / 导入导出 / 设置 / 帮助）", en: "Open the main menu" },
+  menu: { zh: "打开主功能菜单（新建 / 打开 / 导入导出 / 设置）", en: "Open the main menu" },
   undo: { zh: "撤销上一步操作", en: "Undo the last action" },
   redo: { zh: "重做已撤销的操作", en: "Redo the undone action" },
   save: { zh: "把工程保存为 .pxc 文件", en: "Save the project (.pxc)" },

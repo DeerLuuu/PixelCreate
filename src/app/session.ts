@@ -713,19 +713,6 @@ export class Session {
       () => { const N = this.doc.frames[fi]; if (N) N.durationMs = v; },
       () => { const N = this.doc.frames[fi]; if (N) N.durationMs = old; });
   }
-  clearActiveCel(): void {
-    const li = this.curLayer(), fi = this.curFrame();
-    const cel = this.doc.celAt(li, fi);
-    if (!cel || this.doc.layers[li].locked) return;
-    const before = new Uint8ClampedArray(cel.data);
-    cel.data.fill(0);
-    this.history.pushPixels("clear-frame", this.doc, [
-      { li, fi, before, after: new Uint8ClampedArray(cel.data) },
-    ]);
-    this.repaint();
-    this.changed();
-  }
-
   // ---------- image size (Aseprite-style) ----------
   /** ax/ay in {-1,0,1}: -1 = top/left, 0 = center, 1 = bottom/right */
   canvasSize(w: number, h: number, ax: -1 | 0 | 1, ay: -1 | 0 | 1): void {

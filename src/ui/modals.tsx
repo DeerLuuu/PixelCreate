@@ -18,7 +18,7 @@ import * as bridge from "../io/bridge";
 import { Btn, Icon, useSession } from "./base";
 import type { RefImg } from "./refimg";
 
-export type ModalId = "menu" | "changelog" | "newdoc" | "export" | "adjust" | "settings" | "help" | "frame" | "size" | "sheet" | "history" | null;
+export type ModalId = "menu" | "changelog" | "newdoc" | "export" | "adjust" | "settings" | "frame" | "size" | "sheet" | "history" | null;
 export type SizeMode = "canvas" | "sprite";
 export type SheetData = { w: number; h: number; px: Uint8ClampedArray; name: string };
 
@@ -259,9 +259,7 @@ export function MenuModal({ t, snap, onClose, onOpen, onSheet, onRef }: { t: Ret
           <Btn label={t("exportPalette")} icon="i-save" className="menuitem" onClick={() => { exportPaletteFlow(); }} />
           {go("adjust")(t("adjust"), "i-size")}
           {go("settings")(t("settings"), "i-gear")}
-          {go("help")(t("helpTitle"), "i-eye")}
           {go("changelog")(t("changelog"), "i-star")}
-          <Btn label={t("clearFrame")} icon="i-eraser" onClick={() => { SESSION.clearActiveCel(); onClose(); }} className="menuitem danger" />
         </div>
       </div>
     </>
@@ -469,18 +467,6 @@ export function SettingsModal({ t, onClose }: { t: ReturnType<typeof makeT>; onC
     </>
   );
 }
-export function HelpModal({ t, onClose }: { t: ReturnType<typeof makeT>; onClose: () => void }) {
-  return (
-    <>
-      <div className="dlg-mask" onClick={onClose} />
-      <div className="dlg">
-        <div className="dlg-head"><span>{t("helpTitle")}</span><div className="grow" /><button className="btn small" onClick={onClose}><Icon id="i-x" size={16} /></button></div>
-        <div className="dlg-body"><pre className="help-text">{t("helpText")}</pre></div>
-        <div className="dlg-foot"><Btn label={t("ok")} onClick={onClose} className="primary" /></div>
-      </div>
-    </>
-  );
-}
 export function FrameModal({ t, snap, fi, onClose }: { t: ReturnType<typeof makeT>; snap: Snapshot; fi: number; onClose: () => void }) {
   const [ms, setMs] = useState(SESSION.doc.frames[fi]?.durationMs ?? 100);
   return (
@@ -497,8 +483,8 @@ export function FrameModal({ t, snap, fi, onClose }: { t: ReturnType<typeof make
     </>
   );
 }
-const H_ZH: Record<string, string> = { "canvas-size": "修改画布尺寸", "sprite-size": "整体缩放精灵", "clear-frame": "清空当前帧", "layer-add": "新建图层", "layer-del": "删除图层", "layer-up": "上移图层", "layer-down": "下移图层", "layer-dupe": "复制图层", "layer-merge": "向下合并图层", "layer-visible": "图层可见性", "layer-lock": "锁定图层", "layer-rename": "重命名图层", "layer-opacity": "图层不透明度", "layer-blend": "图层混合模式", "frame-add": "新建帧", "frame-del": "删除帧", "frame-move": "移动帧", "frame-dupe": "复制帧", "frame-duration": "帧时长", "palette-set": "替换色板", "palette-add": "添加颜色", "palette-remove": "删除颜色", "import-layer": "导入为图层", "wand": "魔棒选区", "sel.grow": "扩展选区", "sel.shrink": "收缩选区", "sel.lasso": "套索选区", "sel.move": "移动选区", "sel.rotate": "旋转选区", "sel.scale": "缩放选区", "adjust-color": "颜色调整", "palette-recolor": "色卡换色(整幅同步)" };
-const H_EN: Record<string, string> = { "canvas-size": "Resize canvas", "sprite-size": "Scale sprite", "clear-frame": "Clear frame", "layer-add": "New layer", "layer-del": "Delete layer", "layer-up": "Move layer up", "layer-down": "Move layer down", "layer-dupe": "Duplicate layer", "layer-merge": "Merge layer down", "layer-visible": "Layer visibility", "layer-lock": "Lock layer", "layer-rename": "Rename layer", "layer-opacity": "Layer opacity", "layer-blend": "Layer blend mode", "frame-add": "New frame", "frame-del": "Delete frame", "frame-move": "Move frame", "frame-dupe": "Duplicate frame", "frame-duration": "Frame duration", "palette-set": "Replace palette", "palette-add": "Add color", "palette-remove": "Remove color", "import-layer": "Import as layer", "wand": "Magic wand select", "sel.grow": "Grow selection", "sel.shrink": "Shrink selection", "sel.lasso": "Lasso select", "sel.move": "Move selection", "sel.rotate": "Rotate selection", "sel.scale": "Scale selection", "adjust-color": "Adjust color", "palette-recolor": "Recolor palette (sprite)" };
+const H_ZH: Record<string, string> = { "canvas-size": "修改画布尺寸", "sprite-size": "整体缩放精灵", "layer-add": "新建图层", "layer-del": "删除图层", "layer-up": "上移图层", "layer-down": "下移图层", "layer-dupe": "复制图层", "layer-merge": "向下合并图层", "layer-visible": "图层可见性", "layer-lock": "锁定图层", "layer-rename": "重命名图层", "layer-opacity": "图层不透明度", "layer-blend": "图层混合模式", "frame-add": "新建帧", "frame-del": "删除帧", "frame-move": "移动帧", "frame-dupe": "复制帧", "frame-duration": "帧时长", "palette-set": "替换色板", "palette-add": "添加颜色", "palette-remove": "删除颜色", "import-layer": "导入为图层", "wand": "魔棒选区", "sel.grow": "扩展选区", "sel.shrink": "收缩选区", "sel.lasso": "套索选区", "sel.move": "移动选区", "sel.rotate": "旋转选区", "sel.scale": "缩放选区", "adjust-color": "颜色调整", "palette-recolor": "色卡换色(整幅同步)" };
+const H_EN: Record<string, string> = { "canvas-size": "Resize canvas", "sprite-size": "Scale sprite", "layer-add": "New layer", "layer-del": "Delete layer", "layer-up": "Move layer up", "layer-down": "Move layer down", "layer-dupe": "Duplicate layer", "layer-merge": "Merge layer down", "layer-visible": "Layer visibility", "layer-lock": "Lock layer", "layer-rename": "Rename layer", "layer-opacity": "Layer opacity", "layer-blend": "Layer blend mode", "frame-add": "New frame", "frame-del": "Delete frame", "frame-move": "Move frame", "frame-dupe": "Duplicate frame", "frame-duration": "Frame duration", "palette-set": "Replace palette", "palette-add": "Add color", "palette-remove": "Remove color", "import-layer": "Import as layer", "wand": "Magic wand select", "sel.grow": "Grow selection", "sel.shrink": "Shrink selection", "sel.lasso": "Lasso select", "sel.move": "Move selection", "sel.rotate": "Rotate selection", "sel.scale": "Scale selection", "adjust-color": "Adjust color", "palette-recolor": "Recolor palette (sprite)" };
 export function histName(label: string, t: ReturnType<typeof makeT>, lang: string): string {
   const m = lang === "zh" ? H_ZH : H_EN;
   if (m[label]) return m[label];
