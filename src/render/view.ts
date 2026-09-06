@@ -303,13 +303,24 @@ export class View {
       ctx.restore();
     }
     this.drawSelTransform();
-    // hover cursor
+    // hover cursor: outline with a transparent centre (eraser shows the exact
+    // square it would wipe as a white/dark double ring)
     const cu = this.cursor;
     if (cu) {
       const sz = Math.max(2, cu.size * z);
-      ctx.strokeStyle = "rgba(255,255,255,0.9)";
-      ctx.lineWidth = 1.2;
-      ctx.strokeRect(this.ox + cu.x * z, this.oy + cu.y * z, sz, sz);
+      const x = this.ox + cu.x * z, y = this.oy + cu.y * z;
+      if (this.session.tool === "eraser") {
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = "rgba(255,255,255,0.95)";
+        ctx.strokeRect(x, y, sz, sz);
+        ctx.lineWidth = 1;
+        ctx.strokeStyle = "rgba(18,22,32,0.95)";
+        ctx.strokeRect(x + 1, y + 1, Math.max(0, sz - 2), Math.max(0, sz - 2));
+      } else {
+        ctx.strokeStyle = "rgba(255,255,255,0.9)";
+        ctx.lineWidth = 1.2;
+        ctx.strokeRect(x, y, sz, sz);
+      }
     }
   }
 
@@ -527,6 +538,10 @@ export class View {
     if (this.stroke) {
       const pp = ppx;
       if (!this.gestureMoved && this.gestureStartPx && (pp.x !== this.gestureStartPx.x || pp.y !== this.gestureStartPx.y)) this.gestureMoved = true;
+      // keep the erase/draw footprint marker glued to the finger while stroking
+      if (pp.x >= 0 && pp.y >= 0 && pp.x < this.session.doc.w && pp.y < this.session.doc.h) {
+        this.cursor = { x: pp.x, y: pp.y, size: this.session.brushSize };
+      }
       this.stroke.moveTo(pp.x, pp.y, e.pointerType === "pen" ? e.pressure : 1);
       this.session.repaint();
       return;
