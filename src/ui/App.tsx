@@ -216,6 +216,55 @@ function FloatingTools({ t, snap }: { t: ReturnType<typeof makeT>; snap: Snapsho
     open: false,
   }));
 
+  // ---------- floating-ball dock ----------
+  const landD = useLandscape();
+  type BallId = "main" | "pal" | "fx";
+  const [docked, setDocked] = useState<{ id: BallId; x: number; y: number }[]>([]);
+  const [dockOpen, setDockOpen] = useState(false);
+  const [dockHover, setDockHover] = useState<number | null>(null);
+  const dockT = useRef<number | null>(null);
+  const parkRef = useRef<{ id: BallId } | null>(null);
+  const dockWrap = useRef<HTMLDivElement | null>(null);
+  const dockedById = (id: BallId): boolean => docked.some((d) => d.id === id);
+  const dockClear = () => {
+    if (dockT.current !== null) { window.clearTimeout(dockT.current); dockT.current = null; }
+  };
+  const dockCollapse = (ms: number) => {
+    dockClear();
+    dockT.current = window.setTimeout(() => { dockT.current = null; setDockOpen(false); setDockHover(null); }, ms);
+  };
+  const inDockZone = (x: number, y: number): boolean => (landD ? y <= 64 : x >= window.innerWidth - 64);
+  const park = (id: BallId) => {
+    if (dockedById(id)) return;
+    const cur = id === "main" ? pos : id === "pal" ? { x: pal.x, y: pal.y } : { x: fx.x, y: fx.y };
+    if (id === "main") {
+      try { localStorage.setItem(orbKey, JSON.stringify(cur)); } catch { /* ignore */ }
+    }
+    setOpen(false);
+    setSub(null);
+    if (sel) setSel({ ...sel, open: false });
+    setPal((g) => (g ? { ...g, open: false } : g));
+    setFx((g) => (g ? { ...g, open: false } : g));
+    setDocked((d) => [...d, { id, x: cur.x, y: cur.y }]);
+    setDockOpen(true);
+    dockCollapse(900);
+  };
+  const popDock = (idx: number) => {
+    const d = docked[idx];
+    if (!d) return;
+    dockClear();
+    setDocked(docked.filter((_, k) => k !== idx));
+    const np = clampXY(landD
+      ? { x: Math.min(d.x, window.innerWidth - 140), y: Math.max(8, d.y) }
+      : { x: Math.min(d.x, window.innerWidth - 140), y: d.y });
+    if (d.id === "main") { setPos(np); try { localStorage.setItem(orbKey, JSON.stringify(np)); } catch { /* ignore */ } }
+    else if (d.id === "pal") setPal({ x: np.x, y: np.y, open: false });
+    else setFx({ x: np.x, y: np.y, open: false });
+    setDockOpen(false);
+    setDockHover(null);
+  };
+  const iconOfBall = (id: BallId): string => id === "main" ? "i-pencil" : id === "pal" ? "i-palette" : "i-wand";
+
   // rotation / resize: keep every floating ball inside the viewport
   useEffect(() => {
     const fix = () => {
@@ -433,12 +482,22 @@ function FloatingTools({ t, snap }: { t: ReturnType<typeof makeT>; snap: Snapsho
         const dr = drag.current;
         if (!dr || dr.which !== which) return;
         if (Math.abs(e.clientX - p.x - dr.dx) > 4 || Math.abs(e.clientY - p.y - dr.dy) > 4) dr.moved = true;
-        if (dr.moved) { stopTip(); moveBall(which, e.clientX - dr.dx, e.clientY - dr.dy); }
+        if (dr.moved) {
+          stopTip();
+          moveBall(which, e.clientX - dr.dx, e.clientY - dr.dy);
+          parkRef.current = inDockZone(e.clientX, e.clientY) ? ({ id: which as never as never }) : null;
+        }
       }}
       onPointerUp={() => {
         stopTip();
         const dr = drag.current;
         if (dr && dr.which === which) {
+          if (parkRef.current && (parkRef.current.id as string) === (which as string)) {
+            parkRef.current = null;
+            park(which as never);
+            drag.current = null;
+            return;
+          }
           if (!dr.moved) tap();
           drag.current = null;
         }
@@ -478,7 +537,7 @@ function FloatingTools({ t, snap }: { t: ReturnType<typeof makeT>; snap: Snapsho
 
   return (
     <>
-      {renderBall("main", pos, baseIcon, open, t("menu"), bd(snap.lang, "orb"), () => {
+      {!dockedById("main") && renderBall("main", pos, baseIcon, open, t("menu"), bd(snap.lang, "orb"), () => {
         if (open) { setOpen(false); setSub(null); return; }
         if (sel) {
           const pushed = clearRingOf(pos, { x: sel.x, y: sel.y });
@@ -514,7 +573,7 @@ function FloatingTools({ t, snap }: { t: ReturnType<typeof makeT>; snap: Snapsho
         }
         setSel({ ...sel, open: !sel.open });
       }) : null} />
-      {renderBall("pal", { x: pal.x, y: pal.y }, "i-palette", pal.open, t("palette"), bd(snap.lang, "palette"), () => {
+      {!dockedById("pal") && renderBall("pal", { x: pal.x, y: pal.y }, "i-palette", pal.open, t("palette"), bd(snap.lang, "palette"), () => {
         setOpen(false);
         setSub(null);
         if (sel) setSel({ ...sel, open: false });
@@ -535,7 +594,7 @@ function FloatingTools({ t, snap }: { t: ReturnType<typeof makeT>; snap: Snapsho
         }
         setPal({ ...pal, open: !pal.open });
       })}
-      {renderBall("fx", { x: fx.x, y: fx.y }, "i-wand", fx.open, t("fxOrb"), bd(snap.lang, "fx"), () => {
+      {!dockedById("fx") && renderBall("fx", { x: fx.x, y: fx.y }, "i-wand", fx.open, t("fxOrb"), bd(snap.lang, "fx"), () => {
         setOpen(false);
         setSub(null);
         if (sel) setSel({ ...sel, open: false });
@@ -557,6 +616,45 @@ function FloatingTools({ t, snap }: { t: ReturnType<typeof makeT>; snap: Snapsho
         }
         setFx({ ...fx, open: !fx.open });
       })}
+      {docked.length > 0 && (
+        <div ref={dockWrap} className={"bdock" + (landD ? " horiz" : "") + (dockOpen ? " open" : "")}
+          onPointerDown={(e) => {
+            e.preventDefault();
+            dockClear();
+            setDockOpen(true);
+            setDockHover(-1);
+            try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); } catch { /* ignore */ }
+          }}
+          onPointerMove={(e) => {
+            if (!dockOpen) return;
+            const el = dockWrap.current;
+            if (!el) return;
+            const items = Array.from(el.querySelectorAll<HTMLElement>(".bd-item"));
+            let best = -1;
+            let bd = 1e9;
+            for (let i = 0; i < items.length; i++) {
+              const r = items[i].getBoundingClientRect();
+              const cc = Math.hypot(e.clientX - (r.left + r.width / 2), e.clientY - (r.top + r.height / 2));
+              if (cc < bd) { bd = cc; best = i; }
+            }
+            setDockHover(items.length ? best : -1);
+          }}
+          onPointerUp={(e) => {
+            try { (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId); } catch { /* ignore */ }
+            const pick = dockHover != null && dockHover >= 0 ? dockHover : (docked.length === 1 ? 0 : -1);
+            if (pick >= 0) popDock(pick); else dockCollapse(220);
+            setDockHover(null);
+          }}
+          onPointerCancel={() => { dockCollapse(120); setDockHover(null); }}
+        >
+          {!dockOpen && <span className="bd-dots">{"•".repeat(docked.length)}</span>}
+          {dockOpen && docked.map((d, i) => (
+            <span key={d.id} className={"bd-item" + (dockHover === i ? " on" : "")}>
+              <Icon id={iconOfBall(d.id)} size={15} />
+            </span>
+          ))}
+        </div>
+      )}
       {(open || (sel && sel.open) || pal.open || fx.open) && (
         <div className="radial-back" onPointerDown={closeRadials} />
       )}
