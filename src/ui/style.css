@@ -474,3 +474,6 @@ input[type=range]{width:64px;height:22px;accent-color:var(--accent)}
 /* overwrite confirm layer (sits above all modals) */
 .cfm-layer{position:fixed;inset:0;z-index:300}
 .cfm-msg{font-size:14px;line-height:1.6;color:var(--text);margin:4px 0}
+/* color-adjust dialog: H/S/L controls in one compact row */
+.adj3{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:2px}
+.adj3 .holdbtn{width:auto;min-width:64px;max-width:none;flex:1 1 0}

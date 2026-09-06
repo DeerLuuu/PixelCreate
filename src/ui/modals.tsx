@@ -406,9 +406,11 @@ export function AdjustModal({ t, onClose }: { t: ReturnType<typeof makeT>; onClo
             <button className={"chip" + (scope === "doc" ? " on" : "")} onClick={() => setScope("doc")}>{t("scopeDoc")}</button>
             <button className={"chip" + (scope === "layer" ? " on" : "")} onClick={() => setScope("layer")}>{t("scopeLayer")}</button>
           </div>
-          <HoldAdjust dir="h" fixedBottom value={hue} min={-180} max={180} title={t("hueL")} format={(v) => "H" + Math.round(v)} onChange={(v) => { setHue(v); live(v, sat, light); }} />
-          <HoldAdjust dir="h" fixedBottom value={sat} min={0} max={200} title={t("satL")} format={(v) => "S" + Math.round(v) + "%"} onChange={(v) => { setSat(v); live(hue, v, light); }} />
-          <HoldAdjust dir="h" fixedBottom value={light} min={-100} max={100} title={t("lightL")} format={(v) => "L" + Math.round(v)} onChange={(v) => { setLight(v); live(hue, sat, v); }} />
+          <div className="adj3">
+            <HoldAdjust dir="h" fixedBottom value={hue} min={-180} max={180} title={t("hueL")} format={(v) => "H" + Math.round(v)} onChange={(v) => { setHue(v); live(v, sat, light); }} />
+            <HoldAdjust dir="h" fixedBottom value={sat} min={0} max={200} title={t("satL")} format={(v) => "S" + Math.round(v) + "%"} onChange={(v) => { setSat(v); live(hue, v, light); }} />
+            <HoldAdjust dir="h" fixedBottom value={light} min={-100} max={100} title={t("lightL")} format={(v) => "L" + Math.round(v)} onChange={(v) => { setLight(v); live(hue, sat, v); }} />
+          </div>
         </div>
         <div className="dlg-foot"><Btn label={t("cancel")} onClick={closeCancel} /><Btn label={t("ok")} className="primary" onClick={() => { SESSION.adjustCommit(); onClose(); }} /></div>
       </div>
