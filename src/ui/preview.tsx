@@ -33,7 +33,7 @@ export function PreviewBox() {
       const s = sizeRef.current;
       const avail = Math.max(90, Math.min(r.width - 30, r.height - 40));
       if (sizeRef.current > avail) { sizeRef.current = avail; setSize(avail); }
-      posRef.current = { x: Math.max(4, r.width - sizeRef.current - 14), y: 10 };
+      posRef.current = { x: Math.max(4, r.width - sizeRef.current - 14), y: Math.max(52, Math.min(r.height - sizeRef.current - 20, 62)) };
     }
     clampPos(sizeRef.current);
   };
@@ -133,7 +133,7 @@ export function PreviewBox() {
             SESSION.setPreviewBg(n);
             window.setTimeout(() => draw(), 0);
           }}
-          style={{ left: pos.x + s - 10, top: pos.y - 10, background: (SESSION.prefs.previewBg || "white") === "white" ? "#fff" : (SESSION.prefs.previewBg || "white") === "black" ? "#101116" : "repeating-conic-gradient(#9aa0b0 0% 25%, #b9bec9 0% 50%)" }} />
+          style={{ left: pos.x + s - 24, top: pos.y - 8, background: (SESSION.prefs.previewBg || "white") === "white" ? "#fff" : (SESSION.prefs.previewBg || "white") === "black" ? "#101116" : "repeating-conic-gradient(#9aa0b0 0% 25%, #b9bec9 0% 50%)" }} />
         </>
       )}
     </>
