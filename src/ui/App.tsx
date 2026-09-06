@@ -251,6 +251,13 @@ function FloatingTools({ t, snap }: { t: ReturnType<typeof makeT>; snap: Snapsho
     dockT.current = window.setTimeout(() => { dockT.current = null; setDockOpen(false); setDockHover(null); }, ms);
   };
   const inDockZone = (x: number, y: number): boolean => (landD ? y <= 64 : x >= window.innerWidth - 64);
+  /** true when the pointer is over the actual dock panel (parking only works here) */
+  const overDockPanel = (x: number, y: number): boolean => {
+    const el = dockWrap.current;
+    if (!el) return false;
+    const r = el.getBoundingClientRect();
+    return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
+  };
   const park = (id: BallId) => {
     if (dockedById(id)) return;
     const cur = id === "main" ? pos : id === "pal" ? { x: pal.x, y: pal.y } : { x: fx.x, y: fx.y };
@@ -528,10 +535,11 @@ function FloatingTools({ t, snap }: { t: ReturnType<typeof makeT>; snap: Snapsho
         if (dr.moved) {
           stopTip();
           moveBall(which, e.clientX - dr.dx, e.clientY - dr.dy);
-          const parked = inDockZone(e.clientX, e.clientY);
+          const near = inDockZone(e.clientX, e.clientY);
+          const parked = overDockPanel(e.clientX, e.clientY);
           parkRef.current = parked ? ({ id: which as never }) : null;
-          if (parked) { dockClear(); setDockOpen(true); setDockArmed(true); }
-          else setDockArmed(false);
+          if (near) { dockClear(); setDockOpen(true); } // panel pops up while approaching the edge
+          setDockArmed(parked); // highlight only when it would actually park
         }
       }}
       onPointerUp={() => {

@@ -21,6 +21,8 @@ export const CHANGELOG: ClgVersion[] = [
     date: "2025-09-07",
     items: [
       it("add", "操作记录双模式：按步数记录最近操作，或“完整记录”模式自项目创建起保存全部操作、可从头完整回放", "Two history recording modes: step-limited (configurable) or full recording since the project started for complete replay"),
+      it("add", "魔法球（原特效球）新增「居中」：把当前图层内容居中到画布中心，有选区时居中到选区中心", "Magic Ball (was FX ball) gains “Center”: aligns the active layer content to the canvas centre, or to the selection centre when one is active"),
+      it("imp", "特效浮动球更名“魔法球”；浮动球收纳需拖入收纳面板区域内才生效，靠近屏幕边缘不再误收纳", "FX orb renamed to Magic Ball; orbs park only when dropped on the dock panel itself, not merely near the screen edge"),
     ],
   },
   {
