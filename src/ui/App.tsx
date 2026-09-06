@@ -222,6 +222,7 @@ function FloatingTools({ t, snap }: { t: ReturnType<typeof makeT>; snap: Snapsho
   const [docked, setDocked] = useState<{ id: BallId; x: number; y: number }[]>([]);
   const [dockOpen, setDockOpen] = useState(false);
   const [dockHover, setDockHover] = useState<number | null>(null);
+  const [dockArmed, setDockArmed] = useState(false);
   const dockT = useRef<number | null>(null);
   const parkRef = useRef<{ id: BallId } | null>(null);
   const dockWrap = useRef<HTMLDivElement | null>(null);
@@ -485,11 +486,15 @@ function FloatingTools({ t, snap }: { t: ReturnType<typeof makeT>; snap: Snapsho
         if (dr.moved) {
           stopTip();
           moveBall(which, e.clientX - dr.dx, e.clientY - dr.dy);
-          parkRef.current = inDockZone(e.clientX, e.clientY) ? ({ id: which as never as never }) : null;
+          const parked = inDockZone(e.clientX, e.clientY);
+          parkRef.current = parked ? ({ id: which as never }) : null;
+          if (parked) { dockClear(); setDockOpen(true); setDockArmed(true); }
+          else setDockArmed(false);
         }
       }}
       onPointerUp={() => {
         stopTip();
+        setDockArmed(false);
         const dr = drag.current;
         if (dr && dr.which === which) {
           if (parkRef.current && (parkRef.current.id as string) === (which as string)) {
@@ -499,11 +504,13 @@ function FloatingTools({ t, snap }: { t: ReturnType<typeof makeT>; snap: Snapsho
             return;
           }
           if (!dr.moved) tap();
+          else if (dockOpen) dockCollapse(260);
           drag.current = null;
         }
       }}
       onPointerCancel={() => {
         stopTip();
+        setDockArmed(false);
         if (drag.current && drag.current.which === which) drag.current = null;
       }}
     >
@@ -616,8 +623,8 @@ function FloatingTools({ t, snap }: { t: ReturnType<typeof makeT>; snap: Snapsho
         }
         setFx({ ...fx, open: !fx.open });
       })}
-      {docked.length > 0 && (
-        <div ref={dockWrap} className={"bdock" + (landD ? " horiz" : "") + (dockOpen ? " open" : "")}
+      {(docked.length > 0 || dockOpen) && (
+        <div ref={dockWrap} className={"bdock" + (landD ? " horiz" : "") + (dockOpen ? " open" : "") + (dockArmed ? " armed" : "")}
           onPointerDown={(e) => {
             e.preventDefault();
             dockClear();
@@ -647,7 +654,7 @@ function FloatingTools({ t, snap }: { t: ReturnType<typeof makeT>; snap: Snapsho
           }}
           onPointerCancel={() => { dockCollapse(120); setDockHover(null); }}
         >
-          {!dockOpen && <span className="bd-dots">{"•".repeat(docked.length)}</span>}
+          {!dockOpen && <span className="bd-dots">{docked.length ? "•".repeat(Math.min(docked.length, 8)) : "·"}</span>}
           {dockOpen && docked.map((d, i) => (
             <span key={d.id} className={"bd-item" + (dockHover === i ? " on" : "")}>
               <Icon id={iconOfBall(d.id)} size={15} />
