@@ -27,6 +27,9 @@ export interface Prefs {
   previewBg: "white" | "black" | "checker";
   /** timeline matrix max height in px (landscape friendly) */
   tlH: number;
+  /** history recording: "steps" keeps the latest histSteps entries, "full" records everything */
+  histMode: "steps" | "full";
+  histSteps: number;
 }
 
 export interface Snapshot {
@@ -95,7 +98,30 @@ export class Session {
     this.doc = new Doc(64, 64, "untitled");
     this.doc.palette = defaultPalette();
     this.color = this.fg;
+    this.applyHistoryLimit();
   }
+
+  /** enforce the configured recording mode on the history stack */
+  private applyHistoryLimit(): void {
+    if (this.prefs.histMode === "full") this.history.setCap(Infinity);
+    else {
+      this.history.setCap(this.prefs.histSteps);
+      this.history.trimToCap();
+    }
+  }
+  setHistMode(m: "steps" | "full"): void {
+    this.prefs.histMode = m;
+    this.savePrefs();
+    this.applyHistoryLimit();
+    this.changed();
+  }
+  setHistSteps(n: number): void {
+    this.prefs.histSteps = Math.max(10, Math.min(500, Math.round(n)));
+    this.savePrefs();
+    this.applyHistoryLimit();
+    this.changed();
+  }
+
 
   attachView(v: View): void {
     this.view_ = v;
@@ -247,7 +273,7 @@ export class Session {
   }
 
   private loadPrefs(): Prefs {
-    const p: Prefs = { lang: "zh", grid: true, onion: 0, autosave: true, newFrameCopy: false, railSwap: true, palMode: "ball", previewBg: "white", tlH: 116 };
+    const p: Prefs = { lang: "zh", grid: true, onion: 0, autosave: true, newFrameCopy: false, railSwap: true, palMode: "ball", previewBg: "white", tlH: 116, histMode: "steps", histSteps: 60 };
     try {
       const saved = JSON.parse(localStorage.getItem("pc.prefs") ?? "{}");
       if (saved.lang === "en") p.lang = "en";
@@ -258,6 +284,8 @@ export class Session {
       if (typeof saved.newFrameCopy === "boolean") p.newFrameCopy = saved.newFrameCopy;
       if (typeof saved.railSwap === "boolean") p.railSwap = saved.railSwap;
       if (typeof saved.tlH === "number") p.tlH = Math.max(56, Math.min(340, Math.round(saved.tlH)));
+      if (saved.histMode === "full" || saved.histMode === "steps") p.histMode = saved.histMode;
+      if (typeof saved.histSteps === "number") p.histSteps = Math.max(10, Math.min(500, Math.round(saved.histSteps)));
       /* palette floater style fixed to ball */
     } catch {
       /* ignore */

@@ -131,6 +131,20 @@ export class History {
   private redoStack: Entry[] = [];
   private cap = 60;
 
+  /** change the step limit; Infinity keeps every entry (full recording) */
+  setCap(n: number): void {
+    this.cap = n;
+  }
+  /** current step limit (Infinity = full recording mode) */
+  limit(): number {
+    return this.cap;
+  }
+  /** drop the oldest entries so the stack fits the current cap */
+  trimToCap(): void {
+    if (!Number.isFinite(this.cap)) return;
+    while (this.undoStack.length > this.cap) this.undoStack.shift();
+  }
+
   clear(): void {
     this.undoStack = [];
     this.redoStack = [];

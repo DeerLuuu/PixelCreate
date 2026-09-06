@@ -455,6 +455,17 @@ export function SettingsModal({ t, onClose }: { t: ReturnType<typeof makeT>; onC
           <div className="row-actions"><HoldAdjust dir="h" value={SESSION.prefs.tlH} min={56} max={340} title={t("tlHeight")} format={(v) => v + "px"} onChange={(v) => SESSION.setTlHeight(v)} /></div>
           <label className="rowlabel">{t("sel.wandTol")}</label>
           <div className="row-actions"><HoldAdjust value={SESSION.selectionTolerance} min={0} max={64} title={t("sel.wandTol")} format={(v) => "T" + v} onChange={(v) => SESSION.setSelectionTolerance(v)} /></div>
+          <label className="rowlabel">{t("histMode")}</label>
+          <div className="chips">
+            <button className={"chip" + (SESSION.prefs.histMode !== "full" ? " on" : "")} onClick={() => SESSION.setHistMode("steps")}>{t("histModeSteps")}</button>
+            <button className={"chip" + (SESSION.prefs.histMode === "full" ? " on" : "")} onClick={() => SESSION.setHistMode("full")}>{t("histModeFull")}</button>
+          </div>
+          {SESSION.prefs.histMode !== "full" && (
+            <>
+              <label className="rowlabel">{t("histStepsLabel")}</label>
+              <div className="row-actions"><HoldAdjust dir="h" value={SESSION.prefs.histSteps} min={10} max={500} title={t("histStepsLabel")} format={(v) => "◔" + v} onChange={(v) => SESSION.setHistSteps(v)} /></div>
+            </>
+          )}
           <label className="rowlabel">{t("previewBg")}</label>
           <div className="chips">
             <button className={"chip" + (snap.previewBg === "white" ? " on" : "")} onClick={() => SESSION.setPreviewBg("white")}>{t("previewWhite")}</button>
@@ -499,6 +510,9 @@ export function HistoryModal({ t, snap, onClose, onReplay }: { t: ReturnType<typ
       <div className="dlg-mask" onClick={onClose} />
       <div className="dlg">
         <div className="dlg-head"><span>{t("historyTitle")}</span><div className="grow" /><button className="btn small" onClick={onClose}><Icon id="i-x" size={16} /></button></div>
+        {SESSION.prefs.histMode === "full"
+          ? <div className="hist-mode-note full">{t("histNoteFull")}</div>
+          : <div className="hist-mode-note">{t("histNoteStepsA")} {SESSION.history.limit()} {t("histNoteStepsB")}</div>}
         <div className="dlg-body hist-body">
           {labels.length === 0 ? <div className="row-note">{t("historyEmpty")}</div> : rows.map((r) => (<button key={r.key} className={"hist-row" + (index === r.key ? " cur" : "")} onClick={() => SESSION.jumpHistory(r.key)}><span className="hnum">{r.key === 0 ? "▸" : r.key}</span><span className="htext">{r.label}</span></button>))}
         </div>

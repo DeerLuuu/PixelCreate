@@ -591,3 +591,7 @@ input[type=range]{width:64px;height:22px;accent-color:var(--accent)}
 .holdpop.v .hp-fill{transition:height .06s linear}
 .quickwheel{animation:qwIn .18s cubic-bezier(.2,.85,.25,1) both}
 .btn-tip{animation:tipIn .13s ease-out both}
+
+/* history recording-mode note in the history dialog */
+.hist-mode-note{margin:0;padding:8px 16px;font-size:11px;line-height:1.55;color:var(--dim);border-bottom:1px solid var(--line);background:rgba(255,255,255,.02)}
+.hist-mode-note.full{color:var(--accent);font-weight:600}
