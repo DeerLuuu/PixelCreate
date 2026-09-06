@@ -303,24 +303,14 @@ export class View {
       ctx.restore();
     }
     this.drawSelTransform();
-    // hover cursor: outline with a transparent centre (eraser shows the exact
-    // square it would wipe as a white/dark double ring)
+    // hover cursor: outline with a transparent centre; the eraser shares the
+    // same square-footprint marker as the pencil (identical brush algorithm)
     const cu = this.cursor;
     if (cu) {
       const sz = Math.max(2, cu.size * z);
-      const x = this.ox + cu.x * z, y = this.oy + cu.y * z;
-      if (this.session.tool === "eraser") {
-        ctx.lineWidth = 2;
-        ctx.strokeStyle = "rgba(255,255,255,0.95)";
-        ctx.strokeRect(x, y, sz, sz);
-        ctx.lineWidth = 1;
-        ctx.strokeStyle = "rgba(18,22,32,0.95)";
-        ctx.strokeRect(x + 1, y + 1, Math.max(0, sz - 2), Math.max(0, sz - 2));
-      } else {
-        ctx.strokeStyle = "rgba(255,255,255,0.9)";
-        ctx.lineWidth = 1.2;
-        ctx.strokeRect(x, y, sz, sz);
-      }
+      ctx.strokeStyle = "rgba(255,255,255,0.9)";
+      ctx.lineWidth = 1.2;
+      ctx.strokeRect(this.ox + cu.x * z, this.oy + cu.y * z, sz, sz);
     }
   }
 
