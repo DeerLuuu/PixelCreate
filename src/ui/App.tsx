@@ -273,14 +273,17 @@ function FloatingTools({ t, snap }: { t: ReturnType<typeof makeT>; snap: Snapsho
     setDockOpen(true);
     dockCollapse(900);
   };
-  const popDock = (idx: number) => {
+  const popDock = (idx: number, at?: { x: number; y: number }) => {
     const d = docked[idx];
     if (!d) return;
     dockClear();
     setDocked(docked.filter((_, k) => k !== idx));
-    const np = clampXY(landD
-      ? { x: Math.min(d.x, window.innerWidth - 140), y: Math.max(8, d.y) }
-      : { x: Math.min(d.x, window.innerWidth - 140), y: d.y });
+    // the ball pops out exactly where the finger released (fallback: old spot)
+    const np = at
+      ? clampXY({ x: at.x, y: at.y })
+      : clampXY(landD
+        ? { x: Math.min(d.x, window.innerWidth - 140), y: Math.max(8, d.y) }
+        : { x: Math.min(d.x, window.innerWidth - 140), y: d.y });
     if (d.id === "main") { setPos(np); try { localStorage.setItem(orbKey, JSON.stringify(np)); } catch { /* ignore */ } }
     else if (d.id === "pal") setPal({ x: np.x, y: np.y, open: false });
     else setFx({ x: np.x, y: np.y, open: false });
@@ -699,7 +702,7 @@ function FloatingTools({ t, snap }: { t: ReturnType<typeof makeT>; snap: Snapsho
           onPointerUp={(e) => {
             try { (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId); } catch { /* ignore */ }
             const pick = dockHover != null && dockHover >= 0 ? dockHover : (docked.length === 1 ? 0 : -1);
-            if (pick >= 0) popDock(pick); else dockCollapse(220);
+            if (pick >= 0) popDock(pick, { x: e.clientX, y: e.clientY }); else dockCollapse(220);
             setDockHover(null);
           }}
           onPointerCancel={() => { dockCollapse(120); setDockHover(null); }}
