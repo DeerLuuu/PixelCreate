@@ -148,7 +148,12 @@ export function HoldAdjust({
         );
       })()}
       {bar && dir !== "v" && (
-        <div className={"holdpop" + (fixedBottom ? " holdpop-fixed" : "")} style={fixedBottom ? undefined : { left: bar.rect.left, top: bar.rect.top - 44 }}>
+        <div className={"holdpop" + (fixedBottom ? " holdpop-fixed" : "")} style={fixedBottom ? undefined : (() => {
+          const hw = 95; // popup ~190px wide, translated -50%, so clamp its centre point
+          const left = Math.max(hw, Math.min(Math.max(hw, window.innerWidth - hw), bar.rect.left));
+          const top = Math.max(4, bar.rect.top - 44);
+          return { left, top };
+        })()}>
           <span className="hp-label">{format(cur)}</span>
           <div className="hp-track">
             <div className="hp-fill" style={{ width: ((cur - min) / (max - min)) * 100 + "%" }} />

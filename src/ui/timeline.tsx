@@ -3,6 +3,7 @@ import { SESSION } from "./singleton";
 import { makeT } from "./i18n";
 import type { Snapshot } from "../app/session";
 import { Btn, Icon, useLandscape } from "./base";
+import { HoldAdjust } from "./hold";
 import { BLEND_MODES } from "../engine/types";
 export function TimelineBar({ t, snap, onFrameDlg }: { t: ReturnType<typeof makeT>; snap: Snapshot; onFrameDlg: (fi: number) => void }) {
   const HEAD = 20, ROW = 24, CELL = 30, LEFT = 96;
@@ -233,12 +234,10 @@ export function TimelineBar({ t, snap, onFrameDlg }: { t: ReturnType<typeof make
       {curL && (
         <div className="tl-edit">
           <span className="tl-name tl-ro" title={curL.name}>{curL.name}</span>
-          <input className="tl-op" type="range" min={0} max={100} value={curL.opacity} aria-label={t("opacity")}
-            onChange={(e) => SESSION.editLayerOpacity(curLi, Number(e.target.value))}
-            onPointerUp={() => SESSION.endLayerOpacity()}
-            onPointerCancel={() => SESSION.endLayerOpacity()}
-            onBlur={() => SESSION.endLayerOpacity()} />
-          <span className="tl-opval">{curL.opacity}%</span>
+          <HoldAdjust dir={land ? "v" : "h"} value={curL.opacity} min={0} max={100} title={t("opacity")}
+            format={(v) => v + "%"} reset={100}
+            onChange={(v) => SESSION.editLayerOpacity(curLi, v)}
+            onEnd={() => SESSION.endLayerOpacity()} />
           <button type="button" className="tl-blend" onClick={() => setBlendOpen(!blendOpen)}>
             <span className="bname">{t("blends." + curL.blend)}</span><i className="bchev">▾</i>
           </button>
