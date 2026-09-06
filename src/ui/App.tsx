@@ -691,8 +691,9 @@ function FloatingTools({ t, snap }: { t: ReturnType<typeof makeT>; snap: Snapsho
             if (!dockOpen) return;
             const el = dockWrap.current;
             if (!el) return;
-            // focusing a stored ball only works while the finger stays over the panel
-            if (!overDockPanel(e.clientX, e.clientY)) { setDockHover(-1); return; }
+            // sliding only re-focuses while over the panel; leaving keeps the
+            // focused ball unchanged so the finger can carry it out to the drop point
+            if (!overDockPanel(e.clientX, e.clientY)) return;
             const items = Array.from(el.querySelectorAll<HTMLElement>(".bd-item"));
             let best = -1;
             let bd = 1e9;
@@ -709,13 +710,11 @@ function FloatingTools({ t, snap }: { t: ReturnType<typeof makeT>; snap: Snapsho
             const down = dockDown.current;
             dockDown.current = null;
             const tap = down !== null && Math.hypot(e.clientX - down.x, e.clientY - down.y) < 12;
-            // eject only when the release happened over the panel: on a focused
-            // chip, or a plain tap when exactly one ball is stored
+            // eject the focused ball wherever the finger released; a plain tap
+            // over the panel still pops the single stored ball for convenience
             let pick = -1;
-            if (inside) {
-              if (dockHover != null && dockHover >= 0) pick = dockHover;
-              else if (tap && docked.length === 1) pick = 0;
-            }
+            if (dockHover != null && dockHover >= 0) pick = dockHover;
+            else if (inside && tap && docked.length === 1) pick = 0;
             if (pick >= 0) popDock(pick, { x: e.clientX, y: e.clientY }); else dockCollapse(220);
             setDockHover(null);
           }}
