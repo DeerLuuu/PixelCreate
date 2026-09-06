@@ -1,4 +1,8 @@
 import React, { useEffect, useRef, useState } from "react";
+import { SESSION } from "./singleton";
+import { makeT } from "./i18n";
+import type { Lang } from "./i18n";
+import * as bridge from "../io/bridge";
 import { Icon } from "./base";
 
 export interface RefImg { w: number; h: number; px: Uint8ClampedArray; name: string }
@@ -18,6 +22,38 @@ export function RefImageBox({ img, onClose }: { img: RefImg; onClose: () => void
   });
   const sizeRef = useRef(size);
   const s = size;
+  const [picking, setPicking] = useState(false);
+  const pickingRef = useRef(false);
+  const scanRef = useRef(false);
+  const lastSamp = useRef(-1);
+  const tp = makeT(SESSION.prefs.lang as Lang);
+
+  /** sample the ORIGINAL source pixel under the pointer (exact, incl. alpha) */
+  const sampleAt = (e: React.PointerEvent<HTMLDivElement>) => {
+    const cv = cvRef.current;
+    if (!cv) return;
+    const r = cv.getBoundingClientRect();
+    const mx = e.clientX - r.left, my = e.clientY - r.top;
+    const sz = sizeRef.current;
+    const fit = Math.min(sz / img.w, sz / img.h);
+    const sc = fit >= 1 ? Math.max(1, Math.floor(fit)) : fit;
+    const w = img.w * sc, h = img.h * sc;
+    const ox = (sz - w) / 2, oy = (sz - h) / 2;
+    if (mx < ox || my < oy || mx >= ox + w || my >= oy + h) return;
+    const sx = Math.min(img.w - 1, Math.max(0, Math.floor((mx - ox) / sc)));
+    const sy = Math.min(img.h - 1, Math.max(0, Math.floor((my - oy) / sc)));
+    const li = (sy * img.w + sx) * 4;
+    if (li === lastSamp.current) return;
+    lastSamp.current = li;
+    SESSION.setFgColor([img.px[li], img.px[li + 1], img.px[li + 2], img.px[li + 3]]);
+    try { bridge.vibrate(8); } catch { /* ignore */ }
+  };
+  const togglePick = () => {
+    const nv = !pickingRef.current;
+    pickingRef.current = nv;
+    setPicking(nv);
+    if (nv) bridge.toast(tp("refPickHint"));
+  };
 
   const parentRect = () => {
     const p = boxRef.current?.closest(".viewport") as HTMLElement | null;
@@ -77,15 +113,18 @@ export function RefImageBox({ img, onClose }: { img: RefImg; onClose: () => void
   useEffect(() => { const t = window.setTimeout(() => draw(), 0); return () => window.clearTimeout(t); }, [pos, size]);
 
   return (
-    <div className="prevbox" ref={boxRef} style={{ left: pos ? pos.x : 12, top: pos ? pos.y : 12, width: s, height: s, padding: 0 }}>
+    <div className={"prevbox" + (picking ? " picking" : "")} ref={boxRef} style={{ left: pos ? pos.x : 12, top: pos ? pos.y : 12, width: s, height: s, padding: 0 }}>
       <canvas ref={cvRef} style={{ width: s, height: s, display: "block" }} />
       <div className="prev-grab"
-        onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); } catch { /* ignore */ } const p = posRef.current ?? { x: 12, y: 12 }; grabStart.current = { px: e.clientX, py: e.clientY, lx: p.x, ly: p.y }; }}
-        onPointerMove={(e) => { const g = grabStart.current; if (!g) return; const p = { x: g.lx + (e.clientX - g.px), y: g.ly + (e.clientY - g.py) }; posRef.current = p; setPos(p); clampPos(sizeRef.current); }}
-        onPointerUp={(e) => { try { (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId); } catch { /* ignore */ } grabStart.current = null; }}
-        onPointerCancel={() => { grabStart.current = null; }}
+        onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); } catch { /* ignore */ }
+          if (pickingRef.current) { scanRef.current = true; lastSamp.current = -1; sampleAt(e); }
+          else { const p = posRef.current ?? { x: 12, y: 12 }; grabStart.current = { px: e.clientX, py: e.clientY, lx: p.x, ly: p.y }; } }}
+        onPointerMove={(e) => { if (scanRef.current) { sampleAt(e); return; } const g = grabStart.current; if (!g) return; const p = { x: g.lx + (e.clientX - g.px), y: g.ly + (e.clientY - g.py) }; posRef.current = p; setPos(p); clampPos(sizeRef.current); }}
+        onPointerUp={(e) => { try { (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId); } catch { /* ignore */ } if (scanRef.current) { scanRef.current = false; return; } grabStart.current = null; }}
+        onPointerCancel={() => { scanRef.current = false; grabStart.current = null; }}
       />
       <button className="ref-x" title="close" onClick={onClose}><Icon id="i-x" size={13} /></button>
+      <button className={"ref-pick" + (picking ? " on" : "")} title={tp("refPickTitle")} aria-label={tp("refPickTitle")} onClick={togglePick}><Icon id="i-picker" size={13} /></button>
       <div className="prev-resize"
         onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); } catch { /* ignore */ } rzStart.current = { px: e.clientX, py: e.clientY, size: sizeRef.current }; }}
         onPointerMove={(e) => { const rz = rzStart.current; if (!rz) return; const r = parentRect(); const delta = Math.max(e.clientX - rz.px, e.clientY - rz.py); const ns = Math.max(90, Math.min(Math.min(r.width - 20, r.height - 30, 380), rz.size + delta)); sizeRef.current = ns; setSize(ns); try { localStorage.setItem("pc.ref.size", String(Math.round(ns))); } catch { /* ignore */ } clampPos(ns); }}
