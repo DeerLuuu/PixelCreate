@@ -818,9 +818,9 @@ function ControlBar({ t, snap, onPanel, onAdjust }: { t: ReturnType<typeof makeT
         <Btn label={SYM_GLYPH[sym]} className="sym-toggle" active={sym !== "off"} title={t(symKey[sym])} desc={bd(snap.lang, "sym")} onClick={() => { const m = SESSION.cycleSym(); bridge.toast(t(symKey[m])); }} />
       </div>
       <div className="cb-sliders">
-        <HoldAdjust dir={dir} value={snap.brushSize} min={1} max={64} title={t("brushSize")} hint={bd(snap.lang, "brush")} format={(v) => "◉" + v} onChange={(v) => SESSION.setBrushSize(v)} />
-        <HoldAdjust dir={dir} value={snap.brushAlpha} min={0} max={255} title={t("opacity")} hint={bd(snap.lang, "alpha")} format={(v) => "◐" + v} onChange={(v) => SESSION.setBrushAlpha(v)} />
-        {snap.tool === "polygon" && <HoldAdjust dir={dir} value={SESSION.shapeSides} min={3} max={12} title={t("sides")} hint={bd(snap.lang, "sides")} format={(v) => "◮" + v} onChange={(v) => SESSION.setShapeSides(v)} />}
+        <HoldAdjust dir={dir} value={snap.brushSize} min={1} max={64} title={t("brushSize")} hint={bd(snap.lang, "brush")} format={(v) => "◉" + v} reset={1} onChange={(v) => SESSION.setBrushSize(v)} />
+        <HoldAdjust dir={dir} value={snap.brushAlpha} min={0} max={255} title={t("opacity")} hint={bd(snap.lang, "alpha")} format={(v) => "◐" + v} reset={255} onChange={(v) => SESSION.setBrushAlpha(v)} />
+        {snap.tool === "polygon" && <HoldAdjust dir={dir} value={SESSION.shapeSides} min={3} max={12} title={t("sides")} hint={bd(snap.lang, "sides")} format={(v) => "◮" + v} reset={6} onChange={(v) => SESSION.setShapeSides(v)} />}
         {isShapeTool(snap.tool) && snap.tool !== "line" && <Btn icon={SESSION.shapeFill ? "i-rect" : "i-rectfill"} onClick={() => SESSION.setShapeFill(!SESSION.shapeFill)} title={SESSION.shapeFill ? t("shapeHollow") : t("shapeSolid")} />}
       </div>
     </section>

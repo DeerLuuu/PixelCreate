@@ -37,7 +37,7 @@ export function rgbToHsv(c: RGBA): [number, number, number] {
 
 /** Press-hold shows a floating progress bar; slide left/right to change value. */
 export function HoldAdjust({
-  value, min, max, title, format, onChange, dir = "h", hint, fixedBottom, onEnd,
+  value, min, max, title, format, onChange, dir = "h", hint, fixedBottom, onEnd, reset,
 }: {
   value: number;
   min: number;
@@ -51,6 +51,8 @@ export function HoldAdjust({
   fixedBottom?: boolean;
   /** called when the drag gesture ends (commit / coalesce history) */
   onEnd?: () => void;
+  /** quick DOUBLE-TAP resets the value to this default */
+  reset?: number;
 }) {
   const tipT = useRef<number | null>(null);
   const tipOrigin = useRef<number>(0);
@@ -61,12 +63,17 @@ export function HoldAdjust({
   const [bar, setBar] = useState<{ rect: DOMRect; cur: number; start: number } | null>(null);
   const [cur, setCur] = useState(value);
   const startPos = useRef(0);
+  const dnT = useRef(0);
+  const dnXY = useRef({ x: 0, y: 0 });
+  const lastTap = useRef<{ t: number; x: number; y: number } | null>(null);
   const axis = dir === "v" ? "y" : "x";
   const posOf = (p: PointerEvent | React.PointerEvent<HTMLButtonElement>) => (axis === "y" ? p.clientY : p.clientX);
   const factor = dir === "v" ? -1 : 1; // vertical: drag up = increase
 
   const down = (e: React.PointerEvent<HTMLButtonElement>) => {
     e.preventDefault();
+    dnT.current = Date.now();
+    dnXY.current = { x: e.clientX, y: e.clientY };
     startPos.current = posOf(e);
     setCur(value);
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
@@ -87,12 +94,25 @@ export function HoldAdjust({
       setCur(nv);
       onChange(nv);
     };
-    const onUp = () => {
+    const onUp = (ev: PointerEvent) => {
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
       window.removeEventListener("pointercancel", onUp);
       setBar(null);
       onEnd?.();
+      // quick double-tap (no drag) snaps the value back to the default
+      if (reset !== undefined && Date.now() - dnT.current < 350 &&
+          Math.hypot(ev.clientX - dnXY.current.x, ev.clientY - dnXY.current.y) < 8) {
+        const lt = lastTap.current;
+        if (lt && Date.now() - lt.t < 330 &&
+            Math.hypot(ev.clientX - lt.x, ev.clientY - lt.y) < 26) {
+          lastTap.current = null;
+          setCur(reset);
+          onChange(reset);
+        } else {
+          lastTap.current = { t: Date.now(), x: ev.clientX, y: ev.clientY };
+        }
+      }
     };
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
@@ -108,10 +128,13 @@ export function HoldAdjust({
         // swap ON  -> control rail on the right -> pop sits 20px to the LEFT of the button
         // swap OFF -> control rail on the left  -> pop sits 20px to the RIGHT of the button
         const swap = SESSION.prefs.railSwap;
-        const top = Math.max(4, bar.rect.top + bar.rect.height / 2 - 92);
+        // keep the vertical popup fully visible: clamp it inside the viewport
+        const popW = window.innerWidth < window.innerHeight ? 150 : 92;
+        const popH = window.innerWidth < window.innerHeight ? 214 : 200;
+        const top = Math.max(4, Math.min(Math.max(4, window.innerHeight - popH - 4), bar.rect.top + bar.rect.height / 2 - 92));
         const styleV = swap
-          ? { right: Math.max(4, window.innerWidth - bar.rect.left + 20), top }
-          : { left: bar.rect.right + 20, top };
+          ? { right: Math.max(4, Math.min(window.innerWidth - popW - 4, window.innerWidth - bar.rect.left + 20)), top }
+          : { left: Math.max(4, Math.min(window.innerWidth - popW - 4, bar.rect.right + 20)), top };
         return (
         <div
           className="holdpop v"
@@ -176,6 +199,8 @@ export function ColorHoldChip({ onClickTap }: { onClickTap: () => void }) {
 
   const start = (e: React.PointerEvent<HTMLButtonElement>) => {
     e.preventDefault();
+    // keep receiving moves/cancel even when the finger leaves the chip
+    try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); } catch { /* ignore */ }
     if (timer.current) window.clearTimeout(timer.current);
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
     const size = 170;

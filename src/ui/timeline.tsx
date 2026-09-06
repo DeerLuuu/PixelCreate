@@ -3,7 +3,6 @@ import { SESSION } from "./singleton";
 import { makeT } from "./i18n";
 import type { Snapshot } from "../app/session";
 import { Btn, Icon, useLandscape } from "./base";
-import { HoldAdjust } from "./hold";
 import { BLEND_MODES } from "../engine/types";
 export function TimelineBar({ t, snap, onFrameDlg }: { t: ReturnType<typeof makeT>; snap: Snapshot; onFrameDlg: (fi: number) => void }) {
   const HEAD = 20, ROW = 24, CELL = 30, LEFT = 96;
@@ -142,14 +141,15 @@ export function TimelineBar({ t, snap, onFrameDlg }: { t: ReturnType<typeof make
 
   const curLi = snap.layerIdx;
   const curL = layers[curLi];
-  const [nm, setNm] = useState(curL ? curL.name : "");
-  useEffect(() => { setNm(curL ? curL.name : ""); }, [curLi, curL ? curL.name : ""]);
-  const commitName = () => { if (curL && nm.trim() && nm !== curL.name) SESSION.renameLayer(curLi, nm.trim()); };
-  const nameRef = useRef<HTMLInputElement | null>(null);
-  const nameT = useRef(0);
-  const [focusRen, setFocusRen] = useState(0);
   const [blendOpen, setBlendOpen] = useState(false);
-  useEffect(() => { if (focusRen && curL) { const el = nameRef.current; if (el) { el.focus(); el.select(); } } }, [focusRen, curLi]);
+  // renaming happens in its own dialog, only reachable for the selected layer
+  const [ren, setRen] = useState(false);
+  const [renName, setRenName] = useState("");
+  const commitRen = () => {
+    const v = renName.trim();
+    if (curL && v && v !== curL.name) SESSION.renameLayer(curLi, v);
+    setRen(false);
+  };
 
   const dropBox = (() => {
     if (!dl || dl.to === dl.from) return -1;
@@ -209,7 +209,7 @@ export function TimelineBar({ t, snap, onFrameDlg }: { t: ReturnType<typeof make
             <button className="mini lock" title={L.locked ? t("lock") : t("unlock")} onClick={(e) => { e.stopPropagation(); SESSION.toggleLayerLock(li); }}>
               {L.locked ? "🔒" : "🔓"}
             </button>
-            <button className="lname" onPointerDown={() => { nameT.current = Date.now(); }} onClick={(e) => { e.stopPropagation(); const long = Date.now() - nameT.current > 450; nameT.current = 0; if (long) return; SESSION.setLayer(li); setFocusRen((x) => x + 1); }}>{L.name}</button>
+            <button className="lname" title={L.name} onClick={(e) => { e.stopPropagation(); SESSION.setLayer(li); }}>{L.name}</button>
 
           </div>
         ))}
@@ -232,16 +232,18 @@ export function TimelineBar({ t, snap, onFrameDlg }: { t: ReturnType<typeof make
       </div>
       {curL && (
         <div className="tl-edit">
-          <input ref={nameRef} className="tl-name" value={nm} onChange={(e) => setNm(e.target.value)} onBlur={commitName}
-            onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }} placeholder={t("name")} />
-          <HoldAdjust dir={land ? "v" : "h"} value={curL.opacity} min={0} max={100} title={t("opacity")}
-            format={(v) => v + "%"}
-            onChange={(v) => SESSION.editLayerOpacity(curLi, v)}
-            onEnd={() => SESSION.endLayerOpacity()} />
+          <span className="tl-name tl-ro" title={curL.name}>{curL.name}</span>
+          <input className="tl-op" type="range" min={0} max={100} value={curL.opacity} aria-label={t("opacity")}
+            onChange={(e) => SESSION.editLayerOpacity(curLi, Number(e.target.value))}
+            onPointerUp={() => SESSION.endLayerOpacity()}
+            onPointerCancel={() => SESSION.endLayerOpacity()}
+            onBlur={() => SESSION.endLayerOpacity()} />
+          <span className="tl-opval">{curL.opacity}%</span>
           <button type="button" className="tl-blend" onClick={() => setBlendOpen(!blendOpen)}>
             <span className="bname">{t("blends." + curL.blend)}</span><i className="bchev">▾</i>
           </button>
           <div className="tl-btns">
+            <Btn icon="i-pencil" className="mini" title={t("layerRename")} onClick={() => { setRenName(curL.name); setRen(true); }} />
             <Btn icon="i-plus" className="mini primary" title={t("layerAdd")} onClick={() => SESSION.layerAdd()} />
             <Btn icon="i-up" className="mini" title={t("layerUp")} onClick={() => SESSION.layerUp()} />
             <Btn icon="i-down" className="mini" title={t("layerDown")} onClick={() => SESSION.layerDown()} />
@@ -261,6 +263,23 @@ export function TimelineBar({ t, snap, onFrameDlg }: { t: ReturnType<typeof make
                 {t("blends." + b)}
               </button>
             ))}
+          </div>
+        </>
+      )}
+      {ren && curL && (
+        <>
+          <div className="dlg-mask" onClick={() => setRen(false)} />
+          <div className="dlg">
+            <div className="dlg-head"><span>{t("layerRename")}</span><div className="grow" /><button className="btn small" onClick={() => setRen(false)}><Icon id="i-x" size={16} /></button></div>
+            <div className="dlg-body">
+              <label className="rowlabel">{t("name")}</label>
+              <input autoFocus value={renName} onChange={(e) => setRenName(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") commitRen(); else if (e.key === "Escape") setRen(false); }} />
+            </div>
+            <div className="dlg-foot">
+              <Btn label={t("cancel")} onClick={() => setRen(false)} />
+              <Btn label={t("ok")} className="primary" onClick={commitRen} />
+            </div>
           </div>
         </>
       )}

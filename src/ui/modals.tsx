@@ -421,9 +421,9 @@ export function AdjustModal({ t, onClose }: { t: ReturnType<typeof makeT>; onClo
             <button className={"chip" + (scope === "layer" ? " on" : "")} onClick={() => setScope("layer")}>{t("scopeLayer")}</button>
           </div>
           <div className="adj3">
-            <HoldAdjust dir="h" fixedBottom value={hue} min={-180} max={180} title={t("hueL")} format={(v) => "H" + Math.round(v)} onChange={(v) => { setHue(v); live(v, sat, light); }} />
-            <HoldAdjust dir="h" fixedBottom value={sat} min={0} max={200} title={t("satL")} format={(v) => "S" + Math.round(v) + "%"} onChange={(v) => { setSat(v); live(hue, v, light); }} />
-            <HoldAdjust dir="h" fixedBottom value={light} min={-100} max={100} title={t("lightL")} format={(v) => "L" + Math.round(v)} onChange={(v) => { setLight(v); live(hue, sat, v); }} />
+            <HoldAdjust dir="h" fixedBottom value={hue} min={-180} max={180} title={t("hueL")} format={(v) => "H" + Math.round(v)} reset={0} onChange={(v) => { setHue(v); live(v, sat, light); }} />
+            <HoldAdjust dir="h" fixedBottom value={sat} min={0} max={200} title={t("satL")} format={(v) => "S" + Math.round(v) + "%"} reset={100} onChange={(v) => { setSat(v); live(hue, v, light); }} />
+            <HoldAdjust dir="h" fixedBottom value={light} min={-100} max={100} title={t("lightL")} format={(v) => "L" + Math.round(v)} reset={0} onChange={(v) => { setLight(v); live(hue, sat, v); }} />
           </div>
         </div>
         <div className="dlg-foot"><Btn label={t("cancel")} onClick={closeCancel} /><Btn label={t("ok")} className="primary" onClick={() => { SESSION.adjustCommit(); onClose(); }} /></div>
@@ -452,9 +452,9 @@ export function SettingsModal({ t, onClose }: { t: ReturnType<typeof makeT>; onC
           <label className="rowlabel">{t("grid")}</label>
           <button className={"chip" + (snap.grid ? " on" : "")} onClick={() => SESSION.toggleGrid()}>{snap.grid ? "ON" : "OFF"}</button>
           <label className="rowlabel">{t("tlHeight")}</label>
-          <div className="row-actions"><HoldAdjust dir="h" value={SESSION.prefs.tlH} min={56} max={340} title={t("tlHeight")} format={(v) => v + "px"} onChange={(v) => SESSION.setTlHeight(v)} /></div>
+          <div className="row-actions"><HoldAdjust dir="h" value={SESSION.prefs.tlH} min={56} max={340} title={t("tlHeight")} format={(v) => v + "px"} reset={116} onChange={(v) => SESSION.setTlHeight(v)} /></div>
           <label className="rowlabel">{t("sel.wandTol")}</label>
-          <div className="row-actions"><HoldAdjust value={SESSION.selectionTolerance} min={0} max={64} title={t("sel.wandTol")} format={(v) => "T" + v} onChange={(v) => SESSION.setSelectionTolerance(v)} /></div>
+          <div className="row-actions"><HoldAdjust value={SESSION.selectionTolerance} min={0} max={64} title={t("sel.wandTol")} format={(v) => "T" + v} reset={8} onChange={(v) => SESSION.setSelectionTolerance(v)} /></div>
           <label className="rowlabel">{t("histMode")}</label>
           <div className="chips">
             <button className={"chip" + (SESSION.prefs.histMode !== "full" ? " on" : "")} onClick={() => SESSION.setHistMode("steps")}>{t("histModeSteps")}</button>
@@ -463,7 +463,7 @@ export function SettingsModal({ t, onClose }: { t: ReturnType<typeof makeT>; onC
           {SESSION.prefs.histMode !== "full" && (
             <>
               <label className="rowlabel">{t("histStepsLabel")}</label>
-              <div className="row-actions"><HoldAdjust dir="h" value={SESSION.prefs.histSteps} min={10} max={500} title={t("histStepsLabel")} format={(v) => "◔" + v} onChange={(v) => SESSION.setHistSteps(v)} /></div>
+              <div className="row-actions"><HoldAdjust dir="h" value={SESSION.prefs.histSteps} min={10} max={500} title={t("histStepsLabel")} format={(v) => "◔" + v} reset={60} onChange={(v) => SESSION.setHistSteps(v)} /></div>
             </>
           )}
           <label className="rowlabel">{t("previewBg")}</label>
