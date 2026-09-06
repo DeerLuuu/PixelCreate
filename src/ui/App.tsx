@@ -340,13 +340,8 @@ function FloatingTools({ t, snap }: { t: ReturnType<typeof makeT>; snap: Snapsho
   };
 
   const moveBall = (which: "main" | "sel" | "pal" | "fx", nx: number, ny: number) => {
-    const others: { x: number; y: number }[] = [];
-    if (which !== "main") others.push(pos);
-    if (sel && which !== "sel") others.push({ x: sel.x, y: sel.y });
-    if (pal && which !== "pal") others.push({ x: pal.x, y: pal.y });
-    if (which !== "fx") others.push({ x: fx.x, y: fx.y });
-    let p = clampXY({ x: nx, y: ny });
-    for (const o of others) p = separate(p, o);
+    // drop exactly where the finger is: no auto repulsion from other orbs
+    const p = clampXY({ x: nx, y: ny });
     if (which === "main") {
       setPos(p);
       try { localStorage.setItem(orbKey, JSON.stringify(p)); } catch { /* ignore */ }
