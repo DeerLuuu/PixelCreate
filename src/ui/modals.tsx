@@ -1,0 +1,508 @@
+import React, { useEffect, useRef, useState } from "react";
+import { SESSION } from "./singleton";
+import { makeT } from "./i18n";
+import type { Lang } from "./i18n";
+import type { Snapshot } from "../app/session";
+import { Doc } from "../engine/doc";
+import { Cel } from "../engine/cel";
+import type { BlendMode } from "../engine/types";
+import { BLEND_MODES } from "../engine/types";
+import { hexToRgba, rgbaToHex, hexToRgba as hrgb } from "../engine/color";
+import { HsvWheel, colorToHex6 } from "./HsvWheel";
+import { HoldAdjust } from "./hold";
+import { PALETTE_PACKS } from "./palettes";
+import { tryReadGif } from "../io/gifread";
+import * as project from "../io/project";
+import * as exporters from "../io/exporters";
+import * as bridge from "../io/bridge";
+import { Btn, Icon, useSession } from "./base";
+
+export type ModalId = "menu" | "newdoc" | "export" | "adjust" | "settings" | "help" | "frame" | "size" | "sheet" | "history" | null;
+export type SizeMode = "canvas" | "sprite";
+export type SheetData = { w: number; h: number; px: Uint8ClampedArray; name: string };
+
+export async function saveProject(): Promise<void> {
+  const doc = SESSION.doc;
+  const txt = await project.serialize(doc);
+  const bytes = new TextEncoder().encode(txt);
+  bridge.saveBytes((doc.name || "art") + ".pxc", "application/json", bytes, (ok) =>
+    bridge.toast(ok ? makeT(SESSION.prefs.lang)("saved") : makeT(SESSION.prefs.lang)("saveCancel"))
+  );
+}
+export function PalettePanel({ t, onClose }: { t: ReturnType<typeof makeT>; onClose: () => void }) {
+  const doc = SESSION.doc;
+  const active = SESSION.currentColor();
+  const [hex, setHex] = useState(rgbaToHex(active));
+  const alpha = active[3];
+  const apply = (c: [number, number, number, number]) => { SESSION.setColor(c); setHex(rgbaToHex(c)); };
+  // long-press a swatch to recolor it and remap matching pixels across the sprite
+  const [recolor, setRecolor] = useState<{ i: number } | null>(null);
+  const [recColor, setRecColor] = useState("#ffffff");
+  const longRef = useRef<{ i: number; t: number } | null>(null);
+  const skipRef = useRef(false);
+  return (
+    <>
+      <div className="panel-head"><span>{t("palette")}</span><div className="grow" /><button className="btn small" onClick={onClose}><Icon id="i-x" size={16} /></button></div>
+      <div className="panel-body">
+        <HsvWheel color={active} onChange={apply} />
+        <div className="ce-row">
+          <span className="ce-hex">#</span>
+          <input className="hexinput" value={hex.replace(/^#/, "")} onChange={(e) => {
+            const v = e.target.value.replace(/[^0-9a-fA-F]/g, "").slice(0, 8);
+            setHex(v ? "#" + v : "#");
+            if (v.length >= 6) { const c = hrgb(v); SESSION.setColor([c[0], c[1], c[2], v.length === 8 ? c[3] : alpha]); }
+          }} />
+          <input type="color" value={colorToHex6(active)} onChange={(e) => { const c = hrgb(e.target.value); apply([c[0], c[1], c[2], alpha]); }} />
+        </div>
+        <label className="rowlabel">{t("presets")}</label>
+        <div className="preset-list">
+          {PALETTE_PACKS.map((pack) => (
+            <button key={pack.id} className="preset-row" onClick={() => SESSION.setPalette(pack.colors.map((hc) => { const x = hexToRgba(hc); return [x[0], x[1], x[2], x[3]]; }))}>
+              <span className="preset-name">{SESSION.prefs.lang === "zh" ? pack.nameZh : pack.nameEn}</span>
+              <span className="preset-dots">{pack.colors.slice(0, 6).map((hc, i) => <i key={i} style={{ background: hc }} />)}</span>
+            </button>
+          ))}
+        </div>
+        <div className="palgrid">
+          {doc.palette.map((c, i) => {
+            const cur = c[0] === active[0] && c[1] === active[1] && c[2] === active[2];
+            return <button key={i} className={"palcell" + (cur ? " on" : "")} style={{ background: "rgb(" + c[0] + "," + c[1] + "," + c[2] + ")" }} title={rgbaToHex(c)} onContextMenu={(e) => { e.preventDefault(); SESSION.paletteRemove(i); }}
+              onPointerDown={() => { longRef.current = { i, t: Date.now() }; }}
+              onPointerUp={() => { const l = longRef.current; longRef.current = null; if (l && l.i === i && Date.now() - l.t >= 420) { skipRef.current = true; setRecColor(rgbaToHex(c).slice(0, 7)); setRecolor({ i }); } }}
+              onClick={() => { if (skipRef.current) { skipRef.current = false; return; } apply(c); }} />;
+          })}
+        </div>
+        {recolor !== null && doc.palette[recolor.i] && (
+          <div className="recolor-row">
+            <label className="rowlabel">{t("recolor")} · 旧色 #{rgbaToHex(doc.palette[recolor.i]).slice(1)}</label>
+            <div className="ce-row">
+              <input type="color" value={recColor} onChange={(e) => setRecColor(e.target.value)} />
+              <span className="ce-hex">{recColor}</span>
+            </div>
+            <div className="row-actions">
+              <Btn label={t("recolorApply")} className="primary" onClick={() => { SESSION.recolorPaletteColor(recolor.i, hexToRgba(recColor)); setRecolor(null); }} />
+              <Btn label={t("cancel")} onClick={() => setRecolor(null)} />
+            </div>
+          </div>
+        )}
+        <div className="row-actions">
+          <Btn icon="i-plus" label={t("paletteAdd")} onClick={() => SESSION.paletteAdd(active)} />
+          <Btn icon="i-open" label={t("importPalette")} onClick={() => void (async () => {
+            const f = await bridge.openFile("*/*");
+            if (!f) return;
+            const colors = parsePaletteBytes(f.bytes);
+            if (!colors.length) { bridge.toast(t("importFail")); return; }
+            SESSION.setPalette(colors);
+            bridge.toast(t("importOk"));
+          })()} />
+          <Btn icon="i-save" label={t("exportPalette")} onClick={() => { bridge.saveBytes((SESSION.doc.name || "palette") + ".gpl", "text/plain", exportGplPalette()); bridge.toast(t("saved")); }} />
+        </div>
+      </div>
+    </>
+  );
+}
+function headOf(bytes: Uint8Array): string { return String.fromCharCode.apply(null, bytes.subarray(0, 6) as unknown as number[]); }
+function isGifHeader(b: Uint8Array): boolean { const h = headOf(b); return h === "GIF87a" || h === "GIF89a"; }
+async function decodeStill(bytes: Uint8Array, mime: string): Promise<{ w: number; h: number; px: Uint8ClampedArray } | null> {
+  return new Promise((res) => {
+    const blob = new Blob([bytes as BlobPart], { type: mime || "image/png" });
+    const url = URL.createObjectURL(blob);
+    const img = new Image();
+    img.onload = () => { URL.revokeObjectURL(url); const w = img.naturalWidth, h = img.naturalHeight; const c = document.createElement("canvas"); c.width = w; c.height = h; const ctx = c.getContext("2d")!; ctx.drawImage(img, 0, 0); res({ w, h, px: new Uint8ClampedArray(ctx.getImageData(0, 0, w, h).data) }); };
+    img.onerror = () => { URL.revokeObjectURL(url); res(null); };
+    img.src = url;
+  });
+}
+function docFromPixels(w: number, h: number, px: Uint8ClampedArray, name: string, delayMs = 100): Doc {
+  const doc = new Doc(w, h, name.replace(/\.[^.]+$/, "") || "img");
+  doc.palette = SESSION.doc.palette.map((c) => [...c] as never);
+  doc.frames = [{ id: "f1", durationMs: delayMs }];
+  doc.cels = new Map();
+  const cel = doc.ensureCel(0, 0);
+  cel.data.set(px.subarray(0, Math.min(cel.data.length, px.length)));
+  return doc;
+}
+function docFromGifFrames(w: number, h: number, datas: Uint8Array[], delays: number[], name: string): Doc {
+  const doc = new Doc(w, h, name.replace(/\.[^.]+$/, "") || "img");
+  doc.palette = SESSION.doc.palette.map((c) => [...c] as never);
+  doc.frames = datas.map((_, i) => ({ id: "f" + i, durationMs: delays[i] || 100 }));
+  doc.cels = new Map();
+  datas.forEach((d, i) => { const cel = doc.ensureCel(0, i); cel.data.set(d.subarray(0, Math.min(cel.data.length, d.length))); });
+  return doc;
+}
+function addAsLayer(w: number, h: number, px: Uint8ClampedArray, name: string): boolean {
+  const d = SESSION.doc;
+  if (w !== d.w || h !== d.h) return false;
+  SESSION.struct("import-layer", () => {
+    const li = d.layers.length;
+    d.layers.push({ id: Math.random().toString(36).slice(2), name: name.replace(/\.[^.]+$/, ""), visible: true, opacity: 100, blend: "normal", locked: false });
+    const cel = d.ensureCel(li, SESSION.curFrame());
+    cel.data.set(px.subarray(0, Math.min(cel.data.length, px.length)));
+    SESSION.layerIdx = li;
+  });
+  return true;
+}
+async function openFlow(mode: "new" | "layer"): Promise<void> {
+  const t = makeT(SESSION.prefs.lang);
+  const f = await bridge.openFile("*/*");
+  if (!f) return;
+  const ext = (f.name || "").split(".").pop()?.toLowerCase();
+  const isGif = ext === "gif" || isGifHeader(f.bytes);
+  if (!isGif && (ext === "pxc" || f.name.toLowerCase().endsWith(".pxc") || ext === "json")) {
+    if (mode !== "new") { bridge.toast(t("importFail")); return; }
+    const txt = new TextDecoder().decode(f.bytes);
+    const doc = await project.parse(txt);
+    if (doc) { if (await SESSION.replaceDoc(doc)) bridge.toast(t("docLoaded")); } else bridge.toast(t("importFail"));
+    return;
+  }
+  if (isGif) {
+    const gif = tryReadGif(f.bytes);
+    if (gif) {
+      if (mode === "new") { if (await SESSION.replaceDoc(docFromGifFrames(gif.w, gif.h, gif.frames, gif.delays, f.name))) bridge.toast(t("importOk") + " " + gif.frames.length + "f"); }
+      else { if (!addAsLayer(gif.w, gif.h, gif.frames[0] as unknown as Uint8ClampedArray, f.name)) bridge.toast(t("importFail") + " (size)"); else bridge.toast(t("importOk")); }
+      return;
+    }
+  }
+  const still = await decodeStill(f.bytes, f.mime || "image/png");
+  if (!still) { bridge.toast(t("importFail")); return; }
+  if (mode === "layer") { if (!addAsLayer(still.w, still.h, still.px, f.name)) bridge.toast(t("importFail") + " (size)"); else bridge.toast(t("importOk")); }
+  else { if (await SESSION.replaceDoc(docFromPixels(still.w, still.h, still.px, f.name))) bridge.toast(t("importOk")); }
+}
+function importFlow(): Promise<void> { return openFlow("new"); }
+function importLayerFlow(): Promise<void> { return openFlow("layer"); }
+function sheetDocFromPixels(cw: number, ch: number, img: SheetData): Doc | null {
+  const cols = Math.floor(img.w / cw); const rows = Math.floor(img.h / ch);
+  if (cols < 1 || rows < 1) return null;
+  const doc = new Doc(cw, ch, (img.name.replace(/\.[^.]+$/, "") || "sheet") + "_s");
+  doc.palette = SESSION.doc.palette.map((c) => [c[0], c[1], c[2], c[3]]);
+  doc.frames = Array.from({ length: cols * rows }, () => ({ id: Math.random().toString(36).slice(2), durationMs: 100 }));
+  doc.cels = new Map();
+  for (let fi = 0; fi < cols * rows; fi++) {
+    const col = fi % cols; const row = (fi / cols) | 0;
+    const cel = new Cel(cw, ch);
+    for (let y = 0; y < ch; y++) for (let x = 0; x < cw; x++) {
+      const si = ((row * ch + y) * img.w + (col * cw + x)) * 4; const di = cel.idx(x, y);
+      cel.data[di] = img.px[si]; cel.data[di + 1] = img.px[si + 1]; cel.data[di + 2] = img.px[si + 2]; cel.data[di + 3] = img.px[si + 3];
+    }
+    doc.cels.set(doc.key(0, fi), cel);
+  }
+  return doc;
+}
+function exportGplPalette(): Uint8Array {
+  const doc = SESSION.doc;
+  const lines = ["GIMP Palette", "Name: " + (doc.name || "pixelcraft"), "Columns: 8", "#"];
+  for (const c of doc.palette) lines.push(c[0] + " " + c[1] + " " + c[2] + "\t#" + rgbaToHex(c).slice(1));
+  return new TextEncoder().encode(lines.join("\n") + "\n");
+}
+function parsePaletteBytes(b: Uint8Array): Array<[number, number, number, number]> {
+  const txt = new TextDecoder().decode(b);
+  const out: Array<[number, number, number, number]> = [];
+  for (const raw of txt.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line || out.length >= 512) continue;
+    const hexM = /^#([0-9a-fA-F]{6}|[0-9a-fA-F]{3})$/.exec(line);
+    if (hexM) { let hx = hexM[1]; if (hx.length === 3) hx = hx[0] + hx[0] + hx[1] + hx[1] + hx[2] + hx[2]; const n = parseInt(hx, 16); out.push([(n >> 16) & 255, (n >> 8) & 255, n & 255, 255]); continue; }
+    const rgbM = /^(\d{1,3})\s+(\d{1,3})\s+(\d{1,3})/.exec(line);
+    if (rgbM) out.push([+rgbM[1], +rgbM[2], +rgbM[3], 255]);
+  }
+  return out;
+}
+export function MenuModal({ t, snap, onClose, onOpen, onSheet }: { t: ReturnType<typeof makeT>; snap: Snapshot; onClose: () => void; onOpen: (m: ModalId) => void; onSheet: (d: SheetData) => void }) {
+  const go = (modal: ModalId) => (label: string, icon: string) => <Btn label={label} icon={icon} onClick={() => onOpen(modal)} className="menuitem" />;
+  const act = (label: string, icon: string, fn: () => void) => <Btn label={label} icon={icon} onClick={() => { fn(); onClose(); }} className="menuitem" />;
+  const sheetPick = async () => {
+    const f = await bridge.openFile("*/*");
+    if (!f) return;
+    if (isGifHeader(f.bytes)) { bridge.toast(t("importFail")); return; }
+    const st = await decodeStill(f.bytes, f.mime || "image/png");
+    if (!st) { bridge.toast(t("importFail")); return; }
+    onSheet({ w: st.w, h: st.h, px: st.px, name: f.name || "sheet" });
+  };
+  const importPaletteFlow = async () => {
+    const f = await bridge.openFile("*/*");
+    if (!f) return;
+    const colors = parsePaletteBytes(f.bytes);
+    if (!colors.length) { bridge.toast(t("importFail")); return; }
+    SESSION.setPalette(colors);
+    bridge.toast(t("importOk"));
+  };
+  const exportPaletteFlow = () => { bridge.saveBytes((SESSION.doc.name || "palette") + ".gpl", "text/plain", exportGplPalette()); bridge.toast(t("saved")); };
+  return (
+    <>
+      <div className="dlg-mask" onClick={onClose} />
+      <div className="dlg">
+        <div className="dlg-head"><span>{t("menu")}</span><div className="grow" /><button className="btn small" onClick={onClose}><Icon id="i-x" size={16} /></button></div>
+        <div className="dlg-body col">
+          {go("newdoc")(t("newDoc"), "i-new")}
+          {act(t("save"), "i-save", () => void saveProject())}
+          {act(t("open"), "i-open", () => void openFlow("new"))}
+          {go("export")(t("export"), "i-export")}
+          {act(t("importImg"), "i-import", () => void importFlow())}
+          {act(t("importLayerM"), "i-layers", () => void importLayerFlow())}
+          <Btn label={t("importSheet")} icon="i-open" className="menuitem" onClick={() => { void sheetPick(); }} />
+          <Btn label={t("importPalette")} icon="i-palette" className="menuitem" onClick={() => { void importPaletteFlow(); }} />
+          <Btn label={t("exportPalette")} icon="i-save" className="menuitem" onClick={() => { exportPaletteFlow(); }} />
+          {go("adjust")(t("adjust"), "i-size")}
+          {go("settings")(t("settings"), "i-gear")}
+          {go("help")(t("helpTitle"), "i-eye")}
+          <Btn label={t("clearFrame")} icon="i-eraser" onClick={() => { SESSION.clearActiveCel(); onClose(); }} className="menuitem danger" />
+        </div>
+      </div>
+    </>
+  );
+}
+export function SizeModal({ t, snap, initial, onClose }: { t: ReturnType<typeof makeT>; snap: Snapshot; initial: SizeMode; onClose: () => void }) {
+  const [mode, setMode] = useState<SizeMode>(initial);
+  const [w, setW] = useState(String(SESSION.doc.w));
+  const [h, setH] = useState(String(SESSION.doc.h));
+  const [ax, setAx] = useState(0);
+  const [ay, setAy] = useState(0);
+  const [locked, setLocked] = useState(true);
+  const ratio = SESSION.doc.h > 0 && SESSION.doc.w > 0 ? SESSION.doc.h / SESSION.doc.w : 1;
+  const onW = (v: string) => { setW(v); if (locked) { const n = parseInt(v, 10); if (n > 0) setH(String(Math.max(1, Math.round(n * ratio)))); } };
+  const onH = (v: string) => { setH(v); if (locked) { const n = parseInt(v, 10); if (n > 0) setW(String(Math.max(1, Math.round(n / ratio)))); } };
+  const switchMode = (m: SizeMode) => { setMode(m); setW(String(SESSION.doc.w)); setH(String(SESSION.doc.h)); };
+  const apply = () => { const nw = Math.max(1, Math.min(1024, parseInt(w, 10) || SESSION.doc.w)); const nh = Math.max(1, Math.min(1024, parseInt(h, 10) || SESSION.doc.h)); if (mode === "canvas") SESSION.canvasSize(nw, nh, ax as -1 | 0 | 1, ay as -1 | 0 | 1); else SESSION.spriteSize(nw, nh); onClose(); };
+  const cell = (r: number, c: number) => { const on = ax === c - 1 && ay === r - 1; return <button key={r + "-" + c} className={"anchor" + (on ? " on" : "")} onClick={() => { setAx(c - 1); setAy(r - 1); }}><span className={"a-dot" + (on ? " on" : "")} /></button>; };
+  return (
+    <>
+      <div className="dlg-mask" onClick={onClose} />
+      <div className="dlg">
+        <div className="dlg-head"><span>{t("resizeTitle")}</span><div className="grow" /><button className="btn small" onClick={onClose}><Icon id="i-x" size={16} /></button></div>
+        <div className="dlg-body">
+          <div className="chips">
+            <button className={"chip" + (mode === "canvas" ? " on" : "")} onClick={() => switchMode("canvas")}>{t("canvasSize")}</button>
+            <button className={"chip" + (mode === "sprite" ? " on" : "")} onClick={() => switchMode("sprite")}>{t("spriteSize")}</button>
+          </div>
+          <label className="rowlabel">{t("docs.w")}</label>
+          <input type="number" min={1} max={1024} value={w} onChange={(e) => onW(e.target.value)} />
+          <label className="rowlabel">{t("docs.h")}</label>
+          <input type="number" min={1} max={1024} value={h} onChange={(e) => onH(e.target.value)} />
+          <div className="chips"><button className={"chip" + (locked ? " on" : "")} onClick={() => setLocked(!locked)}>{t("lockRatio")}</button></div>
+          {mode === "canvas" ? (<><label className="rowlabel">{t("anchor")}</label><div className="anchor-grid">{[0, 1, 2].map((r) => <div className="anchor-row" key={r}>{[0, 1, 2].map((c) => cell(r, c))}</div>)}</div><p className="size-note">{t("canvasNote")}</p></>) : <p className="size-note">{t("spriteNote")}</p>}
+        </div>
+        <div className="dlg-foot"><Btn label={t("cancel")} onClick={onClose} /><Btn label={t("ok")} onClick={apply} className="primary" /></div>
+      </div>
+    </>
+  );
+}
+export function SheetModal({ t, img, onClose }: { t: ReturnType<typeof makeT>; img: SheetData; onClose: () => void }) {
+  const [cw, setCw] = useState("16");
+  const [ch, setCh] = useState("16");
+  const cwi = Math.max(1, Math.floor(parseInt(cw, 10) || 1));
+  const chi = Math.max(1, Math.floor(parseInt(ch, 10) || 1));
+  const cols = Math.floor(img.w / cwi); const rows = Math.floor(img.h / chi);
+  const apply = async () => { const doc = sheetDocFromPixels(cwi, chi, img); if (!doc) { bridge.toast(t("importFail")); return; } if (await SESSION.replaceDoc(doc)) { bridge.toast(t("importOk")); onClose(); } };
+  return (
+    <>
+      <div className="dlg-mask" onClick={onClose} />
+      <div className="dlg">
+        <div className="dlg-head"><span>{t("importSheet")}</span><div className="grow" /><button className="btn small" onClick={onClose}><Icon id="i-x" size={16} /></button></div>
+        <div className="dlg-body">
+          <div className="row-note">{img.name} · {img.w}×{img.h}</div>
+          <label className="rowlabel">{t("sheetCellW")}</label>
+          <input type="number" min={1} value={cw} onChange={(e) => setCw(e.target.value)} />
+          <label className="rowlabel">{t("sheetCellH")}</label>
+          <input type="number" min={1} value={ch} onChange={(e) => setCh(e.target.value)} />
+          <div className="row-note">{t("sheetFrames")}: {cols * rows} ({cols}×{rows})</div>
+        </div>
+        <div className="dlg-foot"><Btn label={t("cancel")} onClick={onClose} /><Btn label={t("ok")} onClick={apply} className="primary" /></div>
+      </div>
+    </>
+  );
+}
+export function NewDocModal({ t, onClose }: { t: ReturnType<typeof makeT>; onClose: () => void }) {
+  const [w, setW] = useState("64");
+  const [h, setH] = useState("64");
+  const [name, setName] = useState("");
+  const [white, setWhite] = useState(false);
+  const apply = async () => { if (await SESSION.newDoc(Math.max(1, Math.min(1024, parseInt(w, 10) || 64)), Math.max(1, Math.min(1024, parseInt(h, 10) || 64)), name || "untitled", white ? [255, 255, 255, 255] : null)) onClose(); };
+  return (
+    <>
+      <div className="dlg-mask" onClick={onClose} />
+      <div className="dlg">
+        <div className="dlg-head"><span>{t("newDoc")}</span><div className="grow" /><button className="btn small" onClick={onClose}><Icon id="i-x" size={16} /></button></div>
+        <div className="dlg-body">
+          <label className="rowlabel">{t("name")}</label>
+          <input value={name} onChange={(e) => setName(e.target.value)} />
+          <label className="rowlabel">{t("docs.w")}</label>
+          <input type="number" min={1} max={1024} value={w} onChange={(e) => setW(e.target.value)} />
+          <label className="rowlabel">{t("docs.h")}</label>
+          <input type="number" min={1} max={1024} value={h} onChange={(e) => setH(e.target.value)} />
+          <div className="chips"><button className={"chip" + (white ? " on" : "")} onClick={() => setWhite(!white)}>{t("whiteBg")}</button></div>
+        </div>
+        <div className="dlg-foot"><Btn label={t("cancel")} onClick={onClose} /><Btn label={t("ok")} onClick={apply} className="primary" /></div>
+      </div>
+    </>
+  );
+}
+export function ExportModal({ t, snap, onClose }: { t: ReturnType<typeof makeT>; snap: Snapshot; onClose: () => void }) {
+  const [tab, setTab] = useState<"png" | "gif" | "sheet">("png");
+  const [scope, setScope] = useState<"frame" | "layer" | "sel">("frame");
+  const [scale, setScale] = useState(1);
+  const [bgMode, setBgMode] = useState<"transparent" | "white">("transparent");
+  const [cols, setCols] = useState(Math.min(8, snap.frameCount));
+  const selAvail = snap.selActive;
+  const doExport = () => {
+    const doc = SESSION.doc;
+    const li = scope === "layer" ? SESSION.curLayer() : null;
+    const b = scope === "sel" && doc.sel ? doc.sel.bounds() : null;
+    const bg: [number, number, number, number] | null = bgMode === "white" ? [255, 255, 255, 255] : null;
+    const o = { bg, scale, li, bounds: b };
+    if (tab === "png") { void exporters.exportPNG(doc, snap.frameIdx, o).then((r) => { if (r) bridge.saveBytes(r.name, "image/png", r.bytes, (ok) => bridge.toast(ok ? t("exported") : t("saveCancel"))); }); }
+    else if (tab === "gif") { void exporters.exportGIF(doc, o).then((r) => { bridge.saveBytes(r.name, "image/gif", r.bytes, (ok) => bridge.toast(ok ? t("exported") : t("saveCancel"))); }); }
+    else { void exporters.exportSheet(doc, { ...o, cols }).then((r) => { if (!r) return; bridge.saveBytes(r.name, "image/png", r.png, (ok1) => { if (ok1) bridge.saveBytes(r.jsonName, "application/json", r.json, (ok2) => bridge.toast(ok2 ? t("exported") : t("saveCancel"))); else bridge.toast(t("saveCancel")); }); }); }
+  };
+  return (
+    <>
+      <div className="dlg-mask" onClick={onClose} />
+      <div className="dlg">
+        <div className="dlg-head"><span>{t("export")}</span><div className="grow" /><button className="btn small" onClick={onClose}><Icon id="i-x" size={16} /></button></div>
+        <div className="dlg-body">
+          <div className="tabs">
+            <button className={"tab" + (tab === "png" ? " on" : "")} onClick={() => setTab("png")}>PNG</button>
+            <button className={"tab" + (tab === "gif" ? " on" : "")} onClick={() => setTab("gif")}>GIF</button>
+            <button className={"tab" + (tab === "sheet" ? " on" : "")} onClick={() => setTab("sheet")}>{t("exportSheet")}</button>
+          </div>
+          <label className="rowlabel">{t("srcScope")}</label>
+          <div className="chips">
+            <button className={"chip" + (scope === "frame" ? " on" : "")} onClick={() => setScope("frame")}>{t("srcFrame")}</button>
+            <button className={"chip" + (scope === "layer" ? " on" : "")} onClick={() => setScope("layer")}>{t("srcLayer")}</button>
+            {selAvail && <button className={"chip" + (scope === "sel" ? " on" : "")} onClick={() => setScope("sel")}>{t("srcSel")}</button>}
+          </div>
+          <label className="rowlabel">{t("bgCustom")}</label>
+          <div className="chips">
+            <button className={"chip" + (bgMode === "transparent" ? " on" : "")} onClick={() => setBgMode("transparent")}>{t("transparent")}</button>
+            <button className={"chip" + (bgMode === "white" ? " on" : "")} onClick={() => setBgMode("white")}>{t("whiteBg")}</button>
+          </div>
+          <label className="rowlabel">{t("scale")}</label>
+          <select value={scale} onChange={(e) => setScale(Number(e.target.value))}>{[1, 2, 4, 8].map((s) => <option key={s} value={s}>{s}x</option>)}</select>
+          {tab === "sheet" && (<><label className="rowlabel">{t("columns")}</label><input type="number" min={1} max={snap.frameCount} value={cols} onChange={(e) => setCols(Math.max(1, Math.min(snap.frameCount, Number(e.target.value) || 1)))} /></>)}
+        </div>
+        <div className="dlg-foot"><Btn label={t("cancel")} onClick={onClose} /><Btn label={t("export")} onClick={doExport} className="primary" /></div>
+      </div>
+    </>
+  );
+}
+export function AdjustModal({ t, onClose }: { t: ReturnType<typeof makeT>; onClose: () => void }) {
+  const [scope, setScope] = useState<"doc" | "layer">("doc");
+  const [hue, setHue] = useState(0);
+  const [sat, setSat] = useState(100);
+  const [light, setLight] = useState(0);
+  useEffect(() => {
+    // start a fresh preview scope whenever the scope chip changes
+    SESSION.adjustCancel();
+    SESSION.adjustStart(scope);
+  }, [scope]);
+  const live = (h: number, s: number, l: number) => SESSION.adjustLive({ hue: h, satMul: s / 100, lightAdd: l / 100 });
+  const closeCancel = () => { SESSION.adjustCancel(); onClose(); };
+  return (
+    <>
+      <div className="dlg-mask" onClick={closeCancel} />
+      <div className="dlg">
+        <div className="dlg-head"><span>{t("adjust")}</span><div className="grow" /><button className="btn small" onClick={closeCancel}><Icon id="i-x" size={16} /></button></div>
+        <div className="dlg-body col">
+          <div className="chips">
+            <button className={"chip" + (scope === "doc" ? " on" : "")} onClick={() => setScope("doc")}>{t("scopeDoc")}</button>
+            <button className={"chip" + (scope === "layer" ? " on" : "")} onClick={() => setScope("layer")}>{t("scopeLayer")}</button>
+          </div>
+          <HoldAdjust dir="h" fixedBottom value={hue} min={-180} max={180} title={t("hueL")} format={(v) => "H" + Math.round(v)} onChange={(v) => { setHue(v); live(v, sat, light); }} />
+          <HoldAdjust dir="h" fixedBottom value={sat} min={0} max={200} title={t("satL")} format={(v) => "S" + Math.round(v) + "%"} onChange={(v) => { setSat(v); live(hue, v, light); }} />
+          <HoldAdjust dir="h" fixedBottom value={light} min={-100} max={100} title={t("lightL")} format={(v) => "L" + Math.round(v)} onChange={(v) => { setLight(v); live(hue, sat, v); }} />
+        </div>
+        <div className="dlg-foot"><Btn label={t("cancel")} onClick={closeCancel} /><Btn label={t("ok")} className="primary" onClick={() => { SESSION.adjustCommit(); onClose(); }} /></div>
+      </div>
+    </>
+  );
+}
+export function SettingsModal({ t, onClose }: { t: ReturnType<typeof makeT>; onClose: () => void }) {
+  const snap = useSession();
+  const setLang = (l: Lang) => { SESSION.prefs.lang = l; SESSION.savePrefs(); SESSION.changed(); };
+  return (
+    <>
+      <div className="dlg-mask" onClick={onClose} />
+      <div className="dlg">
+        <div className="dlg-head"><span>{t("settings")}</span><div className="grow" /><button className="btn small" onClick={onClose}><Icon id="i-x" size={16} /></button></div>
+        <div className="dlg-body">
+          <label className="rowlabel">{t("lang")}</label>
+          <div className="chips">
+            <button className={"chip" + (snap.lang === "zh" ? " on" : "")} onClick={() => setLang("zh")}>{t("zhLabel")}</button>
+            <button className={"chip" + (snap.lang === "en" ? " on" : "")} onClick={() => setLang("en")}>{t("enLabel")}</button>
+          </div>
+          <label className="rowlabel">{t("newFrameCopy")}</label>
+          <button className={"chip" + (SESSION.prefs.newFrameCopy ? " on" : "")} onClick={() => SESSION.setNewFrameCopy(!SESSION.prefs.newFrameCopy)}>{SESSION.prefs.newFrameCopy ? "ON" : "OFF"}</button>
+          <label className="rowlabel">{t("swapRails")}</label>
+          <button className={"chip" + (SESSION.prefs.railSwap ? " on" : "")} onClick={() => SESSION.setRailSwap(!SESSION.prefs.railSwap)}>{SESSION.prefs.railSwap ? "ON" : "OFF"}</button>
+          <label className="rowlabel">{t("grid")}</label>
+          <button className={"chip" + (snap.grid ? " on" : "")} onClick={() => SESSION.toggleGrid()}>{snap.grid ? "ON" : "OFF"}</button>
+          <label className="rowlabel">{t("tlHeight")}</label>
+          <div className="row-actions"><HoldAdjust dir="h" value={SESSION.prefs.tlH} min={56} max={340} title={t("tlHeight")} format={(v) => v + "px"} onChange={(v) => SESSION.setTlHeight(v)} /></div>
+          <label className="rowlabel">{t("sel.wandTol")}</label>
+          <div className="row-actions"><HoldAdjust value={SESSION.selectionTolerance} min={0} max={64} title={t("sel.wandTol")} format={(v) => "T" + v} onChange={(v) => SESSION.setSelectionTolerance(v)} /></div>
+          <label className="rowlabel">{t("previewBg")}</label>
+          <div className="chips">
+            <button className={"chip" + (snap.previewBg === "white" ? " on" : "")} onClick={() => SESSION.setPreviewBg("white")}>{t("previewWhite")}</button>
+            <button className={"chip" + (snap.previewBg === "black" ? " on" : "")} onClick={() => SESSION.setPreviewBg("black")}>{t("previewBlack")}</button>
+            <button className={"chip" + (snap.previewBg === "checker" ? " on" : "")} onClick={() => SESSION.setPreviewBg("checker")}>{t("previewChecker")}</button>
+          </div>
+        </div>
+        <div className="dlg-foot"><Btn label={t("close")} onClick={onClose} /></div>
+      </div>
+    </>
+  );
+}
+export function HelpModal({ t, onClose }: { t: ReturnType<typeof makeT>; onClose: () => void }) {
+  return (
+    <>
+      <div className="dlg-mask" onClick={onClose} />
+      <div className="dlg">
+        <div className="dlg-head"><span>{t("helpTitle")}</span><div className="grow" /><button className="btn small" onClick={onClose}><Icon id="i-x" size={16} /></button></div>
+        <div className="dlg-body"><pre className="help-text">{t("helpText")}</pre></div>
+        <div className="dlg-foot"><Btn label={t("ok")} onClick={onClose} className="primary" /></div>
+      </div>
+    </>
+  );
+}
+export function FrameModal({ t, snap, fi, onClose }: { t: ReturnType<typeof makeT>; snap: Snapshot; fi: number; onClose: () => void }) {
+  const [ms, setMs] = useState(SESSION.doc.frames[fi]?.durationMs ?? 100);
+  return (
+    <>
+      <div className="dlg-mask" onClick={onClose} />
+      <div className="dlg">
+        <div className="dlg-head"><span>{t("frames")} {fi + 1}</span><div className="grow" /><button className="btn small" onClick={onClose}><Icon id="i-x" size={16} /></button></div>
+        <div className="dlg-body">
+          <label className="rowlabel">{t("frameDur")}</label>
+          <input type="number" min={1} max={60000} value={ms} onChange={(e) => setMs(Number(e.target.value) || 1)} />
+        </div>
+        <div className="dlg-foot"><Btn label={t("cancel")} onClick={onClose} /><Btn label={t("ok")} onClick={() => { SESSION.setFrameDuration(fi, ms); onClose(); }} className="primary" /></div>
+      </div>
+    </>
+  );
+}
+const H_ZH: Record<string, string> = { "canvas-size": "修改画布尺寸", "sprite-size": "整体缩放精灵", "clear-frame": "清空当前帧", "layer-add": "新建图层", "layer-del": "删除图层", "layer-up": "上移图层", "layer-down": "下移图层", "layer-dupe": "复制图层", "layer-merge": "向下合并图层", "layer-visible": "图层可见性", "layer-lock": "锁定图层", "layer-rename": "重命名图层", "layer-opacity": "图层不透明度", "layer-blend": "图层混合模式", "frame-add": "新建帧", "frame-del": "删除帧", "frame-move": "移动帧", "frame-dupe": "复制帧", "frame-duration": "帧时长", "palette-set": "替换色板", "palette-add": "添加颜色", "palette-remove": "删除颜色", "import-layer": "导入为图层", "wand": "魔棒选区", "sel.grow": "扩展选区", "sel.shrink": "收缩选区", "sel.lasso": "套索选区", "sel.move": "移动选区", "sel.rotate": "旋转选区", "sel.scale": "缩放选区", "adjust-color": "颜色调整", "palette-recolor": "色卡换色(整幅同步)" };
+const H_EN: Record<string, string> = { "canvas-size": "Resize canvas", "sprite-size": "Scale sprite", "clear-frame": "Clear frame", "layer-add": "New layer", "layer-del": "Delete layer", "layer-up": "Move layer up", "layer-down": "Move layer down", "layer-dupe": "Duplicate layer", "layer-merge": "Merge layer down", "layer-visible": "Layer visibility", "layer-lock": "Lock layer", "layer-rename": "Rename layer", "layer-opacity": "Layer opacity", "layer-blend": "Layer blend mode", "frame-add": "New frame", "frame-del": "Delete frame", "frame-move": "Move frame", "frame-dupe": "Duplicate frame", "frame-duration": "Frame duration", "palette-set": "Replace palette", "palette-add": "Add color", "palette-remove": "Remove color", "import-layer": "Import as layer", "wand": "Magic wand select", "sel.grow": "Grow selection", "sel.shrink": "Shrink selection", "sel.lasso": "Lasso select", "sel.move": "Move selection", "sel.rotate": "Rotate selection", "sel.scale": "Scale selection", "adjust-color": "Adjust color", "palette-recolor": "Recolor palette (sprite)" };
+export function histName(label: string, t: ReturnType<typeof makeT>, lang: string): string {
+  const m = lang === "zh" ? H_ZH : H_EN;
+  if (m[label]) return m[label];
+  const tr = t(label);
+  return tr === label ? label : tr;
+}
+export function HistoryModal({ t, snap, onClose, onReplay }: { t: ReturnType<typeof makeT>; snap: Snapshot; onClose: () => void; onReplay: () => void }) {
+  const { labels, index } = SESSION.history.list();
+  const rows = [{ key: 0, label: t("historyStart") } as { key: number; label: string }].concat(labels.map((lb, i) => ({ key: i + 1, label: histName(lb, t, snap.lang) })));
+  return (
+    <>
+      <div className="dlg-mask" onClick={onClose} />
+      <div className="dlg">
+        <div className="dlg-head"><span>{t("historyTitle")}</span><div className="grow" /><button className="btn small" onClick={onClose}><Icon id="i-x" size={16} /></button></div>
+        <div className="dlg-body hist-body">
+          {labels.length === 0 ? <div className="row-note">{t("historyEmpty")}</div> : rows.map((r) => (<button key={r.key} className={"hist-row" + (index === r.key ? " cur" : "")} onClick={() => SESSION.jumpHistory(r.key)}><span className="hnum">{r.key === 0 ? "▸" : r.key}</span><span className="htext">{r.label}</span></button>))}
+        </div>
+        {labels.length > 0 && (
+          <div className="repl-line"><Btn icon="i-play" label={t("replay")} className="repl-play" onClick={onReplay} noTip /><span>{t("replayHint")}</span></div>
+        )}
+        <div className="dlg-foot"><Btn label={t("close")} onClick={onClose} /></div>
+      </div>
+    </>
+  );
+}
