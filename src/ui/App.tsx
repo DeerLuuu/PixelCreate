@@ -240,6 +240,7 @@ function FloatingTools({ t, snap }: { t: ReturnType<typeof makeT>; snap: Snapsho
   const [dockHover, setDockHover] = useState<number | null>(null);
   const [dockArmed, setDockArmed] = useState(false);
   const dockT = useRef<number | null>(null);
+  const dockDown = useRef<{ x: number; y: number } | null>(null);
   const parkRef = useRef<{ id: BallId } | null>(null);
   const dockWrap = useRef<HTMLDivElement | null>(null);
   const dockedById = (id: BallId): boolean => docked.some((d) => d.id === id);
@@ -683,12 +684,15 @@ function FloatingTools({ t, snap }: { t: ReturnType<typeof makeT>; snap: Snapsho
             dockClear();
             setDockOpen(true);
             setDockHover(-1);
+            dockDown.current = { x: e.clientX, y: e.clientY };
             try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); } catch { /* ignore */ }
           }}
           onPointerMove={(e) => {
             if (!dockOpen) return;
             const el = dockWrap.current;
             if (!el) return;
+            // focusing a stored ball only works while the finger stays over the panel
+            if (!overDockPanel(e.clientX, e.clientY)) { setDockHover(-1); return; }
             const items = Array.from(el.querySelectorAll<HTMLElement>(".bd-item"));
             let best = -1;
             let bd = 1e9;
@@ -701,11 +705,21 @@ function FloatingTools({ t, snap }: { t: ReturnType<typeof makeT>; snap: Snapsho
           }}
           onPointerUp={(e) => {
             try { (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId); } catch { /* ignore */ }
-            const pick = dockHover != null && dockHover >= 0 ? dockHover : (docked.length === 1 ? 0 : -1);
+            const inside = overDockPanel(e.clientX, e.clientY);
+            const down = dockDown.current;
+            dockDown.current = null;
+            const tap = down !== null && Math.hypot(e.clientX - down.x, e.clientY - down.y) < 12;
+            // eject only when the release happened over the panel: on a focused
+            // chip, or a plain tap when exactly one ball is stored
+            let pick = -1;
+            if (inside) {
+              if (dockHover != null && dockHover >= 0) pick = dockHover;
+              else if (tap && docked.length === 1) pick = 0;
+            }
             if (pick >= 0) popDock(pick, { x: e.clientX, y: e.clientY }); else dockCollapse(220);
             setDockHover(null);
           }}
-          onPointerCancel={() => { dockCollapse(120); setDockHover(null); }}
+          onPointerCancel={() => { dockDown.current = null; dockCollapse(120); setDockHover(null); }}
         >
           {!dockOpen && <span className="bd-dots">{docked.length ? "•".repeat(Math.min(docked.length, 8)) : "·"}</span>}
           {dockOpen && docked.map((d, i) => (
