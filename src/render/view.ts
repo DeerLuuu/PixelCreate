@@ -362,7 +362,7 @@ export class View {
   }
   private samplePickCell(x: number, y: number, strong: boolean): void {
     const c = this.session.sampleComposite(x, y);
-    if (c && c[3] > 0) {
+    if (c) {
       const changed = this.pickLast == null || this.pickLast[0] !== x || this.pickLast[1] !== y;
       if (changed) {
         this.session.setFgColor(c);
@@ -466,7 +466,7 @@ export class View {
     }
     if (tool === "picker") {
       const c = s.sampleComposite(pp.x, pp.y);
-      if (c && c[3] > 0) s.setFgColor(c);
+      if (c) s.setFgColor(c);
       return;
     }
     if (tool === "wand") {
