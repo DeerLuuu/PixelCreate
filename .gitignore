@@ -1,0 +1,26 @@
+# ---- build outputs / logs ----
+/build/
+*.log
+
+# ---- generated web bundles (built from src/) ----
+app2/www/css/style.css
+app2/www/js/app.js
+
+# ---- scratch / local temp ----
+/_scratch/
+
+# ---- toolchain: keep only authored scripts, ignore SDK downloads/extracts ----
+/toolchain/*
+!/toolchain/env.sh
+!/toolchain/devserver.js
+!/toolchain/make-icon.js
+!/toolchain/eng-test.cjs
+!/toolchain/boot-test.js
+!/toolchain/resolve.js
+
+# ---- signing key (secret) ----
+**/debug.keystore
+
+# ---- os junk ----
+.DS_Store
+Thumbs.db

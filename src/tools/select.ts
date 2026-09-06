@@ -1,0 +1,423 @@
+// Selection operations, all exported via one `selOps` object.
+import { Doc, Sel } from "../engine/doc";
+import { Cel } from "../engine/cel";
+import type { RGBA } from "../engine/types";
+import type { History } from "../engine/history";
+import { blendOver } from "../engine/color";
+
+function record(doc: Doc, history: History, li: number, fi: number, before: Uint8ClampedArray | null, label: string): void {
+  const cel = doc.celAt(li, fi);
+  history.pushPixels(label, doc, [
+    { li, fi, before, after: cel ? new Uint8ClampedArray(cel.data) : null },
+  ]);
+}
+
+function setRectFn(doc: Doc, x0: number, y0: number, x1: number, y1: number): void {
+  if (!doc.sel) doc.sel = new Sel(doc.w, doc.h, false);
+  doc.sel.clear();
+  const xa = Math.min(x0, x1), xb = Math.max(x0, x1);
+  const ya = Math.min(y0, y1), yb = Math.max(y0, y1);
+  for (let y = ya; y <= yb; y++) for (let x = xa; x <= xb; x++) doc.sel!.set(x, y, 1);
+}
+
+function grabFn(doc: Doc, li: number, fi: number): Cel | null {
+  if (!doc.sel || !doc.sel.hasAny()) return null;
+  const b = doc.sel.bounds();
+  const cel = doc.celAt(li, fi);
+  if (!b || !cel) return null;
+  const out = new Cel(b.w, b.h);
+  for (let y = 0; y < b.h; y++) {
+    for (let x = 0; x < b.w; x++) {
+      const sx = b.x + x, sy = b.y + y;
+      if (doc.selAt(sx, sy) === 1) {
+        const si = cel.idx(sx, sy);
+        const oi = out.idx(x, y);
+        out.data[oi] = cel.data[si];
+        out.data[oi + 1] = cel.data[si + 1];
+        out.data[oi + 2] = cel.data[si + 2];
+        out.data[oi + 3] = cel.data[si + 3];
+      }
+    }
+  }
+  return out;
+}
+
+export interface Rect {
+  x: number; y: number; w: number; h: number;
+}
+
+
+// ---- mask growth / shrink / wand / outline ----
+export function wandSelect(doc: Doc, li: number, fi: number, x: number, y: number, tol: number): void {
+  const cel = doc.celAt(li, fi);
+  if (!cel || !cel.inBounds(x, y)) return;
+  const w = cel.w, h = cel.h, d = cel.data;
+  const bi = cel.idx(x, y);
+  const baseR = d[bi], baseG = d[bi + 1], baseB = d[bi + 2], baseA = d[bi + 3];
+  if (!doc.sel) doc.sel = new Sel(doc.w, doc.h, false);
+  doc.sel.clear();
+  const sel = doc.sel;
+  const visited = new Uint8Array(w * h);
+  const stack: [number, number][] = [[x, y]];
+  const matches = (px: number, py: number): boolean => {
+    const i = cel.idx(px, py);
+    return (
+      Math.abs(d[i] - baseR) <= tol && Math.abs(d[i + 1] - baseG) <= tol &&
+      Math.abs(d[i + 2] - baseB) <= tol && Math.abs(d[i + 3] - baseA) <= tol
+    );
+  };
+  while (stack.length) {
+    const [cx, cy] = stack.pop()!;
+    if (!cel.inBounds(cx, cy)) continue;
+    const vi = cy * w + cx;
+    if (visited[vi]) continue;
+    visited[vi] = 1;
+    if (!matches(cx, cy)) continue;
+    sel.set(cx, cy, 1);
+    stack.push([cx + 1, cy], [cx - 1, cy], [cx, cy + 1], [cx, cy - 1]);
+  }
+}
+
+export function growSelection(doc: Doc, px: number): void {
+  if (!doc.sel) return;
+  const w = doc.w, h = doc.h;
+  const src = doc.sel.mask;
+  const out = new Uint8Array(w * h);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      let on = false;
+      outer: for (let dy = -px; dy <= px; dy++) {
+        for (let dx = -px; dx <= px; dx++) {
+          const nx = x + dx, ny = y + dy;
+          if (nx >= 0 && ny >= 0 && nx < w && ny < h && src[ny * w + nx]) { on = true; break outer; }
+        }
+      }
+      out[y * w + x] = on ? 1 : 0;
+    }
+  }
+  doc.sel.mask = out;
+}
+
+export function shrinkSelection(doc: Doc, px: number): void {
+  if (!doc.sel) return;
+  const w = doc.w, h = doc.h;
+  const src = doc.sel.mask;
+  const out = new Uint8Array(w * h);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      let all = true;
+      outer2: for (let dy = -px; dy <= px; dy++) {
+        for (let dx = -px; dx <= px; dx++) {
+          const nx = x + dx, ny = y + dy;
+          if (nx < 0 || ny < 0 || nx >= w || ny >= h || !src[ny * w + nx]) { all = false; break outer2; }
+        }
+      }
+      out[y * w + x] = all ? 1 : 0;
+    }
+  }
+  doc.sel.mask = out;
+}
+
+export function outlineSelected(doc: Doc, history: History, li: number, fi: number, color: RGBA): void {
+  const b = doc.sel?.bounds();
+  const cel = doc.celAt(li, fi);
+  if (!b || !cel) return;
+  if (doc.layers[li]?.locked) return;
+  const before = new Uint8ClampedArray(cel.data);
+  const d = doc;
+  const paint = (X: number, Y: number) => {
+    if (X < 0 || Y < 0 || X >= cel.w || Y >= cel.h) return;
+    const i = cel.idx(X, Y);
+    if (color[3] >= 255) { cel.data[i] = color[0]; cel.data[i + 1] = color[1]; cel.data[i + 2] = color[2]; cel.data[i + 3] = 255; }
+    else if (color[3] === 0) { cel.data[i] = 0; cel.data[i + 1] = 0; cel.data[i + 2] = 0; cel.data[i + 3] = 0; }
+    else blendOver(cel.data, i, color);
+  };
+  for (let y = b.y; y < b.y + b.h; y++) {
+    for (let x = b.x; x < b.x + b.w; x++) {
+      if (d.selAt(x, y) !== 1) continue;
+      const isBorder = d.selAt(x + 1, y) !== 1 || d.selAt(x - 1, y) !== 1 || d.selAt(x, y + 1) !== 1 || d.selAt(x, y - 1) !== 1;
+      if (isBorder) paint(x, y);
+    }
+  }
+  history.pushPixels("sel.outline", doc, [{ li, fi, before, after: new Uint8ClampedArray(cel.data) }]);
+}
+
+
+export function lassoFill(doc: Doc, pts: Array<[number, number]>): void {
+  if (!doc.sel) doc.sel = new Sel(doc.w, doc.h, false);
+  doc.sel.clear();
+  if (pts.length < 3) return;
+  const sel = doc.sel;
+  const n = pts.length;
+  for (let y = 0; y < doc.h; y++) {
+    const xs: number[] = [];
+    for (let i = 0; i < n; i++) {
+      const [x0, y0] = pts[i];
+      const [x1, y1] = pts[(i + 1) % n];
+      if ((y0 <= y && y < y1) || (y1 <= y && y < y0)) {
+        const x = x0 + ((x1 - x0) * (y - y0)) / (y1 - y0);
+        xs.push(x);
+      }
+    }
+    xs.sort((a, b) => a - b);
+    for (let k = 0; k + 1 < xs.length; k += 2) {
+      const xa = Math.max(0, Math.ceil(xs[k]));
+      const xb = Math.min(doc.w - 1, Math.floor(xs[k + 1]));
+      for (let x = xa; x <= xb; x++) sel.set(x, y, 1);
+    }
+  }
+}
+/** One-time state captured when a selection-move gesture begins. */
+export interface MoveState {
+  /** grabbed opaque pixels (bbox of the original mask) at gesture start */
+  content: Cel;
+  /** whole-canvas selection mask at gesture start */
+  mask: Uint8Array;
+  /** top-left of the mask's bounding box (grab origin) */
+  ox: number;
+  oy: number;
+  /** cel bytes at gesture start (drag-start picture) */
+  before: Uint8ClampedArray;
+}
+
+/** Snapshot everything needed to move a selection without corrupting old content. */
+export function beginMove(doc: Doc, li: number, fi: number): MoveState | null {
+  if (!doc.sel || !doc.sel.hasAny()) return null;
+  const b = doc.sel.bounds();
+  const cel = doc.celAt(li, fi);
+  if (!b || !cel) return null;
+  const content = grabFn(doc, li, fi);
+  if (!content) return null;
+  return {
+    content,
+    mask: new Uint8Array(doc.sel.mask),
+    ox: b.x,
+    oy: b.y,
+    before: new Uint8ClampedArray(cel.data),
+  };
+}
+
+/**
+ * Rasterise the grabbed selection content transformed around the centre of its
+ * original bounding box: rotate by `angleRad`, scale by (sx, sy). Idempotent per
+ * gesture step: each call restarts from the drag-start picture, cuts the content
+ * out of its original spot, draws the transformed pixels and updates the mask.
+ */
+export function xformSelection(
+  doc: Doc, li: number, fi: number, st: MoveState,
+  angleRad: number, sx: number, sy: number,
+): void {
+  const cel = doc.celAt(li, fi);
+  if (!cel) return;
+  const content = st.content;
+  const cw = content.w, ch = content.h;
+  const w = doc.w, h = doc.h;
+  // cut: back to the pre-drag picture, then clear the grabbed pixels
+  cel.data.set(st.before);
+  for (let y = 0; y < ch; y++) {
+    for (let x = 0; x < cw; x++) {
+      const si = content.idx(x, y);
+      if (content.data[si + 3] === 0) continue;
+      const gx = st.ox + x, gy = st.oy + y;
+      if (gx < 0 || gy < 0 || gx >= w || gy >= h) continue;
+      const di = cel.idx(gx, gy);
+      cel.data[di] = 0; cel.data[di + 1] = 0; cel.data[di + 2] = 0; cel.data[di + 3] = 0;
+    }
+  }
+  const c = Math.cos(angleRad), s = Math.sin(angleRad);
+  const hx = (cw / 2) * Math.max(0.02, sx), hy = (ch / 2) * Math.max(0.02, sy);
+  const cx = st.ox + cw / 2, cy = st.oy + ch / 2;
+  // integer destination bounds (with a little pad, clamped to the canvas)
+  const spanX = Math.abs(c * hx) + Math.abs(s * hy);
+  const spanY = Math.abs(s * hx) + Math.abs(c * hy);
+  const x0 = Math.max(0, Math.floor(cx - spanX - 1));
+  const y0 = Math.max(0, Math.floor(cy - spanY - 1));
+  const x1 = Math.min(w - 1, Math.ceil(cx + spanX + 1));
+  const y1 = Math.min(h - 1, Math.ceil(cy + spanY + 1));
+  if (!doc.sel) doc.sel = new Sel(w, h, false);
+  const m = doc.sel.mask;
+  m.fill(0);
+  if (x0 > x1 || y0 > y1) return;
+  for (let py = y0; py <= y1; py++) {
+    for (let px = x0; px <= x1; px++) {
+      const dx0 = px + 0.5 - cx, dy0 = py + 0.5 - cy;
+      // inverse: R(-a) then divide by scale (both around the centre)
+      const vx = (dx0 * c + dy0 * s) / Math.max(0.02, sx);
+      const vy = (-dx0 * s + dy0 * c) / Math.max(0.02, sy);
+      const sxx = cx + vx - st.ox;
+      const syy = cy + vy - st.oy;
+      if (sxx < 0 || syy < 0 || sxx >= cw || syy >= ch) continue;
+      const si = content.idx(sxx | 0, syy | 0);
+      if (content.data[si + 3] === 0) continue;
+      const di = cel.idx(px, py);
+      cel.data[di] = content.data[si];
+      cel.data[di + 1] = content.data[si + 1];
+      cel.data[di + 2] = content.data[si + 2];
+      cel.data[di + 3] = content.data[si + 3];
+      m[py * w + px] = 1;
+    }
+  }
+}
+
+export const selOps = {
+  setRect: setRectFn,
+  selectAll(doc: Doc): void {
+    if (!doc.sel) doc.sel = new Sel(doc.w, doc.h, false);
+    doc.sel.fillAll();
+  },
+  clear(doc: Doc): void {
+    if (doc.sel) doc.sel.clear();
+  },
+  grab: grabFn,
+  fill(doc: Doc, history: History, li: number, fi: number, color: RGBA): void {
+    if (!doc.sel || !doc.sel.hasAny() || doc.layers[li]?.locked) return;
+    const b = doc.sel.bounds();
+    if (!b) return;
+    const cel = doc.ensureCel(li, fi);
+    const before = new Uint8ClampedArray(cel.data);
+    for (let y = b.y; y < b.y + b.h; y++) {
+      for (let x = b.x; x < b.x + b.w; x++) {
+        if (doc.selAt(x, y) === 1) {
+          const i = cel.idx(x, y);
+          if (color[3] >= 255) {
+            cel.data[i] = color[0]; cel.data[i + 1] = color[1]; cel.data[i + 2] = color[2]; cel.data[i + 3] = 255;
+          } else if (color[3] > 0) {
+            blendOver(cel.data, i, color);
+          }
+        }
+      }
+    }
+    record(doc, history, li, fi, before, "fill");
+  },
+  eraseSelected(doc: Doc, history: History, li: number, fi: number): void {
+    if (!doc.sel || !doc.sel.hasAny() || doc.layers[li]?.locked) return;
+    const b = doc.sel.bounds();
+    if (!b) return;
+    const cel = doc.ensureCel(li, fi);
+    const before = new Uint8ClampedArray(cel.data);
+    for (let y = b.y; y < b.y + b.h; y++) {
+      for (let x = b.x; x < b.x + b.w; x++) {
+        if (doc.selAt(x, y) === 1) {
+          const i = cel.idx(x, y);
+          cel.data[i] = 0; cel.data[i + 1] = 0; cel.data[i + 2] = 0; cel.data[i + 3] = 0;
+        }
+      }
+    }
+    record(doc, history, li, fi, before, "erase");
+  },
+  copy(doc: Doc, li: number, fi: number): Cel | null {
+    return grabFn(doc, li, fi);
+  },
+  cut(doc: Doc, history: History, li: number, fi: number): Cel | null {
+    const clip = grabFn(doc, li, fi);
+    if (!clip) return null;
+    if (!doc.layers[li]?.locked) this.eraseSelected(doc, history, li, fi);
+    return clip;
+  },
+  paste(doc: Doc, history: History, li: number, fi: number, clip: Cel, at?: { x: number; y: number }): void {
+    if (doc.layers[li]?.locked || !clip) return;
+    const b = doc.sel?.bounds();
+    const px = at ? at.x : b ? b.x : Math.max(0, Math.floor((doc.w - clip.w) / 2));
+    const py = at ? at.y : b ? b.y : Math.max(0, Math.floor((doc.h - clip.h) / 2));
+    const ox = Math.max(0, px), oy = Math.max(0, py);
+    const ow = Math.min(clip.w, doc.w - ox), oh = Math.min(clip.h, doc.h - oy);
+    if (ow <= 0 || oh <= 0) return;
+    const cel = doc.ensureCel(li, fi);
+    const before = new Uint8ClampedArray(cel.data);
+    for (let y = 0; y < oh; y++) {
+      for (let x = 0; x < ow; x++) {
+        const si = clip.idx(x, y);
+        if (clip.data[si + 3] > 0) {
+          const c: RGBA = [clip.data[si], clip.data[si + 1], clip.data[si + 2], clip.data[si + 3]];
+          blendOver(cel.data, cel.idx(ox + x, oy + y), c);
+        }
+      }
+    }
+    if (!doc.sel) doc.sel = new Sel(doc.w, doc.h, false);
+    doc.sel.clear();
+    for (let y = 0; y < oh; y++) for (let x = 0; x < ow; x++) doc.sel!.set(ox + x, oy + y, 1);
+    record(doc, history, li, fi, before, "paste");
+  },
+  flip(doc: Doc, history: History, li: number, fi: number, horizontal: boolean): void {
+    const b = doc.sel?.bounds();
+    const cel = doc.celAt(li, fi);
+    if (!b || !cel) return;
+    const before = new Uint8ClampedArray(cel.data);
+    const swap = (x1: number, y1: number, x2: number, y2: number) => {
+      const i = cel.idx(x1, y1), j = cel.idx(x2, y2);
+      for (let k = 0; k < 4; k++) {
+        const tmp = cel.data[i + k];
+        cel.data[i + k] = cel.data[j + k];
+        cel.data[j + k] = tmp;
+      }
+    };
+    if (horizontal) {
+      for (let y = 0; y < b.h; y++) {
+        for (let x = 0; x < Math.floor(b.w / 2); x++) {
+          const x1 = b.x + x, x2 = b.x + b.w - 1 - x;
+          if (doc.selAt(x1, b.y + y) || doc.selAt(x2, b.y + y)) swap(x1, b.y + y, x2, b.y + y);
+        }
+      }
+    } else {
+      for (let x = 0; x < b.w; x++) {
+        for (let y = 0; y < Math.floor(b.h / 2); y++) {
+          const y1 = b.y + y, y2 = b.y + b.h - 1 - y;
+          if (doc.selAt(b.x + x, y1) || doc.selAt(b.x + x, y2)) swap(b.x + x, y1, b.x + x, y2);
+        }
+      }
+    }
+    record(doc, history, li, fi, before, horizontal ? "flip-h" : "flip-v");
+  },
+  /**
+   * Redraw moved content at (origin + dx, origin + dy).
+   * Every drag step starts from the drag-start snapshot, cuts the grabbed
+   * pixels out of their original spot and pastes them at the new offset, so
+   * repeated pointermove calls never duplicate or leave old content behind.
+   */
+  move(doc: Doc, li: number, fi: number, dx: number, dy: number, st: MoveState): void {
+    const cel = doc.celAt(li, fi);
+    if (!cel) return;
+    const content = st.content;
+    const w = doc.w, h = doc.h;
+    // back to the pre-drag picture (idempotent while dragging)
+    cel.data.set(st.before);
+    // cut the dragged pixels out of their original spot
+    for (let y = 0; y < content.h; y++) {
+      for (let x = 0; x < content.w; x++) {
+        const si = content.idx(x, y);
+        if (content.data[si + 3] === 0) continue;
+        const gx = st.ox + x, gy = st.oy + y;
+        if (gx < 0 || gy < 0 || gx >= w || gy >= h) continue;
+        const di = cel.idx(gx, gy);
+        cel.data[di] = 0; cel.data[di + 1] = 0; cel.data[di + 2] = 0; cel.data[di + 3] = 0;
+      }
+    }
+    // paste at the new offset
+    const nx = st.ox + dx, ny = st.oy + dy;
+    for (let y = 0; y < content.h; y++) {
+      for (let x = 0; x < content.w; x++) {
+        const si = content.idx(x, y);
+        if (content.data[si + 3] === 0) continue;
+        const tx = nx + x, ty = ny + y;
+        if (tx < 0 || ty < 0 || tx >= w || ty >= h) continue;
+        const di = cel.idx(tx, ty);
+        cel.data[di] = content.data[si];
+        cel.data[di + 1] = content.data[si + 1];
+        cel.data[di + 2] = content.data[si + 2];
+        cel.data[di + 3] = content.data[si + 3];
+      }
+    }
+    // the selection keeps its original shape, shifted by (dx, dy)
+    if (!doc.sel) doc.sel = new Sel(w, h, false);
+    const dst = doc.sel.mask, src = st.mask;
+    dst.fill(0);
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        if (src[y * w + x]) {
+          const tx = x + dx, ty = y + dy;
+          if (tx >= 0 && ty >= 0 && tx < w && ty < h) dst[ty * w + tx] = 1;
+        }
+      }
+    }
+  },
+};
