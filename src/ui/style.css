@@ -578,3 +578,16 @@ input[type=range]{width:64px;height:22px;accent-color:var(--accent)}
 @keyframes tlOut{from{opacity:1;transform:none}to{opacity:0;transform:translateY(16px)}}
 .tline-wrap{animation:tlIn .22s cubic-bezier(.2,.85,.25,1) both}
 .tline-wrap.closing{animation:tlOut .19s ease-in both;pointer-events:none}
+
+/* ---- hold-to-adjust progress bar + quick wheel + tooltip animations ---- */
+@keyframes hpIn{from{opacity:0;scale:.88}to{opacity:1;scale:1}}
+@keyframes qwIn{from{opacity:0;transform:scale(.82)}to{opacity:1;transform:scale(1)}}
+@keyframes tipIn{from{opacity:0}to{opacity:1}}
+
+.holdbtn{transition:transform .1s ease,background .12s ease}
+.holdbtn:active{transform:scale(.92)}
+.holdpop{animation:hpIn .16s ease-out both;transform-origin:center}
+.hp-fill{transition:width .06s linear}
+.holdpop.v .hp-fill{transition:height .06s linear}
+.quickwheel{animation:qwIn .18s cubic-bezier(.2,.85,.25,1) both}
+.btn-tip{animation:tipIn .13s ease-out both}
