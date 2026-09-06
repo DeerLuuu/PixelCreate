@@ -109,6 +109,7 @@ export function PreviewBox() {
         }
       }}><Icon id="i-eye" size={16} /></button>
       {show && pos && (
+        <>
         <div className={"prevbox" + (closing ? " closing" : "")} ref={boxRef} style={{ left: pos.x, top: pos.y, width: s, height: s, padding: 0 }}>
           <canvas ref={cvRef} style={{ width: s, height: s, display: "block" }} />
           <div className="prev-grab"
@@ -117,14 +118,7 @@ export function PreviewBox() {
             onPointerUp={(e) => { try { (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId); } catch { /* ignore */ } grabStart.current = null; }}
             onPointerCancel={() => { grabStart.current = null; }}
           />
-          <button className="prev-bg" title={tp("previewBgHint")}
-            onClick={() => {
-              const m = SESSION.prefs.previewBg || "white";
-              const n = m === "white" ? "black" : m === "black" ? "checker" : "white";
-              SESSION.setPreviewBg(n);
-              window.setTimeout(() => draw(), 0);
-            }}
-            style={{ background: (SESSION.prefs.previewBg || "white") === "white" ? "#fff" : (SESSION.prefs.previewBg || "white") === "black" ? "#101116" : "repeating-conic-gradient(#9aa0b0 0% 25%, #b9bec9 0% 50%)" }} />
+
           <div className="prev-resize"
             onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); } catch { /* ignore */ } rzStart.current = { px: e.clientX, py: e.clientY, size: sizeRef.current }; }}
             onPointerMove={(e) => { const rz = rzStart.current; if (!rz) return; const r = parentRect(); const delta = Math.max(e.clientX - rz.px, e.clientY - rz.py); const ns = Math.max(90, Math.min(Math.min(r.width - 20, r.height - 30, 380), rz.size + delta)); sizeRef.current = ns; setSize(ns); try { localStorage.setItem("pc.prev.size", String(Math.round(ns))); } catch { /* ignore */ } clampPos(ns); }}
@@ -132,8 +126,16 @@ export function PreviewBox() {
             onPointerCancel={() => { rzStart.current = null; }}
           />
         </div>
+        <button className="prev-bg" title={tp("previewBgHint")}
+          onClick={() => {
+            const m = SESSION.prefs.previewBg || "white";
+            const n = m === "white" ? "black" : m === "black" ? "checker" : "white";
+            SESSION.setPreviewBg(n);
+            window.setTimeout(() => draw(), 0);
+          }}
+          style={{ left: pos.x + s - 10, top: pos.y - 10, background: (SESSION.prefs.previewBg || "white") === "white" ? "#fff" : (SESSION.prefs.previewBg || "white") === "black" ? "#101116" : "repeating-conic-gradient(#9aa0b0 0% 25%, #b9bec9 0% 50%)" }} />
+        </>
       )}
     </>
   );
 }
-
