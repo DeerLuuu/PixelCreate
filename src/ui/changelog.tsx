@@ -7,7 +7,7 @@ import type { Lang } from "./i18n";
 import { Icon } from "./base";
 
 /** keep in sync with android/AndroidManifest.xml versionName on every release */
-export const APP_VERSION = "1.0.1";
+export const APP_VERSION = "1.0.2";
 
 export type ClgKind = "add" | "imp" | "fix";
 export interface ClgItem { kind: ClgKind; zh: string; en: string }
@@ -16,6 +16,13 @@ export interface ClgVersion { v: string; date: string; items: ClgItem[] }
 const it = (kind: ClgKind, zh: string, en: string): ClgItem => ({ kind, zh, en });
 
 export const CHANGELOG: ClgVersion[] = [
+  {
+    v: "1.0.2",
+    date: "2025-09-07",
+    items: [
+      it("add", "操作记录双模式：按步数记录最近操作，或“完整记录”模式自项目创建起保存全部操作、可从头完整回放", "Two history recording modes: step-limited (configurable) or full recording since the project started for complete replay"),
+    ],
+  },
   {
     v: "1.0.1",
     date: "2025-09-07",
@@ -26,7 +33,6 @@ export const CHANGELOG: ClgVersion[] = [
       it("add", "FX 特效浮动球：一键描边 / 反色 / 灰度", "FX orb: one-tap outline / invert / grayscale effects"),
       it("add", "参考图导入预览框：可拖拽缩放，并能直接从参考图上点按/拖动吸色", "Reference image preview: draggable & resizable, pick colours straight off the picture"),
       it("add", "菜单新增“更新日志”，版本更新后首次打开应用自动展示", "New release-notes entry in the menu; opens automatically on first launch after an update"),
-      it("add", "操作记录双模式：按设置步数记录最近操作，或“完整记录”模式自项目创建起保存全部操作、可从头完整回放", "Two history recording modes: step-limited (configurable) or full recording since the project started for complete replay"),
       it("fix", "修复选中颜色与绘制颜色不一致：残留的透明色会让新颜色画出来像橡皮擦（黑变白等）", "Fix picked colour ≠ drawn colour: stale transparency made new colours act like an eraser (black drew as white)"),
       it("fix", "色块按棋盘格真实显示透明度，透明槽位不再显示成黑色", "Swatches now show transparency honestly over a checkerboard instead of black"),
       it("fix", "修复添加/移动图层后帧内容错位（引擎回归测试覆盖）", "Fix cel content shifting after inserting/moving layers (covered by engine regression tests)"),
