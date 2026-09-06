@@ -139,7 +139,7 @@ const B_DESC = {
   alpha: { zh: "不透明度：按住拖动调节（0 = 橡皮擦）", en: "Opacity: hold & drag (0 = eraser)" },
   orb: { zh: "快捷工具球：点按打开工具环，按住拖动可移动位置", en: "Tool orb: tap to open, drag to move" },
   selBall: { zh: "选区操作球：填充 / 复制 / 剪切 / 粘贴 / 翻转 / 扩展等", en: "Selection actions ball" },
-  fx: { zh: "特效球：描边 / 反色 / 灰度等像素效果（作用于当前图层帧）", en: "FX ball: outline / invert / grayscale on the active layer/frame" },
+  fx: { zh: "魔法球：描边 / 反色 / 灰度 / 居中（作用于当前图层帧）", en: "Magic ball: outline / invert / grayscale / center (active layer/frame)" },
   hist: { zh: "操作记录：查看可撤销/重做的步骤，点任意旧记录可回到该状态", en: "History: view undo/redo steps, tap one to jump back" },
   loop: { zh: "循环播放：播到最后一帧后回到第 1 帧继续；关闭则播到末尾停止", en: "Loop: restart from frame 1 at the end; off stops at the last frame" },
   sides: { zh: "多边形边数：按住拖动调节（3–12 边）", en: "Polygon sides: hold & drag (3–12)" },
@@ -437,6 +437,37 @@ function FloatingTools({ t, snap }: { t: ReturnType<typeof makeT>; snap: Snapsho
     fxI("o2", "描2", "O2", "向外描边 2px（用前景色）", "Outline 2px outward (FG colour)", () => fxDo("fx-outline2", (dd, w, h) => fxE.outlineCel(dd, w, h, 2, SESSION.color))),
     fxI("inv", "反色", "Inv", "反色：把不透明像素的 RGB 取反（保留透明）", "Invert RGB of visible pixels", () => fxDo("fx-invert", (dd) => fxE.invertCel(dd))),
     fxI("gray", "灰度", "B/W", "去饱和：把不透明像素变为灰度", "Desaturate visible pixels to grayscale", () => fxDo("fx-gray", (dd) => fxE.desaturateCel(dd))),
+    fxI("ctr", "居中", "Ctr", "把当前图层内容居中到画布中心（有选区时居中到选区）", "Center the layer content in the canvas (or inside the selection when one is active)", () => fxDo("fx-center", (data, w, h) => {
+      const tgt = (d.sel && d.sel.hasAny() ? d.sel.bounds() : null) ?? { x: 0, y: 0, w: d.w, h: d.h };
+      let minX = w, minY = h, maxX = -1, maxY = -1;
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          if (data[(y * w + x) * 4 + 3] !== 0) {
+            if (x < minX) minX = x;
+            if (x > maxX) maxX = x;
+            if (y < minY) minY = y;
+            if (y > maxY) maxY = y;
+          }
+        }
+      }
+      if (maxX < 0) return; // nothing opaque to move
+      const dx = Math.round(tgt.x + tgt.w / 2 - (minX + maxX) / 2);
+      const dy = Math.round(tgt.y + tgt.h / 2 - (minY + maxY) / 2);
+      if (dx === 0 && dy === 0) return;
+      const out = new Uint8ClampedArray(data.length);
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          const i = (y * w + x) * 4;
+          if (data[i + 3] === 0) continue;
+          const nx = x + dx, ny = y + dy;
+          if (nx >= 0 && nx < w && ny >= 0 && ny < h) {
+            const j = (ny * w + nx) * 4;
+            out[j] = data[i]; out[j + 1] = data[i + 1]; out[j + 2] = data[i + 2]; out[j + 3] = data[i + 3];
+          }
+        }
+      }
+      data.set(out);
+    })),
   ];
 
   const mainItems: Item[] = sub
