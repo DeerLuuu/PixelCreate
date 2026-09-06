@@ -42,6 +42,7 @@ export function App() {
   const [modal, setModal] = useState<ModalId>(null);
   const [frameDlgIdx, setFrameDlgIdx] = useState<number | null>(null);
   const [tlOn, setTlOn] = useState(true);
+  const [tlClosing, setTlClosing] = useState(false);
   const [sizeMode, setSizeMode] = useState<SizeMode>("canvas");
   const [sheet, setSheet] = useState<SheetData | null>(null);
   const [replayOn, setReplayOn] = useState(false);
@@ -61,7 +62,15 @@ export function App() {
 
   return (
     <div className={"app-root" + (SESSION.prefs.railSwap ? " rails-swap" : "")} onContextMenu={(e) => e.preventDefault()} onDragStart={(e) => e.preventDefault()}>
-      <TopBar t={t} snap={snap} tlOn={tlOn} onToggleTl={() => setTlOn(!tlOn)} onMenu={() => setModal("menu")} onExport={() => setModal("export")} onResize={() => { setSizeMode("canvas"); setModal("size"); }} onHistory={() => setModal("history")} />
+      <TopBar t={t} snap={snap} tlOn={tlOn} onToggleTl={() => {
+        if (tlClosing) return;
+        if (tlOn) {
+          setTlClosing(true);
+          window.setTimeout(() => { setTlClosing(false); setTlOn(false); }, 210);
+        } else {
+          setTlOn(true);
+        }
+      }} onMenu={() => setModal("menu")} onExport={() => setModal("export")} onResize={() => { setSizeMode("canvas"); setModal("size"); }} onHistory={() => setModal("history")} />
       <div className="workspace">
         <Viewport
           onColorClick={() => setPanel("palette")}
@@ -71,7 +80,7 @@ export function App() {
       </div>
       <ControlBar t={t} snap={snap} onPanel={setPanel} onAdjust={() => setModal("adjust")} />
       {tlOn && (
-      <div className="tline-wrap">
+      <div className={"tline-wrap" + (tlClosing ? " closing" : "")}>
         <TimelineBar t={t} snap={snap} onFrameDlg={setFrameDlgIdx} />
       </div>
       )}
