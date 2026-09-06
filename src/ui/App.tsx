@@ -9,6 +9,7 @@ import { Doc } from "../engine/doc";
 import { Cel } from "../engine/cel";
 import { rgbaToHex, hexToRgba, cssColor } from "../engine/color";
 import * as selOps from "../tools/select";
+import * as fxE from "../engine/effects";
 import { BLEND_MODES } from "../engine/types";
 import { HsvWheel, colorToHex6 } from "./HsvWheel";
 import * as compositor from "../render/compositor";
@@ -25,6 +26,8 @@ import { showTip, hideTip, subscribeTip } from "./tooltip";
 import { Icon, Btn, TipHost, Keep, Overlay, useSession, useLandscape } from "./base";
 import { TimelineBar } from "./timeline";
 import { PreviewBox } from "./preview";
+import { RefImageBox } from "./refimg";
+import type { RefImg } from "./refimg";
 import { PalettePanel, MenuModal, SizeModal, SheetModal, NewDocModal, ExportModal, AdjustModal, SettingsModal, HelpModal, FrameModal, HistoryModal, histName, saveProject } from "./modals";
 import type { ModalId, SizeMode, SheetData } from "./modals";
 
@@ -41,6 +44,7 @@ export function App() {
   const [sizeMode, setSizeMode] = useState<SizeMode>("canvas");
   const [sheet, setSheet] = useState<SheetData | null>(null);
   const [replayOn, setReplayOn] = useState(false);
+  const [refImg, setRefImg] = useState<RefImg | null>(null);
   const [confirmQ, setConfirmQ] = useState<{ msg: string; yes: string; no: string; res: (ok: boolean) => void } | null>(null);
 
   useEffect(() => {
@@ -54,6 +58,8 @@ export function App() {
       <div className="workspace">
         <Viewport
           onColorClick={() => setPanel("palette")}
+          refImg={refImg}
+          onRefClose={() => setRefImg(null)}
         />
       </div>
       <ControlBar t={t} snap={snap} onPanel={setPanel} onAdjust={() => setModal("adjust")} />
@@ -69,7 +75,7 @@ export function App() {
           <PalettePanel t={t} onClose={() => setPanel(null)} />
         </Overlay>
       ) : null} />
-      <Keep on={modal === "menu"} el={modal === "menu" ? <MenuModal t={t} snap={snap} onClose={() => setModal(null)} onOpen={setModal} onSheet={(d) => { setSheet(d); setModal("sheet"); }} /> : null} />
+      <Keep on={modal === "menu"} el={modal === "menu" ? <MenuModal t={t} snap={snap} onClose={() => setModal(null)} onOpen={setModal} onSheet={(d) => { setSheet(d); setModal("sheet"); }} onRef={(d) => setRefImg(d)} /> : null} />
       <Keep on={modal === "size"} el={modal === "size" ? <SizeModal t={t} snap={snap} initial={sizeMode} onClose={() => setModal(null)} /> : null} />
       <Keep on={modal === "sheet" && sheet !== null} el={modal === "sheet" && sheet ? <SheetModal t={t} img={sheet} onClose={() => { setModal(null); setSheet(null); }} /> : null} />
       <Keep on={modal === "newdoc"} el={modal === "newdoc" ? <NewDocModal t={t} onClose={() => setModal(null)} /> : null} />
@@ -117,6 +123,7 @@ const B_DESC = {
   alpha: { zh: "不透明度：按住拖动调节（0 = 橡皮擦）", en: "Opacity: hold & drag (0 = eraser)" },
   orb: { zh: "快捷工具球：点按打开工具环，按住拖动可移动位置", en: "Tool orb: tap to open, drag to move" },
   selBall: { zh: "选区操作球：填充 / 复制 / 剪切 / 粘贴 / 翻转 / 扩展等", en: "Selection actions ball" },
+  fx: { zh: "特效球：描边 / 反色 / 灰度等像素效果（作用于当前图层帧）", en: "FX ball: outline / invert / grayscale on the active layer/frame" },
   hist: { zh: "操作记录：查看可撤销/重做的步骤，点任意旧记录可回到该状态", en: "History: view undo/redo steps, tap one to jump back" },
   loop: { zh: "循环播放：播到最后一帧后回到第 1 帧继续；关闭则播到末尾停止", en: "Loop: restart from frame 1 at the end; off stops at the last frame" },
   sides: { zh: "多边形边数：按住拖动调节（3–12 边）", en: "Polygon sides: hold & drag (3–12)" },
@@ -189,7 +196,7 @@ function FloatingTools({ t, snap }: { t: ReturnType<typeof makeT>; snap: Snapsho
   const [sub, setSub] = useState<"shape" | "select" | null>(null);
   const [sel, setSel] = useState<{ x: number; y: number; open: boolean } | null>(null);
   const prevSelA = useRef(false);
-  const drag = useRef<{ which: "main" | "sel" | "pal"; dx: number; dy: number; moved: boolean } | null>(null);
+  const drag = useRef<{ which: "main" | "sel" | "pal" | "fx"; dx: number; dy: number; moved: boolean } | null>(null);
 
   const ORB = 52;
   const MINC = ORB + 16;
@@ -203,6 +210,11 @@ function FloatingTools({ t, snap }: { t: ReturnType<typeof makeT>; snap: Snapsho
     y: Math.max(8, Math.round(window.innerHeight * 0.55)),
     open: false,
   }));
+  const [fx, setFx] = useState<{ x: number; y: number; open: boolean }>(() => ({
+    x: Math.max(8, Math.round(window.innerWidth * 0.62)),
+    y: Math.max(8, Math.round(window.innerHeight * 0.62)),
+    open: false,
+  }));
 
   // rotation / resize: keep every floating ball inside the viewport
   useEffect(() => {
@@ -214,6 +226,7 @@ function FloatingTools({ t, snap }: { t: ReturnType<typeof makeT>; snap: Snapsho
       });
       setSel((s) => (s ? { ...s, x: clampXY({ x: s.x, y: s.y }).x, y: clampXY({ x: s.x, y: s.y }).y } : s));
       setPal((p) => ({ ...p, ...clampXY({ x: p.x, y: p.y }) }));
+      setFx((p) => ({ ...p, ...clampXY({ x: p.x, y: p.y }) }));
     };
     window.addEventListener("resize", fix);
     window.addEventListener("orientationchange", fix);
@@ -254,6 +267,7 @@ function FloatingTools({ t, snap }: { t: ReturnType<typeof makeT>; snap: Snapsho
     setSub(null);
     if (sel) setSel({ ...sel, open: false });
     if (pal) setPal({ ...pal, open: false });
+    setFx((g) => (g ? { ...g, open: false } : g));
   };
 
   const separate = (m: { x: number; y: number }, o: { x: number; y: number } | null) => {
@@ -275,11 +289,12 @@ function FloatingTools({ t, snap }: { t: ReturnType<typeof makeT>; snap: Snapsho
     return clampXY({ x: anchor.x + (dx / d) * RING_CLEAR, y: anchor.y + (dy / d) * RING_CLEAR });
   };
 
-  const moveBall = (which: "main" | "sel" | "pal", nx: number, ny: number) => {
+  const moveBall = (which: "main" | "sel" | "pal" | "fx", nx: number, ny: number) => {
     const others: { x: number; y: number }[] = [];
     if (which !== "main") others.push(pos);
     if (sel && which !== "sel") others.push({ x: sel.x, y: sel.y });
     if (pal && which !== "pal") others.push({ x: pal.x, y: pal.y });
+    if (which !== "fx") others.push({ x: fx.x, y: fx.y });
     let p = clampXY({ x: nx, y: ny });
     for (const o of others) p = separate(p, o);
     if (which === "main") {
@@ -287,13 +302,16 @@ function FloatingTools({ t, snap }: { t: ReturnType<typeof makeT>; snap: Snapsho
       try { localStorage.setItem(orbKey, JSON.stringify(p)); } catch { /* ignore */ }
     } else if (which === "sel") {
       setSel({ x: p.x, y: p.y, open: false });
-    } else {
+    } else if (which === "pal") {
       setPal((g) => ({ ...g, x: p.x, y: p.y, open: false }));
+    } else {
+      setFx((g) => ({ ...g, x: p.x, y: p.y, open: false }));
     }
     setOpen(false);
     setSub(null);
     if (sel && which !== "sel") setSel((s) => (s ? { ...s, open: false } : s));
     if (pal && which !== "pal") setPal((g) => (g ? { ...g, open: false } : g));
+    if (which !== "fx") setFx((g) => (g ? { ...g, open: false } : g));
   };
 
   type Item = { icon: string; label: string; act: () => void; active?: boolean; desc?: string };
@@ -338,6 +356,28 @@ function FloatingTools({ t, snap }: { t: ReturnType<typeof makeT>; snap: Snapsho
     { icon: "i-paint", label: t("sel.outline"), act: () => { selOps.outlineSelected(d, SESSION.history, li, fi, SESSION.color); repaintChanged(); } },
   ];
 
+  const fxZh = snap.lang === "zh";
+  const fxDo = (label: string, fn: (data: Uint8ClampedArray, w: number, h: number) => void) => {
+    const cel = d.celAt(li, fi);
+    if (!cel) return;
+    const before = new Uint8ClampedArray(cel.data);
+    fn(cel.data, d.w, d.h);
+    let changed = false;
+    for (let i = 0; i < before.length; i++) if (before[i] !== cel.data[i]) { changed = true; break; }
+    if (!changed) return;
+    SESSION.history.pushPixels(label, d, [{ li, fi, before, after: new Uint8ClampedArray(cel.data) }]);
+    repaintChanged();
+  };
+  const fxI = (key: string, labelZh: string, labelEn: string, descZh: string, descEn: string, act: () => void): Item => ({
+    icon: "", label: fxZh ? labelZh : labelEn, desc: fxZh ? descZh : descEn, act,
+  });
+  const fxItems: Item[] = [
+    fxI("o1", "描1", "O1", "向外描边 1px（用前景色）", "Outline 1px outward (FG colour)", () => fxDo("fx-outline1", (dd, w, h) => fxE.outlineCel(dd, w, h, 1, SESSION.color))),
+    fxI("o2", "描2", "O2", "向外描边 2px（用前景色）", "Outline 2px outward (FG colour)", () => fxDo("fx-outline2", (dd, w, h) => fxE.outlineCel(dd, w, h, 2, SESSION.color))),
+    fxI("inv", "反色", "Inv", "反色：把不透明像素的 RGB 取反（保留透明）", "Invert RGB of visible pixels", () => fxDo("fx-invert", (dd) => fxE.invertCel(dd))),
+    fxI("gray", "灰度", "B/W", "去饱和：把不透明像素变为灰度", "Desaturate visible pixels to grayscale", () => fxDo("fx-gray", (dd) => fxE.desaturateCel(dd))),
+  ];
+
   const mainItems: Item[] = sub
     ? [
         { icon: "", label: "\u2039", act: () => setSub(null) },
@@ -370,7 +410,7 @@ function FloatingTools({ t, snap }: { t: ReturnType<typeof makeT>; snap: Snapsho
   };
 
   const renderBall = (
-    which: "main" | "sel" | "pal",
+    which: "main" | "sel" | "pal" | "fx",
     p: { x: number; y: number },
     icon: string,
     isOpen: boolean,
@@ -421,7 +461,7 @@ function FloatingTools({ t, snap }: { t: ReturnType<typeof makeT>; snap: Snapsho
             key={it.label + i}
             className={"orb-item" + (it.active ? " on" : "")}
             style={{ left: pt.x, top: pt.y, "--st": (i * 16) + "ms" } as unknown as React.CSSProperties}
-            title={it.label}
+            title={it.desc || it.label}
             onClick={it.act}
             onPointerDown={startTip(it.label, it.desc)}
             onPointerMove={guardTip}
@@ -448,6 +488,10 @@ function FloatingTools({ t, snap }: { t: ReturnType<typeof makeT>; snap: Snapsho
           const pushed2 = clearRingOf(pos, { x: pal.x, y: pal.y });
           if (pushed2) setPal({ ...pushed2, open: false });
         }
+        if (fx) {
+          const pushed3 = clearRingOf(pos, { x: fx.x, y: fx.y });
+          if (pushed3) setFx({ ...pushed3, open: false });
+        }
         setOpen(true);
       })}
       <Keep on={!!sel} el={sel ? renderBall("sel", { x: sel.x, y: sel.y }, "i-select", sel.open, t("sel.active"), bd(snap.lang, "selBall"), () => {
@@ -462,6 +506,10 @@ function FloatingTools({ t, snap }: { t: ReturnType<typeof makeT>; snap: Snapsho
           if (pal) {
             const pp = clearRingOf({ x: sel.x, y: sel.y }, { x: pal.x, y: pal.y });
             if (pp) setPal({ ...pp, open: false });
+          }
+          if (fx) {
+            const fp = clearRingOf({ x: sel.x, y: sel.y }, { x: fx.x, y: fx.y });
+            if (fp) setFx({ ...fp, open: false });
           }
         }
         setSel({ ...sel, open: !sel.open });
@@ -480,15 +528,42 @@ function FloatingTools({ t, snap }: { t: ReturnType<typeof makeT>; snap: Snapsho
             const sp = clearRingOf({ x: pal.x, y: pal.y }, { x: sel.x, y: sel.y });
             if (sp) setSel({ ...sp, open: false });
           }
+          if (fx) {
+            const fp = clearRingOf({ x: pal.x, y: pal.y }, { x: fx.x, y: fx.y });
+            if (fp) setFx({ ...fp, open: false });
+          }
         }
         setPal({ ...pal, open: !pal.open });
       })}
-      {(open || (sel && sel.open) || pal.open) && (
+      {renderBall("fx", { x: fx.x, y: fx.y }, "i-wand", fx.open, t("fxOrb"), bd(snap.lang, "fx"), () => {
+        setOpen(false);
+        setSub(null);
+        if (sel) setSel({ ...sel, open: false });
+        if (pal) setPal({ ...pal, open: false });
+        if (!fx.open) {
+          const np = clearRingOf({ x: fx.x, y: fx.y }, pos);
+          if (np && (np.x !== pos.x || np.y !== pos.y)) {
+            setPos(np);
+            try { localStorage.setItem(orbKey, JSON.stringify(np)); } catch { /* ignore */ }
+          }
+          if (sel) {
+            const sp = clearRingOf({ x: fx.x, y: fx.y }, { x: sel.x, y: sel.y });
+            if (sp) setSel({ ...sp, open: false });
+          }
+          if (pal) {
+            const pp = clearRingOf({ x: fx.x, y: fx.y }, { x: pal.x, y: pal.y });
+            if (pp) setPal({ ...pp, open: false });
+          }
+        }
+        setFx({ ...fx, open: !fx.open });
+      })}
+      {(open || (sel && sel.open) || pal.open || fx.open) && (
         <div className="radial-back" onPointerDown={closeRadials} />
       )}
       <Keep on={open} el={open ? ring(pos, mainItems) : null} />
       <Keep on={!!sel && sel.open} el={sel && sel.open ? ring({ x: sel.x, y: sel.y }, selItems) : null} />
       <Keep on={pal.open} el={pal.open ? <PalBalls x={pal.x} y={pal.y} onDone={() => setPal({ ...pal, open: false })} /> : null} />
+      <Keep on={fx.open} el={fx.open ? ring({ x: fx.x, y: fx.y }, fxItems) : null} />
     </>
   );
 }
@@ -580,7 +655,7 @@ function ControlBar({ t, snap, onPanel, onAdjust }: { t: ReturnType<typeof makeT
     </section>
   );
 }
-function Viewport({ onColorClick }: { onColorClick: () => void }) {
+function Viewport({ onColorClick, refImg, onRefClose }: { onColorClick: () => void; refImg: RefImg | null; onRefClose: () => void }) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const tv = makeT(SESSION.prefs.lang as Lang);
   const [, setTick] = useState(0);
@@ -599,6 +674,7 @@ function Viewport({ onColorClick }: { onColorClick: () => void }) {
     <section className="viewport">
       <div className="view-canvas" ref={hostRef} />
       <PreviewBox />
+      {refImg && <RefImageBox img={refImg} onClose={onRefClose} />}
       {visible && (
         <div className="canvas-corner">
           <button className="colorbox" onClick={onColorClick} title={tv("colorPicked")}>

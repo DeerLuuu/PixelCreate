@@ -477,3 +477,6 @@ input[type=range]{width:64px;height:22px;accent-color:var(--accent)}
 /* color-adjust dialog: H/S/L controls in one compact row */
 .adj3{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:2px}
 .adj3 .holdbtn{width:auto;min-width:64px;max-width:none;flex:1 1 0}
+/* reference image window close chip */
+.ref-x{position:absolute;left:4px;top:4px;width:22px;height:22px;z-index:6;border-radius:7px;padding:0;
+  background:rgba(18,19,26,.8);border:1px solid var(--line);color:#dfe3f0;display:flex;align-items:center;justify-content:center}

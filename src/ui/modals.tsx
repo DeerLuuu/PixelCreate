@@ -16,6 +16,7 @@ import * as project from "../io/project";
 import * as exporters from "../io/exporters";
 import * as bridge from "../io/bridge";
 import { Btn, Icon, useSession } from "./base";
+import type { RefImg } from "./refimg";
 
 export type ModalId = "menu" | "newdoc" | "export" | "adjust" | "settings" | "help" | "frame" | "size" | "sheet" | "history" | null;
 export type SizeMode = "canvas" | "sprite";
@@ -207,7 +208,7 @@ function parsePaletteBytes(b: Uint8Array): Array<[number, number, number, number
   }
   return out;
 }
-export function MenuModal({ t, snap, onClose, onOpen, onSheet }: { t: ReturnType<typeof makeT>; snap: Snapshot; onClose: () => void; onOpen: (m: ModalId) => void; onSheet: (d: SheetData) => void }) {
+export function MenuModal({ t, snap, onClose, onOpen, onSheet, onRef }: { t: ReturnType<typeof makeT>; snap: Snapshot; onClose: () => void; onOpen: (m: ModalId) => void; onSheet: (d: SheetData) => void; onRef: (d: RefImg) => void }) {
   const go = (modal: ModalId) => (label: string, icon: string) => <Btn label={label} icon={icon} onClick={() => onOpen(modal)} className="menuitem" />;
   const act = (label: string, icon: string, fn: () => void) => <Btn label={label} icon={icon} onClick={() => { fn(); onClose(); }} className="menuitem" />;
   const sheetPick = async () => {
@@ -226,6 +227,15 @@ export function MenuModal({ t, snap, onClose, onOpen, onSheet }: { t: ReturnType
     SESSION.setPalette(colors);
     bridge.toast(t("importOk"));
   };
+  const refPick = async () => {
+    const f = await bridge.openFile("*/*");
+    if (!f) return;
+    if (isGifHeader(f.bytes)) { bridge.toast(t("importFail")); return; }
+    const st = await decodeStill(f.bytes, f.mime || "image/png");
+    if (!st) { bridge.toast(t("importFail")); return; }
+    onRef({ w: st.w, h: st.h, px: st.px, name: f.name || "ref" });
+    bridge.toast(t("importOk"));
+  };
   const exportPaletteFlow = () => { bridge.saveBytes((SESSION.doc.name || "palette") + ".gpl", "text/plain", exportGplPalette()); bridge.toast(t("saved")); };
   return (
     <>
@@ -240,6 +250,7 @@ export function MenuModal({ t, snap, onClose, onOpen, onSheet }: { t: ReturnType
           {act(t("importImg"), "i-import", () => void importFlow())}
           {act(t("importLayerM"), "i-layers", () => void importLayerFlow())}
           <Btn label={t("importSheet")} icon="i-open" className="menuitem" onClick={() => { void sheetPick(); }} />
+          <Btn label={t("refImg")} icon="i-eye" className="menuitem" onClick={() => { void refPick(); }} />
           <Btn label={t("importPalette")} icon="i-palette" className="menuitem" onClick={() => { void importPaletteFlow(); }} />
           <Btn label={t("exportPalette")} icon="i-save" className="menuitem" onClick={() => { exportPaletteFlow(); }} />
           {go("adjust")(t("adjust"), "i-size")}
