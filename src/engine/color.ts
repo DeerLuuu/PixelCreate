@@ -12,6 +12,16 @@ export function cssColor(c: RGBA): string {
   return `rgba(${c[0]},${c[1]},${c[2]},${(c[3] / 255).toFixed(3)})`;
 }
 
+/**
+ * Swatch background that HONESTLY shows alpha: colour painted over a checkerboard,
+ * so a transparent slot reads as checker (never as black over dark chrome).
+ */
+export function chipCss(c: RGBA): string {
+  const a = Math.max(0, Math.min(255, c[3] === undefined ? 255 : Math.round(c[3])));
+  const al = (a / 255).toFixed(3);
+  return "linear-gradient(rgba(" + c[0] + "," + c[1] + "," + c[2] + "," + al + "), rgba(" + c[0] + "," + c[1] + "," + c[2] + "," + al + ")), conic-gradient(#d6d6d6 25%, #ffffff 0 50%, #d6d6d6 0 75%, #ffffff 0) 0 0 / 8px 8px";
+}
+
 export function hexToRgba(hex: string): RGBA {
   let s = String(hex).replace("#", "").trim();
   if (s.length === 3) s = s.replace(/(.)/g, "$1$1");

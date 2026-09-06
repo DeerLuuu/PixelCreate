@@ -7,7 +7,7 @@ import { Doc } from "../engine/doc";
 import { Cel } from "../engine/cel";
 import type { BlendMode } from "../engine/types";
 import { BLEND_MODES } from "../engine/types";
-import { hexToRgba, rgbaToHex, hexToRgba as hrgb } from "../engine/color";
+import { hexToRgba, rgbaToHex, hexToRgba as hrgb, chipCss } from "../engine/color";
 import { HsvWheel, colorToHex6 } from "./HsvWheel";
 import { HoldAdjust } from "./hold";
 import { PALETTE_PACKS } from "./palettes";
@@ -71,7 +71,7 @@ export function PalettePanel({ t, onClose }: { t: ReturnType<typeof makeT>; onCl
         <div className="palgrid">
           {doc.palette.map((c, i) => {
             const cur = c[0] === active[0] && c[1] === active[1] && c[2] === active[2];
-            return <button key={i} className={"palcell" + (cur ? " on" : "")} style={{ background: "rgb(" + c[0] + "," + c[1] + "," + c[2] + ")" }} title={rgbaToHex(c)} onContextMenu={(e) => { e.preventDefault(); SESSION.paletteRemove(i); }}
+            return <button key={i} className={"palcell" + (cur ? " on" : "")} style={{ background: chipCss(c) }} title={rgbaToHex(c)} onContextMenu={(e) => { e.preventDefault(); SESSION.paletteRemove(i); }}
               onPointerDown={() => { longRef.current = { i, t: Date.now() }; }}
               onPointerUp={() => { const l = longRef.current; longRef.current = null; if (l && l.i === i && Date.now() - l.t >= 420) { skipRef.current = true; setRecColor(rgbaToHex(c).slice(0, 7)); setRecolor({ i }); } }}
               onClick={() => { if (skipRef.current) { skipRef.current = false; return; } apply(c); }} />;

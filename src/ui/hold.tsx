@@ -3,7 +3,7 @@ import React, { useRef, useState } from "react";
 import { SESSION } from "./singleton";
 import { showTip, hideTip } from "./tooltip";
 import type { RGBA } from "../engine/types";
-import { cssColor } from "../engine/color";
+import { chipCss } from "../engine/color";
 
 export function hsvToRgb(h: number, s: number, v: number): [number, number, number] {
   h = ((h % 360) + 360) % 360;
@@ -154,7 +154,7 @@ export function ColorHoldChip({ onClickTap }: { onClickTap: () => void }) {
     if (ev.clientX >= barX0 - 6 && ev.clientX <= barX0 + 22 && ev.clientY >= o.y - 8 && ev.clientY <= o.y + o.size + 8) {
       const vv = 1 - Math.max(0, Math.min(1, (ev.clientY - o.y) / o.size));
       const [rr, gg, bb] = hsvToRgb(h, s, vv);
-      SESSION.setColor([rr, gg, bb, SESSION.color[3]]);
+      SESSION.setColor([rr, gg, bb, 255]);
       return;
     }
     const dx = ev.clientX - dcx;
@@ -162,7 +162,7 @@ export function ColorHoldChip({ onClickTap }: { onClickTap: () => void }) {
     const hue = ((Math.atan2(dy, dx) * 180) / Math.PI + 90 + 360) % 360;
     const sat = Math.min(1, Math.hypot(dx, dy) / (o.size / 2));
     const [rr, gg, bb] = hsvToRgb(hue, sat, v);
-    SESSION.setColor([rr, gg, bb, SESSION.color[3]]);
+    SESSION.setColor([rr, gg, bb, 255]);
   };
   const doUp = () => {
     activeRef.current = false;
@@ -201,7 +201,7 @@ export function ColorHoldChip({ onClickTap }: { onClickTap: () => void }) {
     <>
       <button
         className="colorchip"
-        style={{ background: cssColor([c[0], c[1], c[2], 255]), boxShadow: c[3] < 255 ? "inset 0 0 0 2px rgba(255,255,255,.4)" : undefined }}
+        style={{ background: chipCss(c) }}
         title="hold for quick color · tap for palette"
         onPointerDown={start}
         onPointerUp={() => {

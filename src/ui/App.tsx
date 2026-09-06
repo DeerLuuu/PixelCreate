@@ -7,7 +7,7 @@ import { CORE_TOOLS, SHAPE_TOOLS, SELECT_TOOLS, isShapeTool, isSelectTool } from
 import { View } from "../render/view";
 import { Doc } from "../engine/doc";
 import { Cel } from "../engine/cel";
-import { rgbaToHex, hexToRgba, cssColor } from "../engine/color";
+import { rgbaToHex, hexToRgba, chipCss } from "../engine/color";
 import * as selOps from "../tools/select";
 import * as fxE from "../engine/effects";
 import { BLEND_MODES } from "../engine/types";
@@ -711,8 +711,8 @@ function PalBalls({ x, y, onDone }: { x: number; y: number; onDone: () => void }
         const c = it.c;
         const cur = c[0] === SESSION.color[0] && c[1] === SESSION.color[1] && c[2] === SESSION.color[2];
         return (
-          <button key={"pb" + it.i} className={"orb-item pal-c" + (cur ? " on" : "")} style={{ left: it.px, top: it.py, background: "rgb(" + c[0] + "," + c[1] + "," + c[2] + ")", "--st": (Math.min(it.i, 40) * 8) + "ms" } as unknown as React.CSSProperties} title={rgbaToHex(c)} onContextMenu={(e) => e.preventDefault()}
-            onClick={() => { SESSION.setFgColor([c[0], c[1], c[2], c[3]]); onDone(); }} />
+          <button key={"pb" + it.i} className={"orb-item pal-c" + (cur ? " on" : "")} style={{ left: it.px, top: it.py, background: chipCss(c), "--st": (Math.min(it.i, 40) * 8) + "ms" } as unknown as React.CSSProperties} title={rgbaToHex(c)} onContextMenu={(e) => e.preventDefault()}
+            onClick={() => { SESSION.setFgColor([c[0], c[1], c[2], 255]); onDone(); }} />
         );
       })}
     </div>
@@ -740,7 +740,7 @@ function ControlBar({ t, snap, onPanel, onAdjust }: { t: ReturnType<typeof makeT
             title={SESSION.colorTarget === "bg" ? t("useFg") : t("useBg")}
             aria-label={SESSION.colorTarget === "bg" ? t("useFg") : t("useBg")}
             onClick={() => SESSION.setColorTarget(SESSION.colorTarget === "bg" ? "fg" : "bg")}
-            style={{ background: cssColor(SESSION.colorTarget === "bg" ? SESSION.fg : SESSION.bg) }} />
+            style={{ background: chipCss(SESSION.colorTarget === "bg" ? SESSION.fg : SESSION.bg) }} />
         </div>
         <Btn label="⇄" className="swap-color" title={t("swapColors")} onClick={() => SESSION.swapColors()} />
         <Btn icon="i-adjust" onClick={onAdjust} title={t("adjust")} />
@@ -778,7 +778,7 @@ function Viewport({ onColorClick, refImg, onRefClose }: { onColorClick: () => vo
       {visible && (
         <div className="canvas-corner">
           <button className="colorbox" onClick={onColorClick} title={tv("colorPicked")}>
-            <span className="cb-swatch" style={{ background: cssColor([c[0], c[1], c[2], 255]) }} />
+            <span className="cb-swatch" style={{ background: chipCss(c) }} />
             <span className="cb-hex">{rgbaToHex(c)}</span>
           </button>
         </div>
