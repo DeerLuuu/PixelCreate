@@ -18,7 +18,7 @@ import * as bridge from "../io/bridge";
 import { Btn, Icon, useSession } from "./base";
 import type { RefImg } from "./refimg";
 
-export type ModalId = "menu" | "newdoc" | "export" | "adjust" | "settings" | "help" | "frame" | "size" | "sheet" | "history" | null;
+export type ModalId = "menu" | "changelog" | "newdoc" | "export" | "adjust" | "settings" | "help" | "frame" | "size" | "sheet" | "history" | null;
 export type SizeMode = "canvas" | "sprite";
 export type SheetData = { w: number; h: number; px: Uint8ClampedArray; name: string };
 
@@ -260,6 +260,7 @@ export function MenuModal({ t, snap, onClose, onOpen, onSheet, onRef }: { t: Ret
           {go("adjust")(t("adjust"), "i-size")}
           {go("settings")(t("settings"), "i-gear")}
           {go("help")(t("helpTitle"), "i-eye")}
+          {go("changelog")(t("changelog"), "i-star")}
           <Btn label={t("clearFrame")} icon="i-eraser" onClick={() => { SESSION.clearActiveCel(); onClose(); }} className="menuitem danger" />
         </div>
       </div>

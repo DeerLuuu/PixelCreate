@@ -29,6 +29,7 @@ import { PreviewBox } from "./preview";
 import { RefImageBox } from "./refimg";
 import type { RefImg } from "./refimg";
 import { PalettePanel, MenuModal, SizeModal, SheetModal, NewDocModal, ExportModal, AdjustModal, SettingsModal, HelpModal, FrameModal, HistoryModal, histName, saveProject } from "./modals";
+import { ChangelogModal, changelogNeedsShow } from "./changelog";
 import type { ModalId, SizeMode, SheetData } from "./modals";
 
 type PanelId = "layers" | "palette" | null;
@@ -50,6 +51,12 @@ export function App() {
   useEffect(() => {
     SESSION.setConfirmAsk((q) => new Promise<boolean>((resolve) => setConfirmQ({ msg: q.msg, yes: q.yes, no: q.no, res: resolve })));
     return () => SESSION.setConfirmAsk(null);
+  }, []);
+
+  // first launch after an update: auto-show the release notes
+  useEffect(() => {
+    if (changelogNeedsShow()) setModal("changelog");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (
@@ -85,6 +92,7 @@ export function App() {
       <Keep on={modal === "help"} el={modal === "help" ? <HelpModal t={t} onClose={() => setModal(null)} /> : null} />
       <Keep on={frameDlgIdx !== null} el={frameDlgIdx !== null ? <FrameModal t={t} snap={snap} fi={frameDlgIdx} onClose={() => setFrameDlgIdx(null)} /> : null} />
       <Keep on={modal === "history"} el={modal === "history" ? <HistoryModal t={t} snap={snap} onClose={() => setModal(null)} onReplay={() => { setModal(null); setReplayOn(true); }} /> : null} />
+      <Keep on={modal === "changelog"} el={modal === "changelog" ? <ChangelogModal onClose={() => setModal(null)} /> : null} />
       {confirmQ && (
         <div className="cfm-layer">
           <div className="dlg-mask" onClick={() => { confirmQ.res(false); setConfirmQ(null); }} />
