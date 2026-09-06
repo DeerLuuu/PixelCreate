@@ -35,7 +35,11 @@ export function PalettePanel({ t, onClose }: { t: ReturnType<typeof makeT>; onCl
   const active = SESSION.currentColor();
   const [hex, setHex] = useState(rgbaToHex(active));
   const alpha = active[3];
-  const apply = (c: [number, number, number, number]) => { SESSION.setColor(c); setHex(rgbaToHex(c)); };
+  // selecting a colour applies it FULLY OPAQUE: a stale low/zero alpha from a
+  // previous translucent/eraser setting must not make every new colour look
+  // wrong (drawing transparent looks like erasing). Use the opacity slider
+  // afterwards for translucency.
+  const apply = (c: [number, number, number, number]) => { const o: [number, number, number, number] = [c[0], c[1], c[2], 255]; SESSION.setColor(o); setHex(rgbaToHex(o)); };
   // long-press a swatch to recolor it and remap matching pixels across the sprite
   const [recolor, setRecolor] = useState<{ i: number } | null>(null);
   const [recColor, setRecColor] = useState("#ffffff");
@@ -51,7 +55,7 @@ export function PalettePanel({ t, onClose }: { t: ReturnType<typeof makeT>; onCl
           <input className="hexinput" value={hex.replace(/^#/, "")} onChange={(e) => {
             const v = e.target.value.replace(/[^0-9a-fA-F]/g, "").slice(0, 8);
             setHex(v ? "#" + v : "#");
-            if (v.length >= 6) { const c = hrgb(v); SESSION.setColor([c[0], c[1], c[2], v.length === 8 ? c[3] : alpha]); }
+            if (v.length >= 6) { const c = hrgb(v); if (v.length === 8) SESSION.setColor([c[0], c[1], c[2], c[3]]); else { const o: [number, number, number, number] = [c[0], c[1], c[2], 255]; SESSION.setColor(o); setHex(rgbaToHex(o)); } }
           }} />
           <input type="color" value={colorToHex6(active)} onChange={(e) => { const c = hrgb(e.target.value); apply([c[0], c[1], c[2], alpha]); }} />
         </div>
