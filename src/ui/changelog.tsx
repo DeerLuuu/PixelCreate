@@ -30,6 +30,8 @@ export const CHANGELOG: ClgVersion[] = [
       it("fix", "色块按棋盘格真实显示透明度，透明槽位不再显示成黑色", "Swatches now show transparency honestly over a checkerboard instead of black"),
       it("fix", "修复添加/移动图层后帧内容错位（引擎回归测试覆盖）", "Fix cel content shifting after inserting/moving layers (covered by engine regression tests)"),
       it("imp", "选色一律不透明应用，半透明请用“不透明度”滑块；取色器支持吸取透明背景", "Colour picks apply fully opaque; use the opacity slider for translucency. Eyedropper can pick transparency"),
+      it("imp", "界面动效：时间轴开关、长按进度条、快速色轮、菜单与色块控件加入过渡/入场动画", "UI motion: smooth open/close & entrance animations for the timeline panel, hold-drag sliders, quick colour wheel, menus and chips"),
+      it("imp", "精简菜单：移除“操作说明”与“清空当前帧”入口，界面更简洁", "Menu cleanup: removed the Help (操作说明) and Clear-current-frame (清空当前帧) entries"),
     ],
   },
   {
