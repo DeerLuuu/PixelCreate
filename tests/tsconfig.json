@@ -1,0 +1,22 @@
+{
+  "compilerOptions": {
+    "module": "commonjs",
+    "target": "es2019",
+    "lib": [
+      "es2019",
+      "dom"
+    ],
+    "moduleResolution": "node",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "strict": false,
+    "rootDir": "..",
+    "outDir": ".ts-out"
+  },
+  "include": [
+    "../tests/run-tests.ts",
+    "../tests/common.ts",
+    "../tests/history.test.ts",
+    "../tests/ops.test.ts"
+  ]
+}

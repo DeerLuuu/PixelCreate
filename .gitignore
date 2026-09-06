@@ -8,6 +8,7 @@ app2/www/js/app.js
 
 # ---- scratch / local temp ----
 /_scratch/
+tests/.ts-out/
 
 # ---- toolchain: keep only authored scripts, ignore SDK downloads/extracts ----
 /toolchain/*

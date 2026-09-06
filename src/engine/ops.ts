@@ -42,6 +42,9 @@ function shiftCelsByFrame(doc: Doc, fromIdx: number, delta: number): void {
 export function addLayer(doc: Doc, index: number): void {
   const at = Math.max(0, Math.min(doc.layers.length, index));
   doc.layers.splice(at, 0, freshLayer(doc));
+  // every layer originally at >= at shifted up by one: re-key their cels so
+  // content follows the layer (mirrors addFrame below)
+  shiftCelsByLayer(doc, at, +1);
 }
 export function duplicateLayer(doc: Doc, li: number): void {
   const src = doc.layers[li];
@@ -63,22 +66,29 @@ export function removeLayer(doc: Doc, li: number): void {
   shiftCelsByLayer(doc, li + 1, -1);
 }
 export function moveLayer(doc: Doc, from: number, to: number): void {
-  const L = doc.layers[from];
-  if (!L) return;
-  const toC = Math.max(0, Math.min(doc.layers.length - 1, to));
+  const n = doc.layers.length;
+  if (from < 0 || from >= n) return;
+  const toC = Math.max(0, Math.min(n - 1, to));
   if (toC === from) return;
+  const pre = doc.layers.slice(); // keeps layer-object identity + old order
+  const L = doc.layers[from];
   doc.layers.splice(from, 1);
   doc.layers.splice(toC, 0, L);
-  // swap cel keys of both involved layer indices (two phases: delete old, then write)
-  const swaps: { li: number; fi: number; cel: Cel }[] = [];
-  for (const [k, cel] of doc.cels) {
+  // re-key every cel whose layer moved (tracked by layer-object identity) so
+  // content follows the layer even across a multi-index jump. Two phases:
+  // delete all old keys first, then write the new keys.
+  const rekeys: Array<{ li: number; nf: number; fi: number; cel: Cel }> = [];
+  for (const [k, cel] of Array.from(doc.cels)) {
     const sep = k.indexOf(":");
-    const l2 = Number(k.slice(0, sep));
-    const f2 = Number(k.slice(sep + 1));
-    if (l2 === from || l2 === toC) swaps.push({ li: l2, fi: f2, cel });
+    const li = Number(k.slice(0, sep));
+    const fi = Number(k.slice(sep + 1));
+    const lobj = pre[li];
+    if (!lobj) continue;
+    const nf = doc.layers.indexOf(lobj);
+    if (nf !== -1 && nf !== li) rekeys.push({ li, nf, fi, cel });
   }
-  for (const s of swaps) doc.cels.delete(doc.key(s.li, s.fi));
-  for (const s of swaps) doc.cels.set(doc.key(s.li === from ? toC : from, s.fi), s.cel);
+  for (const r of rekeys) doc.cels.delete(doc.key(r.li, r.fi));
+  for (const r of rekeys) doc.cels.set(doc.key(r.nf, r.fi), r.cel);
 }
 
 export function addFrame(doc: Doc, index: number): void {
