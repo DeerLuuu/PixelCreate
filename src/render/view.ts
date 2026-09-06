@@ -7,7 +7,7 @@ import * as comp from "./compositor";
 import * as bridge from "../io/bridge";
 import { rgbaToHex } from "../engine/color";
 import { Stroke } from "../tools/stroke";
-import { lineCells } from "../engine/paint";
+import { lineCells, brushStamp } from "../engine/paint";
 import { selOps, lassoFill, beginMove, xformSelection, type MoveState } from "../tools/select";
 import type { Session } from "../app/session";
 import { clamp } from "../engine/types";
@@ -303,19 +303,29 @@ export class View {
       ctx.restore();
     }
     this.drawSelTransform();
-    // footprint marker: squareCells() centres the brush on the hover cell, so
-    // the outline spans [cell - floor(size/2), +size) and is clipped to the doc
+    // footprint marker: pencil/eraser show the exact Aseprite circle-brush
+    // outline (transparent centre); other drawing tools keep the square bounds
     const cu = this.cursor;
     if (cu) {
-      const s = Math.max(1, Math.round(cu.size));
-      const h = Math.floor(s / 2);
-      const dw = this.session.doc.w, dh = this.session.doc.h;
-      const x1 = Math.max(0, cu.x - h), y1 = Math.max(0, cu.y - h);
-      const x2 = Math.min(dw, cu.x - h + s), y2 = Math.min(dh, cu.y - h + s);
-      if (x2 > x1 && y2 > y1) {
-        ctx.strokeStyle = "rgba(255,255,255,0.9)";
-        ctx.lineWidth = 1.2;
-        ctx.strokeRect(this.ox + x1 * z, this.oy + y1 * z, (x2 - x1) * z, (y2 - y1) * z);
+      const tool = this.session.tool;
+      if (tool === "pencil" || tool === "eraser") {
+        const st = brushStamp(cu.size);
+        const cw = Math.max(1, z);
+        ctx.fillStyle = "rgba(255,255,255,0.9)";
+        for (const [cx, cy] of st.outline) {
+          ctx.fillRect(this.ox + (cu.x + cx) * z, this.oy + (cu.y + cy) * z, cw, cw);
+        }
+      } else {
+        const s = Math.max(1, Math.round(cu.size));
+        const h = Math.floor(s / 2);
+        const dw = this.session.doc.w, dh = this.session.doc.h;
+        const x1 = Math.max(0, cu.x - h), y1 = Math.max(0, cu.y - h);
+        const x2 = Math.min(dw, cu.x - h + s), y2 = Math.min(dh, cu.y - h + s);
+        if (x2 > x1 && y2 > y1) {
+          ctx.strokeStyle = "rgba(255,255,255,0.9)";
+          ctx.lineWidth = 1.2;
+          ctx.strokeRect(this.ox + x1 * z, this.oy + y1 * z, (x2 - x1) * z, (y2 - y1) * z);
+        }
       }
     }
   }

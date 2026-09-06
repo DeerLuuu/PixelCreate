@@ -2,7 +2,7 @@
 import type { Doc } from "../engine/doc";
 import { Cel } from "../engine/cel";
 import type { RGBA } from "../engine/types";
-import { squareCells, lineCells, floodFill, floodErase, paintAt, eraseAt, type MaskFn } from "../engine/paint";
+import { squareCells, brushStamp, lineCells, floodFill, floodErase, paintAt, eraseAt, type MaskFn } from "../engine/paint";
 import { ellipseFill, ellipseOutline } from "../engine/shape";
 import type { History } from "../engine/history";
 import type { BrushState, SymMode } from "./registry";
@@ -128,13 +128,13 @@ export class Stroke {
   }
 
   private paintDot(x: number, y: number, size: number): void {
-    for (const [dx, dy] of squareCells(x, y, size)) {
-      if (this.touch(dx, dy)) this.everPainted = true;
+    for (const [ox, oy] of brushStamp(size).cells) {
+      if (this.touch(x + ox, y + oy)) this.everPainted = true;
     }
   }
   private eraseDot(x: number, y: number, size: number): void {
-    for (const [dx, dy] of squareCells(x, y, size)) {
-      if (this.touchErase(dx, dy)) this.everPainted = true;
+    for (const [ox, oy] of brushStamp(size).cells) {
+      if (this.touchErase(x + ox, y + oy)) this.everPainted = true;
     }
   }
 
