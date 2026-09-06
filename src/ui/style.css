@@ -216,14 +216,11 @@ input[type=range]{width:64px;height:22px;accent-color:var(--accent)}
   border:1px solid var(--line);border-radius:8px;color:var(--text);font-size:11px;padding:3px 8px;height:26px;flex:0 1 auto}
 .tl-blend .bname{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .tl-blend .bchev{color:var(--dim);font-size:9px}
-.blend-mask{position:fixed;inset:0;z-index:59;background:rgba(0,0,0,.35)}
-.blendmenu{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);z-index:60;background:var(--bg2);
-  border:1px solid var(--line);border-radius:14px;padding:8px;width:min(230px,82vw);max-height:72vh;
-  overflow-y:auto;overscroll-behavior:contain;touch-action:pan-y;box-shadow:0 14px 46px rgba(0,0,0,.65)}
-.blendmenu{max-height:min(72vh,calc(100dvh - 40px))}
-.blendmenu::after{content:"";display:block;height:2px}
+/* blend-mode picker: a standard dialog window with a scrollable list */
+.blend-dlg{max-height:min(78vh,calc(100dvh - 40px));display:flex;flex-direction:column}
+.blend-dlg .dlg-body{flex:1 1 auto;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:2px}
 @media (orientation: landscape){
-  .blendmenu{width:min(250px,60vw);max-height:min(64vh,calc(100dvh - 24px));top:50%;transform:translate(-50%,-50%)}
+  .blend-dlg{width:min(340px,72vw)}
 }
 .blend-item{display:flex;width:100%;padding:9px 12px;border-radius:9px;color:var(--text);text-align:left;font-size:13px;margin-bottom:2px}
 .blend-item:active{background:var(--bg4)}

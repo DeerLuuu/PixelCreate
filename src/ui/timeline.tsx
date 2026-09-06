@@ -234,7 +234,7 @@ export function TimelineBar({ t, snap, onFrameDlg }: { t: ReturnType<typeof make
       {curL && (
         <div className="tl-edit">
           <span className="tl-name tl-ro" title={curL.name}>{curL.name}</span>
-          <HoldAdjust dir={land ? "v" : "h"} value={curL.opacity} min={0} max={100} title={t("opacity")}
+          <HoldAdjust fixedBottom dir="h" value={curL.opacity} min={0} max={100} title={t("opacity")}
             format={(v) => v + "%"} reset={100}
             onChange={(v) => SESSION.editLayerOpacity(curLi, v)}
             onEnd={() => SESSION.endLayerOpacity()} />
@@ -254,14 +254,17 @@ export function TimelineBar({ t, snap, onFrameDlg }: { t: ReturnType<typeof make
       )}
       {curL && blendOpen && (
         <>
-          <div className="blend-mask" onClick={() => setBlendOpen(false)} />
-          <div className="blendmenu">
-            {BLEND_MODES.map((b) => (
-              <button key={b} type="button" className={"blend-item" + (b === curL.blend ? " on" : "")}
-                onClick={() => { SESSION.setLayerBlend(curLi, b as never); setBlendOpen(false); }}>
-                {t("blends." + b)}
-              </button>
-            ))}
+          <div className="dlg-mask" onClick={() => setBlendOpen(false)} />
+          <div className="dlg blend-dlg">
+            <div className="dlg-head"><span>{t("blendTitle")}</span><div className="grow" /><button className="btn small" onClick={() => setBlendOpen(false)}><Icon id="i-x" size={16} /></button></div>
+            <div className="dlg-body">
+              {BLEND_MODES.map((b) => (
+                <button key={b} type="button" className={"blend-item" + (b === curL.blend ? " on" : "")}
+                  onClick={() => { SESSION.setLayerBlend(curLi, b as never); setBlendOpen(false); }}>
+                  {t("blends." + b)}
+                </button>
+              ))}
+            </div>
           </div>
         </>
       )}
