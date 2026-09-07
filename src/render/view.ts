@@ -39,7 +39,9 @@ export class View {
   /** axis-adjust mode for the symmetry guides: dragging the dashed lines
    *  repositions the mirror axis instead of painting */
   private symAdj = false;
-  private symTarget: "x" | "y" | "both" | null = null;
+  private symTarget: "mv" | "rot" | null = null;
+  /** css point where the adjust gesture started (for axis translation) */
+  private symGrabPt: PxPoint | null = null;
   private ants = 0;
   private antTimer: number | null = null;
   /** cached selection tint layer (rebuilt only when the doc changes) */
@@ -384,78 +386,86 @@ export class View {
     this.drawOverlay();
   }
 
-  /** css-px positions of the active symmetry guides for the current mode */
-  private symGuides(): { vx?: number; hy?: number } | null {
+  /** mirror-axis geometry in css space, or null when symmetric drawing is off */
+  private symAxis(): { px: number; py: number; ux: number; uy: number; perp: boolean } | null {
     const s = this.session;
     if (s.sym === "off" || !isSymTool(s.tool)) return null;
     const doc = s.doc;
-    const g: { vx?: number; hy?: number } = {};
-    if (s.sym === "lr" || s.sym === "both") {
-      const qx = clamp(s.symQx, -doc.w, doc.w);
-      g.vx = this.ox + ((doc.w + qx) / 2) * this.zoom;
+    const rad = (s.symAng * Math.PI) / 180;
+    return {
+      px: this.ox + (doc.w / 2 + s.symOx) * this.zoom,
+      py: this.oy + (doc.h / 2 + s.symOy) * this.zoom,
+      ux: Math.cos(rad), uy: Math.sin(rad),
+      perp: s.sym === "both",
+    };
+  }
+  /** stroke one infinite symmetry line: the overlay canvas clips it to the
+   *  viewport, so it visibly runs past the canvas edges into the margins */
+  private symStrokeSeg(ctx: CanvasRenderingContext2D, px: number, py: number, ux: number, uy: number): void {
+    const K = Math.hypot(this.host.clientWidth, this.host.clientHeight) + 8;
+    ctx.beginPath();
+    ctx.moveTo(px - ux * K, py - uy * K);
+    ctx.lineTo(px + ux * K, py + uy * K);
+    ctx.stroke();
+  }
+  /** rotation knob sits on the primary axis, inside the viewport */
+  private symRotKnob(): [number, number] | null {
+    const a = this.symAxis();
+    if (!a) return null;
+    const w = this.host.clientWidth, h = this.host.clientHeight;
+    const L = Math.min(92, Math.max(48, Math.min(w, h) * 0.24));
+    for (const sgn of [1, -1]) {
+      const kx = a.px + a.ux * L * sgn, ky = a.py + a.uy * L * sgn;
+      if (kx >= 10 && ky >= 10 && kx <= w - 10 && ky <= h - 10) return [kx, ky];
     }
-    if (s.sym === "tb" || s.sym === "both") {
-      const qy = clamp(s.symQy, -doc.h, doc.h);
-      g.hy = this.oy + ((doc.h + qy) / 2) * this.zoom;
-    }
-    return g;
+    return [clamp(a.px + a.ux * L, 10, w - 10), clamp(a.py + a.uy * L, 10, h - 10)];
+  }
+  private ptNearAxis(pt: PxPoint, px: number, py: number, ux: number, uy: number, band: number): boolean {
+    const dx = pt.x - px, dy = pt.y - py;
+    return Math.abs(dx * uy - dy * ux) <= band;
   }
 
-  /** dashed symmetry guides (the adjustable axis lines) + grab knobs */
+  /** dashed symmetry guides (extend across the whole drawing area) + grab UI */
   private drawSymGuides(ctx: CanvasRenderingContext2D): void {
-    const s = this.session;
-    const g = this.symGuides();
-    if (!g) return;
-    const doc = s.doc;
-    const z = this.zoom;
-    const x0 = this.ox, y0 = this.oy;
-    const wPx = doc.w * z, hPx = doc.h * z;
+    const a = this.symAxis();
+    if (!a) return;
     ctx.save();
     ctx.lineWidth = this.symAdj ? 2 : 1.2;
-    ctx.strokeStyle = this.symAdj ? "rgba(126,255,214,0.95)" : "rgba(255,255,255,0.42)";
+    ctx.strokeStyle = this.symAdj ? "rgba(126,255,214,0.95)" : "rgba(255,255,255,0.45)";
     ctx.setLineDash(this.symAdj ? [8, 5] : [6, 5]);
-    ctx.beginPath();
-    if (g.vx !== undefined) { ctx.moveTo(g.vx, y0); ctx.lineTo(g.vx, y0 + hPx); }
-    if (g.hy !== undefined) { ctx.moveTo(x0, g.hy); ctx.lineTo(x0 + wPx, g.hy); }
-    ctx.stroke();
+    this.symStrokeSeg(ctx, a.px, a.py, a.ux, a.uy);
+    if (a.perp) this.symStrokeSeg(ctx, a.px, a.py, -a.uy, a.ux);
     ctx.setLineDash([]);
     if (this.symAdj) {
-      const knob = (kx: number, ky: number) => {
+      // pivot marker
+      ctx.beginPath();
+      ctx.arc(a.px, a.py, 4.5, 0, Math.PI * 2);
+      ctx.fillStyle = "rgba(255,255,255,0.95)";
+      ctx.fill();
+      // rotation knob at the far end of the primary axis
+      const knob = this.symRotKnob();
+      if (knob) {
         ctx.beginPath();
-        ctx.arc(kx, ky, 6, 0, Math.PI * 2);
-        ctx.fillStyle = "#ffffff";
-        ctx.fill();
-        ctx.strokeStyle = "rgba(126,255,214,0.9)";
-        ctx.lineWidth = 1.8;
-        ctx.stroke();
-      };
-      if (g.vx !== undefined) { knob(g.vx, y0); knob(g.vx, y0 + hPx); }
-      if (g.hy !== undefined) { knob(x0, g.hy); knob(x0 + wPx, g.hy); }
-      // four-way mode: solid knob on the cross (drag moves both axes)
-      if (g.vx !== undefined && g.hy !== undefined) {
-        ctx.beginPath();
-        ctx.arc(g.vx, g.hy, 8, 0, Math.PI * 2);
-        ctx.fillStyle = "rgba(126,255,214,0.95)";
+        ctx.arc(knob[0], knob[1], 10, 0, Math.PI * 2);
+        ctx.fillStyle = "rgba(126,255,214,0.35)";
         ctx.fill();
         ctx.strokeStyle = "#ffffff";
-        ctx.lineWidth = 1.8;
+        ctx.lineWidth = 2.4;
         ctx.stroke();
       }
     }
     ctx.restore();
   }
 
-  /** which symmetry axis is under the pointer (adjust mode only) */
-  private symHit(pt: PxPoint): "x" | "y" | "both" | null {
-    const g = this.symGuides();
-    if (!g) return null;
-    const B = 20; // grab band around each guide (css px)
-    const vx = g.vx, hy = g.hy;
-    const dx = vx === undefined ? Infinity : Math.abs(pt.x - vx);
-    const dy = hy === undefined ? Infinity : Math.abs(pt.y - hy);
-    if (vx !== undefined && hy !== undefined && dx <= B && dy <= B) return "both";
-    if (vx !== undefined && dx <= B) return "x";
-    if (hy !== undefined && dy <= B) return "y";
+  /** what the adjust-mode pointer is holding: the axis (translate) or the knob (rotate) */
+  private symHit(pt: PxPoint): "mv" | "rot" | null {
+    const a = this.symAxis();
+    if (!a) return null;
+    const knob = this.symRotKnob();
+    if (knob && Math.hypot(pt.x - knob[0], pt.y - knob[1]) <= 26) return "rot";
+    const B = 22;
+    if (this.ptNearAxis(pt, a.px, a.py, a.ux, a.uy, B)) return "mv";
+    if (a.perp && this.ptNearAxis(pt, a.px, a.py, -a.uy, a.ux, B)) return "mv";
     return null;
   }
 
@@ -616,6 +626,7 @@ export class View {
       this.lastTapPt = null;
       this.cursor = null;
       this.symTarget = this.symHit(pt);
+      this.symGrabPt = pt;
       this.drawOverlay();
       return;
     }
@@ -669,7 +680,7 @@ export class View {
     this.gestureStartPx = pp;
     try {
       this.stroke = new Stroke(doc, s.curLayer(), s.curFrame(), tool as never, s.brush(), s.layerLocked(), s.sym, s.shapeSides, s.shapeFill,
-        clamp(s.symQx, -doc.w, doc.w), clamp(s.symQy, -doc.h, doc.h));
+        s.symOx, s.symOy, s.symAng);
     } catch {
       this.stroke = null;
       return;
@@ -706,17 +717,25 @@ export class View {
       this.refresh(false);
       return;
     }
-    // axis-adjust drag: the guide follows the finger (snapped to half cells)
+    // axis-adjust drag: translate the axis (grab the line) or rotate it (grab the knob)
     if (this.symTarget) {
       const doc = this.session.doc;
       const s = this.session;
-      if (this.symTarget === "x" || this.symTarget === "both") {
-        const a = (pt.x - this.ox) / this.zoom;
-        s.symQx = clamp(Math.round(a * 2) - doc.w, -doc.w, doc.w);
-      }
-      if (this.symTarget === "y" || this.symTarget === "both") {
-        const a = (pt.y - this.oy) / this.zoom;
-        s.symQy = clamp(Math.round(a * 2) - doc.h, -doc.h, doc.h);
+      if (this.symTarget === "rot") {
+        const cx = this.ox + (doc.w / 2 + s.symOx) * this.zoom;
+        const cy = this.oy + (doc.h / 2 + s.symOy) * this.zoom;
+        let deg = (Math.atan2(pt.y - cy, pt.x - cx) * 180) / Math.PI;
+        deg = ((deg % 180) + 180) % 180; // lines are 180-periodic
+        s.symAng = Math.round(deg * 2) / 2;
+        s.symTweaked = true;
+      } else if (this.symGrabPt) {
+        const dx = (pt.x - this.symGrabPt.x) / this.zoom;
+        const dy = (pt.y - this.symGrabPt.y) / this.zoom;
+        const pxa = doc.w / 2 + s.symOx + dx;
+        const pya = doc.h / 2 + s.symOy + dy;
+        s.symOx = clamp(pxa, 0, doc.w) - doc.w / 2;
+        s.symOy = clamp(pya, 0, doc.h) - doc.h / 2;
+        s.symTweaked = true;
       }
       this.drawOverlay();
       return;
@@ -764,6 +783,8 @@ export class View {
     this.pointers.delete(e.pointerId);
     if (this.symTarget) {
       this.symTarget = null;
+      this.symGrabPt = null;
+      this.session.changed(); // refresh the angle readout in the UI chips
       this.drawOverlay();
     }
     if (this.pointers.size < 2) this.pinchBase = null;

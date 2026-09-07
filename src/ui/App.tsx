@@ -869,6 +869,7 @@ function Viewport({ onColorClick, refImg, onRefClose }: { onColorClick: () => vo
         <div className={"sym-chiprow" + (symAdj ? " adj" : "")}>
           {symAdj ? (
             <>
+              <span className="sym-chip sym-ro">{tv("symAngle")} {Math.round(SESSION.symAng)}°</span>
               <button className="sym-chip sym-done" type="button" title={tv("symAdjustHint")} onClick={() => { setSymAdj(false); viewRef.current?.setSymAdjust(false); }}>{tv("symDone")}</button>
               <button className="sym-chip" type="button" title={tv("symReset")} onClick={() => SESSION.resetSymAxes()}>{tv("symReset")}</button>
             </>

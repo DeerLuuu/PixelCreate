@@ -78,11 +78,14 @@ export class Session {
   selectionTolerance = 8;
   colorPicking = false;
   sym: SymMode = "off";
-  /** symmetry-axis offsets in half-cells from the doc centre: the mirror axis
-   *  sits at (doc.w + symQx) / 2 (integer symQx keeps the axis on a pixel or
-   *  half-pixel grid, so mirrored cells are exact) */
-  symQx = 0;
-  symQy = 0;
+  /** adjustable mirror axis: pivot offset (symOx/symOy) from the doc centre
+   *  in doc gridline units plus the axis angle (degrees, 0 = horizontal,
+   *  180-periodic). lr/tb mirror across this single axis (defaults vertical /
+   *  horizontal); both adds the perpendicular axis through the same pivot. */
+  symOx = 0;
+  symOy = 0;
+  symAng = 90;
+  symTweaked = false;
   shapeSides = 6;
   /** shapes draw filled (true) or hollow outline (false) */
   shapeFill = true;
@@ -407,16 +410,25 @@ export class Session {
     this.changed();
   }
   cycleSym(): SymMode {
-    this.sym = nextSym(this.sym);
+    const prev = this.sym;
+    this.sym = nextSym(prev);
+    // entering a mode applies its default geometry, unless the user already
+    // customised the axis (dragged/rotated) - then keep their setup
+    if (this.sym !== "off" && !this.symTweaked) this.applySymPreset(this.sym);
     this.changed();
     this.repaint(); // show/hide the adjustable symmetry guides
     return this.sym;
   }
-  /** snap both symmetry axes back to the canvas centre */
+  /** mode-preset axis geometry: centred pivot, vertical for lr/both, horizontal for tb */
+  applySymPreset(m: SymMode): void {
+    this.symOx = 0;
+    this.symOy = 0;
+    this.symAng = m === "tb" ? 0 : 90;
+    this.symTweaked = false;
+  }
+  /** recentre the axis and restore the current mode's default angle */
   resetSymAxes(): void {
-    if (this.symQx === 0 && this.symQy === 0) return;
-    this.symQx = 0;
-    this.symQy = 0;
+    this.applySymPreset(this.sym);
     this.repaint();
     this.changed();
   }
@@ -570,8 +582,7 @@ export class Session {
     this.frameIdx = 0;
     this.history.clear();
     this.clip = null;
-    this.symQx = 0;
-    this.symQy = 0;
+    this.applySymPreset(this.sym);
     this.stopPlayback();
     this.view_?.setDoc(this.doc);
     this.view_?.setFrame(0);
@@ -586,8 +597,7 @@ export class Session {
     this.frameIdx = 0;
     this.history.clear();
     this.clip = null;
-    this.symQx = 0;
-    this.symQy = 0;
+    this.applySymPreset(this.sym);
     this.stopPlayback();
     this.view_?.setDoc(doc);
     this.view_?.setFrame(0);

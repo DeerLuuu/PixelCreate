@@ -21,16 +21,19 @@ export class Stroke {
   readonly sym: SymMode;
   readonly shapeSides: number;
   readonly fill: boolean;
-  /** mirror-axis offsets (half-cell units): axis at (w+qx)/2, (h+qy)/2 */
-  readonly qx: number;
-  readonly qy: number;
+  /** mirror-axis pivot offsets from the doc centre (doc gridline units) */
+  readonly ox: number;
+  readonly oy: number;
+  /** mirror-line angle (degrees, 0 = horizontal); direction unit cached */
+  private readonly ux: number;
+  private readonly uy: number;
   color: RGBA;
   size: number;
   last: [number, number] | null = null;
   start: [number, number] | null = null;
   private everPainted = false;
 
-  constructor(doc: Doc, li: number, fi: number, kind: ToolKind, brush: BrushState, layerLocked: boolean, sym: SymMode, shapeSides = 6, fill = true, qx = 0, qy = 0) {
+  constructor(doc: Doc, li: number, fi: number, kind: ToolKind, brush: BrushState, layerLocked: boolean, sym: SymMode, shapeSides = 6, fill = true, ox = 0, oy = 0, angDeg = 90) {
     this.doc = doc;
     this.li = li;
     this.fi = fi;
@@ -38,8 +41,11 @@ export class Stroke {
     this.sym = sym;
     this.shapeSides = Math.max(3, Math.min(32, Math.round(shapeSides) || 6));
     this.fill = fill;
-    this.qx = Math.round(qx);
-    this.qy = Math.round(qy);
+    this.ox = ox;
+    this.oy = oy;
+    const rad = (angDeg * Math.PI) / 180;
+    this.ux = Math.cos(rad);
+    this.uy = Math.sin(rad);
     if (layerLocked) throw new Error("layer-locked");
     const cel = doc.celAt(li, fi);
     this.before = cel ? new Uint8ClampedArray(cel.data) : null;
@@ -51,17 +57,31 @@ export class Stroke {
     this.mask = doc.selectionActive() ? (x: number, y: number) => doc.selAt(x, y) === 1 : null;
   }
 
-  /** mirror-coordinate expansion for the current symmetry mode; the axes may
-   *  be shifted off-centre by the adjustable symmetry guides (qx/qy in
-   *  half-cells): mirror of x across axis a=(w+qx)/2 is 2a-1-x = w-1-x+qx */
+  /** reflect one cell centre across the mirror line through (px,py) with unit direction (ux,uy) */
+  private reflCell(x: number, y: number, px: number, py: number, ux: number, uy: number): [number, number] {
+    const cx = x + 0.5 - px, cy = y + 0.5 - py;
+    const dot = cx * ux + cy * uy;
+    return [
+      Math.round(px + 2 * dot * ux - cx - 0.5),
+      Math.round(py + 2 * dot * uy - cy - 0.5),
+    ];
+  }
+
+  /** mirror-coordinate expansion for the current mode: the axis is the line
+   *  through the doc centre offset (ox,oy) rotated to angDeg; both adds the
+   *  perpendicular axis through the same pivot (four images per cell) */
   private mirrorPts(x: number, y: number): [number, number][] {
     if (this.sym === "off") return [[x, y]];
-    const w = this.doc.w, h = this.doc.h;
-    const x2 = w - 1 - x + this.qx, y2 = h - 1 - y + this.qy;
-    const xs = this.sym === "lr" || this.sym === "both" ? [x, x2] : [x];
-    const ys = this.sym === "tb" || this.sym === "both" ? [y, y2] : [y];
-    const out: [number, number][] = [];
-    for (const X of xs) for (const Y of ys) out.push([X, Y]);
+    const px = this.doc.w / 2 + this.ox;
+    const py = this.doc.h / 2 + this.oy;
+    const out: [number, number][] = [[x, y]];
+    out.push(this.reflCell(x, y, px, py, this.ux, this.uy));
+    if (this.sym === "both") {
+      const u2x = -this.uy, u2y = this.ux;
+      const m2 = this.reflCell(x, y, px, py, u2x, u2y);
+      out.push(m2);
+      out.push(this.reflCell(m2[0], m2[1], px, py, this.ux, this.uy));
+    }
     return out;
   }
 
