@@ -57,7 +57,7 @@ export class View {
   private pinchBase: { mx: number; my: number; dist: number; ox: number; oy: number; zoom: number } | null = null;
   private stroke: Stroke | null = null;
   private panLast: PxPoint | null = null;
-  private selDrag: { kind: "rect" | "move" | "lasso"; x0: number; y0: number; x1: number; y1: number; before: Uint8ClampedArray | null; b: { x: number; y: number; w: number; h: number }; moved: boolean; sx: number; sy: number; mv?: MoveState | null; pts?: [number, number][] } | null = null;
+  private selDrag: { kind: "rect" | "move" | "lasso"; x0: number; y0: number; x1: number; y1: number; before: Uint8ClampedArray | null; b: { x: number; y: number; w: number; h: number }; moved: boolean; sx: number; sy: number; mv?: MoveState | null; pts?: [number, number][]; dx?: number; dy?: number; cut?: boolean } | null = null;
   private longT: number | null = null;
   private pickAnchor: [number, number] | null = null;
   private pickMode = false;
@@ -303,6 +303,25 @@ export class View {
       ctx.restore();
     }
     this.drawSelTransform();
+    // floating selection content: pixels held above the layer during a drag
+    const fg = this.selDrag;
+    if (fg && fg.kind === "move" && fg.mv && fg.cut && fg.moved) {
+      const mv = fg.mv, content = mv.content;
+      const gox = mv.ox + (fg.dx || 0), goy = mv.oy + (fg.dy || 0);
+      const zz = Math.max(1, z);
+      ctx.save();
+      for (let y = 0; y < content.h; y++) {
+        for (let x = 0; x < content.w; x++) {
+          const si = content.idx(x, y);
+          const a = content.data[si + 3];
+          if (a === 0) continue;
+          ctx.globalAlpha = a / 255;
+          ctx.fillStyle = "rgb(" + content.data[si] + "," + content.data[si + 1] + "," + content.data[si + 2] + ")";
+          ctx.fillRect(this.ox + (gox + x) * z, this.oy + (goy + y) * z, zz, zz);
+        }
+      }
+      ctx.restore();
+    }
     // footprint marker: pencil/eraser show the exact Aseprite circle-brush
     // outline (transparent centre); other drawing tools keep the square bounds
     const cu = this.cursor;
@@ -674,7 +693,11 @@ export class View {
       this.session.repaint();
     }
     if (this.xf) this.abortXf();
-    this.selDrag = null;
+    // a cancelled floating drag puts the cut pixels back untouched
+    if (this.selDrag) {
+      if (this.selDrag.kind === "move" && this.selDrag.cut) this.endSelDrag(false);
+      else this.selDrag = null;
+    }
     this.panLast = null;
     this.pinchBase = null;
     this.pickMode = false;
@@ -953,16 +976,21 @@ export class View {
       this.startAnts();
       return;
     }
-    // move content (absolute offset from the grab origin, idempotent per step)
+    // Aseprite-style floating move: the cel is never edited while dragging.
+    // On the first real step the grabbed pixels are cut out of the layer and
+    // float above it (drawn by drawOverlay); only the selection outline moves.
     const dx = pp.x - g.sx, dy = pp.y - g.sy;
     if (dx || dy) g.moved = true;
     if (g.moved && g.mv) {
-      selOps.move(this.session.doc, this.session.curLayer(), this.session.curFrame(), dx, dy, g.mv);
+      const s = this.session;
+      if (!g.cut) { g.cut = true; selOps.floatCut(s.doc, s.curLayer(), s.curFrame(), g.mv); }
+      g.dx = dx; g.dy = dy;
+      selOps.shiftMask(s.doc, g.mv, dx, dy);
       this.session.repaint();
     }
   }
 
-  private endSelDrag(): void {
+  private endSelDrag(commit = true): void {
     const g = this.selDrag;
     this.selDrag = null;
     const s = this.session;
@@ -994,17 +1022,24 @@ export class View {
       this.session.changed();
       return;
     }
-    // move commit
+    // floating move finish: drop pastes once; cancel puts everything back
     const li = s.curLayer(), fi = s.curFrame();
     const cel = doc.celAt(li, fi);
-    if (g.moved && cel && g.before) {
-      let changed = false;
-      const a = cel.data, b = g.before;
-      for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) { changed = true; break; }
-      if (changed) {
-        s.history.pushPixels("sel.move", doc, [
-          { li, fi, before: g.before, after: new Uint8ClampedArray(cel.data) },
-        ]);
+    if (g.mv && g.cut && cel) {
+      if (commit && g.moved) {
+        selOps.floatPaste(doc, li, fi, g.mv, g.dx || 0, g.dy || 0);
+        let changed = false;
+        const a = cel.data, b = g.mv.before;
+        for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) { changed = true; break; }
+        if (changed) {
+          s.history.pushPixels("sel.move", doc, [
+            { li, fi, before: g.mv.before, after: new Uint8ClampedArray(cel.data) },
+          ]);
+        }
+      } else {
+        selOps.restore(doc, li, fi, g.mv);
+        selOps.shiftMask(doc, g.mv, 0, 0);
+        s.repaint();
       }
     }
     this.session.repaint();

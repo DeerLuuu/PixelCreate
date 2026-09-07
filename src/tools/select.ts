@@ -420,4 +420,64 @@ export const selOps = {
       }
     }
   },
+  // ---- Aseprite-style floating helpers: while a selection drags, the grabbed
+  // pixels live OUTSIDE the cel; the layer only sees them when dropped. ----
+  /** cut the grabbed pixels out of the layer (called once when the drag starts) */
+  floatCut(doc: Doc, li: number, fi: number, st: MoveState): void {
+    const cel = doc.celAt(li, fi);
+    if (!cel) return;
+    const content = st.content;
+    const w = doc.w, h = doc.h;
+    for (let y = 0; y < content.h; y++) {
+      for (let x = 0; x < content.w; x++) {
+        const si = content.idx(x, y);
+        if (content.data[si + 3] === 0) continue;
+        const gx = st.ox + x, gy = st.oy + y;
+        if (gx < 0 || gy < 0 || gx >= w || gy >= h) continue;
+        const di = cel.idx(gx, gy);
+        cel.data[di] = 0; cel.data[di + 1] = 0; cel.data[di + 2] = 0; cel.data[di + 3] = 0;
+      }
+    }
+  },
+  /** paste the floating pixels back onto the layer at (ox+dx, oy+dy) */
+  floatPaste(doc: Doc, li: number, fi: number, st: MoveState, dx: number, dy: number): void {
+    const cel = doc.celAt(li, fi);
+    if (!cel) return;
+    const content = st.content;
+    const w = doc.w, h = doc.h;
+    const nx = st.ox + dx, ny = st.oy + dy;
+    for (let y = 0; y < content.h; y++) {
+      for (let x = 0; x < content.w; x++) {
+        const si = content.idx(x, y);
+        if (content.data[si + 3] === 0) continue;
+        const tx = nx + x, ty = ny + y;
+        if (tx < 0 || ty < 0 || tx >= w || ty >= h) continue;
+        const di = cel.idx(tx, ty);
+        cel.data[di] = content.data[si];
+        cel.data[di + 1] = content.data[si + 1];
+        cel.data[di + 2] = content.data[si + 2];
+        cel.data[di + 3] = content.data[si + 3];
+      }
+    }
+  },
+  /** put the layer back to the pre-gesture picture (drag cancelled) */
+  restore(doc: Doc, li: number, fi: number, st: MoveState): void {
+    const cel = doc.celAt(li, fi);
+    if (cel) cel.data.set(st.before);
+  },
+  /** move the selection mask only (the outline follows the finger) */
+  shiftMask(doc: Doc, st: MoveState, dx: number, dy: number): void {
+    if (!doc.sel) doc.sel = new Sel(doc.w, doc.h, false);
+    const dst = doc.sel.mask, src = st.mask;
+    const w = doc.w, h = doc.h;
+    dst.fill(0);
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        if (src[y * w + x]) {
+          const tx = x + dx, ty = y + dy;
+          if (tx >= 0 && ty >= 0 && tx < w && ty < h) dst[ty * w + tx] = 1;
+        }
+      }
+    }
+  },
 };
