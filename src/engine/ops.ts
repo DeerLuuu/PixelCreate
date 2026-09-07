@@ -39,9 +39,9 @@ function shiftCelsByFrame(doc: Doc, fromIdx: number, delta: number): void {
   for (const m of moves) doc.cels.set(doc.key(m.li, m.fi + delta), m.cel);
 }
 
-export function addLayer(doc: Doc, index: number): void {
+export function addLayer(doc: Doc, index: number, name?: string): void {
   const at = Math.max(0, Math.min(doc.layers.length, index));
-  doc.layers.splice(at, 0, freshLayer(doc));
+  doc.layers.splice(at, 0, freshLayer(doc, name));
   // every layer originally at >= at shifted up by one: re-key their cels so
   // content follows the layer (mirrors addFrame below)
   shiftCelsByLayer(doc, at, +1);

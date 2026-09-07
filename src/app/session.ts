@@ -601,7 +601,7 @@ export class Session {
     fxE.dropShadowCel(shadow, w, h, 3, 3, color, false);
     this.struct("fx-shadow", () => {
       const curLi = this.curLayer();
-      ops.addLayer(doc, curLi); // shadow layer at curLi, artwork moves to curLi+1
+      ops.addLayer(doc, curLi, "shadow"); // shadow layer at curLi, artwork moves to curLi+1
       const sc = doc.ensureCel(curLi, fi);
       sc.data.set(shadow);
       this.layerIdx = curLi + 1; // keep the artwork layer active
