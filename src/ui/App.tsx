@@ -467,8 +467,11 @@ function FloatingTools({ t, snap }: { t: ReturnType<typeof makeT>; snap: Snapsho
         }
       }
       if (maxX < 0) return; // nothing opaque to move
-      const dx = Math.round(tgt.x + tgt.w / 2 - (minX + maxX) / 2);
-      const dy = Math.round(tgt.y + tgt.h / 2 - (minY + maxY) / 2);
+      const cw = maxX - minX + 1, ch = maxY - minY + 1;
+      // an axis is only centred when the content fits inside the target;
+      // otherwise it stays put so nothing is ever clipped or lost
+      const dx = cw <= tgt.w ? tgt.x + Math.floor((tgt.w - cw) / 2) - minX : 0;
+      const dy = ch <= tgt.h ? tgt.y + Math.floor((tgt.h - ch) / 2) - minY : 0;
       if (dx === 0 && dy === 0) return;
       const out = new Uint8ClampedArray(data.length);
       for (let y = 0; y < h; y++) {
