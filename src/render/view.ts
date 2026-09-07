@@ -44,6 +44,9 @@ export class View {
   /** first layout handled: later resizes (orientation/panels) preserve pan+zoom */
   private firstFit = false;
   private cursor: { x: number; y: number; size: number } | null = null;
+  /** pixel loupe (magnifier) shown while stroking with a brush */
+  private mag = false;
+  private magPt: PxPoint | null = null;
   private isoCache: HTMLCanvasElement | null = null;
   private isoKey = "";
   /** what the adjust gesture is currently holding (set while unlocked) */
@@ -86,6 +89,14 @@ export class View {
   private lastTapWasDraw = false;
   /** and that tap actually recorded a history step (so it can be rolled back) */
   private lastTapChanged = false;
+  /** the gesture involved 2+ fingers (two-finger double-tap -> redo) */
+  private gestureHadTwo = false;
+  /** the pinch actually zoomed (else it was a two-finger tap) */
+  private pinchZoomed = false;
+  /** midpoint of a two-finger tap, for double-tap detection */
+  private twoTapMid: PxPoint | null = null;
+  private twoTap = 0;
+  private twoTapPt: PxPoint | null = null;
   /** rotate / scale gesture started on a selection frame handle */
   private xf: { mode: "rot" | "scale"; axis: "xy" | "x" | "y"; li: number; fi: number; st: MoveState; cx: number; cy: number; ax: number; ay: number; p0x: number; p0y: number; ang0: number; moved: boolean; cut?: boolean; buf?: Uint8ClampedArray; cells?: number[] } | null = null;
 
@@ -397,6 +408,57 @@ export class View {
         }
       }
     }
+    this.drawMag(ctx);
+  }
+
+  /** pixel loupe: magnified square around the brush while drawing */
+  private drawMag(ctx: CanvasRenderingContext2D): void {
+    if (!this.mag || !this.cursor || !this.magPt) return;
+    const doc = this.session.doc;
+    const CELL = 9, L = 132;
+    const half = Math.floor(L / CELL / 2);
+    const cx = this.cursor.x, cy = this.cursor.y;
+    const sx0 = Math.round(cx - half), sy0 = Math.round(cy - half);
+    let x = this.magPt.x - L - 18, y = this.magPt.y - L - 18;
+    if (this.magPt.x - L - 18 < 6) x = this.magPt.x + 18;
+    if (this.magPt.y - L - 18 < 6) y = this.magPt.y + 18;
+    x = clamp(x, 6, this.host.clientWidth - L - 6);
+    y = clamp(y, 6, this.host.clientHeight - L - 6);
+    ctx.save();
+    ctx.imageSmoothingEnabled = false;
+    ctx.fillStyle = "#1d2129";
+    ctx.fillRect(x - 2, y - 2, L + 4, L + 4);
+    ctx.fillStyle = "#2a2f3d";
+    ctx.fillRect(x, y, L, L);
+    const comp = this.composite;
+    const sX = Math.max(0, sx0), sY = Math.max(0, sy0);
+    const eX = Math.min(doc.w, sx0 + half * 2), eY = Math.min(doc.h, sy0 + half * 2);
+    if (comp && eX > sX && eY > sY) {
+      ctx.drawImage(comp, sX, sY, eX - sX, eY - sY, x + (sX - sx0) * CELL, y + (sY - sy0) * CELL, (eX - sX) * CELL, (eY - sY) * CELL);
+    }
+    // pixel grid inside the loupe
+    ctx.strokeStyle = "rgba(255,255,255,0.14)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let i = 0; i <= half * 2; i++) {
+      const gx = x + i * CELL + 0.5, gy = y + i * CELL + 0.5;
+      ctx.moveTo(gx, y); ctx.lineTo(gx, y + half * 2 * CELL);
+      ctx.moveTo(x, gy); ctx.lineTo(x + half * 2 * CELL, gy);
+    }
+    ctx.stroke();
+    // brush footprint highlight at the centre
+    if (this.cursor.size >= 1) {
+      const st = brushStamp(this.cursor.size);
+      const bx = x + (cx - sx0) * CELL, by = y + (cy - sy0) * CELL;
+      ctx.fillStyle = "rgba(255,255,255,0.26)";
+      for (const [ox, oy] of st.outline) {
+        ctx.fillRect(bx + ox * CELL, by + oy * CELL, CELL, CELL);
+      }
+    }
+    ctx.strokeStyle = "rgba(255,255,255,0.65)";
+    ctx.lineWidth = 2;
+    ctx.strokeRect(x - 2, y - 2, L + 4, L + 4);
+    ctx.restore();
   }
 
   /** toggle the symmetry-axis adjust mode (drag dashed lines to move axes) */
@@ -673,6 +735,9 @@ export class View {
         dist: Math.max(1, Math.hypot(b.x - a.x, b.y - a.y)),
         ox: this.ox, oy: this.oy, zoom: this.zoom,
       };
+      this.gestureHadTwo = true;
+      this.pinchZoomed = false;
+      this.twoTapMid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
       return;
     }
     // flush an unfinished gesture left by a lost pointerup (e.g. rapid bucket taps)
@@ -800,6 +865,7 @@ export class View {
       this.ox = mx - (this.pinchBase.mx - this.pinchBase.ox) * sc;
       this.oy = my - (this.pinchBase.my - this.pinchBase.oy) * sc;
       this.zoom = z;
+      if (Math.abs(z - this.pinchBase.zoom) > 0.001) this.pinchZoomed = true;
       this.refresh(false);
       return;
     }
@@ -857,6 +923,9 @@ export class View {
       // the canvas), so it never freezes at the edge while the hand keeps moving
       const inView = pt.x >= 0 && pt.y >= 0 && pt.x <= this.host.clientWidth && pt.y <= this.host.clientHeight;
       this.cursor = inView ? { x: pp.x, y: pp.y, size: this.session.brushSize } : null;
+      // pixel loupe: magnify the area under the brush while drawing
+      this.mag = inView;
+      this.magPt = inView ? { x: pt.x, y: pt.y } : null;
       this.stroke.moveTo(pp.x, pp.y, e.pointerType === "pen" ? e.pressure : 1);
       this.session.repaint();
       return;
@@ -893,30 +962,56 @@ export class View {
       this.pickMode = false;
       this.pickAnchor = null;
       this.pickLast = null;
+      this.mag = false;
+      this.magPt = null;
       if (this.xf) this.endXf();
       const pt = this.evPt(e);
       const now = Date.now();
+      // two-finger tap (no zoom): a double two-finger tap = redo
+      const hadTwo = this.gestureHadTwo, pinchZoomed = this.pinchZoomed;
+      this.gestureHadTwo = false;
+      this.pinchZoomed = false;
+      if (hadTwo && !pinchZoomed && !this.stroke && !this.selDrag && !this.xf && this.twoTapMid) {
+        const mid = this.twoTapMid;
+        this.twoTapMid = null;
+        if (this.twoTapPt && now - this.twoTap < 420 && Math.hypot(mid.x - this.twoTapPt.x, mid.y - this.twoTapPt.y) < 80) {
+          this.twoTap = 0;
+          this.twoTapPt = null;
+          if (this.session.history.canRedo()) this.session.redo(); else this.session.repaint();
+        } else {
+          this.twoTap = now;
+          this.twoTapPt = mid;
+        }
+        this.gestureMoved = false;
+        this.panLast = null;
+        return;
+      }
       const secondTapMoved = this.stroke ? this.gestureMoved : false;
       const isDouble = this.lastTapPt !== null && now - this.lastTap < 300 &&
         Math.hypot(pt.x - this.lastTapPt.x, pt.y - this.lastTapPt.y) < 48;
       if (isDouble && !secondTapMoved) {
-        // double-tap zoom must not paint: roll back the first tap's dot
-        // (its history entry is still on top) and cancel the second tap's stroke
         if (this.stroke) {
           this.stroke.cancel();
           this.stroke = null;
-        }
-        if (this.lastTapWasDraw && this.lastTapChanged && this.session.history.canUndo()) {
-          this.session.undo();
-        } else {
-          this.session.repaint();
         }
         if (this.selDrag) this.endSelDrag();
         this.panLast = null;
         this.gestureMoved = false;
         this.lastTap = 0;
         this.lastTapPt = null;
-        this.zoomAt(this.zoom * 2, pt.x, pt.y);
+        // double-tap on the canvas margin (outside the doc) = quick undo;
+        // double-tap on the doc = zoom (rolls back any lingering draw dot)
+        const ppc = this.screenToPixel(pt.x, pt.y);
+        const overDoc = ppc.x >= 0 && ppc.y >= 0 && ppc.x < this.session.doc.w && ppc.y < this.session.doc.h;
+        if (overDoc) {
+          if (this.lastTapWasDraw && this.lastTapChanged && this.session.history.canUndo()) this.session.undo();
+          else this.session.repaint();
+          this.zoomAt(this.zoom * 2, pt.x, pt.y);
+        } else if (this.session.history.canUndo()) {
+          this.session.undo();
+        } else {
+          this.session.repaint();
+        }
         return;
       }
       if (this.stroke) {
@@ -979,6 +1074,10 @@ export class View {
 
   private onCancel(e: PointerEvent): void {
     this.pointers.delete(e.pointerId);
+    this.gestureHadTwo = false;
+    this.pinchZoomed = false;
+    this.twoTapMid = null;
+    this.mag = false;
     if (this.symTarget) this.symTarget = null;
     if (this.stroke) {
       if (this.gestureMoved) {
