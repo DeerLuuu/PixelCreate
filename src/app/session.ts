@@ -595,8 +595,9 @@ export class Session {
       this.changed();
       return;
     }
-    // new "shadow" layer below the current one, holding ONLY the offset copy
-    const shadow = new Uint8ClampedArray(cel.data.length);
+    // new "shadow" layer below the current one, holding ONLY the offset copy.
+    // The current layer's pixels are the silhouette source, so copy them in first.
+    const shadow = new Uint8ClampedArray(cel.data);
     fxE.dropShadowCel(shadow, w, h, 3, 3, color, false);
     this.struct("fx-shadow", () => {
       const curLi = this.curLayer();
