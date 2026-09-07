@@ -267,7 +267,7 @@ export function xformSelection(
  */
 export function xformFloating(
   doc: Doc, st: MoveState, angleRad: number, sx: number, sy: number,
-  out: Uint8ClampedArray,
+  out: Uint8ClampedArray, anchorX?: number, anchorY?: number,
 ): number[] {
   const w = doc.w, h = doc.h;
   const content = st.content;
@@ -275,25 +275,34 @@ export function xformFloating(
   out.fill(0);
   const cells: number[] = [];
   const c = Math.cos(angleRad), sn = Math.sin(angleRad);
-  const hx = (cw / 2) * Math.max(0.02, sx), hy = (ch / 2) * Math.max(0.02, sy);
-  const cx = st.ox + cw / 2, cy = st.oy + ch / 2;
-  const spanX = Math.abs(c * hx) + Math.abs(sn * hy);
-  const spanY = Math.abs(sn * hx) + Math.abs(c * hy);
-  const x0 = Math.max(0, Math.floor(cx - spanX - 1));
-  const y0 = Math.max(0, Math.floor(cy - spanY - 1));
-  const x1 = Math.min(w - 1, Math.ceil(cx + spanX + 1));
-  const y1 = Math.min(h - 1, Math.ceil(cy + spanY + 1));
+  // scale/rotate around a fixed anchor (the opposite handle); default = content centre
+  const ax = anchorX === undefined ? st.ox + cw / 2 : anchorX;
+  const ay = anchorY === undefined ? st.oy + ch / 2 : anchorY;
+  const sxn = Math.max(0.02, sx), syn = Math.max(0.02, sy);
+  // bounding box of the content corners transformed around the anchor
+  const corners: [number, number][] = [[st.ox, st.oy], [st.ox + cw, st.oy], [st.ox, st.oy + ch], [st.ox + cw, st.oy + ch]];
+  let x0 = w, y0 = h, x1 = -1, y1 = -1;
+  for (const [cxx, cyy] of corners) {
+    const rx = cxx - ax, ry = cyy - ay;
+    const fx = ax + c * rx * sxn - sn * ry * syn;
+    const fy = ay + sn * rx * sxn + c * ry * syn;
+    const fxi = Math.round(fx), fyi = Math.round(fy);
+    if (fxi < x0) x0 = fxi; if (fxi > x1) x1 = fxi;
+    if (fyi < y0) y0 = fyi; if (fyi > y1) y1 = fyi;
+  }
+  x0 = Math.max(0, x0); y0 = Math.max(0, y0);
+  x1 = Math.min(w - 1, x1); y1 = Math.min(h - 1, y1);
   if (!doc.sel) doc.sel = new Sel(w, h, false);
   const m = doc.sel.mask;
   m.fill(0);
   if (x0 > x1 || y0 > y1) return cells;
   for (let py = y0; py <= y1; py++) {
     for (let px = x0; px <= x1; px++) {
-      const dx0 = px + 0.5 - cx, dy0 = py + 0.5 - cy;
-      const vx = (dx0 * c + dy0 * sn) / Math.max(0.02, sx);
-      const vy = (-dx0 * sn + dy0 * c) / Math.max(0.02, sy);
-      const sxx = cx + vx - st.ox;
-      const syy = cy + vy - st.oy;
+      const dx0 = px + 0.5 - ax, dy0 = py + 0.5 - ay;
+      const vx = (dx0 * c + dy0 * sn) / sxn;
+      const vy = (-dx0 * sn + dy0 * c) / syn;
+      const sxx = ax + vx - st.ox;
+      const syy = ay + vy - st.oy;
       if (sxx < 0 || syy < 0 || sxx >= cw || syy >= ch) continue;
       const si = content.idx(sxx | 0, syy | 0);
       if (content.data[si + 3] === 0) continue;

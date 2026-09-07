@@ -89,7 +89,7 @@ export class View {
   /** and that tap actually recorded a history step (so it can be rolled back) */
   private lastTapChanged = false;
   /** rotate / scale gesture started on a selection frame handle */
-  private xf: { mode: "rot" | "scale"; axis: "xy" | "x" | "y"; li: number; fi: number; st: MoveState; cx: number; cy: number; p0x: number; p0y: number; ang0: number; moved: boolean; cut?: boolean; buf?: Uint8ClampedArray; cells?: number[] } | null = null;
+  private xf: { mode: "rot" | "scale"; axis: "xy" | "x" | "y"; li: number; fi: number; st: MoveState; cx: number; cy: number; ax: number; ay: number; p0x: number; p0y: number; ang0: number; moved: boolean; cut?: boolean; buf?: Uint8ClampedArray; cells?: number[] } | null = null;
 
   constructor(host: HTMLElement, session: Session) {
     this.host = host;
@@ -1016,14 +1016,28 @@ export class View {
     const li = s.curLayer(), fi = s.curFrame();
     const st = beginMove(doc, li, fi);
     if (!st) return false;
-    const cx = st.ox + st.content.w / 2, cy = st.oy + st.content.h / 2;
+    const cw = st.content.w, ch = st.content.h;
+    const cx = st.ox + cw / 2, cy = st.oy + ch / 2;
     const dx = (pt.x - this.ox) / this.zoom, dy = (pt.y - this.oy) / this.zoom;
     let mode: "rot" | "scale" = "scale";
     let axis: "xy" | "x" | "y" = "xy";
     if (id === "rot") mode = "rot";
     else if (id === "t" || id === "b") axis = "y";
     else if (id === "l" || id === "r") axis = "x";
-    this.xf = { mode, axis, li, fi, st, cx, cy, p0x: dx, p0y: dy, ang0: 0, moved: false, cut: false, buf: new Uint8ClampedArray(doc.w * doc.h * 4), cells: [] };
+    // scale anchor = the handle opposite the one being grabbed, so the box
+    // grows from a fixed corner/edge (content extends) instead of around centre
+    let ax = cx, ay = cy;
+    if (mode === "scale") {
+      if (id === "tl") { ax = st.ox + cw; ay = st.oy + ch; }
+      else if (id === "tr") { ax = st.ox; ay = st.oy + ch; }
+      else if (id === "br") { ax = st.ox; ay = st.oy; }
+      else if (id === "bl") { ax = st.ox + cw; ay = st.oy; }
+      else if (id === "t") { ax = cx; ay = st.oy + ch; }
+      else if (id === "b") { ax = cx; ay = st.oy; }
+      else if (id === "l") { ax = st.ox + cw; ay = cy; }
+      else if (id === "r") { ax = st.ox; ay = cy; }
+    }
+    this.xf = { mode, axis, li, fi, st, cx, cy, ax, ay, p0x: dx, p0y: dy, ang0: 0, moved: false, cut: false, buf: new Uint8ClampedArray(doc.w * doc.h * 4), cells: [] };
     if (mode === "rot") this.xf.ang0 = Math.atan2(dy - cy, dx - cx);
     return true;
   }
@@ -1038,20 +1052,20 @@ export class View {
       angle = Math.atan2(py - g.cy, px - g.cx) - g.ang0;
       if (Math.abs(angle) > 0.004) g.moved = true;
     } else if (g.axis === "x") {
-      const base = Math.max(0.5, Math.abs(g.p0x - g.cx));
-      sx = snapScale(clamp(Math.abs(px - g.cx) / base, 0.02, 40));
+      const base = Math.max(0.5, Math.abs(g.p0x - g.ax));
+      sx = snapScale(clamp(Math.abs(px - g.ax) / base, 0.02, 40));
     } else if (g.axis === "y") {
-      const base = Math.max(0.5, Math.abs(g.p0y - g.cy));
-      sy = snapScale(clamp(Math.abs(py - g.cy) / base, 0.02, 40));
+      const base = Math.max(0.5, Math.abs(g.p0y - g.ay));
+      sy = snapScale(clamp(Math.abs(py - g.ay) / base, 0.02, 40));
     } else {
-      const d0 = Math.max(1, Math.hypot(g.p0x - g.cx, g.p0y - g.cy));
-      const f = snapScale(clamp(Math.hypot(px - g.cx, py - g.cy) / d0, 0.02, 40));
+      const d0 = Math.max(1, Math.hypot(g.p0x - g.ax, g.p0y - g.ay));
+      const f = snapScale(clamp(Math.hypot(px - g.ax, py - g.ay) / d0, 0.02, 40));
       sx = f; sy = f;
     }
     if (g.mode !== "rot" && (sx !== 1 || sy !== 1)) g.moved = true;
     if (!g.moved) return;
     if (!g.cut) { g.cut = true; selOps.floatCut(doc, g.li, g.fi, g.st); }
-    if (g.buf) g.cells = xformFloating(doc, g.st, angle, sx, sy, g.buf);
+    if (g.buf) g.cells = xformFloating(doc, g.st, angle, sx, sy, g.buf, g.mode === "rot" ? g.cx : g.ax, g.mode === "rot" ? g.cy : g.ay);
     this.session.repaint();
   }
 

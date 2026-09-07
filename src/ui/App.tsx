@@ -28,7 +28,7 @@ import { TimelineBar } from "./timeline";
 import { PreviewBox } from "./preview";
 import { RefImageBox } from "./refimg";
 import type { RefImg } from "./refimg";
-import { PalettePanel, MenuModal, SizeModal, SheetModal, NewDocModal, ExportModal, AdjustModal, SettingsModal, FrameModal, HistoryModal, histName, saveProject } from "./modals";
+import { PalettePanel, MenuModal, SizeModal, SheetModal, NewDocModal, ExportModal, AdjustModal, SettingsModal, FrameModal, FramePreviewModal, HistoryModal, histName, saveProject } from "./modals";
 import { ChangelogModal, changelogNeedsShow } from "./changelog";
 import type { ModalId, SizeMode, SheetData } from "./modals";
 
@@ -100,6 +100,7 @@ export function App() {
       <Keep on={modal === "adjust"} el={modal === "adjust" ? <AdjustModal t={t} onClose={() => setModal(null)} /> : null} />
       <Keep on={frameDlgIdx !== null} el={frameDlgIdx !== null ? <FrameModal t={t} snap={snap} fi={frameDlgIdx} onClose={() => setFrameDlgIdx(null)} /> : null} />
       <Keep on={modal === "history"} el={modal === "history" ? <HistoryModal t={t} snap={snap} onClose={() => setModal(null)} onReplay={() => { setModal(null); setReplayOn(true); }} /> : null} />
+      <Keep on={modal === "framePrev"} el={modal === "framePrev" ? <FramePreviewModal t={t} onClose={() => setModal(null)} /> : null} />
       <Keep on={modal === "changelog"} el={modal === "changelog" ? <ChangelogModal onClose={() => setModal(null)} /> : null} />
       {confirmQ && (
         <div className="cfm-layer">
@@ -446,6 +447,8 @@ function FloatingTools({ t, snap }: { t: ReturnType<typeof makeT>; snap: Snapsho
   const fxItems: Item[] = [
     fxI("o1", "i-fx-o1", "描边", "Edge", "边缘描边 1px（用前景色）", "Edge outline 1px outward (FG colour)", () => fxDo("fx-outline1", (dd, w, h) => fxE.outlineCel(dd, w, h, 1, SESSION.color))), fxI("crop", "i-fx-crop", "智能裁剪", "Crop", "自动裁剪画布四周空白（全部图层/帧）", "Auto-crop empty canvas borders (all layers/frames)", () => SESSION.cropSmart()),
     fxI("shadow", "i-fx-shadow", "投影", "Shadow", "一键投影：仅按当前图层生成（设置可选当前图层 / 新建shadow图层）", "Drop shadow from the current layer only (Settings: bake here or on a new shadow layer)", () => SESSION.applyShadow()),
+    fxI("delsel", "i-fx-crop", "删除选区内容", "DelSel", "删除选区内的像素（保留选区）", "Delete pixels inside the selection (selection kept)", () => SESSION.deleteSelection(), !!(d.sel && d.sel.hasAny())),
+    fxI("clear", "i-fx-ctr", "清空画布", "Clear", "清空当前帧所有图层的画布内容", "Empty the current frame on all layers", () => SESSION.clearCanvas()),
     fxI("glow", "i-fx-glow", "外发光", "Glow", "一键外发光：用当前颜色向外发光 2px 并逐层淡出", "Outer glow: current colour fading outwards 2px", () => {
       const base = SESSION.color;
       fxDo("fx-glow", (dd, w, h) => fxE.outerGlowCel(dd, w, h, 2, [base[0], base[1], base[2], 255]));

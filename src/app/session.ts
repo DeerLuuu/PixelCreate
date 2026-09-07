@@ -607,6 +607,49 @@ export class Session {
     });
   }
 
+  /** Clear the pixels inside the current selection to transparent (keeps the selection). */
+  deleteSelection(): void {
+    const doc = this.doc;
+    if (!doc.sel || !doc.sel.hasAny()) return;
+    const li = this.curLayer(), fi = this.curFrame();
+    const cel = doc.celAt(li, fi);
+    if (!cel) return;
+    const before = new Uint8ClampedArray(cel.data);
+    for (let y = 0; y < doc.h; y++) {
+      for (let x = 0; x < doc.w; x++) {
+        if (doc.selAt(x, y) === 1) {
+          const i = cel.idx(x, y);
+          cel.data[i] = 0; cel.data[i + 1] = 0; cel.data[i + 2] = 0; cel.data[i + 3] = 0;
+        }
+      }
+    }
+    let changed = false;
+    for (let i = 0; i < before.length; i++) if (before[i] !== cel.data[i]) { changed = true; break; }
+    if (changed) this.history.pushPixels("sel.delete", doc, [{ li, fi, before, after: new Uint8ClampedArray(cel.data) }]);
+    this.repaintAll();
+    this.changed();
+  }
+
+  /** Empty the whole canvas: clear the content of the current frame on every layer. */
+  clearCanvas(): void {
+    const doc = this.doc;
+    const fi = this.curFrame();
+    const changes: Array<{ li: number; fi: number; before: Uint8ClampedArray; after: Uint8ClampedArray }> = [];
+    for (let li = 0; li < doc.layers.length; li++) {
+      const cel = doc.celAt(li, fi);
+      if (!cel) continue;
+      let has = false;
+      for (let i = 3; i < cel.data.length; i += 4) if (cel.data[i] > 0) { has = true; break; }
+      if (!has) continue;
+      const before = new Uint8ClampedArray(cel.data);
+      cel.data.fill(0);
+      changes.push({ li, fi, before, after: new Uint8ClampedArray(cel.data) });
+    }
+    if (changes.length) this.history.pushPixels("clear-canvas", doc, changes);
+    this.repaintAll();
+    this.changed();
+  }
+
   // ---------- history ----------
   undo(): void {
     this.view_?.flushStroke(); // never undo while a gesture is still open

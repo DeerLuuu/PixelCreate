@@ -13,12 +13,13 @@ import { HoldAdjust } from "./hold";
 import { PALETTE_PACKS } from "./palettes";
 import { tryReadGif } from "../io/gifread";
 import * as project from "../io/project";
+import * as compose from "../render/compositor";
 import * as exporters from "../io/exporters";
 import * as bridge from "../io/bridge";
 import { Btn, Icon, useSession, ScrubNum } from "./base";
 import type { RefImg } from "./refimg";
 
-export type ModalId = "menu" | "changelog" | "newdoc" | "export" | "adjust" | "settings" | "frame" | "size" | "sheet" | "history" | null;
+export type ModalId = "menu" | "changelog" | "newdoc" | "export" | "adjust" | "settings" | "frame" | "framePrev" | "size" | "sheet" | "history" | null;
 export type SizeMode = "canvas" | "sprite";
 export type SheetData = { w: number; h: number; px: Uint8ClampedArray; name: string };
 
@@ -256,6 +257,7 @@ export function MenuModal({ t, snap, onClose, onOpen, onSheet, onRef }: { t: Ret
             <Btn label={t("export")} icon="i-export" className="menuitem" onClick={() => setSub("export")} />
             {go("adjust")(t("adjust"), "i-size")}
             {go("settings")(t("settings"), "i-gear")}
+            {go("framePrev")(t("framePreview"), "i-timeline")}
             {go("changelog")(t("changelog"), "i-star")}
           </>) : (
             <>
@@ -563,6 +565,46 @@ export function HistoryModal({ t, snap, onClose, onReplay }: { t: ReturnType<typ
         {labels.length > 0 && (
           <div className="repl-line"><Btn icon="i-play" label={t("replay")} className="repl-play" onClick={onReplay} noTip /><span>{t("replayHint")}</span></div>
         )}
+        <div className="dlg-foot"><Btn label={t("close")} onClick={onClose} /></div>
+      </div>
+    </>
+  );
+}
+
+function FrameThumb({ doc, fi }: { doc: Doc; fi: number }) {
+  const ref = useRef<HTMLCanvasElement | null>(null);
+  useEffect(() => {
+    const cv = ref.current;
+    if (!cv) return;
+    const full = compose.composeFrame(doc, fi);
+    const z = Math.min(1, 150 / Math.max(doc.w, doc.h));
+    cv.width = Math.max(1, Math.round(doc.w * z));
+    cv.height = Math.max(1, Math.round(doc.h * z));
+    const ctx = cv.getContext("2d")!;
+    ctx.imageSmoothingEnabled = false;
+    ctx.clearRect(0, 0, cv.width, cv.height);
+    ctx.drawImage(full, 0, 0, cv.width, cv.height);
+  }, [doc, fi]);
+  return <canvas ref={ref} className="fp-thumb" />;
+}
+
+export function FramePreviewModal({ t, onClose }: { t: ReturnType<typeof makeT>; onClose: () => void }) {
+  const snap = useSession();
+  const doc = SESSION.doc;
+  const frames = doc.frames;
+  return (
+    <>
+      <div className="dlg-mask" onClick={onClose} />
+      <div className="dlg dlg-frame-preview">
+        <div className="dlg-head"><span>{t("framePreview")}</span><div className="grow" /><button className="btn small" onClick={onClose}><Icon id="i-x" size={16} /></button></div>
+        <div className="dlg-body fp-grid">
+          {frames.length === 0 ? <div className="row-note">{t("historyEmpty")}</div> : frames.map((f, i) => (
+            <button key={f.id} className={"fp-cell" + (i === snap.frameIdx ? " on" : "")} onClick={() => { SESSION.setFrame(i); onClose(); }}>
+              <FrameThumb doc={doc} fi={i} />
+              <span className="fp-num">{i + 1}</span>
+            </button>
+          ))}
+        </div>
         <div className="dlg-foot"><Btn label={t("close")} onClick={onClose} /></div>
       </div>
     </>
