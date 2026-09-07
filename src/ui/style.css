@@ -630,8 +630,6 @@ input:-webkit-autofill{-webkit-box-shadow:0 0 0 1000px #232834 inset;-webkit-tex
 /* all-frames preview (PPT-like, scrollable) */
 .dlg-frame-preview{width:min(92vw,660px);max-height:78vh;display:flex;flex-direction:column}
 .dlg-frame-preview .fp-grid{overflow-y:auto;display:flex;flex-wrap:wrap;gap:10px;padding:12px;align-content:flex-start}
-.fp-cell{background:#232834;border:1px solid #3a4055;border-radius:8px;padding:6px;display:flex;flex-direction:column;align-items:center;gap:4px;cursor:pointer;touch-action:manipulation;min-width:96px}
+.fp-cell{background:#1d2129;border:1px solid #3a4055;border-radius:10px;padding:5px;width:142px;height:142px;display:flex;align-items:center;justify-content:center;cursor:pointer;touch-action:manipulation;box-sizing:border-box}
 .fp-cell.on{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
-.fp-thumb{image-rendering:pixelated;display:block;border-radius:4px;background:
-  repeating-conic-gradient(#2a2f3d 0 25%, #232834 0 50%) 0 0/12px 12px}
-.fp-num{font-size:11px;color:#aab1c6}
+.fp-thumb{image-rendering:pixelated;display:block;border-radius:6px;width:132px;height:132px}

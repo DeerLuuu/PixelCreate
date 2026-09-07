@@ -78,7 +78,7 @@ export function App() {
           onRefClose={() => setRefImg(null)}
         />
       </div>
-      <ControlBar t={t} snap={snap} onPanel={setPanel} onAdjust={() => setModal("adjust")} />
+      <ControlBar t={t} snap={snap} onPanel={setPanel} onAdjust={() => setModal("adjust")} onFramePrev={() => setModal("framePrev")} />
       {tlOn && (
       <div className={"tline-wrap" + (tlClosing ? " closing" : "")}>
         <TimelineBar t={t} snap={snap} onFrameDlg={setFrameDlgIdx} />
@@ -806,7 +806,7 @@ function PalBalls({ x, y, onDone }: { x: number; y: number; onDone: () => void }
 
 
 const SYM_GLYPH: Record<string, string> = { off: "·", on: "⇋" };
-function ControlBar({ t, snap, onPanel, onAdjust }: { t: ReturnType<typeof makeT>; snap: Snapshot; onPanel: (p: PanelId) => void; onAdjust: () => void }) {
+function ControlBar({ t, snap, onPanel, onAdjust, onFramePrev }: { t: ReturnType<typeof makeT>; snap: Snapshot; onPanel: (p: PanelId) => void; onAdjust: () => void; onFramePrev: () => void }) {
   const land = useLandscape();
   const dir: "h" | "v" = land ? "v" : "h";
   const sym: "off" | "on" = SESSION.sym;
@@ -831,6 +831,7 @@ function ControlBar({ t, snap, onPanel, onAdjust }: { t: ReturnType<typeof makeT
       <div className="cb-sliders">
         <HoldAdjust dir={dir} value={snap.brushSize} min={1} max={64} title={t("brushSize")} hint={bd(snap.lang, "brush")} format={(v) => "◉" + v} reset={1} onChange={(v) => SESSION.setBrushSize(v)} />
         <HoldAdjust dir={dir} value={snap.brushAlpha} min={0} max={255} title={t("opacity")} hint={bd(snap.lang, "alpha")} format={(v) => "◐" + v} reset={255} onChange={(v) => SESSION.setBrushAlpha(v)} />
+        <Btn icon="i-frameprev" onClick={onFramePrev} title={t("framePreview")} />
         {snap.tool === "polygon" && <HoldAdjust dir={dir} value={SESSION.shapeSides} min={3} max={12} title={t("sides")} hint={bd(snap.lang, "sides")} format={(v) => "◮" + v} reset={6} onChange={(v) => SESSION.setShapeSides(v)} />}
         {isShapeTool(snap.tool) && snap.tool !== "line" && <Btn icon={SESSION.shapeFill ? "i-rect" : "i-rectfill"} onClick={() => SESSION.setShapeFill(!SESSION.shapeFill)} title={SESSION.shapeFill ? t("shapeHollow") : t("shapeSolid")} />}
       </div>

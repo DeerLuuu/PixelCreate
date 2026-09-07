@@ -257,7 +257,6 @@ export function MenuModal({ t, snap, onClose, onOpen, onSheet, onRef }: { t: Ret
             <Btn label={t("export")} icon="i-export" className="menuitem" onClick={() => setSub("export")} />
             {go("adjust")(t("adjust"), "i-size")}
             {go("settings")(t("settings"), "i-gear")}
-            {go("framePrev")(t("framePreview"), "i-timeline")}
             {go("changelog")(t("changelog"), "i-star")}
           </>) : (
             <>
@@ -576,14 +575,16 @@ function FrameThumb({ doc, fi }: { doc: Doc; fi: number }) {
   useEffect(() => {
     const cv = ref.current;
     if (!cv) return;
+    const SZ = 132;
+    cv.width = SZ; cv.height = SZ;
     const full = compose.composeFrame(doc, fi);
-    const z = Math.min(1, 150 / Math.max(doc.w, doc.h));
-    cv.width = Math.max(1, Math.round(doc.w * z));
-    cv.height = Math.max(1, Math.round(doc.h * z));
+    const z = Math.min(SZ / doc.w, SZ / doc.h);
+    const w = Math.max(1, Math.round(doc.w * z)), h = Math.max(1, Math.round(doc.h * z));
     const ctx = cv.getContext("2d")!;
     ctx.imageSmoothingEnabled = false;
-    ctx.clearRect(0, 0, cv.width, cv.height);
-    ctx.drawImage(full, 0, 0, cv.width, cv.height);
+    ctx.fillStyle = "#1d2129";
+    ctx.fillRect(0, 0, SZ, SZ);
+    ctx.drawImage(full, (SZ - w) >> 1, (SZ - h) >> 1, w, h);
   }, [doc, fi]);
   return <canvas ref={ref} className="fp-thumb" />;
 }
@@ -601,7 +602,6 @@ export function FramePreviewModal({ t, onClose }: { t: ReturnType<typeof makeT>;
           {frames.length === 0 ? <div className="row-note">{t("historyEmpty")}</div> : frames.map((f, i) => (
             <button key={f.id} className={"fp-cell" + (i === snap.frameIdx ? " on" : "")} onClick={() => { SESSION.setFrame(i); onClose(); }}>
               <FrameThumb doc={doc} fi={i} />
-              <span className="fp-num">{i + 1}</span>
             </button>
           ))}
         </div>
