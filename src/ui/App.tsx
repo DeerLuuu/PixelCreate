@@ -433,7 +433,7 @@ function FloatingTools({ t, snap }: { t: ReturnType<typeof makeT>; snap: Snapsho
   const selItems: Item[] = [
     { icon: "i-check", label: t("sel.all"), act: () => { selOps.selOps.selectAll(d); SESSION.repaint(); } },
     { icon: "i-x", label: t("sel.clear"), act: () => { selOps.selOps.clear(d); SESSION.repaint(); } },
-    { icon: "i-bucket", label: t("sel.fill"), act: () => { selOps.selOps.fill(d, SESSION.history, li, fi, SESSION.color); repaintChanged(); } },
+    { icon: "i-bucket", label: t("sel.fill"), act: () => { if (!(d.sel && d.sel.hasAny())) { bridge.toast(t("noSel")); return; } selOps.selOps.fill(d, SESSION.history, li, fi, SESSION.color); repaintChanged(); } },
     { icon: "i-dupe", label: t("sel.copy"), act: () => { const c = selOps.selOps.copy(d, li, fi); SESSION.clip = c; if (c) void writeClipboardPng(compositor.celToCanvas(c)).then((ok) => bridge.toast(ok ? t("sysCopy") : t("copied"))); } },
     { icon: "i-pencil", label: t("sel.cut"), act: () => { const c = selOps.selOps.cut(d, SESSION.history, li, fi); SESSION.clip = c; if (c) { repaintChanged(); void writeClipboardPng(compositor.celToCanvas(c)).then((ok) => bridge.toast(ok ? t("sysCopy") : t("cut"))); } } },
     { icon: "i-import", label: t("sel.paste"), act: () => { if (SESSION.clip) { selOps.selOps.paste(d, SESSION.history, li, fi, SESSION.clip); repaintChanged(); bridge.toast(t("pasted")); } else bridge.toast(t("noSel")); } },
@@ -448,7 +448,10 @@ function FloatingTools({ t, snap }: { t: ReturnType<typeof makeT>; snap: Snapsho
   const fxZh = snap.lang === "zh";
   const fxDo = (label: string, fn: (data: Uint8ClampedArray, w: number, h: number) => void) => {
     const cel = d.celAt(li, fi);
-    if (!cel) return;
+    if (!cel) { bridge.toast(t("noContent")); return; }
+    let has = false;
+    for (let i = 3; i < cel.data.length; i += 4) if (cel.data[i] > 0) { has = true; break; }
+    if (!has) { bridge.toast(t("noContent")); return; }
     const before = new Uint8ClampedArray(cel.data);
     fn(cel.data, d.w, d.h);
     let changed = false;
@@ -883,6 +886,10 @@ function Viewport({ onColorClick, refImg, onRefClose }: { onColorClick: () => vo
           <button className="sym-chip sym-done" type="button" title={tv("symAdjustHint")} onClick={() => SESSION.resetSymAxes()}>{tv("symReset")}</button>
         </div>
       )}
+      <div className="zoom-hud">
+        <span className="zoom-pct">{Math.round((viewRef.current?.zoom ?? 8) * 100)}%</span>
+        <button className="zoom-fit" type="button" title={tv("fitView")} onClick={() => { const v = viewRef.current; if (v) { v.fit(); v.refresh(false); } }}>{tv("fitView")}</button>
+      </div>
       {visible && (
         <div className="canvas-corner">
           <button className="colorbox" onClick={onColorClick} title={tv("colorPicked")}>

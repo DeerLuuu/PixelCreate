@@ -633,3 +633,8 @@ input:-webkit-autofill{-webkit-box-shadow:0 0 0 1000px #232834 inset;-webkit-tex
 .fp-cell{background:#1d2129;border:1px solid #3a4055;border-radius:10px;padding:5px;width:142px;height:142px;display:flex;align-items:center;justify-content:center;cursor:pointer;touch-action:manipulation;box-sizing:border-box}
 .fp-cell.on{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
 .fp-thumb{image-rendering:pixelated;display:block;border-radius:6px;width:132px;height:132px}
+/* zoom HUD: current zoom % + fit/reset button (bottom-right of the viewport) */
+.zoom-hud{position:absolute;right:10px;bottom:10px;z-index:8;display:flex;gap:6px;align-items:center;pointer-events:none}
+.zoom-hud .zoom-pct{font-size:12px;color:#aab1c6;background:rgba(21,23,32,.8);border:1px solid var(--line);border-radius:8px;padding:5px 8px;font-variant-numeric:tabular-nums}
+.zoom-hud .zoom-fit{pointer-events:auto;font-size:12px;line-height:1;color:#dfe4f0;background:rgba(21,23,32,.85);border:1px solid var(--line);border-radius:8px;padding:6px 9px;cursor:pointer;font-family:inherit;white-space:nowrap}
+.zoom-hud .zoom-fit:active{background:#2b3042}

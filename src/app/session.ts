@@ -35,6 +35,8 @@ export interface Prefs {
   histSteps: number;
   /** drop shadow target: false = on the current layer, true = new "shadow" layer */
   shadowNewLayer: boolean;
+  /** auto-pan the canvas when a brush/selection drag reaches the viewport edge */
+  autoPan: boolean;
 }
 
 export interface Snapshot {
@@ -288,7 +290,7 @@ export class Session {
   }
 
   private loadPrefs(): Prefs {
-    const p: Prefs = { lang: "zh", grid: true, onion: 0, autosave: true, newFrameCopy: false, railSwap: true, palMode: "ball", previewBg: "white", tlH: 116, histMode: "steps", histSteps: 60, isoGrid: false, shadowNewLayer: false };
+    const p: Prefs = { lang: "zh", grid: true, onion: 0, autosave: true, newFrameCopy: false, railSwap: true, palMode: "ball", previewBg: "white", tlH: 116, histMode: "steps", histSteps: 60, isoGrid: false, shadowNewLayer: false, autoPan: true };
     try {
       const saved = JSON.parse(localStorage.getItem("pc.prefs") ?? "{}");
       if (saved.lang === "en") p.lang = "en";
@@ -303,6 +305,7 @@ export class Session {
       if (typeof saved.histSteps === "number") p.histSteps = Math.max(10, Math.min(500, Math.round(saved.histSteps)));
       if (typeof saved.isoGrid === "boolean") p.isoGrid = saved.isoGrid;
       if (typeof saved.shadowNewLayer === "boolean") p.shadowNewLayer = saved.shadowNewLayer;
+      if (typeof saved.autoPan === "boolean") p.autoPan = saved.autoPan;
       /* palette floater style fixed to ball */
     } catch {
       /* ignore */
@@ -573,6 +576,12 @@ export class Session {
     this.savePrefs();
     this.changed();
   }
+  /** auto-pan when dragging near the viewport edge */
+  setAutoPan(on: boolean): void {
+    this.prefs.autoPan = on;
+    this.savePrefs();
+    this.changed();
+  }
 
   /** One-tap drop shadow based ONLY on the current layer's image. Depending on
    *  the shadowNewLayer pref it is baked into the current layer (silhouette kept
@@ -583,6 +592,9 @@ export class Session {
     const fi = this.curFrame();
     const cel = doc.celAt(li, fi);
     if (!cel) return;
+    let has = false;
+    for (let i = 3; i < cel.data.length; i += 4) if (cel.data[i] > 0) { has = true; break; }
+    if (!has) { toastFn(this.prefs.lang === "en" ? "Layer is empty" : "当前图层为空"); return; }
     const w = doc.w, h = doc.h;
     const color: RGBA = [0, 0, 0, 150];
     if (!this.prefs.shadowNewLayer) {
@@ -611,7 +623,7 @@ export class Session {
   /** Clear the pixels inside the current selection to transparent (keeps the selection). */
   deleteSelection(): void {
     const doc = this.doc;
-    if (!doc.sel || !doc.sel.hasAny()) return;
+    if (!doc.sel || !doc.sel.hasAny()) { toastFn(this.prefs.lang === "en" ? "No selection" : "请先建立选区"); return; }
     const li = this.curLayer(), fi = this.curFrame();
     const cel = doc.celAt(li, fi);
     if (!cel) return;
@@ -904,7 +916,7 @@ export class Session {
   /** smart crop: shrink the canvas to the union of all drawn content */
   cropSmart(): void {
     const b = ops.contentBounds(this.doc);
-    if (!b) return;
+    if (!b) { toastFn(this.prefs.lang === "en" ? "Nothing to crop" : "无可裁剪内容"); return; }
     if (b.w === this.doc.w && b.h === this.doc.h) return;
     this.struct("auto-crop", () => {
       const bb = ops.contentBounds(this.doc);

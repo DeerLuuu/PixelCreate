@@ -41,6 +41,8 @@ export class View {
   private composite: HTMLCanvasElement | null = null;
   private compKey = "";
   private compDirty = true;
+  /** first layout handled: later resizes (orientation/panels) preserve pan+zoom */
+  private firstFit = false;
   private cursor: { x: number; y: number; size: number } | null = null;
   private isoCache: HTMLCanvasElement | null = null;
   private isoKey = "";
@@ -122,7 +124,9 @@ export class View {
       c.width = Math.round(w * this.dpr);
       c.height = Math.round(h * this.dpr);
     }
-    this.fit();
+    // keep the user's pan/zoom across orientation / panel changes; only the
+    // very first layout fits the canvas to the viewport
+    if (!this.firstFit) { this.fit(); this.firstFit = true; }
     this.refresh(true);
   }
 
@@ -747,6 +751,14 @@ export class View {
     const pt = this.evPt(e);
     const wasDown = this.pointers.has(e.pointerId);
     if (wasDown) this.pointers.set(e.pointerId, pt);
+    // auto-pan the viewport while a draw/transform/selection drag nears the edge
+    if (this.session.prefs.autoPan && wasDown && this.pointers.size === 1 && (this.stroke || this.xf || this.selDrag)) {
+      const M = 22, w = this.host.clientWidth, h = this.host.clientHeight;
+      let panx = 0, pany = 0;
+      if (pt.x < M) panx = pt.x - M; else if (pt.x > w - M) panx = pt.x - (w - M);
+      if (pt.y < M) pany = pt.y - M; else if (pt.y > h - M) pany = pt.y - (h - M);
+      if (panx || pany) { this.ox -= panx; this.oy -= pany; }
+    }
     const ppx = this.screenToPixel(pt.x, pt.y);
     // pending pick: cancels only when the finger moves to another pixel cell
     if (wasDown && this.longT !== null && this.pickAnchor) {
