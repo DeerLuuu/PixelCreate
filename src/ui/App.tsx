@@ -236,7 +236,22 @@ function FloatingTools({ t, snap }: { t: ReturnType<typeof makeT>; snap: Snapsho
   // ---------- floating-ball dock ----------
   const landD = useLandscape();
   type BallId = "main" | "pal" | "fx";
-  const [docked, setDocked] = useState<{ id: BallId; x: number; y: number }[]>([]);
+  const dockKey = "pc.orb.dock";
+  const loadDock = (): Array<{ id: BallId; x: number; y: number }> => {
+    try {
+      const d = JSON.parse(localStorage.getItem(dockKey) || "[]");
+      if (Array.isArray(d)) {
+        return d.filter((e) => e && (e.id === "main" || e.id === "pal" || e.id === "fx") &&
+          typeof e.x === "number" && typeof e.y === "number");
+      }
+    } catch { /* ignore */ }
+    return [];
+  };
+  const [docked, setDocked] = useState<{ id: BallId; x: number; y: number }[]>(loadDock);
+  // persist the docked-ball layout so a saved layout restores the storage area
+  useEffect(() => {
+    try { localStorage.setItem(dockKey, JSON.stringify(docked)); } catch { /* ignore */ }
+  }, [docked]);
   const [dockOpen, setDockOpen] = useState(false);
   const [dockHover, setDockHover] = useState<number | null>(null);
   const [dockArmed, setDockArmed] = useState(false);
