@@ -1,5 +1,5 @@
 // Hold-to-adjust buttons + long-press quick color wheel
-import React, { useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { SESSION } from "./singleton";
 import { showTip, hideTip } from "./tooltip";
 import type { RGBA } from "../engine/types";
@@ -62,6 +62,8 @@ export function HoldAdjust({
   };
   const [bar, setBar] = useState<{ rect: DOMRect; cur: number; start: number } | null>(null);
   const [cur, setCur] = useState(value);
+  // keep the label in sync with external value changes while no drag is active
+  useEffect(() => { if (!bar) setCur(value); }, [value, bar]);
   const startPos = useRef(0);
   const dnT = useRef(0);
   const dnXY = useRef({ x: 0, y: 0 });
@@ -122,8 +124,7 @@ export function HoldAdjust({
   return (
     <>
       <button className="holdbtn" title={title} onPointerDown={down}>
-        {/* show the live value during the gesture so the label tracks the drag */}
-        <span className="hb-text">{format(bar ? cur : value)}</span>
+        <span className="hb-text">{format(cur)}</span>
       </button>
       {bar && dir === "v" && (() => {
         // swap ON  -> control rail on the right -> pop sits 20px to the LEFT of the button

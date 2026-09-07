@@ -172,7 +172,6 @@ export function ScrubNum({
     onChange(String(Math.round(clampN(a.n + (d / 3) * unit))));
   };
   const down = (e: React.PointerEvent<HTMLInputElement>) => {
-    e.preventDefault();
     const el = e.currentTarget;
     armT.current = window.setTimeout(() => {
       armT.current = null;

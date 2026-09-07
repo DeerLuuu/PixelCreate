@@ -603,10 +603,21 @@ export class View {
         return;
       }
       if (this.stroke) {
+        const doneKind = this.stroke.kind;
+        const doneStart = this.stroke.start;
+        const doneEnd = this.stroke.last;
+        const doneSize = this.stroke.size;
+        const doneMoved = this.gestureMoved;
         const rec = this.stroke.commit(this.session.history, this.labelFor(this.stroke.kind));
         this.stroke = null;
         this.session.repaint();
         if (rec) this.session.changed();
+        // shapes become an immediate selection: switch to the select tool so
+        // the drawn shape can be dragged/moved right away
+        if (doneMoved && doneStart && doneEnd && this.isShapeKind(doneKind)) {
+          this.selectRectAround(doneStart, doneEnd, doneSize);
+          this.session.setTool("select");
+        }
         this.lastTapWasDraw = !this.gestureMoved;
         this.lastTapChanged = !!rec;
       } else {
@@ -619,6 +630,28 @@ export class View {
       this.lastTap = now;
       this.lastTapPt = pt;
     }
+  }
+
+  /** true for the freehand shape tools that auto-select after drawing */
+  private isShapeKind(k: string): boolean {
+    return k === "line" || k === "rect" || k === "rectfill" || k === "ellipse" || k === "ellipsefill" || k === "circle" || k === "polygon";
+  }
+
+  /** select the rectangle around [start..end] inflated by the brush radius */
+  private selectRectAround(s: [number, number], e: [number, number], size: number): void {
+    const doc = this.session.doc;
+    const h = Math.floor(Math.max(1, Math.round(size)) / 2);
+    const x0 = Math.max(0, Math.min(s[0], e[0]) - h);
+    const y0 = Math.max(0, Math.min(s[1], e[1]) - h);
+    const x1 = Math.min(doc.w - 1, Math.max(s[0], e[0]) + h);
+    const y1 = Math.min(doc.h - 1, Math.max(s[1], e[1]) + h);
+    if (x1 < x0 || y1 < y0) return;
+    if (!doc.sel) doc.sel = new Sel(doc.w, doc.h);
+    const sel = doc.sel;
+    sel.clear();
+    for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) sel.set(x, y, 1);
+    this.session.repaint();
+    this.session.changed();
   }
 
   private onCancel(e: PointerEvent): void {

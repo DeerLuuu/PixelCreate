@@ -440,15 +440,15 @@ function FloatingTools({ t, snap }: { t: ReturnType<typeof makeT>; snap: Snapsho
     SESSION.history.pushPixels(label, d, [{ li, fi, before, after: new Uint8ClampedArray(cel.data) }]);
     repaintChanged();
   };
-  const fxI = (key: string, labelZh: string, labelEn: string, descZh: string, descEn: string, act: () => void): Item => ({
-    icon: "", label: fxZh ? labelZh : labelEn, desc: fxZh ? descZh : descEn, act,
+  const fxI = (key: string, icon: string, labelZh: string, labelEn: string, descZh: string, descEn: string, act: () => void): Item => ({
+    icon, label: fxZh ? labelZh : labelEn, desc: fxZh ? descZh : descEn, act,
   });
   const fxItems: Item[] = [
-    fxI("o1", "描1", "O1", "向外描边 1px（用前景色）", "Outline 1px outward (FG colour)", () => fxDo("fx-outline1", (dd, w, h) => fxE.outlineCel(dd, w, h, 1, SESSION.color))),
-    fxI("o2", "描2", "O2", "向外描边 2px（用前景色）", "Outline 2px outward (FG colour)", () => fxDo("fx-outline2", (dd, w, h) => fxE.outlineCel(dd, w, h, 2, SESSION.color))),
-    fxI("inv", "反色", "Inv", "反色：把不透明像素的 RGB 取反（保留透明）", "Invert RGB of visible pixels", () => fxDo("fx-invert", (dd) => fxE.invertCel(dd))),
-    fxI("gray", "灰度", "B/W", "去饱和：把不透明像素变为灰度", "Desaturate visible pixels to grayscale", () => fxDo("fx-gray", (dd) => fxE.desaturateCel(dd))),
-    fxI("ctr", "居中", "Ctr", "把当前图层内容居中到画布中心（有选区时居中到选区）", "Center the layer content in the canvas (or inside the selection when one is active)", () => fxDo("fx-center", (data, w, h) => {
+    fxI("o1", "i-fx-o1", "描1", "O1", "向外描边 1px（用前景色）", "Outline 1px outward (FG colour)", () => fxDo("fx-outline1", (dd, w, h) => fxE.outlineCel(dd, w, h, 1, SESSION.color))),
+    fxI("o2", "i-fx-o2", "描2", "O2", "向外描边 2px（用前景色）", "Outline 2px outward (FG colour)", () => fxDo("fx-outline2", (dd, w, h) => fxE.outlineCel(dd, w, h, 2, SESSION.color))),
+    fxI("inv", "i-fx-inv", "反色", "Inv", "反色：把不透明像素的 RGB 取反（保留透明）", "Invert RGB of visible pixels", () => fxDo("fx-invert", (dd) => fxE.invertCel(dd))),
+    fxI("gray", "i-fx-gray", "灰度", "B/W", "去饱和：把不透明像素变为灰度", "Desaturate visible pixels to grayscale", () => fxDo("fx-gray", (dd) => fxE.desaturateCel(dd))),
+    fxI("ctr", "i-fx-ctr", "居中", "Ctr", "把当前图层内容居中到画布中心（有选区时居中到选区）", "Center the layer content in the canvas (or inside the selection when one is active)", () => fxDo("fx-center", (data, w, h) => {
       const tgt = (d.sel && d.sel.hasAny() ? d.sel.bounds() : null) ?? { x: 0, y: 0, w: d.w, h: d.h };
       let minX = w, minY = h, maxX = -1, maxY = -1;
       for (let y = 0; y < h; y++) {

@@ -365,12 +365,31 @@ export function NewDocModal({ t, onClose }: { t: ReturnType<typeof makeT>; onClo
   );
 }
 export function ExportModal({ t, snap, onClose }: { t: ReturnType<typeof makeT>; snap: Snapshot; onClose: () => void }) {
-  const [tab, setTab] = useState<"png" | "gif" | "sheet">("png");
+  const [tab, setTab] = useState<"png" | "gif" | "sheet" | "layers">("png");
   const [scope, setScope] = useState<"frame" | "layer" | "sel">("frame");
   const [scale, setScale] = useState(1);
   const [bgMode, setBgMode] = useState<"transparent" | "white">("transparent");
   const [cols, setCols] = useState(Math.min(8, snap.frameCount));
   const selAvail = snap.selActive;
+  const saveOne = (name: string, mime: string, bytes: Uint8Array) =>
+    new Promise<boolean>((res) => bridge.saveBytes(name, mime, bytes, (ok) => res(ok)));
+  const exportLayersFlow = async () => {
+    const doc = SESSION.doc;
+    const bg: [number, number, number, number] | null = bgMode === "white" ? [255, 255, 255, 255] : null;
+    const o = { bg, scale };
+    const multi = doc.frames.length > 1;
+    let okN = 0;
+    for (let li = 0; li < doc.layers.length; li++) {
+      const lname = exporters.sanitizeName(doc.layers[li].name) || "layer" + (li + 1);
+      for (let fi = 0; fi < doc.frames.length; fi++) {
+        const r = await exporters.exportPNG(doc, fi, { ...o, li });
+        if (!r) continue;
+        const name = exporters.sanitizeName(doc.name) + "_" + lname + (multi ? "_" + (fi + 1) : "") + ".png";
+        if (await saveOne(name, "image/png", r.bytes)) okN++;
+      }
+    }
+    bridge.toast(okN > 0 ? t("exported") : t("saveCancel"));
+  };
   const doExport = () => {
     const doc = SESSION.doc;
     const li = scope === "layer" ? SESSION.curLayer() : null;
@@ -379,7 +398,8 @@ export function ExportModal({ t, snap, onClose }: { t: ReturnType<typeof makeT>;
     const o = { bg, scale, li, bounds: b };
     if (tab === "png") { void exporters.exportPNG(doc, snap.frameIdx, o).then((r) => { if (r) bridge.saveBytes(r.name, "image/png", r.bytes, (ok) => bridge.toast(ok ? t("exported") : t("saveCancel"))); }); }
     else if (tab === "gif") { void exporters.exportGIF(doc, o).then((r) => { bridge.saveBytes(r.name, "image/gif", r.bytes, (ok) => bridge.toast(ok ? t("exported") : t("saveCancel"))); }); }
-    else { void exporters.exportSheet(doc, { ...o, cols }).then((r) => { if (!r) return; bridge.saveBytes(r.name, "image/png", r.png, (ok1) => { if (ok1) bridge.saveBytes(r.jsonName, "application/json", r.json, (ok2) => bridge.toast(ok2 ? t("exported") : t("saveCancel"))); else bridge.toast(t("saveCancel")); }); }); }
+    else if (tab === "sheet") { void exporters.exportSheet(doc, { ...o, cols }).then((r) => { if (!r) return; bridge.saveBytes(r.name, "image/png", r.png, (ok1) => { if (ok1) bridge.saveBytes(r.jsonName, "application/json", r.json, (ok2) => bridge.toast(ok2 ? t("exported") : t("saveCancel"))); else bridge.toast(t("saveCancel")); }); }); }
+    else { void exportLayersFlow(); }
   };
   return (
     <>
@@ -391,7 +411,9 @@ export function ExportModal({ t, snap, onClose }: { t: ReturnType<typeof makeT>;
             <button className={"tab" + (tab === "png" ? " on" : "")} onClick={() => setTab("png")}>PNG</button>
             <button className={"tab" + (tab === "gif" ? " on" : "")} onClick={() => setTab("gif")}>GIF</button>
             <button className={"tab" + (tab === "sheet" ? " on" : "")} onClick={() => setTab("sheet")}>{t("exportSheet")}</button>
+            <button className={"tab" + (tab === "layers" ? " on" : "")} onClick={() => setTab("layers")}>{t("exportLayers")}</button>
           </div>
+          {tab === "layers" ? <div className="row-note">{t("layersNote")}</div> : (<>
           <label className="rowlabel">{t("srcScope")}</label>
           <div className="chips">
             <button className={"chip" + (scope === "frame" ? " on" : "")} onClick={() => setScope("frame")}>{t("srcFrame")}</button>
@@ -403,8 +425,11 @@ export function ExportModal({ t, snap, onClose }: { t: ReturnType<typeof makeT>;
             <button className={"chip" + (bgMode === "transparent" ? " on" : "")} onClick={() => setBgMode("transparent")}>{t("transparent")}</button>
             <button className={"chip" + (bgMode === "white" ? " on" : "")} onClick={() => setBgMode("white")}>{t("whiteBg")}</button>
           </div>
+          </>)}
           <label className="rowlabel">{t("scale")}</label>
-          <select value={scale} onChange={(e) => setScale(Number(e.target.value))}>{[1, 2, 4, 8].map((s) => <option key={s} value={s}>{s}x</option>)}</select>
+          <div className="chips">{([1, 2, 4, 8] as const).map((s) => (
+            <button key={s} className={"chip" + (scale === s ? " on" : "")} onClick={() => setScale(s)}>{s}x</button>
+          ))}</div>
           {tab === "sheet" && (<><label className="rowlabel">{t("columns")}</label><ScrubNum min={1} max={snap.frameCount} value={cols} onChange={(v) => setCols(Math.max(1, Math.min(snap.frameCount, Number(v) || 1)))} /></>)}
         </div>
         <div className="dlg-foot"><Btn label={t("cancel")} onClick={onClose} /><Btn label={t("export")} onClick={doExport} className="primary" /></div>
