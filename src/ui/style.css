@@ -4,7 +4,7 @@
   --accent:#5aa2f0; --danger:#f0616d;
   --railw:46px; --barh:44px;
 }
-*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent;-webkit-touch-callout:none}
 html{-webkit-user-select:none;-webkit-touch-callout:none;user-select:none}
 html,body{margin:0;padding:0;width:100%;height:100%;max-width:100%;overflow:hidden;
   background:var(--bg);color:var(--text);
@@ -12,6 +12,10 @@ html,body{margin:0;padding:0;width:100%;height:100%;max-width:100%;overflow:hidd
   overscroll-behavior:none;touch-action:pan-x pan-y;user-select:none;-webkit-user-select:none}
 #root{height:100%;-webkit-touch-callout:none;-webkit-user-select:none;user-select:none}
 canvas,svg,img,button{-webkit-user-drag:none;-webkit-touch-callout:none}
+/* never let a long-press raise a selection / callout menu on the drawing UI */
+.view-canvas,.viewport,.ctrlbar,.tline-wrap,.bdock,.radial-layer,.chiprow,.dlg,.menuitem,.sym-chiprow{user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}
+/* text stays selectable inside inputs for editing */
+input,textarea{user-select:text;-webkit-user-select:text}
 svg{width:20px;height:20px;fill:currentColor;stroke:none;display:block;flex:0 0 auto}
 button{background:none;border:none;color:inherit;padding:0;font:inherit;cursor:pointer}
 input,select{font:inherit;color:var(--text)}

@@ -38,6 +38,24 @@ type PanelId = "layers" | "palette" | null;
 export function App() {
   const snap = useSession();
   const t = useMemo(() => makeT(snap.lang as Lang), [snap.lang]);
+  // kill the browser's long-press menu / text selection anywhere in the app
+  useEffect(() => {
+    const isEditable = (t: EventTarget | null): boolean => {
+      const el = t as HTMLElement | null;
+      return !!el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable);
+    };
+    const onCtx = (e: Event) => e.preventDefault();
+    const onDrag = (e: Event) => e.preventDefault();
+    const onSel = (e: Event) => { if (!isEditable(e.target)) e.preventDefault(); };
+    document.addEventListener("contextmenu", onCtx);
+    document.addEventListener("dragstart", onDrag);
+    document.addEventListener("selectstart", onSel);
+    return () => {
+      document.removeEventListener("contextmenu", onCtx);
+      document.removeEventListener("dragstart", onDrag);
+      document.removeEventListener("selectstart", onSel);
+    };
+  }, []);
   const [panel, setPanel] = useState<PanelId>(null);
   const [modal, setModal] = useState<ModalId>(null);
   const [frameDlgIdx, setFrameDlgIdx] = useState<number | null>(null);
