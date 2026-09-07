@@ -18,6 +18,10 @@ interface PxPoint {
   y: number;
 }
 
+/** lock / unlock glyphs, matching the app's i-lock / i-unlock SVG symbols (24x24) */
+const LOCK_D = "M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z";
+const UNLOCK_D = "M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6h2c0-1.66 1.34-3 3-3s3 1.34 3 3v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm0 12H6V10h12v10z";
+
 export class View {
   private host: HTMLElement;
   private pix: HTMLCanvasElement;
@@ -479,11 +483,15 @@ export class View {
       ctx.strokeStyle = locked ? "#7effd6" : "#ffffff";
       ctx.lineWidth = 2;
       ctx.stroke();
-      ctx.font = "14px sans-serif";
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      ctx.fillStyle = "#ffffff";
-      ctx.fillText(locked ? "🔒" : "🔓", lb[0], lb[1] + 1);
+      // lock glyph drawn as the same SVG paths used by the app's i-lock / i-unlock icons
+      const icon = new Path2D(locked ? LOCK_D : UNLOCK_D);
+      const IC = 18, s = IC / 24;
+      ctx.save();
+      ctx.translate(lb[0] - IC / 2, lb[1] - IC / 2);
+      ctx.scale(s, s);
+      ctx.fillStyle = locked ? "#7effd6" : "#ffffff";
+      ctx.fill(icon);
+      ctx.restore();
     }
     ctx.restore();
   }
