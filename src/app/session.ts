@@ -78,6 +78,11 @@ export class Session {
   selectionTolerance = 8;
   colorPicking = false;
   sym: SymMode = "off";
+  /** symmetry-axis offsets in half-cells from the doc centre: the mirror axis
+   *  sits at (doc.w + symQx) / 2 (integer symQx keeps the axis on a pixel or
+   *  half-pixel grid, so mirrored cells are exact) */
+  symQx = 0;
+  symQy = 0;
   shapeSides = 6;
   /** shapes draw filled (true) or hollow outline (false) */
   shapeFill = true;
@@ -404,7 +409,16 @@ export class Session {
   cycleSym(): SymMode {
     this.sym = nextSym(this.sym);
     this.changed();
+    this.repaint(); // show/hide the adjustable symmetry guides
     return this.sym;
+  }
+  /** snap both symmetry axes back to the canvas centre */
+  resetSymAxes(): void {
+    if (this.symQx === 0 && this.symQy === 0) return;
+    this.symQx = 0;
+    this.symQy = 0;
+    this.repaint();
+    this.changed();
   }
   setShapeSides(n: number): void {
     this.shapeSides = Math.max(3, Math.min(32, Math.round(n)));
@@ -556,6 +570,8 @@ export class Session {
     this.frameIdx = 0;
     this.history.clear();
     this.clip = null;
+    this.symQx = 0;
+    this.symQy = 0;
     this.stopPlayback();
     this.view_?.setDoc(this.doc);
     this.view_?.setFrame(0);
@@ -570,6 +586,8 @@ export class Session {
     this.frameIdx = 0;
     this.history.clear();
     this.clip = null;
+    this.symQx = 0;
+    this.symQy = 0;
     this.stopPlayback();
     this.view_?.setDoc(doc);
     this.view_?.setFrame(0);

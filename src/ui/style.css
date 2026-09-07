@@ -616,3 +616,11 @@ input:-webkit-autofill{-webkit-box-shadow:0 0 0 1000px #232834 inset;-webkit-tex
 .ase-lcell .mini svg{display:block}
 /* menu secondary-level back entry */
 .menuitem.sub-back{color:var(--dim);opacity:.85}
+
+/* symmetry-axis adjust controls (floating chips over the canvas, top centre) */
+.sym-chiprow{position:absolute;top:8px;left:50%;transform:translateX(-50%);z-index:8;display:flex;gap:6px;align-items:center;pointer-events:none}
+.sym-chiprow .sym-chip{pointer-events:auto;border:1px solid var(--line);background:rgba(21,23,32,.84);color:#dbe1ee;
+  font-size:12.5px;line-height:1;padding:8px 11px;border-radius:10px;cursor:pointer;font-family:inherit;
+  touch-action:none;user-select:none;-webkit-user-select:none;box-shadow:0 3px 12px rgba(0,0,0,.4);white-space:nowrap}
+.sym-chiprow .sym-chip:active{background:#2b3042}
+.sym-chiprow .sym-chip.sym-done{border-color:rgba(126,255,214,.65);color:#b2ffe2}

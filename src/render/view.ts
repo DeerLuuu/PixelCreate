@@ -7,6 +7,7 @@ import * as comp from "./compositor";
 import * as bridge from "../io/bridge";
 import { rgbaToHex } from "../engine/color";
 import { Stroke } from "../tools/stroke";
+import { isSymTool } from "../tools/registry";
 import { lineCells, brushStamp } from "../engine/paint";
 import { selOps, lassoFill, beginMove, xformSelection, xformFloating, type MoveState } from "../tools/select";
 import type { Session } from "../app/session";
@@ -35,6 +36,10 @@ export class View {
   private cursor: { x: number; y: number; size: number } | null = null;
   private isoCache: HTMLCanvasElement | null = null;
   private isoKey = "";
+  /** axis-adjust mode for the symmetry guides: dragging the dashed lines
+   *  repositions the mirror axis instead of painting */
+  private symAdj = false;
+  private symTarget: "x" | "y" | "both" | null = null;
   private ants = 0;
   private antTimer: number | null = null;
   /** cached selection tint layer (rebuilt only when the doc changes) */
@@ -343,6 +348,7 @@ export class View {
       }
       ctx.restore();
     }
+    this.drawSymGuides(ctx);
     // footprint marker: pencil/eraser show the exact Aseprite circle-brush
     // outline (transparent centre); other drawing tools keep the square bounds
     const cu = this.cursor;
@@ -368,6 +374,89 @@ export class View {
         }
       }
     }
+  }
+
+  /** toggle the symmetry-axis adjust mode (drag dashed lines to move axes) */
+  setSymAdjust(on: boolean): void {
+    if (this.symAdj === on) return;
+    this.symAdj = on;
+    if (!on) this.symTarget = null;
+    this.drawOverlay();
+  }
+
+  /** css-px positions of the active symmetry guides for the current mode */
+  private symGuides(): { vx?: number; hy?: number } | null {
+    const s = this.session;
+    if (s.sym === "off" || !isSymTool(s.tool)) return null;
+    const doc = s.doc;
+    const g: { vx?: number; hy?: number } = {};
+    if (s.sym === "lr" || s.sym === "both") {
+      const qx = clamp(s.symQx, -doc.w, doc.w);
+      g.vx = this.ox + ((doc.w + qx) / 2) * this.zoom;
+    }
+    if (s.sym === "tb" || s.sym === "both") {
+      const qy = clamp(s.symQy, -doc.h, doc.h);
+      g.hy = this.oy + ((doc.h + qy) / 2) * this.zoom;
+    }
+    return g;
+  }
+
+  /** dashed symmetry guides (the adjustable axis lines) + grab knobs */
+  private drawSymGuides(ctx: CanvasRenderingContext2D): void {
+    const s = this.session;
+    const g = this.symGuides();
+    if (!g) return;
+    const doc = s.doc;
+    const z = this.zoom;
+    const x0 = this.ox, y0 = this.oy;
+    const wPx = doc.w * z, hPx = doc.h * z;
+    ctx.save();
+    ctx.lineWidth = this.symAdj ? 2 : 1.2;
+    ctx.strokeStyle = this.symAdj ? "rgba(126,255,214,0.95)" : "rgba(255,255,255,0.42)";
+    ctx.setLineDash(this.symAdj ? [8, 5] : [6, 5]);
+    ctx.beginPath();
+    if (g.vx !== undefined) { ctx.moveTo(g.vx, y0); ctx.lineTo(g.vx, y0 + hPx); }
+    if (g.hy !== undefined) { ctx.moveTo(x0, g.hy); ctx.lineTo(x0 + wPx, g.hy); }
+    ctx.stroke();
+    ctx.setLineDash([]);
+    if (this.symAdj) {
+      const knob = (kx: number, ky: number) => {
+        ctx.beginPath();
+        ctx.arc(kx, ky, 6, 0, Math.PI * 2);
+        ctx.fillStyle = "#ffffff";
+        ctx.fill();
+        ctx.strokeStyle = "rgba(126,255,214,0.9)";
+        ctx.lineWidth = 1.8;
+        ctx.stroke();
+      };
+      if (g.vx !== undefined) { knob(g.vx, y0); knob(g.vx, y0 + hPx); }
+      if (g.hy !== undefined) { knob(x0, g.hy); knob(x0 + wPx, g.hy); }
+      // four-way mode: solid knob on the cross (drag moves both axes)
+      if (g.vx !== undefined && g.hy !== undefined) {
+        ctx.beginPath();
+        ctx.arc(g.vx, g.hy, 8, 0, Math.PI * 2);
+        ctx.fillStyle = "rgba(126,255,214,0.95)";
+        ctx.fill();
+        ctx.strokeStyle = "#ffffff";
+        ctx.lineWidth = 1.8;
+        ctx.stroke();
+      }
+    }
+    ctx.restore();
+  }
+
+  /** which symmetry axis is under the pointer (adjust mode only) */
+  private symHit(pt: PxPoint): "x" | "y" | "both" | null {
+    const g = this.symGuides();
+    if (!g) return null;
+    const B = 20; // grab band around each guide (css px)
+    const vx = g.vx, hy = g.hy;
+    const dx = vx === undefined ? Infinity : Math.abs(pt.x - vx);
+    const dy = hy === undefined ? Infinity : Math.abs(pt.y - hy);
+    if (vx !== undefined && hy !== undefined && dx <= B && dy <= B) return "both";
+    if (vx !== undefined && dx <= B) return "x";
+    if (hy !== undefined && dy <= B) return "y";
+    return null;
   }
 
   /** cached isometric guide grid (two 26.565° line families) drawn over the doc */
@@ -520,6 +609,16 @@ export class View {
       this.session.repaint();
       if (rec) this.session.changed();
     }
+    // symmetry-axis adjust mode: pressing near the dashed guides repositions
+    // the mirror axis instead of painting (painting is suspended in this mode)
+    if (this.symAdj && this.session.sym !== "off" && isSymTool(this.session.tool)) {
+      this.lastTap = 0;
+      this.lastTapPt = null;
+      this.cursor = null;
+      this.symTarget = this.symHit(pt);
+      this.drawOverlay();
+      return;
+    }
     const s = this.session;
     const tool = s.tool;
     const pp = this.screenToPixel(pt.x, pt.y);
@@ -569,7 +668,8 @@ export class View {
     this.gestureMoved = false;
     this.gestureStartPx = pp;
     try {
-      this.stroke = new Stroke(doc, s.curLayer(), s.curFrame(), tool as never, s.brush(), s.layerLocked(), s.sym, s.shapeSides, s.shapeFill);
+      this.stroke = new Stroke(doc, s.curLayer(), s.curFrame(), tool as never, s.brush(), s.layerLocked(), s.sym, s.shapeSides, s.shapeFill,
+        clamp(s.symQx, -doc.w, doc.w), clamp(s.symQy, -doc.h, doc.h));
     } catch {
       this.stroke = null;
       return;
@@ -606,6 +706,21 @@ export class View {
       this.refresh(false);
       return;
     }
+    // axis-adjust drag: the guide follows the finger (snapped to half cells)
+    if (this.symTarget) {
+      const doc = this.session.doc;
+      const s = this.session;
+      if (this.symTarget === "x" || this.symTarget === "both") {
+        const a = (pt.x - this.ox) / this.zoom;
+        s.symQx = clamp(Math.round(a * 2) - doc.w, -doc.w, doc.w);
+      }
+      if (this.symTarget === "y" || this.symTarget === "both") {
+        const a = (pt.y - this.oy) / this.zoom;
+        s.symQy = clamp(Math.round(a * 2) - doc.h, -doc.h, doc.h);
+      }
+      this.drawOverlay();
+      return;
+    }
     if (this.panLast) {
       this.ox += pt.x - this.panLast.x;
       this.oy += pt.y - this.panLast.y;
@@ -635,10 +750,11 @@ export class View {
       return;
     }
     // hover: footprint marker follows the pointer across the whole drawing
-    // area too (marks still clip to the canvas); it hides only off the view
+    // area too (marks still clip to the canvas); it hides only off the view or
+    // while the axis-adjust mode is on (painting is suspended there)
     const drawing = ["pencil", "eraser", "bucket", "line", "rect", "ellipse", "circle", "polygon"].includes(this.session.tool);
     const inView = pt.x >= 0 && pt.y >= 0 && pt.x <= this.host.clientWidth && pt.y <= this.host.clientHeight;
-    this.cursor = drawing && inView
+    this.cursor = drawing && inView && !this.symAdj
       ? { x: ppx.x, y: ppx.y, size: this.session.brushSize }
       : null;
     this.drawOverlay();
@@ -646,6 +762,10 @@ export class View {
 
   private onUp(e: PointerEvent): void {
     this.pointers.delete(e.pointerId);
+    if (this.symTarget) {
+      this.symTarget = null;
+      this.drawOverlay();
+    }
     if (this.pointers.size < 2) this.pinchBase = null;
     if (this.pointers.size === 0) {
       if (this.longT !== null) {
@@ -741,6 +861,7 @@ export class View {
 
   private onCancel(e: PointerEvent): void {
     this.pointers.delete(e.pointerId);
+    if (this.symTarget) this.symTarget = null;
     if (this.stroke) {
       if (this.gestureMoved) {
         const rec = this.stroke.commit(this.session.history, this.labelFor(this.stroke.kind));

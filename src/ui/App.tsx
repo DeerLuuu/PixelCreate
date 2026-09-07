@@ -3,7 +3,7 @@ import { SESSION } from "./singleton";
 import type { Snapshot } from "../app/session";
 import { makeT } from "./i18n";
 import type { Lang } from "./i18n";
-import { CORE_TOOLS, SHAPE_TOOLS, SELECT_TOOLS, isShapeTool, isSelectTool } from "../tools/registry";
+import { CORE_TOOLS, SHAPE_TOOLS, SELECT_TOOLS, isShapeTool, isSelectTool, isSymTool } from "../tools/registry";
 import { View } from "../render/view";
 import { Doc } from "../engine/doc";
 import { Cel } from "../engine/cel";
@@ -836,17 +836,28 @@ function ControlBar({ t, snap, onPanel, onAdjust }: { t: ReturnType<typeof makeT
 }
 function Viewport({ onColorClick, refImg, onRefClose }: { onColorClick: () => void; refImg: RefImg | null; onRefClose: () => void }) {
   const hostRef = useRef<HTMLDivElement | null>(null);
+  const viewRef = useRef<View | null>(null);
   const tv = makeT(SESSION.prefs.lang as Lang);
   const [, setTick] = useState(0);
+  const [symAdj, setSymAdj] = useState(false);
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
     const v = new View(host, SESSION);
+    viewRef.current = v;
     SESSION.attachView(v);
     v.fit();
     const iv = window.setInterval(() => setTick((x) => x + 1), 300);
-    return () => { window.clearInterval(iv); v.destroy(); };
+    return () => { window.clearInterval(iv); v.destroy(); viewRef.current = null; };
   }, []);
+  const symOn = SESSION.sym !== "off" && isSymTool(SESSION.tool);
+  // switching tool/off symmetry exits the axis-adjust mode automatically
+  useEffect(() => {
+    if (!symOn && symAdj) {
+      setSymAdj(false);
+      viewRef.current?.setSymAdjust(false);
+    }
+  });
   const c = SESSION.color;
   const visible = SESSION.colorPickedRecently(Date.now(), 1600);
   return (
@@ -854,6 +865,18 @@ function Viewport({ onColorClick, refImg, onRefClose }: { onColorClick: () => vo
       <div className="view-canvas" ref={hostRef} />
       <PreviewBox />
       {refImg && <RefImageBox img={refImg} onClose={onRefClose} />}
+      {symOn && (
+        <div className={"sym-chiprow" + (symAdj ? " adj" : "")}>
+          {symAdj ? (
+            <>
+              <button className="sym-chip sym-done" type="button" title={tv("symAdjustHint")} onClick={() => { setSymAdj(false); viewRef.current?.setSymAdjust(false); }}>{tv("symDone")}</button>
+              <button className="sym-chip" type="button" title={tv("symReset")} onClick={() => SESSION.resetSymAxes()}>{tv("symReset")}</button>
+            </>
+          ) : (
+            <button className="sym-chip" type="button" title={tv("symAdjustHint")} onClick={() => { setSymAdj(true); viewRef.current?.setSymAdjust(true); }}>{tv("symAdjust")}</button>
+          )}
+        </div>
+      )}
       {visible && (
         <div className="canvas-corner">
           <button className="colorbox" onClick={onColorClick} title={tv("colorPicked")}>

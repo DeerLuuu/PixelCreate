@@ -45,6 +45,10 @@ export type SymMode = "off" | "lr" | "tb" | "both";
 export const SYM_CYCLE: SymMode[] = ["off", "lr", "tb", "both"];
 export const nextSym = (m: SymMode): SymMode => SYM_CYCLE[(SYM_CYCLE.indexOf(m) + 1) % SYM_CYCLE.length];
 
+/** brush/shape tools whose marks honour drawing symmetry */
+export const SYM_TOOLS = ["pencil", "eraser", "line", "rect", "ellipse", "circle", "polygon"] as const;
+export const isSymTool = (id: string): boolean => (SYM_TOOLS as readonly string[]).includes(id);
+
 export interface BrushState {
   color: RGBA;
   size: number;   // pixel diameter (>=1)

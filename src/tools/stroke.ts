@@ -21,13 +21,16 @@ export class Stroke {
   readonly sym: SymMode;
   readonly shapeSides: number;
   readonly fill: boolean;
+  /** mirror-axis offsets (half-cell units): axis at (w+qx)/2, (h+qy)/2 */
+  readonly qx: number;
+  readonly qy: number;
   color: RGBA;
   size: number;
   last: [number, number] | null = null;
   start: [number, number] | null = null;
   private everPainted = false;
 
-  constructor(doc: Doc, li: number, fi: number, kind: ToolKind, brush: BrushState, layerLocked: boolean, sym: SymMode, shapeSides = 6, fill = true) {
+  constructor(doc: Doc, li: number, fi: number, kind: ToolKind, brush: BrushState, layerLocked: boolean, sym: SymMode, shapeSides = 6, fill = true, qx = 0, qy = 0) {
     this.doc = doc;
     this.li = li;
     this.fi = fi;
@@ -35,6 +38,8 @@ export class Stroke {
     this.sym = sym;
     this.shapeSides = Math.max(3, Math.min(32, Math.round(shapeSides) || 6));
     this.fill = fill;
+    this.qx = Math.round(qx);
+    this.qy = Math.round(qy);
     if (layerLocked) throw new Error("layer-locked");
     const cel = doc.celAt(li, fi);
     this.before = cel ? new Uint8ClampedArray(cel.data) : null;
@@ -46,11 +51,13 @@ export class Stroke {
     this.mask = doc.selectionActive() ? (x: number, y: number) => doc.selAt(x, y) === 1 : null;
   }
 
-  /** mirror-coordinate expansion for the current symmetry mode */
+  /** mirror-coordinate expansion for the current symmetry mode; the axes may
+   *  be shifted off-centre by the adjustable symmetry guides (qx/qy in
+   *  half-cells): mirror of x across axis a=(w+qx)/2 is 2a-1-x = w-1-x+qx */
   private mirrorPts(x: number, y: number): [number, number][] {
     if (this.sym === "off") return [[x, y]];
     const w = this.doc.w, h = this.doc.h;
-    const x2 = w - 1 - x, y2 = h - 1 - y;
+    const x2 = w - 1 - x + this.qx, y2 = h - 1 - y + this.qy;
     const xs = this.sym === "lr" || this.sym === "both" ? [x, x2] : [x];
     const ys = this.sym === "tb" || this.sym === "both" ? [y, y2] : [y];
     const out: [number, number][] = [];
