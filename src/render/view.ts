@@ -127,6 +127,7 @@ export class View {
     // keep the user's pan/zoom across orientation / panel changes; only the
     // very first layout fits the canvas to the viewport
     if (!this.firstFit) { this.fit(); this.firstFit = true; }
+    this.clampView();
     this.refresh(true);
   }
 
@@ -153,6 +154,16 @@ export class View {
     this.oy = (this.host.clientHeight - doc.h * this.zoom) / 2;
   }
 
+  /** Keep the canvas in view: stop panning when a canvas edge reaches the
+   *  viewport edge, so the artwork can never be dragged off-screen. */
+  private clampView(): void {
+    const doc = this.session.doc;
+    const w = this.host.clientWidth, h = this.host.clientHeight;
+    const dw = doc.w * this.zoom, dh = doc.h * this.zoom;
+    this.ox = dw >= w ? clamp(this.ox, w - dw, 0) : clamp(this.ox, 0, Math.max(0, w - dw));
+    this.oy = dh >= h ? clamp(this.oy, h - dh, 0) : clamp(this.oy, 0, Math.max(0, h - dh));
+  }
+
   zoomAt(z: number, cx?: number, cy?: number): void {
     const vpW = this.host.clientWidth, vpH = this.host.clientHeight;
     const mx = cx === undefined ? vpW / 2 : cx;
@@ -162,6 +173,7 @@ export class View {
     this.ox = mx - (mx - this.ox) * k;
     this.oy = my - (my - this.oy) * k;
     this.zoom = z;
+    this.clampView();
     this.refresh(false);
   }
 
@@ -757,7 +769,7 @@ export class View {
       let panx = 0, pany = 0;
       if (pt.x < M) panx = pt.x - M; else if (pt.x > w - M) panx = pt.x - (w - M);
       if (pt.y < M) pany = pt.y - M; else if (pt.y > h - M) pany = pt.y - (h - M);
-      if (panx || pany) { this.ox -= panx; this.oy -= pany; }
+      if (panx || pany) { this.ox -= panx; this.oy -= pany; this.clampView(); }
     }
     const ppx = this.screenToPixel(pt.x, pt.y);
     // pending pick: cancels only when the finger moves to another pixel cell
@@ -820,6 +832,7 @@ export class View {
     if (this.panLast) {
       this.ox += pt.x - this.panLast.x;
       this.oy += pt.y - this.panLast.y;
+      this.clampView();
       this.panLast = pt;
       this.refresh(false);
       return;
