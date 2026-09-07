@@ -598,3 +598,21 @@ input[type=range]{width:64px;height:22px;accent-color:var(--accent)}
 /* history recording-mode note in the history dialog */
 .hist-mode-note{margin:0;padding:8px 16px;font-size:11px;line-height:1.55;color:var(--dim);border-bottom:1px solid var(--line);background:rgba(255,255,255,.02)}
 .hist-mode-note.full{color:var(--accent);font-weight:600}
+
+/* dialogs opened above the soft keyboard / smaller screens: shift the rename box upward */
+.dlg.dlg-top{top:32%;transform:translate(-50%,-50%)}
+
+/* unified dark inputs across the whole app (no white native fields) */
+input:not([type]),input[type="text"],input[type="number"],input[type="search"],input[type="email"],input[type="tel"],input[type="url"]{
+  background:#232834;border:1px solid #3a4055;color:#e9edf7;border-radius:9px;padding:7px 9px;
+  outline:none;min-height:34px;box-sizing:border-box;caret-color:var(--accent);font-size:14px}
+input:not([type]):focus,input[type="text"]:focus,input[type="number"]:focus,input[type="search"]:focus{ border-color:var(--accent)}
+input[type="number"]::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+input:not([type])::-webkit-input-placeholder,input[type="text"]::-webkit-input-placeholder{color:#7b8299}
+input:-webkit-autofill{-webkit-box-shadow:0 0 0 1000px #232834 inset;-webkit-text-fill-color:#e9edf7}
+
+/* lock icon button matches the eye button exactly (18px .mini, 12px glyph) */
+.ase-lcell .mini.lock{font-size:0;line-height:0}
+.ase-lcell .mini svg{display:block}
+/* menu secondary-level back entry */
+.menuitem.sub-back{color:var(--dim);opacity:.85}

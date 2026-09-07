@@ -130,3 +130,73 @@ export function Keep({ on, el, ms = 200 }: { on: boolean; el: React.ReactNode; m
   if (!alive) return null;
   return <div className={"keep" + (out ? " out" : "")}>{on ? el : cached.current}</div>;
 }
+
+
+/**
+ * Numeric input with a scrub gesture: long-press (no typing) then slide
+ * up/down or left/right to change the value. The per-step magnitude is
+ * derived from the bounds ((max-min)/100, minimum 1) or defaults to 1 when a
+ * bound is missing.
+ */
+export function ScrubNum({
+  value, onChange, min, max, step, title, placeholder, style,
+}: {
+  value: string | number;
+  onChange: (v: string) => void;
+  min?: number;
+  max?: number;
+  step?: number;
+  title?: string;
+  placeholder?: string;
+  style?: React.CSSProperties;
+}) {
+  const elRef = useRef<HTMLInputElement | null>(null);
+  const armT = useRef<number | null>(null);
+  const anchor = useRef<{ x: number; y: number; n: number } | null>(null);
+  const unit = step != null ? step : (min != null && max != null ? Math.max(1, Math.round((max - min) / 100)) : 1);
+  const numeric = () => { const n = parseFloat(String(value)); return Number.isFinite(n) ? n : (min ?? 0); };
+  const clampN = (n: number) => { if (min != null) n = Math.max(min, n); if (max != null) n = Math.min(max, n); return n; };
+  const end = () => {
+    if (armT.current !== null) { window.clearTimeout(armT.current); armT.current = null; }
+    anchor.current = null;
+    window.removeEventListener("pointermove", mv);
+    window.removeEventListener("pointerup", end);
+    window.removeEventListener("pointercancel", end);
+  };
+  const mv = (ev: PointerEvent) => {
+    const a = anchor.current;
+    if (!a) return;
+    const dx = ev.clientX - a.x;
+    const dy = ev.clientY - a.y;
+    const d = Math.abs(dy) > Math.abs(dx) ? -dy : dx; // drag up or right increases
+    onChange(String(Math.round(clampN(a.n + (d / 3) * unit))));
+  };
+  const down = (e: React.PointerEvent<HTMLInputElement>) => {
+    e.preventDefault();
+    const el = e.currentTarget;
+    armT.current = window.setTimeout(() => {
+      armT.current = null;
+      try { el.blur(); } catch { /* ignore */ }
+      anchor.current = { x: e.clientX, y: e.clientY, n: numeric() };
+      window.addEventListener("pointermove", mv);
+      window.addEventListener("pointerup", end);
+      window.addEventListener("pointercancel", end);
+    }, 380);
+  };
+  const clearT = () => { if (armT.current !== null) { window.clearTimeout(armT.current); armT.current = null; } };
+  return (
+    <input
+      ref={elRef}
+      type="number"
+      inputMode="decimal"
+      value={String(value)}
+      title={title}
+      placeholder={placeholder}
+      style={style}
+      onChange={(e) => onChange(e.target.value)}
+      onPointerDown={down}
+      onPointerUp={clearT}
+      onPointerCancel={clearT}
+    />
+  );
+}

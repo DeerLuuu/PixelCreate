@@ -15,7 +15,7 @@ import { tryReadGif } from "../io/gifread";
 import * as project from "../io/project";
 import * as exporters from "../io/exporters";
 import * as bridge from "../io/bridge";
-import { Btn, Icon, useSession } from "./base";
+import { Btn, Icon, useSession, ScrubNum } from "./base";
 import type { RefImg } from "./refimg";
 
 export type ModalId = "menu" | "changelog" | "newdoc" | "export" | "adjust" | "settings" | "frame" | "size" | "sheet" | "history" | null;
@@ -213,6 +213,7 @@ function parsePaletteBytes(b: Uint8Array): Array<[number, number, number, number
   return out;
 }
 export function MenuModal({ t, snap, onClose, onOpen, onSheet, onRef }: { t: ReturnType<typeof makeT>; snap: Snapshot; onClose: () => void; onOpen: (m: ModalId) => void; onSheet: (d: SheetData) => void; onRef: (d: RefImg) => void }) {
+  const [sub, setSub] = useState<null | "import" | "export">(null);
   const go = (modal: ModalId) => (label: string, icon: string) => <Btn label={label} icon={icon} onClick={() => onOpen(modal)} className="menuitem" />;
   const act = (label: string, icon: string, fn: () => void) => <Btn label={label} icon={icon} onClick={() => { fn(); onClose(); }} className="menuitem" />;
   const sheetPick = async () => {
@@ -247,19 +248,32 @@ export function MenuModal({ t, snap, onClose, onOpen, onSheet, onRef }: { t: Ret
       <div className="dlg">
         <div className="dlg-head"><span>{t("menu")}</span><div className="grow" /><button className="btn small" onClick={onClose}><Icon id="i-x" size={16} /></button></div>
         <div className="dlg-body col">
-          {go("newdoc")(t("newDoc"), "i-new")}
-          {act(t("save"), "i-save", () => void saveProject())}
-          {act(t("open"), "i-open", () => void openFlow("new"))}
-          {go("export")(t("export"), "i-export")}
-          {act(t("importImg"), "i-import", () => void importFlow())}
-          {act(t("importLayerM"), "i-layers", () => void importLayerFlow())}
-          <Btn label={t("importSheet")} icon="i-open" className="menuitem" onClick={() => { void sheetPick(); }} />
-          <Btn label={t("refImg")} icon="i-eye" className="menuitem" onClick={() => { void refPick(); }} />
-          <Btn label={t("importPalette")} icon="i-palette" className="menuitem" onClick={() => { void importPaletteFlow(); }} />
-          <Btn label={t("exportPalette")} icon="i-save" className="menuitem" onClick={() => { exportPaletteFlow(); }} />
-          {go("adjust")(t("adjust"), "i-size")}
-          {go("settings")(t("settings"), "i-gear")}
-          {go("changelog")(t("changelog"), "i-star")}
+          {!sub ? (<>
+            {go("newdoc")(t("newDoc"), "i-new")}
+            {act(t("save"), "i-save", () => void saveProject())}
+            {act(t("open"), "i-open", () => void openFlow("new"))}
+            <Btn label={t("import")} icon="i-import" className="menuitem" onClick={() => setSub("import")} />
+            <Btn label={t("export")} icon="i-export" className="menuitem" onClick={() => setSub("export")} />
+            {go("adjust")(t("adjust"), "i-size")}
+            {go("settings")(t("settings"), "i-gear")}
+            {go("changelog")(t("changelog"), "i-star")}
+          </>) : (
+            <>
+              <Btn label={"‹ " + (sub === "import" ? t("import") : t("export"))} icon="" className="menuitem sub-back" onClick={() => setSub(null)} />
+              {sub === "import" ? (<>
+                <Btn label={t("importImg")} icon="i-import" className="menuitem" onClick={() => { void importFlow(); setSub(null); onClose(); }} />
+                <Btn label={t("importLayerM")} icon="i-layers" className="menuitem" onClick={() => { void importLayerFlow(); setSub(null); onClose(); }} />
+                <Btn label={t("importSheet")} icon="i-open" className="menuitem" onClick={() => { void sheetPick(); setSub(null); }} />
+                <Btn label={t("refImg")} icon="i-eye" className="menuitem" onClick={() => { void refPick(); setSub(null); }} />
+                <Btn label={t("importPalette")} icon="i-palette" className="menuitem" onClick={() => { void importPaletteFlow(); setSub(null); onClose(); }} />
+              </>) : (
+                <>
+                  {go("export")(t("export"), "i-export")}
+                  <Btn label={t("exportPalette")} icon="i-save" className="menuitem" onClick={() => { exportPaletteFlow(); setSub(null); }} />
+                </>
+              )}
+            </>
+          )}
         </div>
       </div>
     </>
@@ -289,9 +303,9 @@ export function SizeModal({ t, snap, initial, onClose }: { t: ReturnType<typeof 
             <button className={"chip" + (mode === "sprite" ? " on" : "")} onClick={() => switchMode("sprite")}>{t("spriteSize")}</button>
           </div>
           <label className="rowlabel">{t("docs.w")}</label>
-          <input type="number" min={1} max={1024} value={w} onChange={(e) => onW(e.target.value)} />
+          <ScrubNum min={1} max={1024} value={w} onChange={(v) => onW(v)} />
           <label className="rowlabel">{t("docs.h")}</label>
-          <input type="number" min={1} max={1024} value={h} onChange={(e) => onH(e.target.value)} />
+          <ScrubNum min={1} max={1024} value={h} onChange={(v) => onH(v)} />
           <div className="chips"><button className={"chip" + (locked ? " on" : "")} onClick={() => setLocked(!locked)}>{t("lockRatio")}</button></div>
           {mode === "canvas" ? (<><label className="rowlabel">{t("anchor")}</label><div className="anchor-grid">{[0, 1, 2].map((r) => <div className="anchor-row" key={r}>{[0, 1, 2].map((c) => cell(r, c))}</div>)}</div><p className="size-note">{t("canvasNote")}</p></>) : <p className="size-note">{t("spriteNote")}</p>}
         </div>
@@ -315,9 +329,9 @@ export function SheetModal({ t, img, onClose }: { t: ReturnType<typeof makeT>; i
         <div className="dlg-body">
           <div className="row-note">{img.name} · {img.w}×{img.h}</div>
           <label className="rowlabel">{t("sheetCellW")}</label>
-          <input type="number" min={1} value={cw} onChange={(e) => setCw(e.target.value)} />
+          <ScrubNum min={1} value={cw} onChange={(v) => setCw(v)} />
           <label className="rowlabel">{t("sheetCellH")}</label>
-          <input type="number" min={1} value={ch} onChange={(e) => setCh(e.target.value)} />
+          <ScrubNum min={1} value={ch} onChange={(v) => setCh(v)} />
           <div className="row-note">{t("sheetFrames")}: {cols * rows} ({cols}×{rows})</div>
         </div>
         <div className="dlg-foot"><Btn label={t("cancel")} onClick={onClose} /><Btn label={t("ok")} onClick={apply} className="primary" /></div>
@@ -340,9 +354,9 @@ export function NewDocModal({ t, onClose }: { t: ReturnType<typeof makeT>; onClo
           <label className="rowlabel">{t("name")}</label>
           <input value={name} onChange={(e) => setName(e.target.value)} />
           <label className="rowlabel">{t("docs.w")}</label>
-          <input type="number" min={1} max={1024} value={w} onChange={(e) => setW(e.target.value)} />
+          <ScrubNum min={1} max={1024} value={w} onChange={(v) => setW(v)} />
           <label className="rowlabel">{t("docs.h")}</label>
-          <input type="number" min={1} max={1024} value={h} onChange={(e) => setH(e.target.value)} />
+          <ScrubNum min={1} max={1024} value={h} onChange={(v) => setH(v)} />
           <div className="chips"><button className={"chip" + (white ? " on" : "")} onClick={() => setWhite(!white)}>{t("whiteBg")}</button></div>
         </div>
         <div className="dlg-foot"><Btn label={t("cancel")} onClick={onClose} /><Btn label={t("ok")} onClick={apply} className="primary" /></div>
@@ -391,7 +405,7 @@ export function ExportModal({ t, snap, onClose }: { t: ReturnType<typeof makeT>;
           </div>
           <label className="rowlabel">{t("scale")}</label>
           <select value={scale} onChange={(e) => setScale(Number(e.target.value))}>{[1, 2, 4, 8].map((s) => <option key={s} value={s}>{s}x</option>)}</select>
-          {tab === "sheet" && (<><label className="rowlabel">{t("columns")}</label><input type="number" min={1} max={snap.frameCount} value={cols} onChange={(e) => setCols(Math.max(1, Math.min(snap.frameCount, Number(e.target.value) || 1)))} /></>)}
+          {tab === "sheet" && (<><label className="rowlabel">{t("columns")}</label><ScrubNum min={1} max={snap.frameCount} value={cols} onChange={(v) => setCols(Math.max(1, Math.min(snap.frameCount, Number(v) || 1)))} /></>)}
         </div>
         <div className="dlg-foot"><Btn label={t("cancel")} onClick={onClose} /><Btn label={t("export")} onClick={doExport} className="primary" /></div>
       </div>
@@ -487,7 +501,7 @@ export function FrameModal({ t, snap, fi, onClose }: { t: ReturnType<typeof make
         <div className="dlg-head"><span>{t("frames")} {fi + 1}</span><div className="grow" /><button className="btn small" onClick={onClose}><Icon id="i-x" size={16} /></button></div>
         <div className="dlg-body">
           <label className="rowlabel">{t("frameDur")}</label>
-          <input type="number" min={1} max={60000} value={ms} onChange={(e) => setMs(Number(e.target.value) || 1)} />
+          <ScrubNum min={1} max={60000} value={ms} onChange={(v) => setMs(Number(v) || 1)} />
         </div>
         <div className="dlg-foot"><Btn label={t("cancel")} onClick={onClose} /><Btn label={t("ok")} onClick={() => { SESSION.setFrameDuration(fi, ms); onClose(); }} className="primary" /></div>
       </div>

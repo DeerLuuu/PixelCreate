@@ -122,7 +122,8 @@ export function HoldAdjust({
   return (
     <>
       <button className="holdbtn" title={title} onPointerDown={down}>
-        <span className="hb-text">{format(value)}</span>
+        {/* show the live value during the gesture so the label tracks the drag */}
+        <span className="hb-text">{format(bar ? cur : value)}</span>
       </button>
       {bar && dir === "v" && (() => {
         // swap ON  -> control rail on the right -> pop sits 20px to the LEFT of the button

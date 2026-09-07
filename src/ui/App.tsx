@@ -41,7 +41,7 @@ export function App() {
   const [panel, setPanel] = useState<PanelId>(null);
   const [modal, setModal] = useState<ModalId>(null);
   const [frameDlgIdx, setFrameDlgIdx] = useState<number | null>(null);
-  const [tlOn, setTlOn] = useState(true);
+  const [tlOn, setTlOn] = useState(false); // timeline starts hidden
   const [tlClosing, setTlClosing] = useState(false);
   const [sizeMode, setSizeMode] = useState<SizeMode>("canvas");
   const [sheet, setSheet] = useState<SheetData | null>(null);

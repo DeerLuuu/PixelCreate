@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { SESSION } from "./singleton";
 import { makeT } from "./i18n";
 import type { Snapshot } from "../app/session";
@@ -208,7 +209,7 @@ export function TimelineBar({ t, snap, onFrameDlg }: { t: ReturnType<typeof make
               <Icon id={L.visible ? "i-eye" : "i-eyeoff"} size={12} />
             </button>
             <button className="mini lock" title={L.locked ? t("lock") : t("unlock")} onClick={(e) => { e.stopPropagation(); SESSION.toggleLayerLock(li); }}>
-              {L.locked ? "🔒" : "🔓"}
+              <Icon id={L.locked ? "i-lock" : "i-unlock"} size={12} />
             </button>
             <button className="lname" title={L.name} onClick={(e) => { e.stopPropagation(); SESSION.setLayer(li); }}>{L.name}</button>
 
@@ -252,7 +253,7 @@ export function TimelineBar({ t, snap, onFrameDlg }: { t: ReturnType<typeof make
           </div>
         </div>
       )}
-      {curL && blendOpen && (
+      {curL && blendOpen && createPortal(
         <>
           <div className="dlg-mask" onClick={() => setBlendOpen(false)} />
           <div className="dlg blend-dlg">
@@ -266,12 +267,11 @@ export function TimelineBar({ t, snap, onFrameDlg }: { t: ReturnType<typeof make
               ))}
             </div>
           </div>
-        </>
-      )}
-      {ren && curL && (
+        </>, document.body)}
+      {ren && curL && createPortal(
         <>
           <div className="dlg-mask" onClick={() => setRen(false)} />
-          <div className="dlg">
+          <div className="dlg dlg-top">
             <div className="dlg-head"><span>{t("layerRename")}</span><div className="grow" /><button className="btn small" onClick={() => setRen(false)}><Icon id="i-x" size={16} /></button></div>
             <div className="dlg-body">
               <label className="rowlabel">{t("name")}</label>
@@ -283,8 +283,7 @@ export function TimelineBar({ t, snap, onFrameDlg }: { t: ReturnType<typeof make
               <Btn label={t("ok")} className="primary" onClick={commitRen} />
             </div>
           </div>
-        </>
-      )}
+        </>, document.body)}
     </footer>
   );
 }
