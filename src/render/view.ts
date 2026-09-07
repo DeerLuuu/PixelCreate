@@ -438,26 +438,27 @@ export class View {
     return Math.abs(dx * uy - dy * ux) <= band;
   }
 
-  /** lock-axis button sits on the line just outside the canvas (+u side) */
+  /** lock-axis button sits on the line at the FAR viewport edge (as far from
+   *  the canvas as the layout allows), so it never sits on top of the artwork. */
   private symLockBtn(): [number, number] | null {
     const a = this.symAxis();
     if (!a) return null;
-    const doc = this.session.doc;
-    const z = this.zoom;
     const w = this.host.clientWidth, h = this.host.clientHeight;
-    const rx = this.ox, ry = this.oy, rw = doc.w * z, rh = doc.h * z;
     const { px, py, ux, uy } = a;
-    const exits: number[] = [];
+    const tests: number[] = [];
     const test = (t: number): void => {
       const X = px + ux * t, Y = py + uy * t;
-      if (X >= rx - 0.5 && X <= rx + rw + 0.5 && Y >= ry - 0.5 && Y <= ry + rh + 0.5) exits.push(t);
+      if (X >= -0.5 && X <= w + 0.5 && Y >= -0.5 && Y <= h + 0.5) tests.push(t);
     };
-    if (Math.abs(ux) > 1e-6) { test((rx - px) / ux); test((rx + rw - px) / ux); }
-    if (Math.abs(uy) > 1e-6) { test((ry - py) / uy); test((ry + rh - py) / uy); }
-    const pos = exits.filter((t) => t > 0.02).sort((x, y) => x - y);
-    const tOut = pos.length ? pos[0] : exits.length ? Math.max(...exits) : 0;
-    const OUT = 32 / z;
-    return [clamp(px + ux * (tOut + OUT), 16, w - 16), clamp(py + uy * (tOut + OUT), 16, h - 16)];
+    if (Math.abs(ux) > 1e-6) { test((0 - px) / ux); test((w - px) / ux); }
+    if (Math.abs(uy) > 1e-6) { test((0 - py) / uy); test((h - py) / uy); }
+    const pos = tests.filter((t) => t > 0.01).sort((x, y) => x - y);
+    const tExit = pos.length ? pos[pos.length - 1] : pos.length ? pos[0] : 0;
+    const INSET = 22;
+    return [
+      clamp(px + ux * (tExit - INSET), 15, w - 15),
+      clamp(py + uy * (tExit - INSET), 15, h - 15),
+    ];
   }
 
   /** dashed symmetry guides (extend across the whole area) + handles + lock button */
@@ -497,7 +498,7 @@ export class View {
     const lb = this.symLockBtn();
     if (lb) {
       ctx.beginPath();
-      ctx.arc(lb[0], lb[1], 15, 0, Math.PI * 2);
+      ctx.arc(lb[0], lb[1], 12, 0, Math.PI * 2);
       ctx.fillStyle = locked ? "rgba(126,255,214,0.28)" : "rgba(21,23,32,0.9)";
       ctx.fill();
       ctx.strokeStyle = locked ? "#7effd6" : "#ffffff";
@@ -683,7 +684,7 @@ export class View {
     // while unlocked the dashed line/knob are directly draggable
     if (this.session.sym !== "off" && isSymTool(this.session.tool)) {
       const lb = this.symLockBtn();
-      if (lb && Math.hypot(pt.x - lb[0], pt.y - lb[1]) <= 30) {
+      if (lb && Math.hypot(pt.x - lb[0], pt.y - lb[1]) <= 24) {
         this.session.setSymLocked(!this.session.symLocked);
         return;
       }
