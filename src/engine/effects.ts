@@ -75,3 +75,55 @@ export function runCelFx(
   for (let i = 0; i < before.length; i++) if (before[i] !== after[i]) { changed = true; break; }
   return changed;
 }
+/** One-tap drop shadow: silhouette offset (dx,dy) down-right, painted with
+ * `color`, original pixels stay on top. Mutates in place. */
+export function dropShadowCel(d: Uint8ClampedArray, w: number, h: number, dx: number, dy: number, color: RGBA): void {
+  if (w <= 0 || h <= 0) return;
+  const src = new Uint8ClampedArray(d);
+  d.fill(0);
+  const put = (x: number, y: number, c: RGBA) => {
+    const p = (y * w + x) * 4;
+    d[p] = c[0]; d[p + 1] = c[1]; d[p + 2] = c[2]; d[p + 3] = c[3];
+  };
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const p = (y * w + x) * 4;
+      if (src[p + 3] === 0) continue;
+      const nx = x + dx, ny = y + dy;
+      if (nx >= 0 && ny >= 0 && nx < w && ny < h) put(nx, ny, color);
+    }
+  }
+  // original silhouette on top (shadows stay visible only around it)
+  for (let i = 0; i < d.length; i++) d[i] = src[i] > 0 ? src[i] : d[i];
+}
+
+/** One-tap outer glow: expands the silhouette by R px, each ring painted with
+ * `color` at fading alpha; original pixels stay on top. */
+export function outerGlowCel(d: Uint8ClampedArray, w: number, h: number, R: number, color: RGBA): void {
+  if (w <= 0 || h <= 0 || R < 1) return;
+  const src = new Uint8ClampedArray(d);
+  const out = new Uint8ClampedArray(d.length);
+  const isLit = (x: number, y: number): boolean => {
+    if (x < 0 || y < 0 || x >= w || y >= h) return false;
+    const p = (y * w + x) * 4;
+    return src[p + 3] > 0 || out[p + 3] > 0;
+  };
+  for (let ring = 1; ring <= R; ring++) {
+    const a = Math.round((color[3] * (R - ring + 1)) / (R + 1));
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const p = (y * w + x) * 4;
+        if (src[p + 3] > 0 || out[p + 3] > 0) continue; // already lit/original
+        const n = isLit(x - 1, y) || isLit(x + 1, y) || isLit(x, y - 1) || isLit(x, y + 1);
+        if (n) {
+          out[p] = color[0]; out[p + 1] = color[1]; out[p + 2] = color[2]; out[p + 3] = a;
+        }
+      }
+    }
+  }
+  // glow below, original above
+  for (let i = 0; i < d.length; i += 4) {
+    if (src[i + 3] > 0) { out[i] = src[i]; out[i + 1] = src[i + 1]; out[i + 2] = src[i + 2]; out[i + 3] = src[i + 3]; }
+  }
+  d.set(out);
+}

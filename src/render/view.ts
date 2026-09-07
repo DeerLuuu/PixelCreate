@@ -33,6 +33,8 @@ export class View {
   private compKey = "";
   private compDirty = true;
   private cursor: { x: number; y: number; size: number } | null = null;
+  private isoCache: HTMLCanvasElement | null = null;
+  private isoKey = "";
   private ants = 0;
   private antTimer: number | null = null;
   /** cached selection tint layer (rebuilt only when the doc changes) */
@@ -239,6 +241,7 @@ export class View {
     const doc = s.doc;
     if (!doc) return;
     const z = this.zoom;
+    this.drawIsoGuide(ctx);
     // selection tint + ants
     if (doc.sel && doc.sel.hasAny()) {
       if (rebuildTint || !this.selTint || this.selTint.width !== doc.w || this.selTint.height !== doc.h) {
@@ -365,6 +368,42 @@ export class View {
         }
       }
     }
+  }
+
+  /** cached isometric guide grid (two 26.565° line families) drawn over the doc */
+  private drawIsoGuide(ctx: CanvasRenderingContext2D): void {
+    if (!this.session.prefs.isoGrid) return;
+    const doc = this.session.doc;
+    const key = doc.w + "x" + doc.h;
+    if (!this.isoCache || this.isoKey !== key) {
+      const c = document.createElement("canvas");
+      c.width = doc.w; c.height = doc.h;
+      const g = c.getContext("2d")!;
+      const step = 8;
+      const k0 = Math.floor((-2 * doc.h) / step) - 1;
+      const k1 = Math.ceil(doc.w / step) + 1;
+      g.lineWidth = 1;
+      for (let k = k0; k <= k1; k++) {
+        const major = ((k % 4) + 4) % 4 === 0;
+        g.strokeStyle = major ? "rgba(120,140,184,0.42)" : "rgba(120,140,184,0.14)";
+        g.beginPath();
+        g.moveTo(k * step, 0);
+        g.lineTo(k * step + 2 * doc.h, doc.h);
+        g.stroke();
+        g.beginPath();
+        g.moveTo(k * step, 0);
+        g.lineTo(k * step - 2 * doc.h, doc.h);
+        g.stroke();
+      }
+      this.isoCache = c;
+      this.isoKey = key;
+    }
+    ctx.save();
+    ctx.translate(this.ox, this.oy);
+    ctx.scale(this.zoom, this.zoom);
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(this.isoCache, 0, 0);
+    ctx.restore();
   }
 
   private startAnts(): void {

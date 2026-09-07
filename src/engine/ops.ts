@@ -228,3 +228,28 @@ export function scaleDocSprite(doc: Doc, w2: number, h2: number): void {
   doc.sel = null;
 }
 
+
+
+/** Union bounding box of every opaque pixel across all layers/frames, or null
+ * when the document is empty. */
+export function contentBounds(doc: Doc): { x: number; y: number; w: number; h: number } | null {
+  const W = doc.w, H = doc.h;
+  let x0 = W, y0 = H, x1 = -1, y1 = -1;
+  for (const cel of doc.cels.values()) {
+    const d = cel.data;
+    const w = cel.w, h = cel.h;
+    for (let y = 0; y < h; y++) {
+      const row = y * w;
+      for (let x = 0; x < w; x++) {
+        if (d[(row + x) * 4 + 3] > 0) {
+          if (x < x0) x0 = x;
+          if (x > x1) x1 = x;
+          if (y < y0) y0 = y;
+          if (y > y1) y1 = y;
+        }
+      }
+    }
+  }
+  if (x1 < 0) return null;
+  return { x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 + 1 };
+}

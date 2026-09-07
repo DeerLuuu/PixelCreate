@@ -440,12 +440,17 @@ function FloatingTools({ t, snap }: { t: ReturnType<typeof makeT>; snap: Snapsho
     SESSION.history.pushPixels(label, d, [{ li, fi, before, after: new Uint8ClampedArray(cel.data) }]);
     repaintChanged();
   };
-  const fxI = (key: string, icon: string, labelZh: string, labelEn: string, descZh: string, descEn: string, act: () => void): Item => ({
-    icon, label: fxZh ? labelZh : labelEn, desc: fxZh ? descZh : descEn, act,
+  const fxI = (key: string, icon: string, labelZh: string, labelEn: string, descZh: string, descEn: string, act: () => void, active = false): Item => ({
+    icon, label: fxZh ? labelZh : labelEn, desc: fxZh ? descZh : descEn, act, ...(active ? { active: true } : {}),
   });
   const fxItems: Item[] = [
-    fxI("o1", "i-fx-o1", "描1", "O1", "向外描边 1px（用前景色）", "Outline 1px outward (FG colour)", () => fxDo("fx-outline1", (dd, w, h) => fxE.outlineCel(dd, w, h, 1, SESSION.color))),
-    fxI("o2", "i-fx-o2", "描2", "O2", "向外描边 2px（用前景色）", "Outline 2px outward (FG colour)", () => fxDo("fx-outline2", (dd, w, h) => fxE.outlineCel(dd, w, h, 2, SESSION.color))),
+    fxI("o1", "i-fx-o1", "描边", "Edge", "边缘描边 1px（用前景色）", "Edge outline 1px outward (FG colour)", () => fxDo("fx-outline1", (dd, w, h) => fxE.outlineCel(dd, w, h, 1, SESSION.color))), fxI("crop", "i-fx-crop", "智能裁剪", "Crop", "自动裁剪画布四周空白（全部图层/帧）", "Auto-crop empty canvas borders (all layers/frames)", () => SESSION.cropSmart()),
+    fxI("shadow", "i-fx-shadow", "投影", "Shadow", "一键投影：内容右下 3px 黑色半透明投影", "Drop shadow: semi-transparent black copy 3px down-right", () => fxDo("fx-shadow", (dd, w, h) => fxE.dropShadowCel(dd, w, h, 3, 3, [0, 0, 0, 150]))),
+    fxI("glow", "i-fx-glow", "外发光", "Glow", "一键外发光：用当前颜色向外发光 2px 并逐层淡出", "Outer glow: current colour fading outwards 2px", () => {
+      const base = SESSION.color;
+      fxDo("fx-glow", (dd, w, h) => fxE.outerGlowCel(dd, w, h, 2, [base[0], base[1], base[2], 255]));
+    }),
+    fxI("iso", "i-fx-iso", "等距网格", "Iso", "等距网格辅助线（开关）", "Isometric helper grid (toggle)", () => SESSION.toggleIsoGrid(), SESSION.prefs.isoGrid),
     fxI("inv", "i-fx-inv", "反色", "Inv", "反色：把不透明像素的 RGB 取反（保留透明）", "Invert RGB of visible pixels", () => fxDo("fx-invert", (dd) => fxE.invertCel(dd))),
     fxI("gray", "i-fx-gray", "灰度", "B/W", "去饱和：把不透明像素变为灰度", "Desaturate visible pixels to grayscale", () => fxDo("fx-gray", (dd) => fxE.desaturateCel(dd))),
     fxI("ctr", "i-fx-ctr", "居中", "Ctr", "把当前图层内容居中到画布中心（有选区时居中到选区）", "Center the layer content in the canvas (or inside the selection when one is active)", () => fxDo("fx-center", (data, w, h) => {

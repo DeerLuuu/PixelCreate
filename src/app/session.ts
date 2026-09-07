@@ -27,6 +27,8 @@ export interface Prefs {
   previewBg: "white" | "black" | "checker";
   /** timeline matrix max height in px (landscape friendly) */
   tlH: number;
+  /** isometric helper grid overlay */
+  isoGrid: boolean;
   /** history recording: "steps" keeps the latest histSteps entries, "full" records everything */
   histMode: "steps" | "full";
   histSteps: number;
@@ -273,7 +275,7 @@ export class Session {
   }
 
   private loadPrefs(): Prefs {
-    const p: Prefs = { lang: "zh", grid: true, onion: 0, autosave: true, newFrameCopy: false, railSwap: true, palMode: "ball", previewBg: "white", tlH: 116, histMode: "steps", histSteps: 60 };
+    const p: Prefs = { lang: "zh", grid: true, onion: 0, autosave: true, newFrameCopy: false, railSwap: true, palMode: "ball", previewBg: "white", tlH: 116, histMode: "steps", histSteps: 60, isoGrid: false };
     try {
       const saved = JSON.parse(localStorage.getItem("pc.prefs") ?? "{}");
       if (saved.lang === "en") p.lang = "en";
@@ -286,6 +288,7 @@ export class Session {
       if (typeof saved.tlH === "number") p.tlH = Math.max(56, Math.min(340, Math.round(saved.tlH)));
       if (saved.histMode === "full" || saved.histMode === "steps") p.histMode = saved.histMode;
       if (typeof saved.histSteps === "number") p.histSteps = Math.max(10, Math.min(500, Math.round(saved.histSteps)));
+      if (typeof saved.isoGrid === "boolean") p.isoGrid = saved.isoGrid;
       /* palette floater style fixed to ball */
     } catch {
       /* ignore */
@@ -754,6 +757,24 @@ export class Session {
     const nw = Math.max(1, Math.min(1024, Math.round(w)));
     const nh = Math.max(1, Math.min(1024, Math.round(h)));
     this.struct("sprite-size", () => ops.scaleDocSprite(this.doc, nw, nh));
+  }
+
+  /** smart crop: shrink the canvas to the union of all drawn content */
+  cropSmart(): void {
+    const b = ops.contentBounds(this.doc);
+    if (!b) return;
+    if (b.w === this.doc.w && b.h === this.doc.h) return;
+    this.struct("auto-crop", () => {
+      const bb = ops.contentBounds(this.doc);
+      if (bb) ops.resizeDocCanvas(this.doc, bb.w, bb.h, -bb.x, -bb.y);
+    });
+  }
+  /** isometric helper grid overlay on/off */
+  toggleIsoGrid(): void {
+    this.prefs.isoGrid = !this.prefs.isoGrid;
+    this.savePrefs();
+    this.repaintAll();
+    this.changed();
   }
 
   // ---------- playback ----------
