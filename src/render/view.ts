@@ -603,19 +603,17 @@ export class View {
         return;
       }
       if (this.stroke) {
-        const doneKind = this.stroke.kind;
-        const doneStart = this.stroke.start;
-        const doneEnd = this.stroke.last;
-        const doneSize = this.stroke.size;
+        const doneStroke = this.stroke;
         const doneMoved = this.gestureMoved;
         const rec = this.stroke.commit(this.session.history, this.labelFor(this.stroke.kind));
         this.stroke = null;
         this.session.repaint();
         if (rec) this.session.changed();
-        // shapes become an immediate selection: switch to the select tool so
-        // the drawn shape can be dragged/moved right away
-        if (doneMoved && doneStart && doneEnd && this.isShapeKind(doneKind)) {
-          this.selectRectAround(doneStart, doneEnd, doneSize);
+        // shapes become an immediate selection of EXACTLY the pixels this stroke
+        // painted (a pixel mask, not a rectangle) so only the shape moves;
+        // neighbouring artwork that falls under the marquee stays untouched
+        if (doneMoved && doneStroke.start && doneStroke.last && this.isShapeKind(doneStroke.kind)) {
+          this.selectStrokePixels(doneStroke);
           this.session.setTool("select");
         }
         this.lastTapWasDraw = !this.gestureMoved;
@@ -637,19 +635,27 @@ export class View {
     return k === "line" || k === "rect" || k === "rectfill" || k === "ellipse" || k === "ellipsefill" || k === "circle" || k === "polygon";
   }
 
-  /** select the rectangle around [start..end] inflated by the brush radius */
-  private selectRectAround(s: [number, number], e: [number, number], size: number): void {
+  /** select exactly the pixels this stroke painted: compare the cel against the
+   * stroke's pre-draw buffer. The selection is a true pixel mask, so the shared
+   * selection-move/transform logic only carries the shape itself - artwork that
+   * happens to sit inside the marquee bounds is never grabbed or moved. */
+  private selectStrokePixels(st: Stroke): void {
     const doc = this.session.doc;
-    const h = Math.floor(Math.max(1, Math.round(size)) / 2);
-    const x0 = Math.max(0, Math.min(s[0], e[0]) - h);
-    const y0 = Math.max(0, Math.min(s[1], e[1]) - h);
-    const x1 = Math.min(doc.w - 1, Math.max(s[0], e[0]) + h);
-    const y1 = Math.min(doc.h - 1, Math.max(s[1], e[1]) + h);
-    if (x1 < x0 || y1 < y0) return;
-    if (!doc.sel) doc.sel = new Sel(doc.w, doc.h);
+    const cel = doc.celAt(st.li, st.fi);
+    const w = doc.w, h = doc.h;
+    if (!cel) return;
+    const before = st.before ? st.before : new Uint8ClampedArray(w * h * 4);
+    const d = cel.data;
+    if (!doc.sel) doc.sel = new Sel(w, h);
     const sel = doc.sel;
     sel.clear();
-    for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) sel.set(x, y, 1);
+    const n = Math.min(before.length, d.length);
+    for (let i = 0; i < n; i += 4) {
+      if (before[i] !== d[i] || before[i + 1] !== d[i + 1] || before[i + 2] !== d[i + 2] || before[i + 3] !== d[i + 3]) {
+        const p = i >> 2;
+        sel.set(p % w, Math.floor(p / w), 1);
+      }
+    }
     this.session.repaint();
     this.session.changed();
   }
