@@ -734,8 +734,15 @@ export class View {
         const dy = (pt.y - this.symGrabPt.y) / this.zoom;
         const pxa = doc.w / 2 + s.symOx + dx;
         const pya = doc.h / 2 + s.symOy + dy;
-        s.symOx = clamp(pxa, 0, doc.w) - doc.w / 2;
-        s.symOy = clamp(pya, 0, doc.h) - doc.h / 2;
+        // clamp the pivot to the whole visible viewport (not just the canvas),
+        // so the axis follows the finger all the way into the margins instead
+        // of stopping / drifting at the canvas border
+        const vx0 = Math.min(-this.ox, this.host.clientWidth - this.ox) / this.zoom;
+        const vx1 = Math.max(-this.ox, this.host.clientWidth - this.ox) / this.zoom;
+        const vy0 = Math.min(-this.oy, this.host.clientHeight - this.oy) / this.zoom;
+        const vy1 = Math.max(-this.oy, this.host.clientHeight - this.oy) / this.zoom;
+        s.symOx = clamp(pxa, vx0, vx1) - doc.w / 2;
+        s.symOy = clamp(pya, vy0, vy1) - doc.h / 2;
         s.symTweaked = true;
       }
       this.drawOverlay();
