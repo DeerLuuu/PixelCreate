@@ -7,7 +7,7 @@ import * as comp from "./compositor";
 import * as bridge from "../io/bridge";
 import { rgbaToHex } from "../engine/color";
 import { Stroke } from "../tools/stroke";
-import { isSymTool } from "../tools/registry";
+import { isSymTool, SYM_ANGLES } from "../tools/registry";
 import { lineCells, brushStamp } from "../engine/paint";
 import { selOps, lassoFill, beginMove, xformSelection, xformFloating, type MoveState } from "../tools/select";
 import type { Session } from "../app/session";
@@ -396,7 +396,7 @@ export class View {
       px: this.ox + (doc.w / 2 + s.symOx) * this.zoom,
       py: this.oy + (doc.h / 2 + s.symOy) * this.zoom,
       ux: Math.cos(rad), uy: Math.sin(rad),
-      perp: s.sym === "both",
+      perp: s.symFour,
     };
   }
   /** stroke one infinite symmetry line: the overlay canvas clips it to the
@@ -680,7 +680,7 @@ export class View {
     this.gestureStartPx = pp;
     try {
       this.stroke = new Stroke(doc, s.curLayer(), s.curFrame(), tool as never, s.brush(), s.layerLocked(), s.sym, s.shapeSides, s.shapeFill,
-        s.symOx, s.symOy, s.symAng);
+        s.symOx, s.symOy, s.symAng, s.symFour);
     } catch {
       this.stroke = null;
       return;
@@ -726,8 +726,13 @@ export class View {
         const cy = this.oy + (doc.h / 2 + s.symOy) * this.zoom;
         let deg = (Math.atan2(pt.y - cy, pt.x - cx) * 180) / Math.PI;
         deg = ((deg % 180) + 180) % 180; // lines are 180-periodic
-        // only the two diagonal orientations are selectable
-        s.symAng = Math.abs(deg - 45) <= Math.abs(deg - 135) ? 45 : 135;
+        // snap to the nearest of 0/45/90/135
+        let best = 0, bd = Infinity;
+        for (const a of SYM_ANGLES) {
+          const d2 = Math.abs(deg - a);
+          if (d2 < bd) { bd = d2; best = a; }
+        }
+        s.symAng = best;
         s.symTweaked = true;
       } else if (this.symGrabPt) {
         const dx = (pt.x - this.symGrabPt.x) / this.zoom;

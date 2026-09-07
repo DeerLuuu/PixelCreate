@@ -27,13 +27,15 @@ export class Stroke {
   /** mirror-line angle (degrees, 0 = horizontal); direction unit cached */
   private readonly ux: number;
   private readonly uy: number;
+  /** also mirror across the perpendicular axis (four-way symmetry) */
+  private readonly symFour: boolean;
   color: RGBA;
   size: number;
   last: [number, number] | null = null;
   start: [number, number] | null = null;
   private everPainted = false;
 
-  constructor(doc: Doc, li: number, fi: number, kind: ToolKind, brush: BrushState, layerLocked: boolean, sym: SymMode, shapeSides = 6, fill = true, ox = 0, oy = 0, angDeg = 90) {
+  constructor(doc: Doc, li: number, fi: number, kind: ToolKind, brush: BrushState, layerLocked: boolean, sym: SymMode, shapeSides = 6, fill = true, ox = 0, oy = 0, angDeg = 90, symFour = false) {
     this.doc = doc;
     this.li = li;
     this.fi = fi;
@@ -43,6 +45,7 @@ export class Stroke {
     this.fill = fill;
     this.ox = ox;
     this.oy = oy;
+    this.symFour = symFour;
     const rad = (angDeg * Math.PI) / 180;
     this.ux = Math.cos(rad);
     this.uy = Math.sin(rad);
@@ -68,15 +71,15 @@ export class Stroke {
   }
 
   /** mirror-coordinate expansion for the current mode: the axis is the line
-   *  through the doc centre offset (ox,oy) rotated to angDeg; both adds the
-   *  perpendicular axis through the same pivot (four images per cell) */
+   *  through the doc centre offset (ox,oy) rotated to angDeg; if four-way is
+   *  on, the perpendicular axis through the same pivot is added (4 images) */
   private mirrorPts(x: number, y: number): [number, number][] {
     if (this.sym === "off") return [[x, y]];
     const px = this.doc.w / 2 + this.ox;
     const py = this.doc.h / 2 + this.oy;
     const out: [number, number][] = [[x, y]];
     out.push(this.reflCell(x, y, px, py, this.ux, this.uy));
-    if (this.sym === "both") {
+    if (this.symFour) {
       const u2x = -this.uy, u2y = this.ux;
       const m2 = this.reflCell(x, y, px, py, u2x, u2y);
       out.push(m2);

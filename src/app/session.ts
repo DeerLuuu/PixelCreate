@@ -7,7 +7,7 @@ import * as compositor from "../render/compositor";
 import * as project from "../io/project";
 import { toast as toastFn } from "../io/bridge";
 import type { ToolId, BrushState, SymMode } from "../tools/registry";
-import { isShapeTool, nextSym } from "../tools/registry";
+import { isShapeTool, nextSym, SYM_ANGLES } from "../tools/registry";
 import type { View } from "../render/view";
 import { rgbaToHex } from "../engine/color";
 import * as selM from "../tools/select";
@@ -78,10 +78,10 @@ export class Session {
   selectionTolerance = 8;
   colorPicking = false;
   sym: SymMode = "off";
+  /** four-way symmetry: also mirror across the perpendicular axis (cross) */
+  symFour = false;
   /** adjustable mirror axis: pivot offset (symOx/symOy) from the doc centre
-   *  in doc gridline units plus the axis angle (degrees, 0 = horizontal,
-   *  180-periodic). lr/tb mirror across this single axis (defaults vertical /
-   *  horizontal); both adds the perpendicular axis through the same pivot. */
+   *  in doc gridline units plus the axis angle (degrees, from 0/45/90/135). */
   symOx = 0;
   symOy = 0;
   symAng = 90;
@@ -412,34 +412,41 @@ export class Session {
   cycleSym(): SymMode {
     const prev = this.sym;
     this.sym = nextSym(prev);
-    // entering a mode applies its default geometry, unless the user already
-    // customised the axis (dragged/rotated) - then keep their setup
+    // enabling applies the default (centred) axis unless already customised
     if (this.sym !== "off" && !this.symTweaked) this.applySymPreset(this.sym);
     this.changed();
     this.repaint(); // show/hide the adjustable symmetry guides
     return this.sym;
   }
-  /** mode-preset axis geometry: centred pivot, vertical for lr/both, horizontal for tb */
-  applySymPreset(m: SymMode): void {
-    this.symOx = 0;
-    this.symOy = 0;
-    this.symAng = m === "tb" ? 0 : 90;
-    this.symTweaked = false;
-  }
-  /** recentre the axis and restore the current mode's default angle */
-  resetSymAxes(): void {
-    this.applySymPreset(this.sym);
+  /** toggle four-way symmetry (adds the perpendicular axis through the pivot) */
+  setSymFour(on: boolean): void {
+    if (this.symFour === on) return;
+    this.symFour = on;
     this.repaint();
     this.changed();
   }
-  /** flip the mirror axis to the other diagonal (45deg <-> 135deg); from a
-   *  non-diagonal default it snaps to 45deg first */
-  toggleSymDiag(): void {
+  /** step the mirror angle through 0/45/90/135 */
+  cycleSymAngle(): number {
     const cur = ((this.symAng % 180) + 180) % 180;
-    if (cur === 45) this.symAng = 135;
-    else if (cur === 135) this.symAng = 45;
-    else this.symAng = 45;
+    let idx = SYM_ANGLES.findIndex((a) => a === cur);
+    if (idx < 0) idx = 0;
+    this.symAng = SYM_ANGLES[(idx + 1) % SYM_ANGLES.length];
     this.symTweaked = true;
+    this.repaint();
+    this.changed();
+    return this.symAng;
+  }
+  /** mode-preset axis geometry: centred pivot at the default (vertical) angle */
+  applySymPreset(m: SymMode): void {
+    void m;
+    this.symOx = 0;
+    this.symOy = 0;
+    this.symAng = 90;
+    this.symTweaked = false;
+  }
+  /** recentre the axis and restore the default angle */
+  resetSymAxes(): void {
+    this.applySymPreset(this.sym);
     this.repaint();
     this.changed();
   }

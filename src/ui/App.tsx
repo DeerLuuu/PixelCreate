@@ -802,12 +802,12 @@ function PalBalls({ x, y, onDone }: { x: number; y: number; onDone: () => void }
 
 
 
-const SYM_GLYPH: Record<string, string> = { off: "·", lr: "↔", tb: "↕", both: "✳" };
+const SYM_GLYPH: Record<string, string> = { off: "·", on: "⇋" };
 function ControlBar({ t, snap, onPanel, onAdjust }: { t: ReturnType<typeof makeT>; snap: Snapshot; onPanel: (p: PanelId) => void; onAdjust: () => void }) {
   const land = useLandscape();
   const dir: "h" | "v" = land ? "v" : "h";
-  const sym: "off" | "lr" | "tb" | "both" = SESSION.sym;
-  const symKey = { off: "sym.off", lr: "sym.lr", tb: "sym.tb", both: "sym.both" } as const;
+  const sym: "off" | "on" = SESSION.sym;
+  const symKey = { off: "sym.off", on: "sym.on" } as const;
   return (
     <section className={"ctrlbar" + (land ? " land" : "")}>
       <div className="cb-row">
@@ -867,9 +867,10 @@ function Viewport({ onColorClick, refImg, onRefClose }: { onColorClick: () => vo
       {refImg && <RefImageBox img={refImg} onClose={onRefClose} />}
       {symOn && (
         <div className={"sym-chiprow" + (symAdj ? " adj" : "")}>
+          <button className={"sym-chip" + (SESSION.symFour ? " on" : "")} type="button" title={tv("symFour")} onClick={() => SESSION.setSymFour(!SESSION.symFour)}>{tv("symFour")}</button>
           {symAdj ? (
             <>
-              <button className="sym-chip sym-ro" type="button" title={tv("symAngleHint")} onClick={() => SESSION.toggleSymDiag()}>{tv("symAngle")} {Math.round(SESSION.symAng)}°</button>
+              <button className="sym-chip sym-ro" type="button" title={tv("symAngleHint")} onClick={() => SESSION.cycleSymAngle()}>{tv("symAngle")} {SESSION.symAng}°</button>
               <button className="sym-chip sym-done" type="button" title={tv("symAdjustHint")} onClick={() => { setSymAdj(false); viewRef.current?.setSymAdjust(false); }}>{tv("symDone")}</button>
               <button className="sym-chip" type="button" title={tv("symReset")} onClick={() => SESSION.resetSymAxes()}>{tv("symReset")}</button>
             </>

@@ -39,11 +39,14 @@ export const isSelectTool = (id: ToolId): boolean =>
 
 export const isShapeTool = (id: ToolId): boolean => SHAPE_TOOLS.some((t) => t.id === id);
 
-/** Drawing symmetry. lr = mirror across the vertical centre (左右), tb = across
- *  the horizontal centre (上下), both = four-way (四向). */
-export type SymMode = "off" | "lr" | "tb" | "both";
-export const SYM_CYCLE: SymMode[] = ["off", "lr", "tb", "both"];
+/** Unified drawing symmetry: one mirror axis whose angle the user picks from
+ *  0/45/90/135; the separate symFour flag optionally adds the perpendicular
+ *  axis (four-way symmetry). Vertical/horizontal are no longer separate modes. */
+export type SymMode = "off" | "on";
+export const SYM_CYCLE: SymMode[] = ["off", "on"];
 export const nextSym = (m: SymMode): SymMode => SYM_CYCLE[(SYM_CYCLE.indexOf(m) + 1) % SYM_CYCLE.length];
+/** selectable symmetry-axis angles (degrees) */
+export const SYM_ANGLES = [0, 45, 90, 135] as const;
 
 /** brush/shape tools whose marks honour drawing symmetry */
 export const SYM_TOOLS = ["pencil", "eraser", "line", "rect", "ellipse", "circle", "polygon"] as const;
