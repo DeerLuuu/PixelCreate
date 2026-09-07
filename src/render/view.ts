@@ -233,15 +233,16 @@ export class View {
     if (this.composite) {
       ctx.drawImage(this.composite, this.ox, this.oy, doc.w * z, doc.h * z);
     }
-    if (s.prefs.grid && z >= 6) {
+    if (s.prefs.gridMode === "pixel" && z >= 6) {
+      const step = Math.max(1, Math.round(s.prefs.gridSize));
       ctx.save();
       ctx.translate(this.ox, this.oy);
       ctx.scale(z, z);
       ctx.beginPath();
       ctx.lineWidth = (1 / (z * dpr)) * (z >= 16 ? 2 : 1);
       ctx.strokeStyle = z >= 16 ? "rgba(70,74,96,0.55)" : "rgba(96,102,130,0.4)";
-      for (let x = 0; x <= doc.w; x++) { ctx.moveTo(x, 0); ctx.lineTo(x, doc.h); }
-      for (let y = 0; y <= doc.h; y++) { ctx.moveTo(0, y); ctx.lineTo(doc.w, y); }
+      for (let x = 0; x <= doc.w; x += step) { ctx.moveTo(x, 0); ctx.lineTo(x, doc.h); }
+      for (let y = 0; y <= doc.h; y += step) { ctx.moveTo(0, y); ctx.lineTo(doc.w, y); }
       ctx.stroke();
       ctx.restore();
     }
@@ -530,16 +531,16 @@ export class View {
     return null;
   }
 
-  /** cached isometric guide grid (two 26.565° line families) drawn over the doc */
+  /** cached isometric guide grid (two 26.565° line families), non-pixel lines */
   private drawIsoGuide(ctx: CanvasRenderingContext2D): void {
-    if (!this.session.prefs.isoGrid) return;
+    if (this.session.prefs.gridMode !== "iso") return;
     const doc = this.session.doc;
-    const key = doc.w + "x" + doc.h;
+    const step = Math.max(2, Math.round(this.session.prefs.gridSize));
+    const key = doc.w + "x" + doc.h + "|" + step;
     if (!this.isoCache || this.isoKey !== key) {
       const c = document.createElement("canvas");
       c.width = doc.w; c.height = doc.h;
       const g = c.getContext("2d")!;
-      const step = 8;
       const k0 = Math.floor((-2 * doc.h) / step) - 1;
       const k1 = Math.ceil(doc.w / step) + 1;
       g.lineWidth = 1;

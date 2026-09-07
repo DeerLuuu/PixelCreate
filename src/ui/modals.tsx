@@ -490,7 +490,17 @@ export function SettingsModal({ t, onClose }: { t: ReturnType<typeof makeT>; onC
           <label className="rowlabel">{t("swapRails")}</label>
           <button className={"chip" + (SESSION.prefs.railSwap ? " on" : "")} onClick={() => SESSION.setRailSwap(!SESSION.prefs.railSwap)}>{SESSION.prefs.railSwap ? "ON" : "OFF"}</button>
           <label className="rowlabel">{t("grid")}</label>
-          <button className={"chip" + (snap.grid ? " on" : "")} onClick={() => SESSION.toggleGrid()}>{snap.grid ? "ON" : "OFF"}</button>
+          <div className="chips">
+            <button className={"chip" + (snap.gridMode === "off" ? " on" : "")} onClick={() => SESSION.setGridMode("off")}>{t("gridNone")}</button>
+            <button className={"chip" + (snap.gridMode === "pixel" ? " on" : "")} onClick={() => SESSION.setGridMode("pixel")}>{t("gridPixel")}</button>
+            <button className={"chip" + (snap.gridMode === "iso" ? " on" : "")} onClick={() => SESSION.setGridMode("iso")}>{t("gridIso")}</button>
+          </div>
+          {SESSION.prefs.gridMode !== "off" && (
+            <>
+              <label className="rowlabel">{t("gridSize")}</label>
+              <div className="row-actions"><HoldAdjust dir="h" value={SESSION.prefs.gridSize} min={1} max={32} title={t("gridSize")} format={(v) => v + "px"} reset={SESSION.prefs.gridMode === "iso" ? 8 : 1} onChange={(v) => SESSION.setGridSize(v)} /></div>
+            </>
+          )}
           <label className="rowlabel">{t("shadowMode")}</label>
           <div className="chips">
             <button className={"chip" + (!SESSION.prefs.shadowNewLayer ? " on" : "")} onClick={() => SESSION.setShadowNewLayer(false)}>{t("shadowCur")}</button>

@@ -16,7 +16,9 @@ import { adjustPixel, type HslAdj } from "../engine/adjust";
 
 export interface Prefs {
   lang: "zh" | "en";
-  grid: boolean;
+  /** helper grid: off | pixel grid (cell gridSize) | isometric grid (spacing gridSize) */
+  gridMode: "off" | "pixel" | "iso";
+  gridSize: number;
   onion: 0 | 1 | 2;
   autosave: boolean;
   /** add frame via FrameAdd: clone current frame's cels into the new one */
@@ -28,8 +30,7 @@ export interface Prefs {
   previewBg: "white" | "black" | "checker";
   /** timeline matrix max height in px (landscape friendly) */
   tlH: number;
-  /** isometric helper grid overlay */
-  isoGrid: boolean;
+  
   /** history recording: "steps" keeps the latest histSteps entries, "full" records everything */
   histMode: "steps" | "full";
   histSteps: number;
@@ -53,7 +54,8 @@ export interface Snapshot {
   canUndo: boolean;
   canRedo: boolean;
   onion: 0 | 1 | 2;
-  grid: boolean;
+  gridMode: Prefs["gridMode"];
+  gridSize: number;
   previewBg: Prefs["previewBg"];
   selActive: boolean;
   docName: string;
@@ -213,7 +215,8 @@ export class Session {
       canUndo: this.history.canUndo(),
       canRedo: this.history.canRedo(),
       onion: this.prefs.onion,
-      grid: this.prefs.grid,
+      gridMode: this.prefs.gridMode,
+  gridSize: this.prefs.gridSize,
       previewBg: this.prefs.previewBg,
       selActive: this.doc.selectionActive(),
       docName: this.doc.name,
@@ -290,11 +293,13 @@ export class Session {
   }
 
   private loadPrefs(): Prefs {
-    const p: Prefs = { lang: "zh", grid: true, onion: 0, autosave: true, newFrameCopy: false, railSwap: true, palMode: "ball", previewBg: "white", tlH: 116, histMode: "steps", histSteps: 60, isoGrid: false, shadowNewLayer: false, autoPan: true };
+    const p: Prefs = { lang: "zh", gridMode: "off", gridSize: 1, onion: 0, autosave: true, newFrameCopy: false, railSwap: true, palMode: "ball", previewBg: "white", tlH: 116, histMode: "steps", histSteps: 60, shadowNewLayer: false, autoPan: true };
     try {
       const saved = JSON.parse(localStorage.getItem("pc.prefs") ?? "{}");
       if (saved.lang === "en") p.lang = "en";
-      if (typeof saved.grid === "boolean") p.grid = saved.grid;
+      if (saved.gridMode === "pixel" || saved.gridMode === "iso") p.gridMode = saved.gridMode;
+      else if (saved.grid === true) p.gridMode = "pixel"; // migrate the old checkbox
+      if (typeof saved.gridSize === "number") p.gridSize = Math.max(1, Math.min(64, Math.round(saved.gridSize)));
       if (saved.onion === 1 || saved.onion === 2) p.onion = saved.onion;
       if (saved.previewBg === "black" || saved.previewBg === "checker" || saved.previewBg === "white") p.previewBg = saved.previewBg;
       if (typeof saved.autosave === "boolean") p.autosave = saved.autosave;
@@ -303,7 +308,6 @@ export class Session {
       if (typeof saved.tlH === "number") p.tlH = Math.max(56, Math.min(340, Math.round(saved.tlH)));
       if (saved.histMode === "full" || saved.histMode === "steps") p.histMode = saved.histMode;
       if (typeof saved.histSteps === "number") p.histSteps = Math.max(10, Math.min(500, Math.round(saved.histSteps)));
-      if (typeof saved.isoGrid === "boolean") p.isoGrid = saved.isoGrid;
       if (typeof saved.shadowNewLayer === "boolean") p.shadowNewLayer = saved.shadowNewLayer;
       if (typeof saved.autoPan === "boolean") p.autoPan = saved.autoPan;
       /* palette floater style fixed to ball */
@@ -564,10 +568,18 @@ export class Session {
     this.savePrefs();
     this.changed();
   }
-  toggleGrid(): void {
-    this.prefs.grid = !this.prefs.grid;
+  /** helper grid mode: off | pixel | iso */
+  setGridMode(m: "off" | "pixel" | "iso"): void {
+    this.prefs.gridMode = m;
     this.savePrefs();
-    this.repaint();
+    this.repaintAll();
+    this.changed();
+  }
+  /** helper grid cell size / iso spacing (sprite px) */
+  setGridSize(n: number): void {
+    this.prefs.gridSize = Math.max(1, Math.min(64, Math.round(n)));
+    this.savePrefs();
+    this.repaintAll();
     this.changed();
   }
   /** set where the drop-shadow lands: current layer (false) or a new shadow layer (true) */
@@ -923,13 +935,7 @@ export class Session {
       if (bb) ops.resizeDocCanvas(this.doc, bb.w, bb.h, -bb.x, -bb.y);
     });
   }
-  /** isometric helper grid overlay on/off */
-  toggleIsoGrid(): void {
-    this.prefs.isoGrid = !this.prefs.isoGrid;
-    this.savePrefs();
-    this.repaintAll();
-    this.changed();
-  }
+  
 
   // ---------- playback ----------
   togglePlay(): void {

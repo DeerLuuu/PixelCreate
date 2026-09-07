@@ -471,7 +471,6 @@ function FloatingTools({ t, snap }: { t: ReturnType<typeof makeT>; snap: Snapsho
       const base = SESSION.color;
       fxDo("fx-glow", (dd, w, h) => fxE.outerGlowCel(dd, w, h, 2, [base[0], base[1], base[2], 255]));
     }),
-    fxI("iso", "i-fx-iso", "等距网格", "Iso", "等距网格辅助线（开关）", "Isometric helper grid (toggle)", () => SESSION.toggleIsoGrid(), SESSION.prefs.isoGrid),
     fxI("inv", "i-fx-inv", "反色", "Inv", "反色：把不透明像素的 RGB 取反（保留透明）", "Invert RGB of visible pixels", () => fxDo("fx-invert", (dd) => fxE.invertCel(dd))),
     fxI("gray", "i-fx-gray", "灰度", "B/W", "去饱和：把不透明像素变为灰度", "Desaturate visible pixels to grayscale", () => fxDo("fx-gray", (dd) => fxE.desaturateCel(dd))),
     fxI("ctr", "i-fx-ctr", "居中", "Ctr", "把当前图层内容居中到画布中心（有选区时居中到选区）", "Center the layer content in the canvas (or inside the selection when one is active)", () => fxDo("fx-center", (data, w, h) => {
