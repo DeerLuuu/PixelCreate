@@ -291,7 +291,7 @@ function FloatingTools({ t, snap }: { t: ReturnType<typeof makeT>; snap: Snapsho
     setDockOpen(false);
     setDockHover(null);
   };
-  const iconOfBall = (id: BallId): string => id === "main" ? "i-pencil" : id === "pal" ? "i-palette" : "i-wand";
+  const iconOfBall = (id: BallId): string => id === "main" ? "i-pencil" : id === "pal" ? "i-palette" : "i-star";
 
   // rotation / resize: keep every floating ball inside the viewport
   useEffect(() => {
@@ -655,7 +655,7 @@ function FloatingTools({ t, snap }: { t: ReturnType<typeof makeT>; snap: Snapsho
         }
         setPal({ ...pal, open: !pal.open });
       })}
-      {!dockedById("fx") && renderBall("fx", { x: fx.x, y: fx.y }, "i-wand", fx.open, t("fxOrb"), bd(snap.lang, "fx"), () => {
+      {!dockedById("fx") && renderBall("fx", { x: fx.x, y: fx.y }, "i-star", fx.open, t("fxOrb"), bd(snap.lang, "fx"), () => {
         setOpen(false);
         setSub(null);
         if (sel) setSel({ ...sel, open: false });
