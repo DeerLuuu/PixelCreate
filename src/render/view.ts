@@ -763,12 +763,17 @@ export class View {
     const pt = this.evPt(e);
     const wasDown = this.pointers.has(e.pointerId);
     if (wasDown) this.pointers.set(e.pointerId, pt);
-    // auto-pan the viewport while a draw/transform/selection drag nears the edge
+    // auto-pan the viewport while a draw/transform/selection drag nears the edge.
+    // Speed scales with how deep into the edge zone the pointer is, but is capped
+    // per event so the scroll stays slow, smooth and controllable.
     if (this.session.prefs.autoPan && wasDown && this.pointers.size === 1 && (this.stroke || this.xf || this.selDrag)) {
-      const M = 22, w = this.host.clientWidth, h = this.host.clientHeight;
+      const M = 34, w = this.host.clientWidth, h = this.host.clientHeight;
+      const SPEED = 0.28, MAX = 3; // px per event
       let panx = 0, pany = 0;
-      if (pt.x < M) panx = pt.x - M; else if (pt.x > w - M) panx = pt.x - (w - M);
-      if (pt.y < M) pany = pt.y - M; else if (pt.y > h - M) pany = pt.y - (h - M);
+      if (pt.x < M) panx = (pt.x - M) * SPEED; else if (pt.x > w - M) panx = (pt.x - (w - M)) * SPEED;
+      if (pt.y < M) pany = (pt.y - M) * SPEED; else if (pt.y > h - M) pany = (pt.y - (h - M)) * SPEED;
+      panx = clamp(panx, -MAX, MAX);
+      pany = clamp(pany, -MAX, MAX);
       if (panx || pany) { this.ox -= panx; this.oy -= pany; this.clampView(); }
     }
     const ppx = this.screenToPixel(pt.x, pt.y);
