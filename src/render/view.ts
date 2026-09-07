@@ -97,6 +97,10 @@ export class View {
   private twoTapMid: PxPoint | null = null;
   private twoTap = 0;
   private twoTapPt: PxPoint | null = null;
+  /** single-finger tap sequence counter (triple-tap on the doc = zoom) */
+  private tapN = 0;
+  private tapT = 0;
+  private tapPt: PxPoint | null = null;
   /** rotate / scale gesture started on a selection frame handle */
   private xf: { mode: "rot" | "scale"; axis: "xy" | "x" | "y"; li: number; fi: number; st: MoveState; cx: number; cy: number; ax: number; ay: number; p0x: number; p0y: number; ang0: number; moved: boolean; cut?: boolean; buf?: Uint8ClampedArray; cells?: number[] } | null = null;
 
@@ -987,32 +991,53 @@ export class View {
         return;
       }
       const secondTapMoved = this.stroke ? this.gestureMoved : false;
-      const isDouble = this.lastTapPt !== null && now - this.lastTap < 300 &&
-        Math.hypot(pt.x - this.lastTapPt.x, pt.y - this.lastTapPt.y) < 48;
-      if (isDouble && !secondTapMoved) {
-        if (this.stroke) {
-          this.stroke.cancel();
-          this.stroke = null;
-        }
-        if (this.selDrag) this.endSelDrag();
-        this.panLast = null;
-        this.gestureMoved = false;
-        this.lastTap = 0;
-        this.lastTapPt = null;
-        // double-tap on the canvas margin (outside the doc) = quick undo;
-        // double-tap on the doc = zoom (rolls back any lingering draw dot)
+      if (secondTapMoved) {
+        this.tapN = 0; // a drag breaks the tap sequence
+      } else {
+        // single-finger tap sequence: double-tap on the margin = undo,
+        // triple-tap on the doc = zoom (double-tap on the doc does nothing)
+        const contSeq = this.tapN > 0 && now - this.tapT < 480 && this.tapPt &&
+          Math.hypot(pt.x - this.tapPt.x, pt.y - this.tapPt.y) < 64;
+        this.tapN = contSeq ? this.tapN + 1 : 1;
+        this.tapT = now;
+        this.tapPt = pt;
         const ppc = this.screenToPixel(pt.x, pt.y);
         const overDoc = ppc.x >= 0 && ppc.y >= 0 && ppc.x < this.session.doc.w && ppc.y < this.session.doc.h;
-        if (overDoc) {
+        if (this.tapN === 2 && !overDoc) {
+          // double-tap on the canvas margin -> quick undo
+          this.tapN = 0;
+          if (this.stroke) { this.stroke.cancel(); this.stroke = null; }
+          if (this.selDrag) this.endSelDrag();
+          this.panLast = null; this.gestureMoved = false;
+          this.lastTap = 0; this.lastTapPt = null;
+          if (this.session.history.canUndo()) this.session.undo(); else this.session.repaint();
+          return;
+        }
+        if (this.tapN === 3) {
+          // triple-tap on the doc -> zoom (keep it clean: no stray tap dots)
+          this.tapN = 0;
+          if (this.stroke) { this.stroke.cancel(); this.stroke = null; }
+          if (this.selDrag) this.endSelDrag();
+          this.panLast = null; this.gestureMoved = false;
+          this.lastTap = 0; this.lastTapPt = null;
+          if (overDoc) {
+            if (this.session.history.canUndo()) this.session.undo();
+            this.session.repaint();
+            this.zoomAt(this.zoom * 2, pt.x, pt.y);
+          } else this.session.repaint();
+          return;
+        }
+        if (this.tapN === 2 && overDoc) {
+          // clean second tap over the doc: swallow it, wait for a possible 3rd
+          if (this.stroke) { this.stroke.cancel(); this.stroke = null; }
           if (this.lastTapWasDraw && this.lastTapChanged && this.session.history.canUndo()) this.session.undo();
           else this.session.repaint();
-          this.zoomAt(this.zoom * 2, pt.x, pt.y);
-        } else if (this.session.history.canUndo()) {
-          this.session.undo();
-        } else {
+          this.gestureMoved = false; this.panLast = null;
+          this.lastTapWasDraw = false; this.lastTapChanged = false;
           this.session.repaint();
+          return;
         }
-        return;
+        // single / otherwise-unhandled tap: fall through to commit the dot normally
       }
       if (this.stroke) {
         const doneStroke = this.stroke;
