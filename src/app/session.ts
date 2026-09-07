@@ -21,6 +21,8 @@ export interface Prefs {
   gridSize: number;
   /** pixel loupe magnification: css px per doc pixel in the bottom-left loupe */
   magZoom: number;
+  /** show the pixel loupe while picking a colour */
+  loupe: boolean;
   onion: 0 | 1 | 2;
   autosave: boolean;
   /** add frame via FrameAdd: clone current frame's cels into the new one */
@@ -295,14 +297,15 @@ export class Session {
   }
 
   private loadPrefs(): Prefs {
-    const p: Prefs = { lang: "zh", gridMode: "off", gridSize: 1, magZoom: 9, onion: 0, autosave: true, newFrameCopy: false, railSwap: true, palMode: "ball", previewBg: "white", tlH: 116, histMode: "steps", histSteps: 60, shadowNewLayer: false, autoPan: true };
+    const p: Prefs = { lang: "zh", gridMode: "off", gridSize: 1, magZoom: 12, loupe: true, onion: 0, autosave: true, newFrameCopy: false, railSwap: true, palMode: "ball", previewBg: "white", tlH: 116, histMode: "steps", histSteps: 60, shadowNewLayer: false, autoPan: true };
     try {
       const saved = JSON.parse(localStorage.getItem("pc.prefs") ?? "{}");
       if (saved.lang === "en") p.lang = "en";
       if (saved.gridMode === "pixel" || saved.gridMode === "iso") p.gridMode = saved.gridMode;
       else if (saved.grid === true) p.gridMode = "pixel"; // migrate the old checkbox
       if (typeof saved.gridSize === "number") p.gridSize = Math.max(1, Math.min(64, Math.round(saved.gridSize)));
-      if (typeof saved.magZoom === "number") p.magZoom = Math.max(4, Math.min(16, Math.round(saved.magZoom)));
+      if (typeof saved.magZoom === "number") p.magZoom = Math.max(8, Math.min(20, Math.round(saved.magZoom)));
+      if (typeof saved.loupe === "boolean") p.loupe = saved.loupe;
       if (saved.onion === 1 || saved.onion === 2) p.onion = saved.onion;
       if (saved.previewBg === "black" || saved.previewBg === "checker" || saved.previewBg === "white") p.previewBg = saved.previewBg;
       if (typeof saved.autosave === "boolean") p.autosave = saved.autosave;
@@ -589,7 +592,13 @@ export class Session {
   }
   /** pixel loupe magnification (css px per doc pixel) */
   setMagZoom(n: number): void {
-    this.prefs.magZoom = Math.max(4, Math.min(16, Math.round(n)));
+    this.prefs.magZoom = Math.max(8, Math.min(20, Math.round(n)));
+    this.savePrefs();
+    this.changed();
+  }
+  /** show the pixel loupe while picking a colour */
+  setLoupe(on: boolean): void {
+    this.prefs.loupe = on;
     this.savePrefs();
     this.changed();
   }

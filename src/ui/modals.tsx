@@ -501,8 +501,10 @@ export function SettingsModal({ t, onClose }: { t: ReturnType<typeof makeT>; onC
               <div className="row-actions"><HoldAdjust dir="h" value={SESSION.prefs.gridSize} min={1} max={32} title={t("gridSize")} format={(v) => v + "px"} reset={SESSION.prefs.gridMode === "iso" ? 8 : 1} onChange={(v) => SESSION.setGridSize(v)} /></div>
             </>
           )}
+          <label className="rowlabel">{t("loupe")}</label>
+          <button className={"chip" + (SESSION.prefs.loupe ? " on" : "")} onClick={() => SESSION.setLoupe(!SESSION.prefs.loupe)}>{SESSION.prefs.loupe ? "ON" : "OFF"}</button>
           <label className="rowlabel">{t("magZoom")}</label>
-          <div className="row-actions"><HoldAdjust dir="h" value={SESSION.prefs.magZoom} min={4} max={16} title={t("magZoom")} format={(v) => v + "px"} reset={9} onChange={(v) => SESSION.setMagZoom(v)} /></div>
+          <div className="row-actions"><HoldAdjust dir="h" value={SESSION.prefs.magZoom} min={8} max={20} title={t("magZoom")} format={(v) => v + "px"} reset={12} onChange={(v) => SESSION.setMagZoom(v)} /></div>
           <label className="rowlabel">{t("shadowMode")}</label>
           <div className="chips">
             <button className={"chip" + (!SESSION.prefs.shadowNewLayer ? " on" : "")} onClick={() => SESSION.setShadowNewLayer(false)}>{t("shadowCur")}</button>

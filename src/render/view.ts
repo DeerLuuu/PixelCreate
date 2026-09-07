@@ -44,9 +44,9 @@ export class View {
   /** first layout handled: later resizes (orientation/panels) preserve pan+zoom */
   private firstFit = false;
   private cursor: { x: number; y: number; size: number } | null = null;
-  /** pixel loupe (magnifier) shown while stroking with a brush */
+  /** pixel loupe (magnifier) shown only while picking a colour */
   private mag = false;
-  private magPt: PxPoint | null = null;
+  private magCenter: PxPoint | null = null;
   private isoCache: HTMLCanvasElement | null = null;
   private isoKey = "";
   /** what the adjust gesture is currently holding (set while unlocked) */
@@ -417,12 +417,12 @@ export class View {
 
   /** pixel loupe: magnified square around the brush while drawing */
   private drawMag(ctx: CanvasRenderingContext2D): void {
-    if (!this.mag || !this.cursor) return;
+    if (!this.mag || !this.magCenter) return;
     const doc = this.session.doc;
-    const CELL = Math.max(4, Math.round(this.session.prefs.magZoom));
+    const CELL = Math.max(8, Math.round(this.session.prefs.magZoom));
     const L = 132;
     const half = Math.floor(L / CELL / 2);
-    const cx = this.cursor.x, cy = this.cursor.y;
+    const cx = this.magCenter.x, cy = this.magCenter.y;
     const sx0 = Math.round(cx - half), sy0 = Math.round(cy - half);
     // fixed at the bottom-left corner of the viewport
     const x = 10, y = this.host.clientHeight - L - 10;
@@ -448,15 +448,11 @@ export class View {
       ctx.moveTo(x, gy); ctx.lineTo(x + half * 2 * CELL, gy);
     }
     ctx.stroke();
-    // brush footprint highlight at the centre
-    if (this.cursor.size >= 1) {
-      const st = brushStamp(this.cursor.size);
-      const bx = x + (cx - sx0) * CELL, by = y + (cy - sy0) * CELL;
-      ctx.fillStyle = "rgba(255,255,255,0.26)";
-      for (const [ox, oy] of st.outline) {
-        ctx.fillRect(bx + ox * CELL, by + oy * CELL, CELL, CELL);
-      }
-    }
+    // crosshair at the sampled pixel centre
+    const bx = x + (cx - sx0) * CELL, by = y + (cy - sy0) * CELL;
+    ctx.strokeStyle = "rgba(126,255,214,0.9)";
+    ctx.lineWidth = 1.6;
+    ctx.strokeRect(bx + 0.5, by + 0.5, CELL - 1, CELL - 1);
     ctx.strokeStyle = "rgba(255,255,255,0.65)";
     ctx.lineWidth = 2;
     ctx.strokeRect(x - 2, y - 2, L + 4, L + 4);
@@ -808,8 +804,11 @@ export class View {
       return;
     }
     if (tool === "picker") {
+      this.mag = this.session.prefs.loupe;
+      this.magCenter = { x: pp.x, y: pp.y };
       const c = s.sampleComposite(pp.x, pp.y);
       if (c) s.setFgColor(c);
+      this.drawOverlay();
       return;
     }
     if (tool === "wand") {
@@ -853,7 +852,10 @@ export class View {
     }
     // pick mode: sample whatever cell the finger is over until release
     if (this.pickMode && wasDown && this.pointers.size === 1) {
+      this.mag = this.session.prefs.loupe;
+      this.magCenter = { x: ppx.x, y: ppx.y };
       this.samplePickCell(ppx.x, ppx.y, false);
+      this.drawOverlay();
       return;
     }
     // pinch
@@ -925,9 +927,6 @@ export class View {
       // the canvas), so it never freezes at the edge while the hand keeps moving
       const inView = pt.x >= 0 && pt.y >= 0 && pt.x <= this.host.clientWidth && pt.y <= this.host.clientHeight;
       this.cursor = inView ? { x: pp.x, y: pp.y, size: this.session.brushSize } : null;
-      // pixel loupe: magnify the area under the brush while drawing
-      this.mag = inView;
-      this.magPt = inView ? { x: pt.x, y: pt.y } : null;
       this.stroke.moveTo(pp.x, pp.y, e.pointerType === "pen" ? e.pressure : 1);
       this.session.repaint();
       return;
@@ -965,7 +964,7 @@ export class View {
       this.pickAnchor = null;
       this.pickLast = null;
       this.mag = false;
-      this.magPt = null;
+      this.magCenter = null;
       if (this.xf) this.endXf();
       const pt = this.evPt(e);
       const now = Date.now();
@@ -1101,6 +1100,7 @@ export class View {
     this.pinchZoomed = false;
     this.twoTapMid = null;
     this.mag = false;
+    this.magCenter = null;
     if (this.symTarget) this.symTarget = null;
     if (this.stroke) {
       if (this.gestureMoved) {
