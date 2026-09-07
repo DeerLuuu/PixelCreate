@@ -624,4 +624,5 @@ input:-webkit-autofill{-webkit-box-shadow:0 0 0 1000px #232834 inset;-webkit-tex
   touch-action:none;user-select:none;-webkit-user-select:none;box-shadow:0 3px 12px rgba(0,0,0,.4);white-space:nowrap}
 .sym-chiprow .sym-chip:active{background:#2b3042}
 .sym-chiprow .sym-chip.sym-done{border-color:rgba(126,255,214,.65);color:#b2ffe2}
-.sym-chiprow .sym-chip.sym-ro{pointer-events:none;border-color:transparent;background:rgba(21,23,32,.5);color:#9fe8cf;font-variant-numeric:tabular-nums;min-width:74px;text-align:center}
+.sym-chiprow .sym-chip.sym-ro{pointer-events:auto;cursor:pointer;border-color:rgba(126,255,214,.4);background:rgba(21,23,32,.5);color:#9fe8cf;font-variant-numeric:tabular-nums;min-width:74px;text-align:center}
+.sym-chiprow .sym-chip.sym-ro:active{background:#1d2a30}

@@ -726,7 +726,8 @@ export class View {
         const cy = this.oy + (doc.h / 2 + s.symOy) * this.zoom;
         let deg = (Math.atan2(pt.y - cy, pt.x - cx) * 180) / Math.PI;
         deg = ((deg % 180) + 180) % 180; // lines are 180-periodic
-        s.symAng = Math.round(deg * 2) / 2;
+        // only the two diagonal orientations are selectable
+        s.symAng = Math.abs(deg - 45) <= Math.abs(deg - 135) ? 45 : 135;
         s.symTweaked = true;
       } else if (this.symGrabPt) {
         const dx = (pt.x - this.symGrabPt.x) / this.zoom;

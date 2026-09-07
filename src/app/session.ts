@@ -432,6 +432,17 @@ export class Session {
     this.repaint();
     this.changed();
   }
+  /** flip the mirror axis to the other diagonal (45deg <-> 135deg); from a
+   *  non-diagonal default it snaps to 45deg first */
+  toggleSymDiag(): void {
+    const cur = ((this.symAng % 180) + 180) % 180;
+    if (cur === 45) this.symAng = 135;
+    else if (cur === 135) this.symAng = 45;
+    else this.symAng = 45;
+    this.symTweaked = true;
+    this.repaint();
+    this.changed();
+  }
   setShapeSides(n: number): void {
     this.shapeSides = Math.max(3, Math.min(32, Math.round(n)));
     this.changed();
