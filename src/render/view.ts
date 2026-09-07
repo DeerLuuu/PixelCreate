@@ -531,7 +531,7 @@ export class View {
     return null;
   }
 
-  /** cached isometric guide grid (two 26.565° line families), non-pixel lines */
+  /** cached isometric guide grid (true 30° line families), non-pixel lines */
   private drawIsoGuide(ctx: CanvasRenderingContext2D): void {
     if (this.session.prefs.gridMode !== "iso") return;
     const doc = this.session.doc;
@@ -541,19 +541,20 @@ export class View {
       const c = document.createElement("canvas");
       c.width = doc.w; c.height = doc.h;
       const g = c.getContext("2d")!;
-      const k0 = Math.floor((-2 * doc.h) / step) - 1;
-      const k1 = Math.ceil(doc.w / step) + 1;
+      const sx = doc.h * Math.sqrt(3); // horizontal run of a 30° line over the doc height
+      const k0 = Math.floor((-sx - step) / step) - 1;
+      const k1 = Math.ceil((doc.w + sx) / step) + 1;
       g.lineWidth = 1;
       for (let k = k0; k <= k1; k++) {
         const major = ((k % 4) + 4) % 4 === 0;
-        g.strokeStyle = major ? "rgba(120,140,184,0.42)" : "rgba(120,140,184,0.14)";
+        g.strokeStyle = major ? "rgba(120,140,184,0.45)" : "rgba(120,140,184,0.16)";
         g.beginPath();
         g.moveTo(k * step, 0);
-        g.lineTo(k * step + 2 * doc.h, doc.h);
+        g.lineTo(k * step + sx, doc.h);
         g.stroke();
         g.beginPath();
         g.moveTo(k * step, 0);
-        g.lineTo(k * step - 2 * doc.h, doc.h);
+        g.lineTo(k * step - sx, doc.h);
         g.stroke();
       }
       this.isoCache = c;

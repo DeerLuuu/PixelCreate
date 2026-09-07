@@ -570,6 +570,8 @@ export class Session {
   }
   /** helper grid mode: off | pixel | iso */
   setGridMode(m: "off" | "pixel" | "iso"): void {
+    // a tiny gridSize makes the iso guide too dense; give it a sensible default
+    if (m === "iso" && this.prefs.gridSize < 4) this.prefs.gridSize = 8;
     this.prefs.gridMode = m;
     this.savePrefs();
     this.repaintAll();
