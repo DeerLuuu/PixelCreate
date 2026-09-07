@@ -8,7 +8,7 @@ import * as bridge from "../io/bridge";
 import { rgbaToHex } from "../engine/color";
 import { Stroke } from "../tools/stroke";
 import { lineCells, brushStamp } from "../engine/paint";
-import { selOps, lassoFill, beginMove, xformSelection, type MoveState } from "../tools/select";
+import { selOps, lassoFill, beginMove, xformSelection, xformFloating, type MoveState } from "../tools/select";
 import type { Session } from "../app/session";
 import { clamp } from "../engine/types";
 
@@ -72,7 +72,7 @@ export class View {
   /** and that tap actually recorded a history step (so it can be rolled back) */
   private lastTapChanged = false;
   /** rotate / scale gesture started on a selection frame handle */
-  private xf: { mode: "rot" | "scale"; axis: "xy" | "x" | "y"; li: number; fi: number; st: MoveState; cx: number; cy: number; p0x: number; p0y: number; ang0: number; moved: boolean } | null = null;
+  private xf: { mode: "rot" | "scale"; axis: "xy" | "x" | "y"; li: number; fi: number; st: MoveState; cx: number; cy: number; p0x: number; p0y: number; ang0: number; moved: boolean; cut?: boolean; buf?: Uint8ClampedArray; cells?: number[] } | null = null;
 
   constructor(host: HTMLElement, session: Session) {
     this.host = host;
@@ -319,6 +319,24 @@ export class View {
           ctx.fillStyle = "rgb(" + content.data[si] + "," + content.data[si + 1] + "," + content.data[si + 2] + ")";
           ctx.fillRect(this.ox + (gox + x) * z, this.oy + (goy + y) * z, zz, zz);
         }
+      }
+      ctx.restore();
+    }
+    // floating rotate/scale content: pixels rasterised off-layer during a transform
+    const xfg = this.xf;
+    if (xfg && xfg.cut && xfg.buf && xfg.cells && xfg.cells.length) {
+      const wdoc = this.session.doc.w;
+      const buf = xfg.buf;
+      const zz = Math.max(1, z);
+      ctx.save();
+      for (const di of xfg.cells) {
+        const o = di * 4;
+        const a = buf[o + 3];
+        if (a === 0) continue;
+        ctx.globalAlpha = a / 255;
+        ctx.fillStyle = "rgb(" + buf[o] + "," + buf[o + 1] + "," + buf[o + 2] + ")";
+        const cx2 = di % wdoc, cy2 = (di / wdoc) | 0;
+        ctx.fillRect(this.ox + cx2 * z, this.oy + cy2 * z, zz, zz);
       }
       ctx.restore();
     }
@@ -753,7 +771,7 @@ export class View {
     if (id === "rot") mode = "rot";
     else if (id === "t" || id === "b") axis = "y";
     else if (id === "l" || id === "r") axis = "x";
-    this.xf = { mode, axis, li, fi, st, cx, cy, p0x: dx, p0y: dy, ang0: 0, moved: false };
+    this.xf = { mode, axis, li, fi, st, cx, cy, p0x: dx, p0y: dy, ang0: 0, moved: false, cut: false, buf: new Uint8ClampedArray(doc.w * doc.h * 4), cells: [] };
     if (mode === "rot") this.xf.ang0 = Math.atan2(dy - cy, dx - cx);
     return true;
   }
@@ -782,11 +800,12 @@ export class View {
       if (Math.abs(f - 1) > 0.004) g.moved = true;
     }
     if (!g.moved) return;
-    xformSelection(doc, g.li, g.fi, g.st, angle, sx, sy);
+    if (!g.cut) { g.cut = true; selOps.floatCut(doc, g.li, g.fi, g.st); }
+    if (g.buf) g.cells = xformFloating(doc, g.st, angle, sx, sy, g.buf);
     this.session.repaint();
   }
 
-  /** transform ended: commit one undo step (or restore when nothing moved) */
+  /** transform ended: commit one undo step (or nothing when it never moved) */
   private endXf(): void {
     const g = this.xf;
     this.xf = null;
@@ -795,20 +814,24 @@ export class View {
     const doc = s.doc;
     const cel = doc.celAt(g.li, g.fi);
     if (!cel) return;
-    if (!g.moved) {
-      cel.data.set(g.st.before);
-      if (doc.sel) doc.sel.mask.set(g.st.mask);
-      s.repaint();
-      return;
-    }
-    let changed = false;
-    const a = cel.data, b = g.st.before;
-    for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) { changed = true; break; }
-    if (changed) {
-      s.history.pushPixels(g.mode === "rot" ? "sel.rotate" : "sel.scale", doc, [
-        { li: g.li, fi: g.fi, before: g.st.before, after: new Uint8ClampedArray(cel.data) },
-      ]);
-      s.changed();
+    if (!g.moved) return;
+    if (g.cut && g.buf && g.cells) {
+      // drop: the cel still holds "pre-gesture minus content", write the final
+      // floating pixels once and record a single history step
+      const data = cel.data;
+      const buf = g.buf;
+      for (const di of g.cells) {
+        const o = di * 4;
+        data[o] = buf[o]; data[o + 1] = buf[o + 1]; data[o + 2] = buf[o + 2]; data[o + 3] = buf[o + 3];
+      }
+      let changed = false;
+      for (let i = 0; i < data.length; i++) if (data[i] !== g.st.before[i]) { changed = true; break; }
+      if (changed) {
+        s.history.pushPixels(g.mode === "rot" ? "sel.rotate" : "sel.scale", doc, [
+          { li: g.li, fi: g.fi, before: g.st.before, after: new Uint8ClampedArray(data) },
+        ]);
+        s.changed();
+      }
     }
     s.repaint();
   }

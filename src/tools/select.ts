@@ -259,6 +259,56 @@ export function xformSelection(
   }
 }
 
+
+/**
+ * Floating rotate/scale: rasterises the transformed selection content into
+ * `out` (doc-sized RGBA) and moves the selection mask, WITHOUT touching the
+ * layer cel. Returns the painted document pixel indices (for overlay drawing).
+ */
+export function xformFloating(
+  doc: Doc, st: MoveState, angleRad: number, sx: number, sy: number,
+  out: Uint8ClampedArray,
+): number[] {
+  const w = doc.w, h = doc.h;
+  const content = st.content;
+  const cw = content.w, ch = content.h;
+  out.fill(0);
+  const cells: number[] = [];
+  const c = Math.cos(angleRad), sn = Math.sin(angleRad);
+  const hx = (cw / 2) * Math.max(0.02, sx), hy = (ch / 2) * Math.max(0.02, sy);
+  const cx = st.ox + cw / 2, cy = st.oy + ch / 2;
+  const spanX = Math.abs(c * hx) + Math.abs(sn * hy);
+  const spanY = Math.abs(sn * hx) + Math.abs(c * hy);
+  const x0 = Math.max(0, Math.floor(cx - spanX - 1));
+  const y0 = Math.max(0, Math.floor(cy - spanY - 1));
+  const x1 = Math.min(w - 1, Math.ceil(cx + spanX + 1));
+  const y1 = Math.min(h - 1, Math.ceil(cy + spanY + 1));
+  if (!doc.sel) doc.sel = new Sel(w, h, false);
+  const m = doc.sel.mask;
+  m.fill(0);
+  if (x0 > x1 || y0 > y1) return cells;
+  for (let py = y0; py <= y1; py++) {
+    for (let px = x0; px <= x1; px++) {
+      const dx0 = px + 0.5 - cx, dy0 = py + 0.5 - cy;
+      const vx = (dx0 * c + dy0 * sn) / Math.max(0.02, sx);
+      const vy = (-dx0 * sn + dy0 * c) / Math.max(0.02, sy);
+      const sxx = cx + vx - st.ox;
+      const syy = cy + vy - st.oy;
+      if (sxx < 0 || syy < 0 || sxx >= cw || syy >= ch) continue;
+      const si = content.idx(sxx | 0, syy | 0);
+      if (content.data[si + 3] === 0) continue;
+      const di = py * w + px, o = di * 4;
+      out[o] = content.data[si];
+      out[o + 1] = content.data[si + 1];
+      out[o + 2] = content.data[si + 2];
+      out[o + 3] = content.data[si + 3];
+      cells.push(di);
+      m[di] = 1;
+    }
+  }
+  return cells;
+}
+
 export const selOps = {
   setRect: setRectFn,
   selectAll(doc: Doc): void {
