@@ -22,6 +22,14 @@ interface PxPoint {
 const LOCK_D = "M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z";
 const UNLOCK_D = "M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6h2c0-1.66 1.34-3 3-3s3 1.34 3 3v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm0 12H6V10h12v10z";
 
+/** snap a selection scale factor to a crisp pixel multiple (n or 1/n) so
+ *  nearest-neighbour scaling never produces jagged 1px/2px mixed lines */
+function snapScale(v: number): number {
+  if (v >= 1) return Math.max(1, Math.round(v));
+  const n = Math.max(1, Math.round(1 / v));
+  return 1 / n;
+}
+
 export class View {
   private host: HTMLElement;
   private pix: HTMLCanvasElement;
@@ -1031,18 +1039,16 @@ export class View {
       if (Math.abs(angle) > 0.004) g.moved = true;
     } else if (g.axis === "x") {
       const base = Math.max(0.5, Math.abs(g.p0x - g.cx));
-      sx = clamp(Math.abs(px - g.cx) / base, 0.02, 40);
-      if (Math.abs(sx - 1) > 0.004) g.moved = true;
+      sx = snapScale(clamp(Math.abs(px - g.cx) / base, 0.02, 40));
     } else if (g.axis === "y") {
       const base = Math.max(0.5, Math.abs(g.p0y - g.cy));
-      sy = clamp(Math.abs(py - g.cy) / base, 0.02, 40);
-      if (Math.abs(sy - 1) > 0.004) g.moved = true;
+      sy = snapScale(clamp(Math.abs(py - g.cy) / base, 0.02, 40));
     } else {
       const d0 = Math.max(1, Math.hypot(g.p0x - g.cx, g.p0y - g.cy));
-      const f = clamp(Math.hypot(px - g.cx, py - g.cy) / d0, 0.02, 40);
+      const f = snapScale(clamp(Math.hypot(px - g.cx, py - g.cy) / d0, 0.02, 40));
       sx = f; sy = f;
-      if (Math.abs(f - 1) > 0.004) g.moved = true;
     }
+    if (g.mode !== "rot" && (sx !== 1 || sy !== 1)) g.moved = true;
     if (!g.moved) return;
     if (!g.cut) { g.cut = true; selOps.floatCut(doc, g.li, g.fi, g.st); }
     if (g.buf) g.cells = xformFloating(doc, g.st, angle, sx, sy, g.buf);

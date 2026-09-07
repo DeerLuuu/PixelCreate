@@ -77,7 +77,7 @@ export function runCelFx(
 }
 /** One-tap drop shadow: silhouette offset (dx,dy) down-right, painted with
  * `color`, original pixels stay on top. Mutates in place. */
-export function dropShadowCel(d: Uint8ClampedArray, w: number, h: number, dx: number, dy: number, color: RGBA): void {
+export function dropShadowCel(d: Uint8ClampedArray, w: number, h: number, dx: number, dy: number, color: RGBA, keepOriginal = true): void {
   if (w <= 0 || h <= 0) return;
   const src = new Uint8ClampedArray(d);
   d.fill(0);
@@ -93,8 +93,9 @@ export function dropShadowCel(d: Uint8ClampedArray, w: number, h: number, dx: nu
       if (nx >= 0 && ny >= 0 && nx < w && ny < h) put(nx, ny, color);
     }
   }
-  // original silhouette on top (shadows stay visible only around it)
-  for (let i = 0; i < d.length; i++) d[i] = src[i] > 0 ? src[i] : d[i];
+  if (keepOriginal) {
+    for (let i = 0; i < d.length; i++) d[i] = src[i] > 0 ? src[i] : d[i];
+  }
 }
 
 /** One-tap outer glow: expands the silhouette by R px, each ring painted with

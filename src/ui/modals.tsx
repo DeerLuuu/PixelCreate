@@ -490,6 +490,11 @@ export function SettingsModal({ t, onClose }: { t: ReturnType<typeof makeT>; onC
           <button className={"chip" + (SESSION.prefs.railSwap ? " on" : "")} onClick={() => SESSION.setRailSwap(!SESSION.prefs.railSwap)}>{SESSION.prefs.railSwap ? "ON" : "OFF"}</button>
           <label className="rowlabel">{t("grid")}</label>
           <button className={"chip" + (snap.grid ? " on" : "")} onClick={() => SESSION.toggleGrid()}>{snap.grid ? "ON" : "OFF"}</button>
+          <label className="rowlabel">{t("shadowMode")}</label>
+          <div className="chips">
+            <button className={"chip" + (!SESSION.prefs.shadowNewLayer ? " on" : "")} onClick={() => SESSION.setShadowNewLayer(false)}>{t("shadowCur")}</button>
+            <button className={"chip" + (SESSION.prefs.shadowNewLayer ? " on" : "")} onClick={() => SESSION.setShadowNewLayer(true)}>{t("shadowNew")}</button>
+          </div>
           <label className="rowlabel">{t("tlHeight")}</label>
           <div className="row-actions"><HoldAdjust dir="h" value={SESSION.prefs.tlH} min={56} max={340} title={t("tlHeight")} format={(v) => v + "px"} reset={116} onChange={(v) => SESSION.setTlHeight(v)} /></div>
           <label className="rowlabel">{t("sel.wandTol")}</label>

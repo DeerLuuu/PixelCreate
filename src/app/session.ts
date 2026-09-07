@@ -3,6 +3,7 @@ import { History } from "../engine/history";
 import type { RGBA, BlendMode } from "../engine/types";
 import { defaultPalette } from "../engine/palette";
 import * as ops from "../engine/ops";
+import * as fxE from "../engine/effects";
 import * as compositor from "../render/compositor";
 import * as project from "../io/project";
 import { toast as toastFn } from "../io/bridge";
@@ -32,6 +33,8 @@ export interface Prefs {
   /** history recording: "steps" keeps the latest histSteps entries, "full" records everything */
   histMode: "steps" | "full";
   histSteps: number;
+  /** drop shadow target: false = on the current layer, true = new "shadow" layer */
+  shadowNewLayer: boolean;
 }
 
 export interface Snapshot {
@@ -285,7 +288,7 @@ export class Session {
   }
 
   private loadPrefs(): Prefs {
-    const p: Prefs = { lang: "zh", grid: true, onion: 0, autosave: true, newFrameCopy: false, railSwap: true, palMode: "ball", previewBg: "white", tlH: 116, histMode: "steps", histSteps: 60, isoGrid: false };
+    const p: Prefs = { lang: "zh", grid: true, onion: 0, autosave: true, newFrameCopy: false, railSwap: true, palMode: "ball", previewBg: "white", tlH: 116, histMode: "steps", histSteps: 60, isoGrid: false, shadowNewLayer: false };
     try {
       const saved = JSON.parse(localStorage.getItem("pc.prefs") ?? "{}");
       if (saved.lang === "en") p.lang = "en";
@@ -299,6 +302,7 @@ export class Session {
       if (saved.histMode === "full" || saved.histMode === "steps") p.histMode = saved.histMode;
       if (typeof saved.histSteps === "number") p.histSteps = Math.max(10, Math.min(500, Math.round(saved.histSteps)));
       if (typeof saved.isoGrid === "boolean") p.isoGrid = saved.isoGrid;
+      if (typeof saved.shadowNewLayer === "boolean") p.shadowNewLayer = saved.shadowNewLayer;
       /* palette floater style fixed to ball */
     } catch {
       /* ignore */
@@ -562,6 +566,45 @@ export class Session {
     this.savePrefs();
     this.repaint();
     this.changed();
+  }
+  /** set where the drop-shadow lands: current layer (false) or a new shadow layer (true) */
+  setShadowNewLayer(on: boolean): void {
+    this.prefs.shadowNewLayer = on;
+    this.savePrefs();
+    this.changed();
+  }
+
+  /** One-tap drop shadow based ONLY on the current layer's image. Depending on
+   *  the shadowNewLayer pref it is baked into the current layer (silhouette kept
+   *  on top) or written onto a new layer placed just below it. */
+  applyShadow(): void {
+    const doc = this.doc;
+    const li = this.curLayer();
+    const fi = this.curFrame();
+    const cel = doc.celAt(li, fi);
+    if (!cel) return;
+    const w = doc.w, h = doc.h;
+    const color: RGBA = [0, 0, 0, 150];
+    if (!this.prefs.shadowNewLayer) {
+      const before = new Uint8ClampedArray(cel.data);
+      fxE.dropShadowCel(cel.data, w, h, 3, 3, color, true);
+      let changed = false;
+      for (let i = 0; i < before.length; i++) if (cel.data[i] !== before[i]) { changed = true; break; }
+      if (changed) this.history.pushPixels("fx-shadow", doc, [{ li, fi, before, after: new Uint8ClampedArray(cel.data) }]);
+      this.repaintAll();
+      this.changed();
+      return;
+    }
+    // new "shadow" layer below the current one, holding ONLY the offset copy
+    const shadow = new Uint8ClampedArray(cel.data.length);
+    fxE.dropShadowCel(shadow, w, h, 3, 3, color, false);
+    this.struct("fx-shadow", () => {
+      const curLi = this.curLayer();
+      ops.addLayer(doc, curLi); // shadow layer at curLi, artwork moves to curLi+1
+      const sc = doc.ensureCel(curLi, fi);
+      sc.data.set(shadow);
+      this.layerIdx = curLi + 1; // keep the artwork layer active
+    });
   }
 
   // ---------- history ----------
