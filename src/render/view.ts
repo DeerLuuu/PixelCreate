@@ -40,8 +40,6 @@ export class View {
    *  repositions the mirror axis instead of painting */
   private symAdj = false;
   private symTarget: "mv" | "rot" | null = null;
-  /** css point where the adjust gesture started (for axis translation) */
-  private symGrabPt: PxPoint | null = null;
   private ants = 0;
   private antTimer: number | null = null;
   /** cached selection tint layer (rebuilt only when the doc changes) */
@@ -626,7 +624,6 @@ export class View {
       this.lastTapPt = null;
       this.cursor = null;
       this.symTarget = this.symHit(pt);
-      this.symGrabPt = pt;
       this.drawOverlay();
       return;
     }
@@ -734,20 +731,18 @@ export class View {
         }
         s.symAng = best;
         s.symTweaked = true;
-      } else if (this.symGrabPt) {
-        const dx = (pt.x - this.symGrabPt.x) / this.zoom;
-        const dy = (pt.y - this.symGrabPt.y) / this.zoom;
-        const pxa = doc.w / 2 + s.symOx + dx;
-        const pya = doc.h / 2 + s.symOy + dy;
-        // clamp the pivot to the whole visible viewport (not just the canvas),
-        // so the axis follows the finger all the way into the margins instead
-        // of stopping / drifting at the canvas border
+      } else {
+        // the axis passes through the finger; clamp to the visible viewport
+        // (so it follows into the margins) and snap to the half-cell grid so
+        // it moves in whole pixels instead of drifting continuously
         const vx0 = Math.min(-this.ox, this.host.clientWidth - this.ox) / this.zoom;
         const vx1 = Math.max(-this.ox, this.host.clientWidth - this.ox) / this.zoom;
         const vy0 = Math.min(-this.oy, this.host.clientHeight - this.oy) / this.zoom;
         const vy1 = Math.max(-this.oy, this.host.clientHeight - this.oy) / this.zoom;
-        s.symOx = clamp(pxa, vx0, vx1) - doc.w / 2;
-        s.symOy = clamp(pya, vy0, vy1) - doc.h / 2;
+        const pxa = Math.round(clamp((pt.x - this.ox) / this.zoom, vx0, vx1) * 2) / 2;
+        const pya = Math.round(clamp((pt.y - this.oy) / this.zoom, vy0, vy1) * 2) / 2;
+        s.symOx = pxa - doc.w / 2;
+        s.symOy = pya - doc.h / 2;
         s.symTweaked = true;
       }
       this.drawOverlay();
@@ -796,7 +791,6 @@ export class View {
     this.pointers.delete(e.pointerId);
     if (this.symTarget) {
       this.symTarget = null;
-      this.symGrabPt = null;
       this.session.changed(); // refresh the angle readout in the UI chips
       this.drawOverlay();
     }
