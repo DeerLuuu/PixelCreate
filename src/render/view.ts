@@ -417,17 +417,15 @@ export class View {
 
   /** pixel loupe: magnified square around the brush while drawing */
   private drawMag(ctx: CanvasRenderingContext2D): void {
-    if (!this.mag || !this.cursor || !this.magPt) return;
+    if (!this.mag || !this.cursor) return;
     const doc = this.session.doc;
-    const CELL = 9, L = 132;
+    const CELL = Math.max(4, Math.round(this.session.prefs.magZoom));
+    const L = 132;
     const half = Math.floor(L / CELL / 2);
     const cx = this.cursor.x, cy = this.cursor.y;
     const sx0 = Math.round(cx - half), sy0 = Math.round(cy - half);
-    let x = this.magPt.x - L - 18, y = this.magPt.y - L - 18;
-    if (this.magPt.x - L - 18 < 6) x = this.magPt.x + 18;
-    if (this.magPt.y - L - 18 < 6) y = this.magPt.y + 18;
-    x = clamp(x, 6, this.host.clientWidth - L - 6);
-    y = clamp(y, 6, this.host.clientHeight - L - 6);
+    // fixed at the bottom-left corner of the viewport
+    const x = 10, y = this.host.clientHeight - L - 10;
     ctx.save();
     ctx.imageSmoothingEnabled = false;
     ctx.fillStyle = "#1d2129";
