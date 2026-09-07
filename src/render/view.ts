@@ -36,9 +36,7 @@ export class View {
   private cursor: { x: number; y: number; size: number } | null = null;
   private isoCache: HTMLCanvasElement | null = null;
   private isoKey = "";
-  /** axis-adjust mode for the symmetry guides: dragging the dashed lines
-   *  repositions the mirror axis instead of painting */
-  private symAdj = false;
+  /** what the adjust gesture is currently holding (set while unlocked) */
   private symTarget: "mv" | "rot" | null = null;
   private ants = 0;
   private antTimer: number | null = null;
@@ -377,13 +375,6 @@ export class View {
   }
 
   /** toggle the symmetry-axis adjust mode (drag dashed lines to move axes) */
-  setSymAdjust(on: boolean): void {
-    if (this.symAdj === on) return;
-    this.symAdj = on;
-    if (!on) this.symTarget = null;
-    this.drawOverlay();
-  }
-
   /** mirror-axis geometry in css space, or null when symmetric drawing is off */
   private symAxis(): { px: number; py: number; ux: number; uy: number; perp: boolean } | null {
     const s = this.session;
@@ -406,13 +397,13 @@ export class View {
     ctx.lineTo(px + ux * K, py + uy * K);
     ctx.stroke();
   }
-  /** rotation knob sits on the primary axis, inside the viewport */
+  /** rotation knob sits on the primary axis opposite the lock button; hidden when locked */
   private symRotKnob(): [number, number] | null {
     const a = this.symAxis();
-    if (!a) return null;
+    if (!a || this.session.symLocked) return null;
     const w = this.host.clientWidth, h = this.host.clientHeight;
     const L = Math.min(92, Math.max(48, Math.min(w, h) * 0.24));
-    for (const sgn of [1, -1]) {
+    for (const sgn of [-1, 1]) {
       const kx = a.px + a.ux * L * sgn, ky = a.py + a.uy * L * sgn;
       if (kx >= 10 && ky >= 10 && kx <= w - 10 && ky <= h - 10) return [kx, ky];
     }
@@ -423,24 +414,50 @@ export class View {
     return Math.abs(dx * uy - dy * ux) <= band;
   }
 
-  /** dashed symmetry guides (extend across the whole drawing area) + grab UI */
+  /** lock-axis button sits on the line just outside the canvas (+u side) */
+  private symLockBtn(): [number, number] | null {
+    const a = this.symAxis();
+    if (!a) return null;
+    const doc = this.session.doc;
+    const z = this.zoom;
+    const w = this.host.clientWidth, h = this.host.clientHeight;
+    const rx = this.ox, ry = this.oy, rw = doc.w * z, rh = doc.h * z;
+    const { px, py, ux, uy } = a;
+    const exits: number[] = [];
+    const test = (t: number): void => {
+      const X = px + ux * t, Y = py + uy * t;
+      if (X >= rx - 0.5 && X <= rx + rw + 0.5 && Y >= ry - 0.5 && Y <= ry + rh + 0.5) exits.push(t);
+    };
+    if (Math.abs(ux) > 1e-6) { test((rx - px) / ux); test((rx + rw - px) / ux); }
+    if (Math.abs(uy) > 1e-6) { test((ry - py) / uy); test((ry + rh - py) / uy); }
+    const pos = exits.filter((t) => t > 0.02).sort((x, y) => x - y);
+    const tOut = pos.length ? pos[0] : exits.length ? Math.max(...exits) : 0;
+    const OUT = 32 / z;
+    return [clamp(px + ux * (tOut + OUT), 16, w - 16), clamp(py + uy * (tOut + OUT), 16, h - 16)];
+  }
+
+  /** dashed symmetry guides (extend across the whole area) + handles + lock button */
   private drawSymGuides(ctx: CanvasRenderingContext2D): void {
     const a = this.symAxis();
     if (!a) return;
+    const locked = this.session.symLocked;
     ctx.save();
-    ctx.lineWidth = this.symAdj ? 2 : 1.2;
-    ctx.strokeStyle = this.symAdj ? "rgba(126,255,214,0.95)" : "rgba(255,255,255,0.45)";
-    ctx.setLineDash(this.symAdj ? [8, 5] : [6, 5]);
+    ctx.lineWidth = locked ? 1.2 : 2;
+    ctx.strokeStyle = locked ? "rgba(255,255,255,0.4)" : "rgba(126,255,214,0.95)";
+    ctx.setLineDash([8, 5]);
     this.symStrokeSeg(ctx, a.px, a.py, a.ux, a.uy);
     if (a.perp) this.symStrokeSeg(ctx, a.px, a.py, -a.uy, a.ux);
     ctx.setLineDash([]);
-    if (this.symAdj) {
-      // pivot marker
+    if (!locked) {
+      // pivot / cross intersection marker (draggable in four-way mode)
       ctx.beginPath();
-      ctx.arc(a.px, a.py, 4.5, 0, Math.PI * 2);
+      ctx.arc(a.px, a.py, 5, 0, Math.PI * 2);
       ctx.fillStyle = "rgba(255,255,255,0.95)";
       ctx.fill();
-      // rotation knob at the far end of the primary axis
+      ctx.strokeStyle = "rgba(126,255,214,0.9)";
+      ctx.lineWidth = 1.8;
+      ctx.stroke();
+      // rotation knob opposite the lock button
       const knob = this.symRotKnob();
       if (knob) {
         ctx.beginPath();
@@ -452,11 +469,28 @@ export class View {
         ctx.stroke();
       }
     }
+    // lock button on the line outside the canvas (always tappable)
+    const lb = this.symLockBtn();
+    if (lb) {
+      ctx.beginPath();
+      ctx.arc(lb[0], lb[1], 15, 0, Math.PI * 2);
+      ctx.fillStyle = locked ? "rgba(126,255,214,0.28)" : "rgba(21,23,32,0.9)";
+      ctx.fill();
+      ctx.strokeStyle = locked ? "#7effd6" : "#ffffff";
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.font = "14px sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillStyle = "#ffffff";
+      ctx.fillText(locked ? "🔒" : "🔓", lb[0], lb[1] + 1);
+    }
     ctx.restore();
   }
 
-  /** what the adjust-mode pointer is holding: the axis (translate) or the knob (rotate) */
+  /** what an unlocked axis grab is holding: the line (translate) or the knob (rotate) */
   private symHit(pt: PxPoint): "mv" | "rot" | null {
+    if (this.session.symLocked) return null;
     const a = this.symAxis();
     if (!a) return null;
     const knob = this.symRotKnob();
@@ -617,15 +651,26 @@ export class View {
       this.session.repaint();
       if (rec) this.session.changed();
     }
-    // symmetry-axis adjust mode: pressing near the dashed guides repositions
-    // the mirror axis instead of painting (painting is suspended in this mode)
-    if (this.symAdj && this.session.sym !== "off" && isSymTool(this.session.tool)) {
-      this.lastTap = 0;
-      this.lastTapPt = null;
-      this.cursor = null;
-      this.symTarget = this.symHit(pt);
-      this.drawOverlay();
-      return;
+    // symmetry axis (brush tools): the lock button is always tappable, and
+    // while unlocked the dashed line/knob are directly draggable
+    if (this.session.sym !== "off" && isSymTool(this.session.tool)) {
+      const lb = this.symLockBtn();
+      if (lb && Math.hypot(pt.x - lb[0], pt.y - lb[1]) <= 30) {
+        this.session.setSymLocked(!this.session.symLocked);
+        return;
+      }
+      if (!this.session.symLocked) {
+        const t = this.symHit(pt);
+        if (t) {
+          this.lastTap = 0;
+          this.lastTapPt = null;
+          this.cursor = null;
+          this.symTarget = t;
+          this.drawOverlay();
+          return;
+        }
+      }
+      // unlocked but off the line, or locked: painting / panning proceed normally
     }
     const s = this.session;
     const tool = s.tool;
@@ -781,7 +826,7 @@ export class View {
     // while the axis-adjust mode is on (painting is suspended there)
     const drawing = ["pencil", "eraser", "bucket", "line", "rect", "ellipse", "circle", "polygon"].includes(this.session.tool);
     const inView = pt.x >= 0 && pt.y >= 0 && pt.x <= this.host.clientWidth && pt.y <= this.host.clientHeight;
-    this.cursor = drawing && inView && !this.symAdj
+    this.cursor = drawing && inView
       ? { x: ppx.x, y: ppx.y, size: this.session.brushSize }
       : null;
     this.drawOverlay();

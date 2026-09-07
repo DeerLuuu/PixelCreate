@@ -80,6 +80,8 @@ export class Session {
   sym: SymMode = "off";
   /** four-way symmetry: also mirror across the perpendicular axis (cross) */
   symFour = false;
+  /** axis is locked (not movable / intersecting hidden); toggle via the button */
+  symLocked = false;
   /** adjustable mirror axis: pivot offset (symOx/symOy) from the doc centre
    *  in doc gridline units plus the axis angle (degrees, from 0/45/90/135). */
   symOx = 0;
@@ -422,6 +424,13 @@ export class Session {
   setSymFour(on: boolean): void {
     if (this.symFour === on) return;
     this.symFour = on;
+    this.repaint();
+    this.changed();
+  }
+  /** lock / unlock the axis (locked = not movable, intersection hidden) */
+  setSymLocked(on: boolean): void {
+    if (this.symLocked === on) return;
+    this.symLocked = on;
     this.repaint();
     this.changed();
   }

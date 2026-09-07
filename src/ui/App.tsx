@@ -839,7 +839,6 @@ function Viewport({ onColorClick, refImg, onRefClose }: { onColorClick: () => vo
   const viewRef = useRef<View | null>(null);
   const tv = makeT(SESSION.prefs.lang as Lang);
   const [, setTick] = useState(0);
-  const [symAdj, setSymAdj] = useState(false);
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
@@ -851,13 +850,6 @@ function Viewport({ onColorClick, refImg, onRefClose }: { onColorClick: () => vo
     return () => { window.clearInterval(iv); v.destroy(); viewRef.current = null; };
   }, []);
   const symOn = SESSION.sym !== "off" && isSymTool(SESSION.tool);
-  // switching tool/off symmetry exits the axis-adjust mode automatically
-  useEffect(() => {
-    if (!symOn && symAdj) {
-      setSymAdj(false);
-      viewRef.current?.setSymAdjust(false);
-    }
-  });
   const c = SESSION.color;
   const visible = SESSION.colorPickedRecently(Date.now(), 1600);
   return (
@@ -866,17 +858,10 @@ function Viewport({ onColorClick, refImg, onRefClose }: { onColorClick: () => vo
       <PreviewBox />
       {refImg && <RefImageBox img={refImg} onClose={onRefClose} />}
       {symOn && (
-        <div className={"sym-chiprow" + (symAdj ? " adj" : "")}>
+        <div className="sym-chiprow">
           <button className={"sym-chip" + (SESSION.symFour ? " on" : "")} type="button" title={tv("symFour")} onClick={() => SESSION.setSymFour(!SESSION.symFour)}>{tv("symFour")}</button>
-          {symAdj ? (
-            <>
-              <button className="sym-chip sym-ro" type="button" title={tv("symAngleHint")} onClick={() => SESSION.cycleSymAngle()}>{tv("symAngle")} {SESSION.symAng}°</button>
-              <button className="sym-chip sym-done" type="button" title={tv("symAdjustHint")} onClick={() => { setSymAdj(false); viewRef.current?.setSymAdjust(false); }}>{tv("symDone")}</button>
-              <button className="sym-chip" type="button" title={tv("symReset")} onClick={() => SESSION.resetSymAxes()}>{tv("symReset")}</button>
-            </>
-          ) : (
-            <button className="sym-chip" type="button" title={tv("symAdjustHint")} onClick={() => { setSymAdj(true); viewRef.current?.setSymAdjust(true); }}>{tv("symAdjust")}</button>
-          )}
+          <button className="sym-chip sym-ro" type="button" title={tv("symAngleHint")} onClick={() => SESSION.cycleSymAngle()}>{tv("symAngle")} {SESSION.symAng}°</button>
+          <button className="sym-chip sym-done" type="button" title={tv("symAdjustHint")} onClick={() => SESSION.resetSymAxes()}>{tv("symReset")}</button>
         </div>
       )}
       {visible && (
