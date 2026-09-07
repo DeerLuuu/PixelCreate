@@ -21,8 +21,16 @@ export const CHANGELOG: ClgVersion[] = [
     date: "2025-09-07",
     items: [
       it("add", "操作记录双模式：按步数记录最近操作，或“完整记录”模式自项目创建起保存全部操作、可从头完整回放", "Two history recording modes: step-limited (configurable) or full recording since the project started for complete replay"),
-      it("add", "魔法球（原特效球）新增「居中」：把当前图层内容居中到画布中心，有选区时居中到选区中心", "Magic Ball (was FX ball) gains “Center”: aligns the active layer content to the canvas centre, or to the selection centre when one is active"),
-      it("imp", "特效浮动球更名“魔法球”；浮动球收纳需拖入收纳面板区域内才生效，靠近屏幕边缘不再误收纳", "FX orb renamed to Magic Ball; orbs park only when dropped on the dock panel itself, not merely near the screen edge"),
+      it("add", "魔法球（原特效球）：居中、智能裁剪画布空白、一键投影/外发光、等距网格辅助、全套 SVG 图标", "Magic Ball (was FX orb): centre content, smart-crop empty borders, one-tap drop shadow / outer glow, isometric grid helper, full SVG action icons"),
+      it("add", "铅笔与橡皮改用 Aseprite 圆形笔刷算法（尺寸＝直径，奇偶尺寸逐像素一致）", "Pencil & eraser now use Aseprite’s circular brush algorithm (size = diameter, pixel-identical for odd/even sizes)"),
+      it("add", "图形绘制后自动进入精确像素选区并可立刻拖动；选区移动/旋转/缩放按 Aseprite 浮动方式，不带走底下像素", "Shapes auto-select their exact pixels and can be dragged immediately; move/rotate/scale uses Aseprite-style floating content that never carries underlying artwork"),
+      it("add", "图层重命名改为独立弹窗；图层透明度量程恢复为长按手势条并修复弹层越界", "Layer rename via its own dialog; layer-opacity hold slider restored with popups clamped on-screen"),
+      it("add", "数字输入框支持长按上下/左右滑动微调（步长按值域自适应）；全部输入框统一深色主题", "Numeric fields support long-press slide scrubbing (auto step from value range); all inputs now match the dark theme"),
+      it("add", "菜单重组：导入（图片/图层/精灵表/参考图/色板）与导出（图片/图层/色板）二级菜单；时间线默认隐藏", "Menu regrouped: Import and Export open second-level menus (image/layer/sheet/reference/palette); timeline starts hidden"),
+      it("add", "混合模式改为弹窗选择（屏幕居中、可滚动、横屏适配）；导出新增“图层导出”模式", "Blend modes open a centred scrollable dialog (landscape-aware); new Layers export mode exports one image per layer"),
+      it("imp", "长按进度条按钮双击快速归位默认值；快速色轮长按时不再因离开色块而消失；按钮文字实时跟随", "Double-tap hold-sliders to snap back to defaults; quick colour wheel stays open when the finger leaves the chip; live label updates"),
+      it("fix", "浮动球收纳需拖入面板区域才生效、离开区域保持聚焦、拿出落在手指位置、横屏固定宽度", "Dock fixes: parking only inside the panel, focus kept outside, eject at the finger drop point, fixed landscape width"),
+      it("fix", "橡皮擦/铅笔足迹指示与实际涂抹区域精确对齐并随手指移动", "Brush footprint marker aligns exactly with the painted/erased area and follows the finger"),
     ],
   },
   {
