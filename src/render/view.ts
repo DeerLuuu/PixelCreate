@@ -620,10 +620,11 @@ export class View {
     if (this.stroke) {
       const pp = ppx;
       if (!this.gestureMoved && this.gestureStartPx && (pp.x !== this.gestureStartPx.x || pp.y !== this.gestureStartPx.y)) this.gestureMoved = true;
-      // keep the erase/draw footprint marker glued to the finger while stroking
-      if (pp.x >= 0 && pp.y >= 0 && pp.x < this.session.doc.w && pp.y < this.session.doc.h) {
-        this.cursor = { x: pp.x, y: pp.y, size: this.session.brushSize };
-      }
+      // keep the erase/draw footprint marker glued to the finger while stroking;
+      // it follows the pointer even past the image border (marks are clipped to
+      // the canvas), so it never freezes at the edge while the hand keeps moving
+      const inView = pt.x >= 0 && pt.y >= 0 && pt.x <= this.host.clientWidth && pt.y <= this.host.clientHeight;
+      this.cursor = inView ? { x: pp.x, y: pp.y, size: this.session.brushSize } : null;
       this.stroke.moveTo(pp.x, pp.y, e.pointerType === "pen" ? e.pressure : 1);
       this.session.repaint();
       return;
@@ -633,9 +634,11 @@ export class View {
       this.selMove(pp);
       return;
     }
-    // hover
+    // hover: footprint marker follows the pointer across the whole drawing
+    // area too (marks still clip to the canvas); it hides only off the view
     const drawing = ["pencil", "eraser", "bucket", "line", "rect", "ellipse", "circle", "polygon"].includes(this.session.tool);
-    this.cursor = drawing && ppx.x >= 0 && ppx.y >= 0 && ppx.x < this.session.doc.w && ppx.y < this.session.doc.h
+    const inView = pt.x >= 0 && pt.y >= 0 && pt.x <= this.host.clientWidth && pt.y <= this.host.clientHeight;
+    this.cursor = drawing && inView
       ? { x: ppx.x, y: ppx.y, size: this.session.brushSize }
       : null;
     this.drawOverlay();
