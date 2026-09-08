@@ -52,6 +52,8 @@ export interface SettingDef {
   /** enum rendering: a chip row (default) or an expandable dropdown.
    *  Omitted = chips for <= 6 options, dropdown above that. */
   control?: "chips" | "dropdown";
+  /** extra button rendered under the control (label = i18n key) */
+  action?: { label: string; run: (s: Session) => void };
   /** custom read (defaults to prefs[field]) */
   get?: (s: Session) => SettingValue;
   /** custom write (defaults to prefs[field]) */
@@ -305,7 +307,15 @@ const defs: SettingDef[] = [
     path: "gesture.haptic", field: "haptic", kind: "bool", group: "gesture",
     label: "hapticLabel", desc: "hapticDesc", default: true, refresh: "none",
     // a tick right when it is switched on, so the effect is obvious
-    after: (_s, v) => { if (v) bridge.vibrate(30); },
+    after: (_s, v) => { if (v) bridge.vibrate(60); },
+    action: {
+      label: "hapticTest",
+      run: () => {
+        const cap = bridge.canVibrate();
+        const ok = bridge.vibrate(80);
+        bridge.toast(ok ? "hapticTestOk" : cap === false ? "hapticTestNoMotor" : "hapticTestFail");
+      },
+    },
   },
   // one entry per gesture: which function it runs (see src/app/gestures.ts)
   ...GESTURES.map((g): SettingDef => ({

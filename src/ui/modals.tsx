@@ -652,6 +652,11 @@ function SettingRow({ def, t }: { def: SettingDef; t: ReturnType<typeof makeT> }
           </div>
         );
       })()}
+      {def.action && (
+        <div className="row-actions">
+          <Btn icon="i-star" label={t(def.action.label)} onClick={() => def.action!.run(SESSION)} />
+        </div>
+      )}
       {def.desc && <div className="row-note">{t(def.desc)}</div>}
     </>
   );

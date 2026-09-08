@@ -6,7 +6,7 @@ declare global {
       hasVibrator?: () => boolean;
       openFile: (mime: string) => void;
       toast: (msg: string) => void;
-      vibrate: (ms: number) => void;
+      vibrate: (ms: number) => boolean;
       keepAwake: (on: boolean) => void;
     };
   }
@@ -43,19 +43,16 @@ export function toast(msg: string): void {
  *  navigator.vibrate (both need android.permission.VIBRATE, which the app
  *  declares). Failures are silent: vibration is only a nicety. */
 export function vibrate(ms: number): boolean {
-  const d = Math.max(5, Math.min(100, Math.round(ms)));
-  let ok = false;
+  const d = Math.max(10, Math.min(200, Math.round(ms)));
   try {
     const b = window.PixelBridge;
-    if (b?.vibrate) { b.vibrate(d); ok = true; }
+    if (b?.vibrate) return b.vibrate(d) === true; // native answer, synchronously
+  } catch { /* fall through */ }
+  try {
+    const nav = navigator as Navigator & { vibrate?: (p: number | number[]) => boolean };
+    if (nav.vibrate) return nav.vibrate(d);
   } catch { /* ignore */ }
-  if (!ok) {
-    try {
-      const nav = navigator as Navigator & { vibrate?: (p: number | number[]) => boolean };
-      if (nav.vibrate) ok = nav.vibrate(d);
-    } catch { /* ignore */ }
-  }
-  return ok;
+  return false;
 }
 
 /** true when the device reports a usable vibrator (null = unknown) */

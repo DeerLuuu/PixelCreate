@@ -8,7 +8,7 @@ import { Icon } from "./base";
 import { TabBar } from "./tabs";
 
 /** keep in sync with android/AndroidManifest.xml versionName on every release */
-export const APP_VERSION = "1.0.7.4";
+export const APP_VERSION = "1.0.7.5";
 
 export type ClgKind = "add" | "imp" | "fix";
 export interface ClgItem { kind: ClgKind; zh: string; en: string }
@@ -17,6 +17,14 @@ export interface ClgVersion { v: string; date: string; items: ClgItem[] }
 const it = (kind: ClgKind, zh: string, en: string): ClgItem => ({ kind, zh, en });
 
 export const CHANGELOG: ClgVersion[] = [
+  {
+    v: "1.0.7.5",
+    date: "2026-09-08",
+    items: [
+      it("fix", "再次修复震动：原生 vibrate 改为同步调用并返回结果（不再绕 UI 线程），振幅改为最大值 255、时长上限 200ms；打开工具球/浮动球也会震一下", "Vibration fix, round two: the native vibrate call is now synchronous and returns whether it fired (no UI-thread hop), amplitude is the maximum 255 with a 200ms cap, and opening the tool ring / floating ball ticks as well"),
+      it("add", "设置 → 手势与触控 里新增“测试震动”按钮：按下会立刻震动 80ms，并用提示区分“已触发”“系统禁止”“设备无马达”三种情况，方便定位问题", "Settings -> Gestures & Touch gains a Test vibration button: it fires an 80ms pulse and tells you whether it fired, the system blocked it, or the device reports no vibrator"),
+    ],
+  },
   {
     v: "1.0.7.4",
     date: "2026-09-08",

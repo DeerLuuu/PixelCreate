@@ -213,29 +213,30 @@ public class MainActivity extends Activity {
             }
         }
 
+        /** Run one pulse right now and report whether the vibrator accepted
+         *  it. Called synchronously from JS (no UI-thread hop) so the page can
+         *  tell the difference between "no vibrator" and "it worked". */
         @JavascriptInterface
-        public void vibrate(final long ms) {
-            runOnUiThread(new Runnable() {
-                @Override public void run() {
+        public boolean vibrate(final long ms) {
+            try {
+                Vibrator v = defaultVibrator();
+                if (v == null || !v.hasVibrator()) return false;
+                long d = Math.max(10, Math.min(ms, 200));
+                if (android.os.Build.VERSION.SDK_INT >= 26) {
                     try {
-                        Vibrator v = defaultVibrator();
-                        if (v == null || !v.hasVibrator()) return;
-                        long d = Math.max(5, Math.min(ms, 100));
-                        if (android.os.Build.VERSION.SDK_INT >= 26) {
-                            try {
-                                v.vibrate(VibrationEffect.createOneShot(d, VibrationEffect.DEFAULT_AMPLITUDE));
-                            } catch (Throwable e) {
-                                // some devices reject the effect API: legacy call
-                                v.vibrate(d);
-                            }
-                        } else {
-                            v.vibrate(d);
-                        }
-                    } catch (Throwable ignored) {
-                        // vibrate is a nicety: never crash the app over it
+                        // full amplitude: DEFAULT_AMPLITUDE can be imperceptible
+                        // for very short pulses on some ROMs
+                        v.vibrate(VibrationEffect.createOneShot(d, 255));
+                    } catch (Throwable e) {
+                        v.vibrate(d);
                     }
+                } else {
+                    v.vibrate(d);
                 }
-            });
+                return true;
+            } catch (Throwable ignored) {
+                return false;
+            }
         }
 
         @JavascriptInterface

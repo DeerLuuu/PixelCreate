@@ -1022,6 +1022,7 @@ function FloatingTools({ t, snap }: { t: ReturnType<typeof makeT>; snap: Snapsho
           const pushed3 = clearRingOf(pos, { x: fx.x, y: fx.y });
           if (pushed3) setFx({ ...pushed3, open: false });
         }
+        if (SESSION.prefs.haptic) bridge.vibrate(15);
         setOpen(true);
       })}
       <Keep on={!!sel} el={sel ? renderBall("sel", { x: sel.x, y: sel.y }, "i-select", sel.open, t("sel.active"), bd(snap.lang, "selBall"), () => {
