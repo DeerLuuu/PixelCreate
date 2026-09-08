@@ -355,13 +355,14 @@ export class View {
     const doc = s.doc;
     const fi = s.curFrame();
     const p = s.prefs;
-    const onionKey = p.onionOn ? "1:" + p.onionBefore + ":" + p.onionAfter + ":" + p.onionAlpha + ":" + (p.onionTint ? 1 : 0) : "0";
+    const onionKey = p.onionOn ? "1:" + p.onionBefore + ":" + p.onionAfter + ":" + p.onionAlpha + ":" + (p.onionTint ? 1 : 0) + ":" + (p.onionWrap ? 1 : 0) : "0";
     const key = fi + "|" + doc.layers.map((l) => (l.visible ? 1 : 0) + ":" + l.opacity + ":" + l.blend + (doc.bg ? "B" : "T")).join() + "|on" + onionKey;
     const onion = {
       before: p.onionOn ? p.onionBefore : 0,
       after: p.onionOn ? p.onionAfter : 0,
       alpha: p.onionAlpha / 100,
       tint: p.onionTint,
+      wrap: p.onionWrap,
     };
     if (!force && this.composite && this.compKey === key) {
       // same frame / layers / onion config: only the changed region is stale

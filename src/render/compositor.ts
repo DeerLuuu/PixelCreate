@@ -3,6 +3,7 @@ import { Cel } from "../engine/cel";
 import { Doc } from "../engine/doc";
 import type { BlendMode, Rect } from "../engine/types";
 import { clampRect } from "./rect";
+import { onionGhosts } from "./onion";
 import { cssColor } from "../engine/color";
 
 interface CelEntry { canvas: HTMLCanvasElement; img: ImageData }
@@ -119,6 +120,22 @@ export interface OnionSpec {
   alpha: number;
   /** tint previous ghosts red / next ghosts green (off = draw them as-is) */
   tint: boolean;
+  /** loop the animation: ghosts wrap around the first/last frame and get a
+   *  distinct colour so the wrap-around is obvious (default false) */
+  wrap?: boolean;
+}
+
+/** tint colours of the onion ghosts; the wrapped first/last frames differ */
+export const ONION_TINT = {
+  prev: "rgba(255,70,90,0.9)",
+  next: "rgba(90,230,130,0.95)",
+  prevWrap: "rgba(120,150,255,0.95)",
+  nextWrap: "rgba(255,190,80,0.95)",
+};
+
+function ghostTint(prev: boolean, wrapped: boolean): string {
+  if (wrapped) return prev ? ONION_TINT.prevWrap : ONION_TINT.nextWrap;
+  return prev ? ONION_TINT.prev : ONION_TINT.next;
 }
 
 /** Frame image including onion ghosts of neighbouring frames. Ghosts are
@@ -129,27 +146,19 @@ export function composeFrameWithOnion(doc: Doc, fi: number, onion: OnionSpec, ca
   const after = Math.max(0, Math.min(3, Math.round(onion.after)));
   if (before <= 0 && after <= 0) return out;
   const ctx = out.getContext("2d")!;
-  const ghost = (f: number, k: number, prev: boolean): void => {
-    const key = f + (onion.tint ? "t" : "n");
+  const ghost = (f: number, k: number, prev: boolean, wrapped: boolean): void => {
+    const tint = ghostTint(prev, wrapped);
+    const key = f + (onion.tint ? "|" + tint : "|none");
     let cv = cache?.ghosts.get(key);
     if (!cv) {
       const src = composeFrame(doc, f, { bgOverride: null });
-      cv = onion.tint ? tintCanvas(src, prev ? "rgba(255,70,90,0.9)" : "rgba(90,230,130,0.95)", 1) : src;
+      cv = onion.tint ? tintCanvas(src, tint, 1) : src;
       cache?.ghosts.set(key, cv);
     }
     ctx.globalAlpha = Math.max(0.04, onion.alpha / k);
     ctx.drawImage(cv, 0, 0);
   };
-  for (let k = before; k >= 1; k--) {
-    const f = fi - k;
-    if (f < 0) continue;
-    ghost(f, k, true);
-  }
-  for (let k = after; k >= 1; k--) {
-    const f = fi + k;
-    if (f >= doc.frames.length) continue;
-    ghost(f, k, false);
-  }
+  for (const g of onionGhosts(fi, doc.frames.length, before, after, !!onion.wrap)) ghost(g.f, g.k, g.prev, g.wrapped);
   ctx.globalAlpha = 1;
   return out;
 }
@@ -186,25 +195,19 @@ export function composeRectInto(
   ctx.globalCompositeOperation = "source-over";
   const before = Math.max(0, Math.min(3, Math.round(onion.before)));
   const after = Math.max(0, Math.min(3, Math.round(onion.after)));
-  const ghost = (f: number, k: number, prev: boolean): void => {
-    const key = f + (onion.tint ? "t" : "n");
+  const ghost = (f: number, k: number, prev: boolean, wrapped: boolean): void => {
+    const tint = ghostTint(prev, wrapped);
+    const key = f + (onion.tint ? "|" + tint : "|none");
     let cv = cache?.ghosts.get(key);
     if (!cv) {
       const src = composeFrame(doc, f, { bgOverride: null });
-      cv = onion.tint ? tintCanvas(src, prev ? "rgba(255,70,90,0.9)" : "rgba(90,230,130,0.95)", 1) : src;
+      cv = onion.tint ? tintCanvas(src, tint, 1) : src;
       cache?.ghosts.set(key, cv);
     }
     ctx.globalAlpha = Math.max(0.04, onion.alpha / k);
     ctx.drawImage(cv, 0, 0);
   };
-  for (let k = before; k >= 1; k--) {
-    const f = fi - k;
-    if (f >= 0) ghost(f, k, true);
-  }
-  for (let k = after; k >= 1; k--) {
-    const f = fi + k;
-    if (f < doc.frames.length) ghost(f, k, false);
-  }
+  for (const g of onionGhosts(fi, doc.frames.length, before, after, !!onion.wrap)) ghost(g.f, g.k, g.prev, g.wrapped);
   ctx.globalAlpha = 1;
   ctx.restore();
 }

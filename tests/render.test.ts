@@ -5,6 +5,7 @@ import { Stroke } from "../src/tools/stroke";
 import type { BrushState, SymMode } from "../src/tools/registry";
 import { clampRect, coversAll, screenRectOf, unionRect } from "../src/render/rect";
 import { growSelection, selOps, shrinkSelection } from "../src/tools/select";
+import { onionGhosts } from "../src/render/onion";
 import { eq, ok } from "./common";
 
 const brush = (size = 1, color: [number, number, number, number] = [255, 0, 0, 255]): BrushState => ({
@@ -129,6 +130,28 @@ export function testRender(): void {
     const v3 = sel.ver;
     sel.bump();
     ok("render.sel.ver-bump", sel.ver > v3);
+  }
+
+  // -------------------------------------------------------- onion ghosts
+  {
+    const shape = (g: ReturnType<typeof onionGhosts>): unknown => g.map((x) => [x.f, x.k, x.prev, x.wrapped]);
+    // without wrapping only the plain neighbourhood is ghosted
+    eq("onion.plain", shape(onionGhosts(1, 5, 1, 1, false)), [[0, 1, true, false], [2, 1, false, false]]);
+    // on the first frame the "before" ghost comes from the end and is flagged
+    eq("onion.wrap.start", shape(onionGhosts(0, 5, 1, 1, true)), [[1, 1, false, false], [4, 1, true, true]]);
+    // on the last frame the "after" ghost comes from the start and is flagged
+    eq("onion.wrap.end", shape(onionGhosts(4, 5, 1, 1, true)), [[0, 1, false, true], [3, 1, true, false]]);
+    // far ghosts are listed first so the nearest one stays readable on top
+    eq("onion.order", onionGhosts(2, 7, 2, 2, false).map((g) => g.k), [2, 2, 1, 1]);
+    // a single frame has nothing to ghost, wrapping or not
+    eq("onion.single", onionGhosts(0, 1, 3, 3, true), []);
+    // wrapping never ghosts the current frame and collapses duplicates
+    const tight = onionGhosts(0, 2, 3, 3, true);
+    ok("onion.no-self", tight.every((g) => g.f !== 0), JSON.stringify(tight));
+    eq("onion.dedupe", tight.map((g) => g.f), [1]);
+    // without wrapping nothing is drawn past the ends
+    eq("onion.plain.ends", onionGhosts(0, 3, 3, 3, false).map((g) => g.f), [2, 1]);
+    eq("onion.plain.ends.last", onionGhosts(2, 3, 3, 3, false).map((g) => g.f), [0, 1]);
   }
 
   // bulk selection operations rewrite the mask array: they must bump the

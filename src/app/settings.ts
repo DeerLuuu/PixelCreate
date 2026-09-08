@@ -140,6 +140,13 @@ const defs: SettingDef[] = [
     label: "onionTint", default: true, refresh: "repaintAll",
     visible: (s) => s.prefs.onionOn,
   },
+  {
+    // loop-aware onion skin: the frames before the first / after the last one
+    // are shown too, in their own colour (blue / amber) so the wrap is obvious
+    path: "onion.wrap", field: "onionWrap", kind: "bool", group: "onion",
+    label: "onionWrapLabel", desc: "onionWrapDesc", default: true, refresh: "repaintAll",
+    visible: (s) => s.prefs.onionOn,
+  },
 
   // ------------------------------------------------------------ history
   {

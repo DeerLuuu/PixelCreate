@@ -28,6 +28,9 @@ export interface Prefs {
   loupe: boolean;
   /** onion skin master switch */
   onionOn: boolean;
+  /** loop-aware onion skin: ghosts wrap around the first/last frame and get
+   *  their own colour so the wrap-around is obvious */
+  onionWrap: boolean;
   /** how many previous / next frames are ghosted (0..3 each) */
   onionBefore: number;
   onionAfter: number;
@@ -382,7 +385,7 @@ export class Session {
   private loadPrefs(): Prefs {
     const p: Prefs = {
       lang: "zh", gridMode: "off", gridSize: 1, magZoom: 12, loupe: true,
-      onionOn: false, onionBefore: 1, onionAfter: 0, onionAlpha: 55, onionTint: true,
+      onionOn: false, onionBefore: 1, onionAfter: 0, onionAlpha: 55, onionTint: true, onionWrap: true,
       autosave: true, newFrameCopy: false, railSwap: true, previewBg: "white", tlH: 116,
       histMode: "steps", histSteps: 120, shadowNewLayer: false, autoPan: true,
       bucketGlobal: false, loopMode: "loop", recentColorsMax: 16, selectionTolerance: 8,
@@ -403,6 +406,7 @@ export class Session {
       if (typeof saved.onionAfter === "number") p.onionAfter = Math.max(0, Math.min(3, Math.round(saved.onionAfter)));
       if (typeof saved.onionAlpha === "number") p.onionAlpha = Math.max(10, Math.min(100, Math.round(saved.onionAlpha)));
       if (typeof saved.onionTint === "boolean") p.onionTint = saved.onionTint;
+      if (typeof saved.onionWrap === "boolean") p.onionWrap = saved.onionWrap;
       if (saved.previewBg === "black" || saved.previewBg === "checker" || saved.previewBg === "white") p.previewBg = saved.previewBg;
       if (typeof saved.autosave === "boolean") p.autosave = saved.autosave;
       if (typeof saved.newFrameCopy === "boolean") p.newFrameCopy = saved.newFrameCopy;
@@ -765,6 +769,7 @@ export class Session {
   setOnionAfter(n: number): void { this.setSetting("onion.after", n); }
   setOnionAlpha(n: number): void { this.setSetting("onion.alpha", n); }
   setOnionTint(on: boolean): void { this.setSetting("onion.tint", on); }
+  setOnionWrap(on: boolean): void { this.setSetting("onion.wrap", on); }
   setPreviewBg(b: "white" | "black" | "checker"): void { this.setSetting("display.previewBg", b); }
   /** helper grid mode: off | pixel | iso */
   setGridMode(m: "off" | "pixel" | "iso"): void { this.setSetting("canvas.grid", m); }
