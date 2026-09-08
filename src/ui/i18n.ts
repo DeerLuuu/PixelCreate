@@ -43,7 +43,7 @@ const zh: Dict = {
   newDoc: "新建画布", import: "导入", importImg: "导入图片", export: "导出", settings: "设置", exportLayers: "图层导出", layersNote: "每个图层单独导出一张图片；多帧时自动按帧编号命名",
 
   frames: "帧", framePrev: "上一帧", frameNext: "下一帧", frameAdd: "新建帧", frameDupe: "复制帧", frameDel: "删除帧",
-  frameSelMode: "多选帧", frameSelTitle: "已选", frameSelHint: "点帧号勾选多帧，可批量复制 / 删除 / 设置时长",
+  frameSelMode: "多选帧", frameSelTitle: "已选", frameSelHint: "点帧号或该帧的任意图层格子即可勾选，可批量复制 / 删除 / 设置时长",
   frameSelAll: "全选 / 清空", frameSelDupe: "复制所选帧", frameSelDur: "所选帧时长", frameSelDel: "删除所选帧", frameSelExit: "退出多选",
   frameSelDuped: "已复制 ", frameSelDeleted: "已删除 ", frameSelKeepOne: "至少保留 1 帧", frameSelNone: "先选中帧",
   frameDur: "帧时长(毫秒)", play: "播放", pause: "暂停", loop: "循环播放", onion: "洋葱皮",
@@ -211,7 +211,7 @@ const en: Dict = {
   newDoc: "New canvas", import: "Import", importImg: "Import image", export: "Export", settings: "Settings", exportLayers: "Layers", layersNote: "One image per layer; frames are numbered automatically",
 
   frames: "Frames", framePrev: "Previous frame", frameNext: "Next frame", frameAdd: "New frame", frameDupe: "Duplicate", frameDel: "Delete",
-  frameSelMode: "Pick frames", frameSelTitle: "Picked", frameSelHint: "Tap frame numbers to pick several, then duplicate / delete / set duration in bulk",
+  frameSelMode: "Pick frames", frameSelTitle: "Picked", frameSelHint: "Tap a frame number or any layer cell in that frame to pick it, then duplicate / delete / set duration in bulk",
   frameSelAll: "Select all / none", frameSelDupe: "Duplicate picked frames", frameSelDur: "Duration of picked frames", frameSelDel: "Delete picked frames", frameSelExit: "Leave pick mode",
   frameSelDuped: "Duplicated ", frameSelDeleted: "Deleted ", frameSelKeepOne: "At least 1 frame must remain", frameSelNone: "Pick frames first",
   frameDur: "Frame duration (ms)", play: "Play", pause: "Pause", loop: "Loop playback", onion: "Onion skin",

@@ -315,9 +315,16 @@ export function TimelineBar({ t, snap, onFrameDlg }: { t: ReturnType<typeof make
             const dot = celDot(li, fi);
             return (
               <button key={"c" + L.id + ":" + f.id}
-                className={"ase-cell ase-cel" + (active ? " on" : "")}
+                className={"ase-cell ase-cel" + (active ? " on" : "") + (snap.frameSel.includes(fi) ? " picked" : "")}
                 style={{ gridColumn: fi + 2, gridRow: li + 2, gridTemplateColumns: "none" }}
-                onClick={() => { if (Date.now() - panT.current < 260) return; SESSION.setLayer(li); SESSION.setFrame(fi); }}>
+                onClick={() => {
+                  if (Date.now() - panT.current < 260) return;
+                  // in pick-frames mode the whole frame column (every layer cell)
+                  // toggles the frame instead of switching layer + frame
+                  if (SESSION.frameSelOn) { SESSION.toggleFrameSel(fi); return; }
+                  SESSION.setLayer(li);
+                  SESSION.setFrame(fi);
+                }}>
                 {dot && <i className="dot" style={{ background: dot }} />}
               </button>
             );
