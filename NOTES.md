@@ -34,6 +34,7 @@
 - **版本号**：`1.0.x` 的第三段由用户决定，不要自行递增；小改动只递增第四段（`1.0.6.0 → 1.0.6.1`），且只在用户要求出包时才改；`versionCode` 为覆盖安装需要可内部递增。
 - **声明式优先**：设置项走 `src/app/settings.ts`，引导步骤走 `src/app/guide.ts`；新增功能 = 一条声明 + i18n 文案，界面/引擎自动适配。
 - **出包流程**：改源码 → tsc → 引擎/逻辑测试 → `app2/www` 重建（esbuild，注意仓库中文路径需在 ASCII 目录构建后回拷）→ `/root/pk/rebuild.py` 换 assets 并改写 AXML 版本 → apksigner 签名 → 解析包内 manifest 复核。
+- **提交约定**：每完成一个功能就提交一次（不要攒着）。提交信息用中文 + `type(scope): 摘要`（type 取 feat/fix/imp/chore/docs/refactor），正文用 `-` 列出改动要点；产物不进版本库（`build/`、`app2/www/js/app.js`、`app2/www/css/style.css`、`tests/.ts-out/`、`toolchain/` 已在 `.gitignore`）。提交前至少跑一遍 `tsc --noEmit` 与 `tests` 全绿。
 - **引导的“真操作演示”约定**（`src/app/guide.ts` + `src/ui/App.tsx` 的 `guideActions`）：
   - 真操作一般放 **before**（放在 `after` 的演示会被下一步的遮罩盖住，等于看不见）；只有需要在离开步骤后继续的才放 `after`（如四指步骤→真的打开帧预览）。
   - 每个演示必须**自还原**，且还原前检查当前值是否仍是演示设置的值——用户或下一步改过就不动。
