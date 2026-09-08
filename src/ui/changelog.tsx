@@ -8,7 +8,7 @@ import { Icon } from "./base";
 import { TabBar } from "./tabs";
 
 /** keep in sync with android/AndroidManifest.xml versionName on every release */
-export const APP_VERSION = "1.0.7.2";
+export const APP_VERSION = "1.0.7.3";
 
 export type ClgKind = "add" | "imp" | "fix";
 export interface ClgItem { kind: ClgKind; zh: string; en: string }
@@ -17,6 +17,15 @@ export interface ClgVersion { v: string; date: string; items: ClgItem[] }
 const it = (kind: ClgKind, zh: string, en: string): ClgItem => ({ kind, zh, en });
 
 export const CHANGELOG: ClgVersion[] = [
+  {
+    v: "1.0.7.3",
+    date: "2026-09-08",
+    items: [
+      it("add", "每个手势的功能都可以改：设置 → 手势与触控里，画布外双击、画布内双击、双指双击、三连击、四指滑动、长按各自可以选择撤销 / 重做 / 放大 / 缩小 / 适配视图 / 播放暂停 / 洋葱皮 / 网格 / 对称 / 时间轴 / 帧预览 / 上一帧 / 下一帧 / 调色板 / 取色 / 关闭", "Every gesture can now run a different function: in Settings -> Gestures & Touch, double-tap margin, double-tap canvas, two-finger double-tap, triple-tap, four-finger slide and long-press each pick from undo / redo / zoom in / zoom out / fit / play-pause / onion skin / grid / symmetry / timeline / frame preview / prev frame / next frame / palette / pick colour / nothing"),
+      it("add", "工程文件现在会带上操作记录：保存的 .pxc 里包含撤销/重做栈（笔迹增量、图层/帧结构快照、可见性等小改动），重新打开后还能继续撤销、重做和跳转历史；设置 → 数据里可以关闭记录存储来减小文件体积", "Project files now carry the operation history: a saved .pxc contains the undo/redo stack (stroke deltas, layer/frame snapshots, small edits like visibility), so reopening it lets you keep undoing, redoing and jumping through history; Settings -> Data can turn the recording off to keep files small"),
+      it("imp", "恢复的历史步骤语义完整：能序列化的步骤全部保留，无法序列化的步骤会截断更旧的记录，保证撤销结果永远正确", "Restored history stays correct: every serializable step is kept and an unserializable one truncates the older entries, so undo can never produce a wrong result"),
+    ],
+  },
   {
     v: "1.0.7.2",
     date: "2026-09-08",
