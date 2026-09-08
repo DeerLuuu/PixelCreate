@@ -27,12 +27,18 @@
 ## 待办/已知缺口
 - APK 打包只能在宿主机（本仓库无 java/android-sdk）；AndroidManifest versionCode/versionName 与 changelog 需手动同步
 - view.ts(~1460)/session.ts(~1020)/App.tsx(~900) 仍偏大：手势/渲染、会话、UI 可继续拆
-- 无键盘快捷键、性能全量合成未做脏矩形（见 docs/COMPARISON.md 优先级）
+- 无键盘快捷键；渲染已做脏矩形增量（仍未做 overlay 笔迹层 / Web Worker，见 docs/COMPARISON.md 优先级）
+
+## 文档入口
+- [`README.md`](README.md)：项目概览、功能清单、快速开始、目录结构与架构要点。
+- [`docs/API.md`](docs/API.md)：全部模块的 API 接口文档（签名 / 参数 / 返回值 / 用法），以及“新增工具 / 设置 / 导出格式 / 引导步骤”的扩展指南。
+- [`docs/COMPARISON.md`](docs/COMPARISON.md)：与 Aseprite / Resprite 的对比、痛点复盘与优先级（含最新进展表）。
 
 ## 协作约定（给后续会话/AI 用）
 - **测试副本与输出不要每次删**：容器里的 `/root/pcbuild/app/src`、`app/tests` 用 `cp -r <repo>/src/. app/src/` 增量覆盖同步，`app/tests/.ts-out` 用 tsc 增量编译，**不要 `rm -rf`**。累积约 5 次同步后再清理一次（计数放在 `/root/pcbuild/.sync-count`），或用户明确要求时清理。
 - **版本号**：`1.0.x` 的第三段由用户决定，不要自行递增；小改动只递增第四段（`1.0.6.0 → 1.0.6.1`），且只在用户要求出包时才改；`versionCode` 为覆盖安装需要可内部递增。
 - **声明式优先**：设置项走 `src/app/settings.ts`，引导步骤走 `src/app/guide.ts`；新增功能 = 一条声明 + i18n 文案，界面/引擎自动适配。
+- **文档同步**：新增/修改对外 API 或功能后，同步更新 `docs/API.md`（接口签名）与 `README.md`（功能表）；对比文档的“最新进展”表也一并刷新。
 - **出包流程**：改源码 → tsc → 引擎/逻辑测试 → `app2/www` 重建（esbuild，注意仓库中文路径需在 ASCII 目录构建后回拷）→ `/root/pk/rebuild.py` 换 assets 并改写 AXML 版本 → apksigner 签名 → 解析包内 manifest 复核。
 - **提交约定**：每完成一个功能就提交一次（不要攒着）。提交信息用中文 + `type(scope): 摘要`（type 取 feat/fix/imp/chore/docs/refactor），正文用 `-` 列出改动要点；产物不进版本库（`build/`、`app2/www/js/app.js`、`app2/www/css/style.css`、`tests/.ts-out/`、`toolchain/` 已在 `.gitignore`）。提交前至少跑一遍 `tsc --noEmit` 与 `tests` 全绿。
 - **引导的“真操作演示”约定**（`src/app/guide.ts` + `src/ui/App.tsx` 的 `guideActions`）：
