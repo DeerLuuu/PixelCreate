@@ -588,31 +588,41 @@ export function AdjustModal({ t, onClose }: { t: ReturnType<typeof makeT>; onClo
 function SettingRow({ def, t }: { def: SettingDef; t: ReturnType<typeof makeT> }) {
   const v = SESSION.settingValue(def.path);
   const changed = !isDefault(SESSION, def);
+  const resetBtn = changed ? (
+    <button type="button" className="set-reset" title={t("setReset")} onClick={() => resetSetting(SESSION, def)}>
+      <Icon id="i-undo" size={11} />
+    </button>
+  ) : null;
+  // a switch or a single number control sits on the SAME line as its label:
+  // stacking them wastes half the panel on wide screens
+  if (def.kind === "bool" || def.kind === "int") {
+    return (
+      <>
+        <div className="set-row">
+          <span className="set-label" title={t(def.label)}>{t(def.label)}{resetBtn}</span>
+          {def.kind === "bool" ? (
+            <button className={"chip" + (v ? " on" : "")} onClick={() => SESSION.setSetting(def.path, !v)}>{v ? "ON" : "OFF"}</button>
+          ) : (
+            <HoldAdjust dir="h" value={Number(v)} min={def.min ?? 0} max={def.max ?? 100} title={t(def.label)}
+              format={(n) => (def.unit ?? "") + n} reset={Number(def.reset ?? def.default)}
+              onChange={(n) => SESSION.setSetting(def.path, n)} />
+          )}
+        </div>
+        {def.desc && <div className="row-note">{t(def.desc)}</div>}
+      </>
+    );
+  }
   return (
     <>
       <label className="rowlabel">
         <span>{t(def.label)}</span>
-        {changed && (
-          <button type="button" className="set-reset" title={t("setReset")} onClick={() => resetSetting(SESSION, def)}>
-            <Icon id="i-undo" size={11} />
-          </button>
-        )}
+        {resetBtn}
       </label>
-      {def.kind === "bool" && (
-        <button className={"chip" + (v ? " on" : "")} onClick={() => SESSION.setSetting(def.path, !v)}>{v ? "ON" : "OFF"}</button>
-      )}
       {def.kind === "enum" && (
         <div className="chips">
           {(def.options ?? []).map((o) => (
             <button key={o.value} className={"chip" + (v === o.value ? " on" : "")} onClick={() => SESSION.setSetting(def.path, o.value)}>{t(o.label)}</button>
           ))}
-        </div>
-      )}
-      {def.kind === "int" && (
-        <div className="row-actions">
-          <HoldAdjust dir="h" value={Number(v)} min={def.min ?? 0} max={def.max ?? 100} title={t(def.label)}
-            format={(n) => (def.unit ?? "") + n} reset={Number(def.reset ?? def.default)}
-            onChange={(n) => SESSION.setSetting(def.path, n)} />
         </div>
       )}
       {def.desc && <div className="row-note">{t(def.desc)}</div>}
