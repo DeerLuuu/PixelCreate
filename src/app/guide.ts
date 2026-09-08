@@ -157,7 +157,7 @@ export const GUIDE: GuideStep[] = [
   },
   {
     // palette panel: de-dupe / sort / merge
-    id: "orbs.paletteOps", module: "orbs", since: "1.0.6.1", target: '[data-guide="pal-ops"]', place: "auto", peek: true,
+    id: "orbs.paletteOps", module: "orbs", since: "1.0.7", target: '[data-guide="pal-ops"]', place: "auto", peek: true,
     before: ["openPalettePanel"], after: "closePalettePanel",
     title: "guide.paletteOps.title", body: "guide.paletteOps.body",
   },
@@ -182,7 +182,7 @@ export const GUIDE: GuideStep[] = [
   },
   {
     // the tour really turns pick mode on and ticks two frame numbers
-    id: "timeline.frameSel", module: "timeline", since: "1.0.6.1", target: '[data-guide="btn-framesel"]', place: "top", optional: true, peek: true,
+    id: "timeline.frameSel", module: "timeline", since: "1.0.7", target: '[data-guide="btn-framesel"]', place: "top", optional: true, peek: true,
     before: ["openTimeline", "demoFramePick"], closeClick: '[data-guide="btn-framesel-exit"]', after: "closeTimeline",
     title: "guide.frameSel.title", body: "guide.frameSel.body",
   },
@@ -255,7 +255,7 @@ export const GUIDE: GuideStep[] = [
   },
   {
     // the real export dialog, opened on the GIF tab so the range row is there
-    id: "files.exportRange", module: "files", since: "1.0.6.1", target: '[data-guide="exp-range"]', place: "auto", peek: true,
+    id: "files.exportRange", module: "files", since: "1.0.7", target: '[data-guide="exp-range"]', place: "auto", peek: true,
     before: ["closeMenu", "demoExportRange"], after: "closeExport",
     title: "guide.exportRange.title", body: "guide.exportRange.body",
   },
@@ -273,7 +273,7 @@ export const GUIDE: GuideStep[] = [
   },
   {
     // search / reset one row / settings file import-export
-    id: "files.settingsSearch", module: "files", since: "1.0.6.1", target: '[data-guide="set-search"]', place: "auto", peek: true,
+    id: "files.settingsSearch", module: "files", since: "1.0.7", target: '[data-guide="set-search"]', place: "auto", peek: true,
     before: ["closeMenu", "demoSettings"], after: "closeSettings",
     title: "guide.settingsSearch.title", body: "guide.settingsSearch.body",
   },
@@ -305,7 +305,7 @@ export const GUIDE: GuideStep[] = [
     title: "guide.tripleTap.title", body: "guide.tripleTap.body",
   },
   {
-    id: "gestures.back", module: "gestures", since: "1.0.6.1",
+    id: "gestures.back", module: "gestures", since: "1.0.7",
     title: "guide.back.title", body: "guide.back.body",
   },
   {

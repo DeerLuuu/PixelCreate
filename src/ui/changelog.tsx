@@ -7,7 +7,7 @@ import type { Lang } from "./i18n";
 import { Icon } from "./base";
 
 /** keep in sync with android/AndroidManifest.xml versionName on every release */
-export const APP_VERSION = "1.0.6.0";
+export const APP_VERSION = "1.0.7";
 
 export type ClgKind = "add" | "imp" | "fix";
 export interface ClgItem { kind: ClgKind; zh: string; en: string }
@@ -16,6 +16,21 @@ export interface ClgVersion { v: string; date: string; items: ClgItem[] }
 const it = (kind: ClgKind, zh: string, en: string): ClgItem => ({ kind, zh, en });
 
 export const CHANGELOG: ClgVersion[] = [
+  {
+    v: "1.0.7",
+    date: "2026-09-08",
+    items: [
+      it("imp", "绘制改为增量渲染：笔迹只重合成与重绘改动的区域（脏矩形），并把同一帧内的多次重绘合并成一次；洋葱皮幽灵帧与选区染色图加入缓存，大画布下手感明显更顺", "Drawing is now incremental: a stroke only re-composites and repaints the pixels it touched (dirty rectangles), several repaints inside one frame are coalesced into one, and onion ghosts plus the selection tint are cached — noticeably smoother on large canvases"),
+      it("add", "时间轴帧多选：点帧号勾选多帧，可批量复制、删除、统一设置时长（至少保留 1 帧），批量操作各算一步撤销", "Multi-frame selection in the timeline: tap frame numbers to pick several, then duplicate, delete or set one duration for all of them (one frame always survives), each batch being a single undo step"),
+      it("add", "洋葱皮新增“循环环绕”：首帧往前看到末尾帧、末帧往后看到开头帧，并用蓝色/琥珀色区分环绕帧，做循环动画时不用再自己数帧", "Loop-aware onion skin: the frame before the first one is the last one and the frame after the last is the first, tinted blue / amber so wrapped frames are obvious — no more counting frames while building a loop"),
+      it("add", "导出支持帧范围：GIF、精灵表、分图层导出都能只导出指定区间，可一键“全部帧”或“用所选帧”（配合帧多选）", "Exports can now target a frame range: GIF, spritesheet and per-layer exports write just the slice you pick, with All frames / Use picked frames shortcuts"),
+      it("add", "调色板整理：去重（相同颜色只留一个）、按色相或明度排序（只改顺序）、把预设色板合并进当前色板", "Palette tidying: de-dupe identical colours, sort by hue or lightness (order only), and merge a preset palette into the current one"),
+      it("add", "设置面板支持搜索、单项恢复默认值，以及整套设置导出/导入 JSON（未知项忽略、非法值跳过、整数自动裁剪）", "Settings can be searched, a single row can be reset to its default, and the whole set exports/imports as JSON (unknown keys ignored, invalid values skipped, integers clamped)"),
+      it("add", "返回手势逐层关闭：弹窗 → 面板 → 浮动球环 → 新手引导；都没有打开时第一次返回只提示，再按一次才退出应用", "Back gesture closes one layer at a time (dialog -> panel -> floating-ball ring -> tour); with nothing open the first press only warns and a second press exits the app"),
+      it("add", "新手引导新增 5 步：帧多选、色板整理、导出帧范围、设置搜索与恢复默认、返回手势（其中帧多选会真的替你勾选两帧，导出与设置步骤直接打开真实窗口）", "The onboarding tour gains 5 steps: frame multi-select, palette tidying, export frame range, settings search/reset and the back gesture (the frame step really ticks two frames for you, while the export and settings steps open the real windows)"),
+      it("imp", "新增 README 与 docs/API.md 接口文档（18 章，覆盖引擎/工具/应用/渲染/IO/UI 的对外 API 与扩展指南），并刷新竞品对比文档的过时结论", "New README and docs/API.md reference (18 chapters covering the engine, tools, app, render, IO and UI APIs plus an extension guide), and the competitor comparison doc no longer lists already-fixed gaps"),
+    ],
+  },
   {
     v: "1.0.6.0",
     date: "2026-09-08",
