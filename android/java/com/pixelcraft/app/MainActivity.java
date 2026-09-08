@@ -281,16 +281,17 @@ public class MainActivity extends Activity {
     @Override
     @SuppressLint("ObsoleteSdkInt")
     public void onBackPressed() {
-        if (android.os.Build.VERSION.SDK_INT >= 33) {
-            // give JS a chance to consume; default fallback below
-        }
         if (web != null) {
-            web.evaluateJavascript("(function(){try{var r=window.__pc_back?window.__pc_back():false;return r===true?'true':'false';}catch(e){return 'false';}})()",
+            // __pc_back() returns a REAL boolean: evaluateJavascript JSON-encodes
+            // strings, so returning 'true' as a string arrives as "\"true\"" and
+            // every press would fall through to finish(). Ask for a boolean and
+            // still strip quotes in case the page returns one.
+            web.evaluateJavascript(
+                    "(function(){try{return window.__pc_back?window.__pc_back()===true:false;}catch(e){return false;}})()",
                     new ValueCallback<String>() {
                         @Override public void onReceiveValue(String value) {
-                            if (!"true".equalsIgnoreCase(value == null ? "" : value.trim())) {
-                                finish();
-                            }
+                            String v = value == null ? "" : value.trim().replace("\"", "");
+                            if (!"true".equalsIgnoreCase(v)) finish();
                         }
                     });
         } else {
