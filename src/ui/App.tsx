@@ -53,7 +53,8 @@ export function App() {
   }, []);
   const [panel, setPanel] = useState<PanelId>(null);
   const [modal, setModal] = useState<ModalId>(null);
-  const [frameDlgIdx, setFrameDlgIdx] = useState<number | null>(null);
+  // frame duration dialog: a frame index, or "batch" for the picked frames
+  const [frameDlgIdx, setFrameDlgIdx] = useState<number | "batch" | null>(null);
   const [tlOn, setTlOn] = useState(false); // timeline starts hidden
   const [tlClosing, setTlClosing] = useState(false);
   const [sizeMode, setSizeMode] = useState<SizeMode>("canvas");
@@ -374,7 +375,7 @@ export function App() {
       <Keep on={modal === "export"} el={modal === "export" ? <ExportModal t={t} snap={snap} onClose={() => setModal(null)} /> : null} />
       <Keep on={modal === "settings"} el={modal === "settings" ? <SettingsModal t={t} onClose={() => setModal(null)} /> : null} />
       <Keep on={modal === "adjust"} el={modal === "adjust" ? <AdjustModal t={t} onClose={() => setModal(null)} /> : null} />
-      <Keep on={frameDlgIdx !== null} el={frameDlgIdx !== null ? <FrameModal t={t} snap={snap} fi={frameDlgIdx} onClose={() => setFrameDlgIdx(null)} /> : null} />
+      <Keep on={frameDlgIdx !== null} el={frameDlgIdx !== null ? <FrameModal t={t} snap={snap} fi={typeof frameDlgIdx === "number" ? frameDlgIdx : snap.frameIdx} batch={frameDlgIdx === "batch"} onClose={() => setFrameDlgIdx(null)} /> : null} />
       <Keep on={modal === "history"} el={modal === "history" ? <HistoryModal t={t} snap={snap} onClose={() => setModal(null)} onReplay={() => { setModal(null); setReplayOn(true); }} /> : null} />
       <Keep on={modal === "framePrev"} el={modal === "framePrev" ? <FramePreviewModal t={t} onClose={() => setModal(null)} /> : null} />
       <Keep on={modal === "changelog"} el={modal === "changelog" ? <ChangelogModal onClose={() => setModal(null)} /> : null} />

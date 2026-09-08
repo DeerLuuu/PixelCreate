@@ -168,4 +168,65 @@ export function testSession(): void {
     if (v === undefined || v === null) unresolved++;
   }
   eq("settings.all-resolve", unresolved, 0);
+
+  // --- multi-frame selection: batch duplicate / delete / duration ---
+  {
+    const f = new Session();
+    f.frameAdd();
+    f.frameAdd(); // 3 frames
+    eq("fsel.frames", f.doc.frames.length, 3);
+
+    f.setFrameSelMode(true);
+    f.toggleFrameSel(0);
+    f.toggleFrameSel(2);
+    eq("fsel.list", f.frameSelList(), [0, 2]);
+    eq("fsel.snapshot", f.snapshot().frameSel, [0, 2]);
+    eq("fsel.mode.snapshot", f.snapshot().frameSelOn, true);
+    f.toggleFrameSel(0); // toggling twice removes it again
+    eq("fsel.toggle-off", f.frameSelList(), [2]);
+    f.toggleFrameSel(0);
+    eq("fsel.toggle-on", f.frameSelList(), [0, 2]);
+
+    // duplicate both picked frames (one undo step)
+    eq("fsel.dupe.return", f.framesDuplicateSelected(), 2);
+    eq("fsel.dupe.total", f.doc.frames.length, 5);
+    eq("fsel.dupe.cleared", f.frameSelList(), []);
+    f.history.undo();
+    eq("fsel.dupe.undo", f.doc.frames.length, 3);
+    f.history.redo();
+    eq("fsel.dupe.redo", f.doc.frames.length, 5);
+
+    // duration for the picked frames only
+    f.toggleFrameSel(1);
+    f.toggleFrameSel(3);
+    eq("fsel.dur.return", f.framesSetDuration(250), 2);
+    eq("fsel.dur.picked", [1, 3].map((fi) => f.doc.frames[fi].durationMs), [250, 250]);
+    eq("fsel.dur.other", f.doc.frames[0].durationMs, 100);
+    f.history.undo();
+    eq("fsel.dur.undo", [1, 3].map((fi) => f.doc.frames[fi].durationMs), [100, 100]);
+
+    // delete the picked frames
+    f.toggleFrameSel(0);
+    f.toggleFrameSel(2);
+    eq("fsel.del.return", f.framesDeleteSelected(), 4);
+    eq("fsel.del.total", f.doc.frames.length, 1);
+    eq("fsel.del.cleared", f.frameSelList(), []);
+    f.history.undo();
+    eq("fsel.del.undo", f.doc.frames.length, 5);
+
+    // deleting every frame is refused: one frame always has to survive
+    f.framesSelectAll();
+    eq("fsel.all", f.frameSelList().length, 5);
+    eq("fsel.del.last-guard", f.framesDeleteSelected(), 0);
+    eq("fsel.del.last-guard.total", f.doc.frames.length, 5);
+    // select-all toggles back off
+    f.framesSelectAll();
+    eq("fsel.all.off", f.frameSelList(), []);
+
+    // leaving pick mode clears the selection
+    f.toggleFrameSel(0);
+    eq("fsel.mode-on", f.frameSelList(), [0]);
+    f.setFrameSelMode(false);
+    eq("fsel.mode-off-clears", f.frameSelList(), []);
+  }
 }

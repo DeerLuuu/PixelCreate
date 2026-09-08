@@ -579,18 +579,25 @@ export function SettingsModal({ t, onClose }: { t: ReturnType<typeof makeT>; onC
     </>
   );
 }
-export function FrameModal({ t, snap, fi, onClose }: { t: ReturnType<typeof makeT>; snap: Snapshot; fi: number; onClose: () => void }) {
+export function FrameModal({ t, snap, fi, onClose, batch = false }: { t: ReturnType<typeof makeT>; snap: Snapshot; fi: number; onClose: () => void; batch?: boolean }) {
+  // batch mode edits every frame picked in the timeline at once
   const [ms, setMs] = useState(SESSION.doc.frames[fi]?.durationMs ?? 100);
+  const head = batch ? t("frameSelDur") + " · " + snap.frameSel.length : t("frames") + " " + (fi + 1);
   return (
     <>
       <div className="dlg-mask" onClick={onClose} />
       <div className="dlg">
-        <div className="dlg-head"><span>{t("frames")} {fi + 1}</span><div className="grow" /><button className="btn small" onClick={onClose}><Icon id="i-x" size={16} /></button></div>
+        <div className="dlg-head"><span>{head}</span><div className="grow" /><button className="btn small" onClick={onClose}><Icon id="i-x" size={16} /></button></div>
         <div className="dlg-body">
           <label className="rowlabel">{t("frameDur")}</label>
           <ScrubNum min={1} max={60000} value={ms} onChange={(v) => setMs(Number(v) || 1)} />
         </div>
-        <div className="dlg-foot"><Btn label={t("cancel")} onClick={onClose} /><Btn label={t("ok")} onClick={() => { SESSION.setFrameDuration(fi, ms); onClose(); }} className="primary" /></div>
+        <div className="dlg-foot"><Btn label={t("cancel")} onClick={onClose} />
+          <Btn label={t("ok")} className="primary" onClick={() => {
+            if (batch) SESSION.framesSetDuration(ms);
+            else SESSION.setFrameDuration(fi, ms);
+            onClose();
+          }} /></div>
       </div>
     </>
   );

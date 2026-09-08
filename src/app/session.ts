@@ -85,6 +85,10 @@ export interface Snapshot {
   h: number;
   playing: boolean;
   loopMode: LoopMode;
+  /** frames picked in the timeline for a batch operation */
+  frameSel: number[];
+  /** true while the timeline is in "pick frames" mode */
+  frameSelOn: boolean;
 }
 
 export class Session {
@@ -251,6 +255,8 @@ export class Session {
       h: this.doc.h,
       playing: this.playing,
       loopMode: this.loopMode,
+      frameSel: this.frameSelList(),
+      frameSelOn: this.frameSelOn,
     };
     this.snapCache = snap;
     this.snapRev = this.rev;
@@ -1050,6 +1056,81 @@ export class Session {
     if (this.doc.frames.length <= 1) return;
     const fi = this.curFrame();
     this.struct("frame-del", () => ops.removeFrame(this.doc, fi));
+  }
+
+  // ---------- multi-frame selection (timeline batch edits) ----------
+  /** frames picked in the timeline; every batch button acts on all of them */
+  frameSel = new Set<number>();
+  /** true while the timeline shows the pick-frames toolbar */
+  frameSelOn = false;
+
+  setFrameSelMode(on: boolean): void {
+    this.frameSelOn = on;
+    if (!on) this.frameSel.clear();
+    this.changed();
+  }
+  toggleFrameSel(fi: number): void {
+    if (fi < 0 || fi >= this.doc.frames.length) return;
+    if (this.frameSel.has(fi)) this.frameSel.delete(fi);
+    else this.frameSel.add(fi);
+    this.changed();
+  }
+  clearFrameSel(): void {
+    if (!this.frameSel.size) return;
+    this.frameSel.clear();
+    this.changed();
+  }
+  /** selected frame indices, ascending and pruned against the current doc */
+  frameSelList(): number[] {
+    const n = this.doc.frames.length;
+    return [...this.frameSel].filter((fi) => fi >= 0 && fi < n).sort((a, b) => a - b);
+  }
+  /** select every frame (a second call clears the selection) */
+  framesSelectAll(): void {
+    const n = this.doc.frames.length;
+    if (this.frameSel.size >= n) this.frameSel.clear();
+    else for (let fi = 0; fi < n; fi++) this.frameSel.add(fi);
+    this.changed();
+  }
+  /** delete every selected frame; at least one frame always survives */
+  framesDeleteSelected(): number {
+    const list = this.frameSelList();
+    if (!list.length || list.length >= this.doc.frames.length) return 0;
+    const cur = this.curFrame();
+    this.struct("frames-del", () => {
+      // back to front so the remaining indices stay valid
+      for (let i = list.length - 1; i >= 0; i--) ops.removeFrame(this.doc, list[i]);
+    });
+    const removedBefore = list.filter((fi) => fi < cur).length;
+    this.frameIdx = Math.max(0, Math.min(this.doc.frames.length - 1, cur - removedBefore));
+    this.view_?.setFrame(this.frameIdx);
+    this.frameSel.clear();
+    this.repaintAll();
+    this.changed();
+    return list.length;
+  }
+  /** duplicate every selected frame directly after its source */
+  framesDuplicateSelected(): number {
+    const list = this.frameSelList();
+    if (!list.length) return 0;
+    this.struct("frames-dupe", () => {
+      for (let i = list.length - 1; i >= 0; i--) ops.duplicateFrame(this.doc, list[i]);
+    });
+    this.frameSel.clear();
+    this.repaintAll();
+    this.changed();
+    return list.length;
+  }
+  /** apply one duration to every selected frame */
+  framesSetDuration(ms: number): number {
+    const list = this.frameSelList();
+    if (!list.length) return 0;
+    const v = Math.max(1, Math.min(60000, Math.round(ms)));
+    const olds = list.map((fi) => this.doc.frames[fi]?.durationMs ?? 100);
+    this.cheap("frames-duration",
+      () => { for (const fi of list) { const f = this.doc.frames[fi]; if (f) f.durationMs = v; } },
+      () => { list.forEach((fi, k) => { const f = this.doc.frames[fi]; if (f) f.durationMs = olds[k]; }); });
+    return list.length;
   }
   frameMove(dir: -1 | 1): void {
     const fi = this.curFrame();
