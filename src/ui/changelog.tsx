@@ -8,7 +8,7 @@ import { Icon } from "./base";
 import { TabBar } from "./tabs";
 
 /** keep in sync with android/AndroidManifest.xml versionName on every release */
-export const APP_VERSION = "1.0.7";
+export const APP_VERSION = "1.0.7.1";
 
 export type ClgKind = "add" | "imp" | "fix";
 export interface ClgItem { kind: ClgKind; zh: string; en: string }
@@ -17,6 +17,18 @@ export interface ClgVersion { v: string; date: string; items: ClgItem[] }
 const it = (kind: ClgKind, zh: string, en: string): ClgItem => ({ kind, zh, en });
 
 export const CHANGELOG: ClgVersion[] = [
+  {
+    v: "1.0.7.1",
+    date: "2026-09-08",
+    items: [
+      it("fix", "修复返回键直接把应用退到后台：原生侧把 JS 返回的字符串再 JSON 编码后比较失败，导致每次返回都执行了 finish()；现在有弹窗/面板/浮动球/引导时只关闭最上层，都没有时第一次返回提示、再按一次才退出", "Fix the back gesture quitting straight to the home screen: the native side compared a JSON-encoded string and always fell through to finish(). Now it closes the topmost layer (dialog / panel / ball ring / tour) and only warns first when nothing is open"),
+      it("imp", "多选帧时点击该帧在图层矩阵中的任意格子也能勾选，选中帧的整列会加底色标出（不再只能点帧号）", "While picking frames you can now tap any layer cell in that frame, not just the frame number, and the whole picked column is highlighted"),
+      it("imp", "色板面板改用选项卡：色板 / 画布 / 最近（标题更短），排序改成选项卡右侧的可展开下拉（按色相 / 按明度），去重改为图标按钮；删掉了颜色代号输入框旁毫无意义的取色器", "The palette panel now uses tabs (Palette / Canvas / Recent, shorter labels), sorting moved into an expandable menu on the right of the tab bar (by hue / by lightness), de-dupe became an icon button, and the pointless native colour picker beside the hex field is gone"),
+      it("add", "可以把当前色板保存为自定义预设：保存后出现在预设列表里，可替换 / 合并 / 删除，重启后仍在", "The current palette can be saved as a custom preset: it shows up in the preset list and can be applied, merged or deleted, and it survives restarts"),
+      it("imp", "更新日志改为版本选项卡（横向可滚动，带日期），新增 / 改进 / 修复 分类可以点标题折叠", "Release notes now use version tabs (horizontally scrollable, with dates) and the Added / Improved / Fixed groups can be folded by tapping their header"),
+      it("imp", "设置面板里“文字 + 开关”和“文字 + 数值”的设置项改为同一行横向布局（标签在左、控件在右），省掉一半纵向空间；说明文字仍在下方独占一行", "Settings rows with a switch or a single number now put the label and the control on one line (label left, control right), halving the vertical space; the description still gets its own line below"),
+    ],
+  },
   {
     v: "1.0.7",
     date: "2026-09-08",
