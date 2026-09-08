@@ -3,6 +3,7 @@ import { History } from "../engine/history";
 import { uid } from "../engine/types";
 import type { Rect, RGBA, BlendMode } from "../engine/types";
 import { defaultPalette } from "../data/palettes";
+import { hexToRgba, rgbaToHex } from "../engine/color";
 import * as ops from "../engine/ops";
 import * as fxE from "../engine/effects";
 import * as compositor from "../render/compositor";
@@ -12,7 +13,6 @@ import { toast as toastFn } from "../io/bridge";
 import type { ToolId, BrushState, SymMode } from "../tools/registry";
 import { isShapeTool, nextSym, SYM_ANGLES } from "../tools/registry";
 import type { View } from "../render/view";
-import { rgbaToHex } from "../engine/color";
 import * as selM from "../tools/select";
 import { adjustPixel, type HslAdj } from "../engine/adjust";
 import { type LoopMode, nextLoopMode, nextPlayFrame, startPlayDir, startPlayFrame } from "./playback";
@@ -42,6 +42,32 @@ export interface Prefs {
   autosave: boolean;
   /** add frame via FrameAdd: clone current frame's cels into the new one */
   newFrameCopy: boolean;
+
+  // ---- remembered tool / colour / symmetry state (survives a restart) ----
+  brushSize: number;
+  brushAlpha: number;
+  /** "#rrggbb" or "#rrggbbaa" */
+  fgColor: string;
+  bgColor: string;
+  tool: ToolId;
+  currentShape: ToolId;
+  currentSelect: ToolId;
+  brushShape: "circle" | "square";
+  shapeSides: number;
+  shapeFill: boolean;
+  shapeFromCenter: boolean;
+  sym: SymMode;
+  symFour: boolean;
+  symLocked: boolean;
+  symAng: number;
+  symOx: number;
+  symOy: number;
+  /** last used palette (hex strings); seeds new documents */
+  palette: string[];
+  /** new-document defaults */
+  newDocW: number;
+  newDocH: number;
+  newDocBg: "transparent" | "white";
   /** landscape: swap side rails (default on: control rail right, actions left) */
   railSwap: boolean;
   previewBg: "white" | "black" | "checker";
@@ -127,6 +153,10 @@ export class Session {
   shapeSides = 6;
   /** shapes draw filled (true) or hollow outline (false) */
   shapeFill = true;
+  /** rect/ellipse/circle/polygon grow from the centre instead of the corner */
+  shapeFromCenter = false;
+  /** brush tip: round disc (default) or square block */
+  brushShape: "circle" | "square" = "circle";
   private lastColorAt = 0;
   playing = false;
   loopMode: LoopMode = "loop";
@@ -149,7 +179,9 @@ export class Session {
   constructor() {
     this.prefs = this.loadPrefs();
     this.doc = new Doc(64, 64, "untitled");
-    this.doc.palette = defaultPalette();
+    // the remembered palette wins over the built-in default
+    this.doc.palette = this.prefs.palette.length ? this.prefs.palette.map((h) => hexToRgba(h)) : defaultPalette();
+    this.applyRememberedState();
     this.color = this.fg;
     this.loopMode = this.prefs.loopMode;
     this.recentColors = this.loadRecentColors();
@@ -164,6 +196,44 @@ export class Session {
         });
       }
     } catch { /* ignore */ }
+  }
+
+  /** push the remembered tool/colour/symmetry values into the live fields */
+  private applyRememberedState(): void {
+    const p = this.prefs;
+    this.brushSize = p.brushSize;
+    this.tool = p.tool;
+    this.currentShape = p.currentShape;
+    this.currentSelect = p.currentSelect;
+    this.brushShape = p.brushShape;
+    this.shapeSides = p.shapeSides;
+    this.shapeFill = p.shapeFill;
+    this.shapeFromCenter = p.shapeFromCenter;
+    this.sym = p.sym;
+    this.symFour = p.symFour;
+    this.symLocked = p.symLocked;
+    this.symAng = p.symAng;
+    this.symOx = p.symOx;
+    this.symOy = p.symOy;
+    this.fg = hexToRgba(p.fgColor);
+    this.bg = hexToRgba(p.bgColor);
+    if (p.brushAlpha !== 255) this.fg[3] = p.brushAlpha;
+    this.color = this.fg;
+  }
+  /** debounced prefs write for the hot paths (brush size, colours, sym drag) */
+  private prefsTimer: number | null = null;
+  scheduleSavePrefs(): void {
+    if (this.prefsTimer !== null) return;
+    this.prefsTimer = window.setTimeout(() => {
+      this.prefsTimer = null;
+      this.savePrefs();
+    }, 600);
+  }
+  /** remember the current palette so a new document starts with it */
+  private rememberPalette(): void {
+    this.prefs.palette = this.doc.palette.map((c) => "#" + [c[0], c[1], c[2]]
+      .map((v) => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, "0")).join(""));
+    this.scheduleSavePrefs();
   }
 
   /** enforce the configured recording mode on the history stack */
@@ -391,6 +461,11 @@ export class Session {
       autosave: true, newFrameCopy: false, railSwap: true, previewBg: "white", tlH: 116,
       histMode: "steps", histSteps: 120, shadowNewLayer: false, autoPan: true,
       bucketGlobal: false, loopMode: "loop", recentColorsMax: 16, selectionTolerance: 8,
+      brushSize: 1, brushAlpha: 255, fgColor: "#141414", bgColor: "#ffffff",
+      tool: "pencil", currentShape: "line", currentSelect: "select",
+      brushShape: "circle", shapeSides: 6, shapeFill: true, shapeFromCenter: false,
+      sym: "off", symFour: false, symLocked: false, symAng: 90, symOx: 0, symOy: 0,
+      palette: [], newDocW: 64, newDocH: 64, newDocBg: "transparent",
     };
     try {
       const saved = JSON.parse(localStorage.getItem("pc.prefs") ?? "{}");
@@ -422,6 +497,33 @@ export class Session {
       if (saved.loopMode === "once" || saved.loopMode === "loop" || saved.loopMode === "pingpong" || saved.loopMode === "reverse") p.loopMode = saved.loopMode;
       if (typeof saved.recentColorsMax === "number") p.recentColorsMax = Math.max(4, Math.min(64, Math.round(saved.recentColorsMax)));
       if (typeof saved.selectionTolerance === "number") p.selectionTolerance = Math.max(0, Math.min(64, Math.round(saved.selectionTolerance)));
+      // remembered tool / colour / symmetry / document state
+      const hex = (v: unknown): string | null => (typeof v === "string" && /^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$/.test(v) ? v.toLowerCase() : null);
+      if (typeof saved.brushSize === "number") p.brushSize = Math.max(1, Math.min(64, Math.round(saved.brushSize)));
+      if (typeof saved.brushAlpha === "number") p.brushAlpha = Math.max(0, Math.min(255, Math.round(saved.brushAlpha)));
+      const fg = hex(saved.fgColor); if (fg) p.fgColor = fg;
+      const bg = hex(saved.bgColor); if (bg) p.bgColor = bg;
+      const toolIds = ["pencil", "eraser", "bucket", "picker", "line", "rect", "rectfill", "ellipse",
+        "ellipsefill", "circle", "polygon", "select", "wand", "lasso"];
+      if (typeof saved.tool === "string" && toolIds.includes(saved.tool)) p.tool = saved.tool;
+      if (typeof saved.currentShape === "string" && toolIds.includes(saved.currentShape)) p.currentShape = saved.currentShape;
+      if (typeof saved.currentSelect === "string" && toolIds.includes(saved.currentSelect)) p.currentSelect = saved.currentSelect;
+      if (saved.brushShape === "square" || saved.brushShape === "circle") p.brushShape = saved.brushShape;
+      if (typeof saved.shapeSides === "number") p.shapeSides = Math.max(3, Math.min(32, Math.round(saved.shapeSides)));
+      if (typeof saved.shapeFill === "boolean") p.shapeFill = saved.shapeFill;
+      if (typeof saved.shapeFromCenter === "boolean") p.shapeFromCenter = saved.shapeFromCenter;
+      if (saved.sym === "on" || saved.sym === "off") p.sym = saved.sym;
+      if (typeof saved.symFour === "boolean") p.symFour = saved.symFour;
+      if (typeof saved.symLocked === "boolean") p.symLocked = saved.symLocked;
+      if (typeof saved.symAng === "number") p.symAng = Math.max(0, Math.min(179, Math.round(saved.symAng)));
+      if (typeof saved.symOx === "number") p.symOx = saved.symOx;
+      if (typeof saved.symOy === "number") p.symOy = saved.symOy;
+      if (Array.isArray(saved.palette)) {
+        p.palette = (saved.palette as unknown[]).filter((c): c is string => typeof c === "string" && /^#[0-9a-fA-F]{6,8}$/.test(c)).slice(0, 512);
+      }
+      if (typeof saved.newDocW === "number") p.newDocW = Math.max(1, Math.min(1024, Math.round(saved.newDocW)));
+      if (typeof saved.newDocH === "number") p.newDocH = Math.max(1, Math.min(1024, Math.round(saved.newDocH)));
+      if (saved.newDocBg === "white" || saved.newDocBg === "transparent") p.newDocBg = saved.newDocBg;
       /* palette floater style fixed to ball */
     } catch {
       /* ignore */
@@ -445,6 +547,7 @@ export class Session {
     arr[0] = c[0]; arr[1] = c[1]; arr[2] = c[2]; arr[3] = c[3];
     this.lastColorAt = Date.now();
     this.pushRecentColor(arr);
+    this.rememberColors();
     this.changed();
   }
   /** pickers set the fg slot and make it active (paint follows) */
@@ -455,6 +558,7 @@ export class Session {
     this.color = this.fg;
     this.lastColorAt = Date.now();
     this.pushRecentColor(f);
+    this.rememberColors();
     this.changed();
   }
   setColorTarget(t: "fg" | "bg"): void {
@@ -471,6 +575,7 @@ export class Session {
     // `color` already aliases the active slot array; contents were swapped
     this.lastColorAt = Date.now();
     this.pushRecentColor(this.color);
+    this.rememberColors();
     this.changed();
   }
 
@@ -652,6 +757,8 @@ export class Session {
   }
   setTool(t: ToolId): void {
     this.tool = t;
+    this.prefs.tool = t;
+    this.savePrefs();
     this.changed();
   }
   cycleSym(): SymMode {
@@ -659,14 +766,27 @@ export class Session {
     this.sym = nextSym(prev);
     // enabling applies the default (centred) axis unless already customised
     if (this.sym !== "off" && !this.symTweaked) this.applySymPreset(this.sym);
+    this.rememberSym();
     this.changed();
     this.repaint(); // show/hide the adjustable symmetry guides
     return this.sym;
+  }
+  /** persist the symmetry axis state (angle / pivot / flags) */
+  rememberSym(): void {
+    const p = this.prefs;
+    p.sym = this.sym;
+    p.symFour = this.symFour;
+    p.symLocked = this.symLocked;
+    p.symAng = this.symAng;
+    p.symOx = this.symOx;
+    p.symOy = this.symOy;
+    this.scheduleSavePrefs();
   }
   /** toggle four-way symmetry (adds the perpendicular axis through the pivot) */
   setSymFour(on: boolean): void {
     if (this.symFour === on) return;
     this.symFour = on;
+    this.rememberSym();
     this.repaint();
     this.changed();
   }
@@ -674,6 +794,7 @@ export class Session {
   setSymLocked(on: boolean): void {
     if (this.symLocked === on) return;
     this.symLocked = on;
+    this.rememberSym();
     this.repaint();
     this.changed();
   }
@@ -683,6 +804,7 @@ export class Session {
     let idx = SYM_ANGLES.findIndex((a) => a === cur);
     if (idx < 0) idx = 0;
     this.symAng = SYM_ANGLES[(idx + 1) % SYM_ANGLES.length];
+    this.rememberSym();
     this.symTweaked = true;
     this.repaint();
     this.changed();
@@ -695,6 +817,7 @@ export class Session {
     this.symOy = 0;
     this.symAng = 90;
     this.symTweaked = false;
+    this.rememberSym();
   }
   /** recentre the axis and restore the default angle */
   resetSymAxes(): void {
@@ -704,10 +827,14 @@ export class Session {
   }
   setShapeSides(n: number): void {
     this.shapeSides = Math.max(3, Math.min(32, Math.round(n)));
+    this.prefs.shapeSides = this.shapeSides;
+    this.scheduleSavePrefs();
     this.changed();
   }
   setShapeFill(f: boolean): void {
     this.shapeFill = f;
+    this.prefs.shapeFill = f;
+    this.savePrefs();
     this.changed();
   }
   setPalette(colors: Array<[number, number, number, number]>): void {
@@ -715,6 +842,7 @@ export class Session {
     this.struct("palette-set", () => {
       this.doc.palette = colors.slice(0, 512).map((c) => [c[0], c[1], c[2], c[3]]);
     });
+    this.rememberPalette();
   }
   /** drop duplicate swatches (exact RGBA match, first occurrence wins) */
   paletteDedupe(): number {
@@ -804,6 +932,7 @@ export class Session {
       apply: () => { if (doc.palette.length <= idx) doc.palette.push(col); },
       unapply: () => { if (doc.palette[idx]) doc.palette.splice(idx, 1); },
     });
+    this.rememberPalette();
     this.changed();
   }
   paletteRemove(idx: number): void {
@@ -815,10 +944,37 @@ export class Session {
       apply: () => { if (doc.palette.length > idx) doc.palette.splice(idx, 1); },
       unapply: () => { doc.palette.splice(Math.min(idx, doc.palette.length), 0, col); },
     });
+    this.rememberPalette();
     this.changed();
   }
   setBrushSize(n: number): void {
     this.brushSize = Math.max(1, Math.min(64, Math.round(n)));
+    this.prefs.brushSize = this.brushSize;
+    this.scheduleSavePrefs();
+    this.changed();
+  }
+  setBrushShape(s: "circle" | "square"): void {
+    this.brushShape = s;
+    this.prefs.brushShape = s;
+    this.savePrefs();
+    this.changed();
+  }
+  setShapeFromCenter(on: boolean): void {
+    this.shapeFromCenter = on;
+    this.prefs.shapeFromCenter = on;
+    this.savePrefs();
+    this.changed();
+  }
+  setCurrentShape(id: ToolId): void {
+    this.currentShape = id;
+    this.prefs.currentShape = id;
+    this.savePrefs();
+    this.changed();
+  }
+  setCurrentSelect(id: ToolId): void {
+    this.currentSelect = id;
+    this.prefs.currentSelect = id;
+    this.savePrefs();
     this.changed();
   }
   setSelectionTolerance(n: number): void { this.setSetting("tools.wandTolerance", n); }
@@ -834,7 +990,16 @@ export class Session {
   }
   setBrushAlpha(n: number): void {
     this.color[3] = Math.max(0, Math.min(255, Math.round(n)));
+    this.prefs.brushAlpha = this.color[3];
+    this.rememberColors();
     this.changed();
+  }
+  /** store both colour slots (they carry the current brush opacity too) */
+  private rememberColors(): void {
+    this.prefs.fgColor = rgbaToHex(this.fg);
+    this.prefs.bgColor = rgbaToHex(this.bg);
+    this.prefs.brushAlpha = this.color[3];
+    this.scheduleSavePrefs();
   }
   /** switch the visible frame. User-initiated switches (timeline taps, prev /
    *  next buttons) are recorded as their own undo step; internal playback and
@@ -1011,7 +1176,7 @@ export class Session {
   async newDoc(w: number, h: number, name: string, bg: RGBA | null): Promise<boolean> {
     if (!(await this.askOverwrite("new"))) return false;
     this.doc = new Doc(w, h, name);
-    this.doc.palette = defaultPalette();
+    this.doc.palette = this.prefs.palette.length ? this.prefs.palette.map((hex) => hexToRgba(hex)) : defaultPalette();
     this.doc.bg = bg;
     this.layerIdx = 0;
     this.frameIdx = 0;

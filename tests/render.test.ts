@@ -6,6 +6,7 @@ import type { BrushState, SymMode } from "../src/tools/registry";
 import { clampRect, coversAll, screenRectOf, unionRect } from "../src/render/rect";
 import { growSelection, selOps, shrinkSelection } from "../src/tools/select";
 import { onionGhosts } from "../src/render/onion";
+import { brushStamp } from "../src/engine/paint";
 import { eq, ok } from "./common";
 
 const brush = (size = 1, color: [number, number, number, number] = [255, 0, 0, 255]): BrushState => ({
@@ -130,6 +131,49 @@ export function testRender(): void {
     const v3 = sel.ver;
     sel.bump();
     ok("render.sel.ver-bump", sel.ver > v3);
+  }
+
+  // ------------------------------------------------- brush tip shapes
+  {
+    const round = brushStamp(5, "circle");
+    const square = brushStamp(5, "square");
+    eq("brush.square.cells", square.cells.length, 25);
+    ok("brush.round.less", round.cells.length < 25, "round=" + round.cells.length);
+    eq("brush.square.outline", square.outline.length, 16);
+    eq("brush.square.cache", brushStamp(5, "square"), square);
+    ok("brush.shapes.differ", JSON.stringify(round.cells) !== JSON.stringify(square.cells));
+    const one = brushStamp(1, "square");
+    eq("brush.square.one", one.cells, [[0, 0]]);
+  }
+
+  // ------------------------------------------------- shapes from the centre
+  {
+    const doc = new Doc(32, 32, "t");
+    const st = new Stroke(doc, 0, 0, "rect", brush(1), false, "off", 6, true, 0, 0, 90, false, false, "circle", true);
+    st.startAt(16, 16);
+    st.moveTo(20, 18, 1); // radius 4 x 2 -> box 12..20 x 14..18
+    const cel = doc.celAt(0, 0)!;
+    ok("shape.center.sym-x", cel.data[cel.idx(12, 16) + 3] > 0 && cel.data[cel.idx(20, 16) + 3] > 0);
+    ok("shape.center.sym-y", cel.data[cel.idx(16, 14) + 3] > 0 && cel.data[cel.idx(16, 18) + 3] > 0);
+    ok("shape.center.outside", cel.data[cel.idx(11, 16) + 3] === 0 && cel.data[cel.idx(16, 13) + 3] === 0);
+    // the same drag from a corner stays a corner box
+    const doc2 = new Doc(32, 32, "t");
+    const st2 = new Stroke(doc2, 0, 0, "rect", brush(1), false, "off", 6, true, 0, 0, 90, false, false, "circle", false);
+    st2.startAt(16, 16);
+    st2.moveTo(20, 18, 1);
+    const c2 = doc2.celAt(0, 0)!;
+    ok("shape.corner.keeps", c2.data[c2.idx(16, 16) + 3] > 0 && c2.data[c2.idx(12, 12) + 3] === 0);
+  }
+
+  // ------------------------------------------------- square brush tip
+  {
+    const doc = new Doc(16, 16, "t");
+    const st = new Stroke(doc, 0, 0, "pencil", brush(3), false, "off", 6, true, 0, 0, 90, false, false, "square", false);
+    st.startAt(8, 8);
+    const cel = doc.celAt(0, 0)!;
+    let n = 0;
+    for (let i = 3; i < cel.data.length; i += 4) if (cel.data[i] > 0) n++;
+    eq("brush.square.paints", n, 9);
   }
 
   // -------------------------------------------------------- onion ghosts

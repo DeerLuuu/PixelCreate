@@ -976,7 +976,7 @@ export class View {
     this.gestureStartPx = pp;
     try {
       this.stroke = new Stroke(doc, s.curLayer(), s.curFrame(), tool as never, s.brush(), s.layerLocked(), s.sym, s.shapeSides, s.shapeFill,
-        s.symOx, s.symOy, s.symAng, s.symFour, s.prefs.bucketGlobal);
+        s.symOx, s.symOy, s.symAng, s.symFour, s.prefs.bucketGlobal, s.brushShape, s.shapeFromCenter);
     } catch {
       this.stroke = null;
       return;
@@ -1064,6 +1064,7 @@ export class View {
         }
         s.symAng = best;
         s.symTweaked = true;
+        s.rememberSym();
       } else {
         // the axis passes through the finger; clamp to the visible viewport
         // (so it follows into the margins) and snap to the half-cell grid so
@@ -1077,6 +1078,7 @@ export class View {
         s.symOx = pxa - doc.w / 2;
         s.symOy = pya - doc.h / 2;
         s.symTweaked = true;
+        s.rememberSym();
       }
       this.drawOverlay();
       return;

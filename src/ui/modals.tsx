@@ -420,11 +420,19 @@ export function SheetModal({ t, img, onClose }: { t: ReturnType<typeof makeT>; i
   );
 }
 export function NewDocModal({ t, onClose }: { t: ReturnType<typeof makeT>; onClose: () => void }) {
-  const [w, setW] = useState("64");
-  const [h, setH] = useState("64");
+  // remembered defaults: the last size / background the user created
+  const [w, setW] = useState(String(SESSION.prefs.newDocW));
+  const [h, setH] = useState(String(SESSION.prefs.newDocH));
   const [name, setName] = useState("");
-  const [white, setWhite] = useState(false);
-  const apply = async () => { if (await SESSION.newDoc(Math.max(1, Math.min(1024, parseInt(w, 10) || 64)), Math.max(1, Math.min(1024, parseInt(h, 10) || 64)), name || "untitled", white ? [255, 255, 255, 255] : null)) onClose(); };
+  const [white, setWhite] = useState(SESSION.prefs.newDocBg === "white");
+  const apply = async () => {
+    const nw = Math.max(1, Math.min(1024, parseInt(w, 10) || SESSION.prefs.newDocW));
+    const nh = Math.max(1, Math.min(1024, parseInt(h, 10) || SESSION.prefs.newDocH));
+    SESSION.setSetting("general.newDocW", nw);
+    SESSION.setSetting("general.newDocH", nh);
+    SESSION.setSetting("general.newDocBg", white ? "white" : "transparent");
+    if (await SESSION.newDoc(nw, nh, name || "untitled", white ? [255, 255, 255, 255] : null)) onClose();
+  };
   return (
     <>
       <div className="dlg-mask" onClick={onClose} />

@@ -714,8 +714,8 @@ function FloatingTools({ t, snap }: { t: ReturnType<typeof makeT>; snap: Snapsho
 
   const pickTool = (family: "core" | "shape" | "select", id: string) => {
     SESSION.setTool(id as never);
-    if (family === "shape") SESSION.currentShape = id as never;
-    else if (family === "select") SESSION.currentSelect = id as never;
+    if (family === "shape") SESSION.setCurrentShape(id as never);
+    else if (family === "select") SESSION.setCurrentSelect(id as never);
     setOpen(false);
     setSub(null);
     if (sel) setSel({ ...sel, open: false });
@@ -1237,7 +1237,16 @@ function ControlBar({ t, snap, onPanel, onAdjust, onFramePrev }: { t: ReturnType
         <HoldAdjust dir={dir} value={snap.brushSize} min={1} max={64} title={t("brushSize")} hint={bd(snap.lang, "brush")} format={(v) => "◉" + v} reset={1} onChange={(v) => SESSION.setBrushSize(v)} />
         <HoldAdjust dir={dir} value={snap.brushAlpha} min={0} max={255} title={t("opacity")} hint={bd(snap.lang, "alpha")} format={(v) => "◐" + v} reset={255} onChange={(v) => SESSION.setBrushAlpha(v)} />
         <Btn icon="i-frameprev" onClick={onFramePrev} title={t("framePreview")} guide="btn-frameprev" />
-        {snap.tool === "polygon" && <HoldAdjust dir={dir} value={SESSION.shapeSides} min={3} max={12} title={t("sides")} hint={bd(snap.lang, "sides")} format={(v) => "◮" + v} reset={6} onChange={(v) => SESSION.setShapeSides(v)} />}
+        {(snap.tool === "pencil" || snap.tool === "eraser") && (
+          <Btn label={SESSION.brushShape === "square" ? "■" : "●"} active={SESSION.brushShape === "square"}
+            onClick={() => SESSION.setBrushShape(SESSION.brushShape === "square" ? "circle" : "square")}
+            title={SESSION.brushShape === "square" ? t("brushSquare") : t("brushCircle")} />
+        )}
+        {snap.tool === "polygon" && <HoldAdjust dir={dir} value={SESSION.shapeSides} min={3} max={32} title={t("sides")} hint={bd(snap.lang, "sides")} format={(v) => "◮" + v} reset={6} onChange={(v) => SESSION.setShapeSides(v)} />}
+        {isShapeTool(snap.tool) && snap.tool !== "line" && (
+          <Btn label="✛" active={SESSION.shapeFromCenter} onClick={() => SESSION.setShapeFromCenter(!SESSION.shapeFromCenter)}
+            title={t(SESSION.shapeFromCenter ? "shapeFromCenterOn" : "shapeFromCenterOff")} />
+        )}
         {snap.tool === "bucket" && <Btn label={SESSION.prefs.bucketGlobal ? "∞" : "◎"} active={SESSION.prefs.bucketGlobal} onClick={() => SESSION.setBucketGlobal(!SESSION.prefs.bucketGlobal)} title={SESSION.prefs.bucketGlobal ? t("bucketGlobalOn") : t("bucketGlobalOff")} />}
         {isShapeTool(snap.tool) && snap.tool !== "line" && <Btn icon={SESSION.shapeFill ? "i-rect" : "i-rectfill"} onClick={() => SESSION.setShapeFill(!SESSION.shapeFill)} title={SESSION.shapeFill ? t("shapeHollow") : t("shapeSolid")} />}
       </div>

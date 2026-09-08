@@ -173,7 +173,74 @@ const defs: SettingDef[] = [
     label: "tlHeight", default: 116, min: 56, max: 340, unit: "px", reset: 116, refresh: "changed",
   },
 
+  {
+    path: "general.newDocW", field: "newDocW", kind: "int", group: "general",
+    label: "newDocW", default: 64, min: 1, max: 1024, unit: "px", reset: 64, refresh: "none",
+  },
+  {
+    path: "general.newDocH", field: "newDocH", kind: "int", group: "general",
+    label: "newDocH", default: 64, min: 1, max: 1024, unit: "px", reset: 64, refresh: "none",
+  },
+  {
+    path: "general.newDocBg", field: "newDocBg", kind: "enum", group: "general",
+    label: "newDocBg", default: "transparent", refresh: "none",
+    options: [{ value: "transparent", label: "transparent" }, { value: "white", label: "whiteBg" }],
+  },
+
   // -------------------------------------------------------------- tools
+  {
+    // remembered tool / brush state
+    path: "tools.brushSize", kind: "int", group: "tools",
+    label: "brushSize", default: 1, min: 1, max: 64, unit: "px", reset: 1, refresh: "changed",
+    get: (s) => s.brushSize,
+    set: (s, v) => s.setBrushSize(Number(v)),
+  },
+  {
+    path: "tools.brushAlpha", kind: "int", group: "tools",
+    label: "opacity", default: 255, min: 0, max: 255, reset: 255, refresh: "changed",
+    get: (s) => s.color[3],
+    set: (s, v) => s.setBrushAlpha(Number(v)),
+  },
+  {
+    path: "tools.brushShape", kind: "enum", group: "tools",
+    label: "brushShapeLabel", desc: "brushShapeDesc", default: "circle", refresh: "changed",
+    options: [{ value: "circle", label: "brushCircle" }, { value: "square", label: "brushSquare" }],
+    get: (s) => s.brushShape,
+    set: (s, v) => s.setBrushShape(v === "square" ? "square" : "circle"),
+  },
+  {
+    path: "tools.shapeFill", kind: "bool", group: "tools",
+    label: "shapeFillLabel", desc: "shapeFillDesc", default: true, refresh: "changed",
+    get: (s) => s.shapeFill,
+    set: (s, v) => s.setShapeFill(!!v),
+  },
+  {
+    path: "tools.shapeFromCenter", kind: "bool", group: "tools",
+    label: "shapeFromCenterLabel", desc: "shapeFromCenterDesc", default: false, refresh: "changed",
+    get: (s) => s.shapeFromCenter,
+    set: (s, v) => s.setShapeFromCenter(!!v),
+  },
+  {
+    path: "tools.shapeSides", kind: "int", group: "tools",
+    label: "sides", default: 6, min: 3, max: 32, unit: "◮", reset: 6, refresh: "changed",
+    visible: (s) => s.tool === "polygon" || s.currentShape === "polygon",
+    get: (s) => s.shapeSides,
+    set: (s, v) => s.setShapeSides(Number(v)),
+  },
+  {
+    path: "tools.defaultTool", kind: "enum", group: "tools",
+    label: "defaultToolLabel", desc: "defaultToolDesc", default: "pencil", refresh: "changed",
+    options: [
+      { value: "pencil", label: "tools.pencil" }, { value: "eraser", label: "tools.eraser" },
+      { value: "bucket", label: "tools.bucket" }, { value: "picker", label: "tools.picker" },
+      { value: "line", label: "tools.line" }, { value: "rect", label: "tools.rect" },
+      { value: "ellipse", label: "tools.ellipse" }, { value: "circle", label: "tools.circle" },
+      { value: "polygon", label: "tools.polygon" }, { value: "select", label: "tools.select" },
+      { value: "wand", label: "tools.wand" }, { value: "lasso", label: "tools.lasso" },
+    ],
+    get: (s) => s.tool,
+    set: (s, v) => s.setTool(String(v) as never),
+  },
   {
     path: "tools.bucketGlobal", field: "bucketGlobal", kind: "bool", group: "tools",
     label: "bucketGlobalLabel", desc: "bucketGlobalDesc", default: false, refresh: "changed",

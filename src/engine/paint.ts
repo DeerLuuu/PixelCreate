@@ -146,12 +146,30 @@ export function globalErase(cel: Cel, sx: number, sy: number, mask?: MaskFn | nu
  * plus the outline offsets (cells having an unpainted 4-neighbour).
  */
 export interface BrushStamp { size: number; cells: [number, number][]; outline: [number, number][] }
-const stampCache = new Map<number, BrushStamp>();
+/** brush tip shapes: round disc (default) or a square block */
+export type BrushShape = "circle" | "square";
+const stampCache = new Map<string, BrushStamp>();
 
-export function brushStamp(size: number): BrushStamp {
+export function brushStamp(size: number, shape: BrushShape = "circle"): BrushStamp {
   const n = Math.max(1, Math.round(size));
-  const got = stampCache.get(n);
+  const cacheKey = n + (shape === "square" ? "s" : "c");
+  const got = stampCache.get(cacheKey);
   if (got) return got;
+  if (shape === "square") {
+    // full n×n block; the outline is its border ring
+    const cells: [number, number][] = [];
+    const outline: [number, number][] = [];
+    const o = -Math.floor((n - 1) / 2);
+    for (let y = 0; y < n; y++) {
+      for (let x = 0; x < n; x++) {
+        cells.push([o + x, o + y]);
+        if (x === 0 || y === 0 || x === n - 1 || y === n - 1) outline.push([o + x, o + y]);
+      }
+    }
+    const st: BrushStamp = { size: n, cells, outline };
+    stampCache.set(cacheKey, st);
+    return st;
+  }
   const half = Math.floor(n / 2);
   const grid: Uint8Array = new Uint8Array(n * n);
   // Symmetric circle raster: D/E are twice each pixel-centre's distance from
@@ -183,6 +201,6 @@ export function brushStamp(size: number): BrushStamp {
     }
   }
   const stamp: BrushStamp = { size: n, cells, outline };
-  stampCache.set(n, stamp);
+  stampCache.set(cacheKey, stamp);
   return stamp;
 }

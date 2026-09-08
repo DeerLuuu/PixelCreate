@@ -17,9 +17,16 @@ function stubEnv(): void {
   w.removeEventListener = () => {};
   w.dispatchEvent = () => {};
   w.PixelBridge = { toast: () => {}, vibrate: () => {} };
-  if (!g.localStorage) {
-    g.localStorage = { getItem: () => null, setItem: () => {}, removeItem: () => {} };
-  }
+  // stateful in-memory localStorage so persistence round trips can be tested
+  const store = new Map<string, string>();
+  g.localStorage = {
+    getItem: (k: string) => (store.has(k) ? store.get(k)! : null),
+    setItem: (k: string, v: string) => { store.set(k, String(v)); },
+    removeItem: (k: string) => { store.delete(k); },
+    clear: () => store.clear(),
+    key: (i: number) => [...store.keys()][i] ?? null,
+    get length() { return store.size; },
+  };
 }
 
 export function testSession(): void {
@@ -171,6 +178,53 @@ export function testSession(): void {
   }
   eq("settings.all-resolve", unresolved, 0);
 
+  // --- remembered tool / colour / symmetry / document state ---
+  {
+    (globalThis as unknown as { localStorage: { clear(): void } }).localStorage.clear();
+    const a = new Session();
+    a.setBrushSize(7);
+    a.setBrushShape("square");
+    a.setShapeSides(9);
+    a.setShapeFill(false);
+    a.setShapeFromCenter(true);
+    a.setTool("eraser");
+    a.setCurrentShape("ellipse");
+    a.setCurrentSelect("wand");
+    a.cycleSym();                 // off -> on
+    a.setSymFour(true);
+    a.setSymLocked(true);
+    a.setFgColor([1, 2, 3, 255]);
+    a.setPalette([[10, 20, 30, 255], [40, 50, 60, 255]]);
+    a.savePrefs();
+
+    const b = new Session();
+    eq("persist.brushSize", b.brushSize, 7);
+    eq("persist.brushShape", b.brushShape, "square");
+    eq("persist.shapeSides", b.shapeSides, 9);
+    eq("persist.shapeFill", b.shapeFill, false);
+    eq("persist.shapeFromCenter", b.shapeFromCenter, true);
+    eq("persist.tool", b.tool, "eraser");
+    eq("persist.currentShape", b.currentShape, "ellipse");
+    eq("persist.currentSelect", b.currentSelect, "wand");
+    eq("persist.sym", b.sym, "on");
+    eq("persist.symFour", b.symFour, true);
+    eq("persist.symLocked", b.symLocked, true);
+    eq("persist.fg", b.fg, [1, 2, 3, 255]);
+    eq("persist.palette", b.doc.palette, [[10, 20, 30, 255], [40, 50, 60, 255]]);
+
+    // symmetry axis changes are remembered too
+    const c = new Session();
+    c.symAng = 45;
+    c.symOx = 3;
+    c.symOy = -2;
+    c.rememberSym();
+    c.savePrefs();
+    const d = new Session();
+    eq("persist.symAng", d.symAng, 45);
+    eq("persist.symOx", d.symOx, 3);
+    eq("persist.symOy", d.symOy, -2);
+  }
+
   // --- user-saved palettes ---
   {
     const p = new Session();
@@ -191,6 +245,7 @@ export function testSession(): void {
 
   // --- settings: per-row reset + file export/import ---
   {
+    (globalThis as unknown as { localStorage: { clear(): void } }).localStorage.clear();
     const g = new Session();
     const intDef = SETTINGS.find((d) => d.path === "onion.before")!;
     const boolDef = SETTINGS.find((d) => d.path === "onion.tint")!;

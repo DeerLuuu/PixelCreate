@@ -2,7 +2,7 @@
 import type { Doc } from "../engine/doc";
 import { Cel } from "../engine/cel";
 import type { RGBA, Rect } from "../engine/types";
-import { squareCells, brushStamp, lineCells, floodFill, floodErase, globalFill, globalErase, paintAt, eraseAt, type MaskFn } from "../engine/paint";
+import { brushStamp, lineCells, floodFill, floodErase, globalFill, globalErase, paintAt, eraseAt, type BrushShape, type MaskFn } from "../engine/paint";
 import { ellipseFill, ellipseOutline } from "../engine/shape";
 import type { History } from "../engine/history";
 import type { BrushState, SymMode } from "./registry";
@@ -31,6 +31,10 @@ export class Stroke {
   private readonly symFour: boolean;
   /** bucket: fill every matching pixel in the layer instead of the connected region */
   private readonly bucketGlobal: boolean;
+  /** round disc or square block brush tip */
+  readonly brushShape: BrushShape;
+  /** shapes grow outwards from the touch point instead of the corner */
+  readonly shapeFromCenter: boolean;
   color: RGBA;
   size: number;
   last: [number, number] | null = null;
@@ -44,7 +48,8 @@ export class Stroke {
    *  the previous outline has to be repainted as well) */
   private shapeBox: { x0: number; y0: number; x1: number; y1: number } | null = null;
 
-  constructor(doc: Doc, li: number, fi: number, kind: ToolKind, brush: BrushState, layerLocked: boolean, sym: SymMode, shapeSides = 6, fill = true, ox = 0, oy = 0, angDeg = 90, symFour = false, bucketGlobal = false) {
+  constructor(doc: Doc, li: number, fi: number, kind: ToolKind, brush: BrushState, layerLocked: boolean, sym: SymMode, shapeSides = 6, fill = true, ox = 0, oy = 0, angDeg = 90, symFour = false, bucketGlobal = false,
+              brushShape: BrushShape = "circle", shapeFromCenter = false) {
     this.doc = doc;
     this.li = li;
     this.fi = fi;
@@ -56,6 +61,8 @@ export class Stroke {
     this.oy = oy;
     this.symFour = symFour;
     this.bucketGlobal = bucketGlobal;
+    this.brushShape = brushShape;
+    this.shapeFromCenter = shapeFromCenter;
     const rad = (angDeg * Math.PI) / 180;
     this.ux = Math.cos(rad);
     this.uy = Math.sin(rad);
@@ -211,12 +218,12 @@ export class Stroke {
   }
 
   private paintDot(x: number, y: number, size: number): void {
-    for (const [ox, oy] of brushStamp(size).cells) {
+    for (const [ox, oy] of brushStamp(size, this.brushShape).cells) {
       if (this.touch(x + ox, y + oy)) this.everPainted = true;
     }
   }
   private eraseDot(x: number, y: number, size: number): void {
-    for (const [ox, oy] of brushStamp(size).cells) {
+    for (const [ox, oy] of brushStamp(size, this.brushShape).cells) {
       if (this.touchErase(x + ox, y + oy)) this.everPainted = true;
     }
   }
@@ -230,8 +237,12 @@ export class Stroke {
 
   private redrawShape(x: number, y: number): void {
     const s = this.start!;
-    const xa = Math.min(s[0], x), xb = Math.max(s[0], x);
-    const ya = Math.min(s[1], y), yb = Math.max(s[1], y);
+    // "from centre": the touch point is the middle, the drag defines the radius
+    const sym = this.shapeFromCenter && this.kind !== "line";
+    const xa = sym ? s[0] - Math.abs(x - s[0]) : Math.min(s[0], x);
+    const xb = sym ? s[0] + Math.abs(x - s[0]) : Math.max(s[0], x);
+    const ya = sym ? s[1] - Math.abs(y - s[1]) : Math.min(s[1], y);
+    const yb = sym ? s[1] + Math.abs(y - s[1]) : Math.max(s[1], y);
     const erase = this.color[3] === 0;
     // the brush stamp widens every drawn cell by half the brush size
     const pad = Math.max(1, Math.ceil(this.size / 2));
@@ -247,7 +258,7 @@ export class Stroke {
     // stamp the brush over a cell (lines & hollow outlines use brushSize as
     // their stroke thickness, like Aseprite's line tool)
     const stamp = (px: number, py: number) => {
-      for (const [dx, dy] of squareCells(px, py, this.size)) paint(dx, dy);
+      for (const [dx, dy] of brushStamp(this.size, this.brushShape).cells) paint(px + dx, py + dy);
     };
     if (this.kind === "line") {
       lineCells(s[0], s[1], x, y, stamp);
