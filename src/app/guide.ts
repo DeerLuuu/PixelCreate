@@ -23,7 +23,10 @@ export type GuideAction =
   | "demoPalMode" | "demoFx"
   | "demoOnionFrame" | "demoFramePreview"
   | "demoSettings" | "closeSettings" | "demoChangelog" | "closeChangelog"
-  | "closeOrbs";
+  | "closeOrbs"
+  | "openPalettePanel" | "closePalettePanel"
+  | "demoExportRange" | "closeExport"
+  | "demoFramePick";
 
 /** a step may request several actions; they run in order */
 export type GuideActionList = GuideAction | GuideAction[];
@@ -153,6 +156,12 @@ export const GUIDE: GuideStep[] = [
     title: "guide.orbPal.title", body: "guide.orbPal.body",
   },
   {
+    // palette panel: de-dupe / sort / merge
+    id: "orbs.paletteOps", module: "orbs", since: "1.0.6.1", target: '[data-guide="pal-ops"]', place: "auto", peek: true,
+    before: ["openPalettePanel"], after: "closePalettePanel",
+    title: "guide.paletteOps.title", body: "guide.paletteOps.body",
+  },
+  {
     id: "orbs.fx", module: "orbs", since: "1.0.6.0", target: '[data-guide="orb-fx"]', place: "left", optional: true,
     click: '[data-guide="orb-fx"]',
     before: ["closeOrbs", "undockOrbs", "closeOverlays", "demoFx"], peek: true,
@@ -170,6 +179,12 @@ export const GUIDE: GuideStep[] = [
     id: "timeline.layerDrag", module: "timeline", since: "1.0.6.0", target: ".ase-lcell", place: "right", optional: true, demo: "longPressDrag",
     before: "openTimeline", after: "closeTimeline",
     title: "guide.layerDrag.title", body: "guide.layerDrag.body",
+  },
+  {
+    // the tour really turns pick mode on and ticks two frame numbers
+    id: "timeline.frameSel", module: "timeline", since: "1.0.6.1", target: '[data-guide="btn-framesel"]', place: "top", optional: true, peek: true,
+    before: ["openTimeline", "demoFramePick"], closeClick: '[data-guide="btn-framesel-exit"]', after: "closeTimeline",
+    title: "guide.frameSel.title", body: "guide.frameSel.body",
   },
   {
     id: "timeline.onion", module: "timeline", since: "1.0.6.0", target: '[data-guide="btn-onion"]', place: "top", optional: true, peek: true,
@@ -239,6 +254,12 @@ export const GUIDE: GuideStep[] = [
     title: "guide.exportDialog.title", body: "guide.exportDialog.body",
   },
   {
+    // the real export dialog, opened on the GIF tab so the range row is there
+    id: "files.exportRange", module: "files", since: "1.0.6.1", target: '[data-guide="exp-range"]', place: "auto", peek: true,
+    before: ["closeMenu", "demoExportRange"], after: "closeExport",
+    title: "guide.exportRange.title", body: "guide.exportRange.body",
+  },
+  {
     id: "files.exportPalette", module: "files", since: "1.0.6.0", target: '[data-guide="menu-export-palette"]', place: "right",
     before: ["openMenu", "menuSubExport"],
     title: "guide.exportPalette.title", body: "guide.exportPalette.body",
@@ -249,6 +270,12 @@ export const GUIDE: GuideStep[] = [
     id: "files.menuSettings", module: "files", since: "1.0.6.0", target: '[data-guide="dlg-settings"]', place: "auto", peek: true,
     before: ["closeMenu", "demoSettings"], after: "closeSettings",
     title: "guide.menuSettings.title", body: "guide.menuSettings.body",
+  },
+  {
+    // search / reset one row / settings file import-export
+    id: "files.settingsSearch", module: "files", since: "1.0.6.1", target: '[data-guide="set-search"]', place: "auto", peek: true,
+    before: ["closeMenu", "demoSettings"], after: "closeSettings",
+    title: "guide.settingsSearch.title", body: "guide.settingsSearch.body",
   },
   {
     // same idea: the real changelog list is opened and highlighted
@@ -276,6 +303,10 @@ export const GUIDE: GuideStep[] = [
     // the canvas really zooms 2x while the step is on screen, then goes back
     before: "demoZoomIn",
     title: "guide.tripleTap.title", body: "guide.tripleTap.body",
+  },
+  {
+    id: "gestures.back", module: "gestures", since: "1.0.6.1",
+    title: "guide.back.title", body: "guide.back.body",
   },
   {
     id: "gestures.fourFinger", module: "gestures", since: "1.0.6.0", demo: "fourFingerSwipe",

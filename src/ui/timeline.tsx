@@ -246,35 +246,30 @@ export function TimelineBar({ t, snap, onFrameDlg }: { t: ReturnType<typeof make
     <footer className="tline ase-tlbar">
       <div className="ase-main">
       <div className="tlctrl">
-        {snap.frameSelOn ? (
-          <>
-            <span className="fsel-count" title={t("frameSelHint")}>{t("frameSelTitle")} · {snap.frameSel.length}</span>
-            <Btn icon="i-check" onClick={() => SESSION.framesSelectAll()} title={t("frameSelAll")} active={snap.frameSel.length >= snap.frameCount} />
-            <Btn icon="i-dupe" onClick={() => {
-              const n = SESSION.framesDuplicateSelected();
-              bridge.toast(n ? t("frameSelDuped") + n : t("frameSelNone"));
-            }} title={t("frameSelDupe")} />
-            <Btn icon="i-history" onClick={() => onFrameDlg("batch")} title={t("frameSelDur")} />
-            <Btn icon="i-trash" danger onClick={() => {
-              const n = SESSION.framesDeleteSelected();
-              bridge.toast(n ? t("frameSelDeleted") + n : t("frameSelKeepOne"));
-            }} title={t("frameSelDel")} guide="btn-framesel-del" />
-            <Btn icon="i-x" onClick={() => SESSION.setFrameSelMode(false)} title={t("frameSelExit")} guide="btn-framesel-exit" />
-          </>
-        ) : (
-          <>
-            <Btn icon="i-prev" onClick={() => SESSION.setFrame(snap.frameIdx - 1)} title={t("framePrev")} />
-            <Btn icon={snap.playing ? "i-pause" : "i-play"} onClick={() => SESSION.togglePlay()} title={t(snap.playing ? "pause" : "play")} />
-            <Btn icon="i-loop" onClick={() => { const m = SESSION.cycleLoopMode(); bridge.toast(t("loop." + m)); }}
-              active={snap.loopMode !== "once"} title={t("loop") + " · " + t("loop." + snap.loopMode)} />
-            <Btn icon="i-next" onClick={() => SESSION.setFrame(snap.frameIdx + 1)} title={t("frameNext")} />
-            <Btn icon="i-plus" onClick={() => SESSION.frameAdd()} title={t("frameAdd")} />
-            <Btn icon="i-dupe" onClick={() => SESSION.frameDuplicate()} title={t("frameDupe")} />
-            <Btn icon="i-minus" onClick={() => SESSION.frameDelete()} title={t("frameDel")} />
-            <Btn icon="i-onion" onClick={() => SESSION.toggleOnion()} active={snap.onionOn} title={t("onion")} guide="btn-onion" />
-            <Btn icon="i-check" onClick={() => SESSION.setFrameSelMode(true)} title={t("frameSelMode")} guide="btn-framesel" />
-          </>
-        )}
+        <Btn icon="i-prev" onClick={() => SESSION.setFrame(snap.frameIdx - 1)} title={t("framePrev")} />
+        <Btn icon={snap.playing ? "i-pause" : "i-play"} onClick={() => SESSION.togglePlay()} title={t(snap.playing ? "pause" : "play")} />
+        <Btn icon="i-loop" onClick={() => { const m = SESSION.cycleLoopMode(); bridge.toast(t("loop." + m)); }}
+          active={snap.loopMode !== "once"} title={t("loop") + " · " + t("loop." + snap.loopMode)} />
+        <Btn icon="i-next" onClick={() => SESSION.setFrame(snap.frameIdx + 1)} title={t("frameNext")} />
+        <Btn icon="i-plus" onClick={() => SESSION.frameAdd()} title={t("frameAdd")} />
+        <Btn icon="i-dupe" onClick={() => SESSION.frameDuplicate()} title={t("frameDupe")} />
+        <Btn icon="i-minus" onClick={() => SESSION.frameDelete()} title={t("frameDel")} />
+        <Btn icon="i-onion" onClick={() => SESSION.toggleOnion()} active={snap.onionOn} title={t("onion")} guide="btn-onion" />
+        <Btn icon="i-check" onClick={() => SESSION.setFrameSelMode(!snap.frameSelOn)} active={snap.frameSelOn} title={t("frameSelMode")} guide="btn-framesel" />
+        {snap.frameSelOn && (<>
+          <span className="fsel-count" title={t("frameSelHint")}>{t("frameSelTitle")} · {snap.frameSel.length}</span>
+          <Btn icon="i-check" onClick={() => SESSION.framesSelectAll()} title={t("frameSelAll")} active={snap.frameSel.length >= snap.frameCount} />
+          <Btn icon="i-dupe" onClick={() => {
+            const n = SESSION.framesDuplicateSelected();
+            bridge.toast(n ? t("frameSelDuped") + n : t("frameSelNone"));
+          }} title={t("frameSelDupe")} guide="btn-framesel-dupe" />
+          <Btn icon="i-history" onClick={() => onFrameDlg("batch")} title={t("frameSelDur")} guide="btn-framesel-dur" />
+          <Btn icon="i-trash" danger onClick={() => {
+            const n = SESSION.framesDeleteSelected();
+            bridge.toast(n ? t("frameSelDeleted") + n : t("frameSelKeepOne"));
+          }} title={t("frameSelDel")} guide="btn-framesel-del" />
+          <Btn icon="i-x" onClick={() => SESSION.setFrameSelMode(false)} title={t("frameSelExit")} guide="btn-framesel-exit" />
+        </>)}
       </div>
       <div ref={scrollRef} className="ase-scroll" style={{ gridTemplateColumns: gtc, gridTemplateRows: gtr, maxHeight: SESSION.prefs.tlH }}
         onPointerDown={matDown} onPointerMove={matMove} onPointerUp={matUp} onPointerCancel={matUp}>
@@ -288,6 +283,7 @@ export function TimelineBar({ t, snap, onFrameDlg }: { t: ReturnType<typeof make
             <div key={"n" + f.id}
               className={"ase-cell ase-numcell" + (fi === snap.frameIdx ? " on" : "") + (snap.frameSel.includes(fi) ? " picked" : "") + (isDrag ? " dragging" : "") + (isDrop ? " drop" : "")}
               style={{ gridColumn: fi + 2, gridRow: 1, transform: isDrag && dl ? "translateX(" + dl.dx + "px) translateY(-2px)" : undefined }}
+              data-guide={"frame-" + fi}
               onPointerDown={numDown(fi)} onPointerMove={numMove(fi)} onPointerUp={numUp(fi)} onPointerCancel={reset}>
               <span>{fi + 1}</span>
             </div>

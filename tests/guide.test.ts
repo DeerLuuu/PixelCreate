@@ -36,14 +36,17 @@ export function testGuide(): void {
   {
     const orbs = guideStepsOfModule("orbs");
     ok("guide.module.orbs", orbs.length >= 3 && orbs.every((s) => s.module === "orbs"));
-    eq("guide.module.gestures", guideStepsOfModule("gestures").length, 4);
+    eq("guide.module.gestures", guideStepsOfModule("gestures").length, 5);
   }
 
   // --- every orb step pops docked balls out first (they may be parked away) ---
   {
     const orbs = guideStepsOfModule("orbs");
     const before = (s: { before?: string | string[] }): string[] => (Array.isArray(s.before) ? s.before : s.before ? [s.before] : []);
-    ok("guide.orbs.undock-first", orbs.length > 0 && orbs.every((s) => before(s).includes("undockOrbs")));
+    // only steps that spotlight a ball itself need the dock popped out (the
+    // palette-panel step points at the panel, not at an orb)
+    const orbSteps = orbs.filter((s) => /^\[data-guide="orb-/.test(s.target ?? ""));
+    ok("guide.orbs.undock-first", orbSteps.length > 0 && orbSteps.every((s) => before(s).includes("undockOrbs")));
     // the selection orb only exists while something is selected: the tour must
     // demonstrate a selection first and restore the previous state after
     const sel = orbs.find((s) => s.id === "orbs.sel");
@@ -132,6 +135,7 @@ export function testGuide(): void {
       "demoBrushSize", "demoSwapColors", "demoSymmetry", "demoPalMode", "demoFx",
       "demoOnionFrame", "demoFramePreview",
       "demoSettings", "closeSettings", "demoChangelog", "closeChangelog", "closeOrbs",
+      "openPalettePanel", "closePalettePanel", "demoExportRange", "closeExport", "demoFramePick",
     ]);
     eq("guide.demo.actions-known", used.filter((a) => !known.has(a)), []);
     // every real demo the app implements must actually be requested by a step

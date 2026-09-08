@@ -77,7 +77,7 @@ export function PalettePanel({ t, onClose }: { t: ReturnType<typeof makeT>; onCl
             </button>
           ))}
         </div>
-        <div className="chips palops">
+        <div className="chips palops" data-guide="pal-ops">
           <button className="chip" title={t("palDedupeHint")} onClick={() => {
             const n = SESSION.paletteDedupe();
             bridge.toast(n ? t("palDedupeDone") + n : t("palDedupeNone"));
@@ -412,7 +412,8 @@ export function NewDocModal({ t, onClose }: { t: ReturnType<typeof makeT>; onClo
   );
 }
 export function ExportModal({ t, snap, onClose }: { t: ReturnType<typeof makeT>; snap: Snapshot; onClose: () => void }) {
-  const [tab, setTab] = useState<"png" | "gif" | "sheet" | "layers">("png");
+  const guideTab = (window as unknown as { __pcGuideExportTab?: string }).__pcGuideExportTab;
+  const [tab, setTab] = useState<"png" | "gif" | "sheet" | "layers">(guideTab === "gif" ? "gif" : "png");
   const [scope, setScope] = useState<"frame" | "layer" | "sel">("frame");
   const [scale, setScale] = useState(1);
   const [bgMode, setBgMode] = useState<"transparent" | "white">("transparent");
@@ -442,6 +443,10 @@ export function ExportModal({ t, snap, onClose }: { t: ReturnType<typeof makeT>;
     }
     bridge.toast(okN > 0 ? t("exported") : t("saveCancel"));
   };
+  useEffect(() => {
+    // the tour may have forced the GIF tab just to show the range row
+    return () => { delete (window as unknown as { __pcGuideExportTab?: string }).__pcGuideExportTab; };
+  }, []);
   const doExport = () => {
     const doc = SESSION.doc;
     const li = scope === "layer" ? SESSION.curLayer() : null;
@@ -484,7 +489,7 @@ export function ExportModal({ t, snap, onClose }: { t: ReturnType<typeof makeT>;
           ))}</div>
           {tab !== "png" && (<>
             <label className="rowlabel">{t("frameRange")}</label>
-            <div className="chips fsel-range">
+            <div className="chips fsel-range" data-guide="exp-range">
               <ScrubNum min={1} max={snap.frameCount} value={rFrom} onChange={(v) => {
                 const n = Math.max(1, Math.min(snap.frameCount, Number(v) || 1));
                 setRFrom(n);
@@ -616,7 +621,7 @@ export function SettingsModal({ t, onClose }: { t: ReturnType<typeof makeT>; onC
       <div className="dlg" data-guide="dlg-settings">
         <div className="dlg-head"><span>{t("settings")}</span><div className="grow" /><button className="btn small" onClick={onClose}><Icon id="i-x" size={16} /></button></div>
         <div className="dlg-body">
-          <div className="set-search">
+          <div className="set-search" data-guide="set-search">
             <input value={q} placeholder={t("setSearch")} onChange={(e) => setQ(e.target.value)} />
             {q !== "" && <button type="button" className="btn small" onClick={() => setQ("")}><Icon id="i-x" size={14} /></button>}
           </div>

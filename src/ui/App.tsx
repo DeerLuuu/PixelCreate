@@ -186,6 +186,25 @@ export function App() {
     menuSubBack: () => window.dispatchEvent(new CustomEvent("pc-guide-menu-sub", { detail: null })),
     // close every floating-ball ring (used when the tour ends)
     closeOrbs: () => window.dispatchEvent(new CustomEvent("pc-guide-tools", { detail: "closeall" })),
+    // palette panel (palette sort / merge / de-dupe step)
+    openPalettePanel: () => setPanel("palette"),
+    closePalettePanel: () => setPanel((p) => (p === "palette" ? null : p)),
+    // export dialog with the frame-range row visible
+    demoExportRange: () => {
+      (window as unknown as { __pcGuideExportTab?: string }).__pcGuideExportTab = "gif";
+      setModal("export");
+    },
+    closeExport: () => setModal((m) => (m === "export" ? null : m)),
+    // frame multi-select: enter pick mode and really tick two frames
+    demoFramePick: () => {
+      SESSION.setFrameSelMode(true);
+      const n = SESSION.doc.frames.length;
+      const pick = (i: number) => {
+        if (i < n) window.setTimeout(() => simulateTap('[data-guide="frame-' + i + '"]'), 320 + i * 260);
+      };
+      pick(0);
+      pick(Math.min(2, n - 1));
+    },
 
     // ---------------------------------------------------------------- demos
     // Every demo below performs the REAL action and then puts the app back the
