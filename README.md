@@ -25,8 +25,8 @@
 | 特效 | 描边、投影、外发光、反色、灰度、居中、智能裁剪 |
 | 导出 | PNG（整帧 / 图层 / 选区 + 倍率 + 背景）、GIF（**帧范围**、逐帧时长、透明）、精灵表 + JSON、调色板 `.gpl`、分图层批量导出 |
 | 导入 | 图片（新建 / 作为图层）、精灵表按单元格切帧、参考图浮窗、色板 |
-| 工程 | `.pxc` 工程文件、IndexedDB 自动保存与恢复、设置文件导入导出；**工具/颜色/对称/参考图/文档默认值全部跨启动保持** |
-| 交互 | 双指缩放/平移、三连击 2× 放大、边距双击撤销、双指双击重做、四指打开全部帧预览、像素放大镜、边缘自动平移、**返回手势逐层关闭 + 二次确认退出** |
+| 工程 | `.pxc` 工程文件（**内含操作记录，可关闭**）、IndexedDB 自动保存与恢复、设置文件导入导出；**工具/颜色/对称/参考图/文档默认值全部跨启动保持** |
+| 交互 | 双指缩放/平移、像素放大镜、边缘自动平移、返回手势逐层关闭 + 二次确认退出；**每个手势的功能都可重映射**（画布内外双击、双指双击、三连击、四指滑动、长按） |
 | 体验 | 声明式设置（搜索 / 单项恢复默认 / 分组折叠，含**手势与触控**组）、41 步模块化新手引导（真操作演示）、更新日志（版本选项卡 + 分类折叠）、操作记录与回放、帧预览、中英双语 |
 | 渲染 | 增量渲染：笔迹脏矩形合成 + 局部重绘 + rAF 合并；洋葱皮幽灵帧缓存；选区染色按版本缓存 |
 
@@ -62,7 +62,7 @@ bash build.sh          # aapt2 + javac + d8 + apksigner，产出 build/PixelCraf
 src/
 ├─ engine/      纯像素引擎（无 DOM）：doc / cel / paint / shape / effects / ops / history / color / adjust
 ├─ tools/       工具层：registry（工具表与笔刷状态）、stroke（笔迹引擎）、select（选区与变换）
-├─ app/         应用层：session（状态中枢）、settings（设置注册表）、guide（引导注册表）、playback（循环模式）
+├─ app/         应用层：session（状态中枢）、settings（设置注册表）、guide（引导注册表）、playback（循环模式）、gestures（手势映射）、history-io（标量历史载荷）
 ├─ render/      view（视口 / 手势 / 渲染）、compositor（合成）、rect（脏矩形工具）、onion（洋葱皮布局）
 ├─ io/          bridge（原生桥接）、exporters、gifread、project（.pxc）、autosave、clipboard
 └─ ui/          React 界面：App、timeline、modals、changelog、guide(+demo/layout)、hold、preview、i18n、style.css
