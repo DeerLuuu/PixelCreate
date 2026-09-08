@@ -60,7 +60,8 @@ export function App() {
   const [sizeMode, setSizeMode] = useState<SizeMode>("canvas");
   const [sheet, setSheet] = useState<SheetData | null>(null);
   const [replayOn, setReplayOn] = useState(false);
-  const [refImg, setRefImg] = useState<RefImg | null>(null);
+  // the reference image lives in the session so it survives a restart
+  const refImg = SESSION.refImg;
   const [confirmQ, setConfirmQ] = useState<{ msg: string; yes: string; no: string; res: (ok: boolean) => void } | null>(null);
   /** onboarding tour: steps still unseen by this user (null = not running) */
   const [guide, setGuide] = useState<GuideStep[] | null>(null);
@@ -370,7 +371,7 @@ export function App() {
         <Viewport
           onColorClick={() => setPanel("palette")}
           refImg={refImg}
-          onRefClose={() => setRefImg(null)}
+          onRefClose={() => SESSION.setRefImage(null)}
           onFramePrev={() => setModal("framePrev")}
         />
       </div>
@@ -387,7 +388,7 @@ export function App() {
           <PalettePanel t={t} onClose={() => setPanel(null)} />
         </Overlay>
       ) : null} />
-      <Keep on={modal === "menu"} el={modal === "menu" ? <MenuModal t={t} snap={snap} onClose={() => setModal(null)} onOpen={setModal} onSheet={(d) => { setSheet(d); setModal("sheet"); }} onRef={(d) => setRefImg(d)} onGuide={() => { setModal(null); setGuide(GUIDE.slice()); }} /> : null} />
+      <Keep on={modal === "menu"} el={modal === "menu" ? <MenuModal t={t} snap={snap} onClose={() => setModal(null)} onOpen={setModal} onSheet={(d) => { setSheet(d); setModal("sheet"); }} onRef={(d) => SESSION.setRefImage(d)} onGuide={() => { setModal(null); setGuide(GUIDE.slice()); }} /> : null} />
       <Keep on={modal === "size"} el={modal === "size" ? <SizeModal t={t} snap={snap} initial={sizeMode} onClose={() => setModal(null)} /> : null} />
       <Keep on={modal === "sheet" && sheet !== null} el={modal === "sheet" && sheet ? <SheetModal t={t} img={sheet} onClose={() => { setModal(null); setSheet(null); }} /> : null} />
       <Keep on={modal === "newdoc"} el={modal === "newdoc" ? <NewDocModal t={t} onClose={() => setModal(null)} /> : null} />

@@ -13,6 +13,8 @@ void (async () => {
     const { SESSION } = await import("./ui/singleton");
     const doc = await SESSION.restoreAutosave();
     if (doc) SESSION.replaceDoc(doc);
+    // bring back the floating reference image as well
+    await SESSION.restoreRefImage();
   } catch { /* ignore */ }
 })();
 

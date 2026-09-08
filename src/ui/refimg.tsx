@@ -5,7 +5,8 @@ import type { Lang } from "./i18n";
 import * as bridge from "../io/bridge";
 import { Icon } from "./base";
 
-export interface RefImg { w: number; h: number; px: Uint8ClampedArray; name: string }
+import type { RefImg } from "../io/refstore";
+export type { RefImg };
 
 /** A draggable / resizable floating window that shows an imported reference
  * image (separate from the sprite preview box). */
@@ -18,8 +19,10 @@ export function RefImageBox({ img, onClose }: { img: RefImg; onClose: () => void
   const posRef = useRef<{ x: number; y: number } | null>(null);
   const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
   const [size, setSize] = useState(() => {
-    try { const n = parseInt(localStorage.getItem("pc.ref.size") || "148", 10); return n >= 90 && n <= 380 ? n : 148; } catch { return 148; }
+    const n = SESSION.refBox.size;
+    return n >= 90 && n <= 380 ? n : 148;
   });
+  const [opacity, setOpacity] = useState(() => Math.max(10, Math.min(100, SESSION.refBox.opacity || 100)));
   const sizeRef = useRef(size);
   const s = size;
   const [picking, setPicking] = useState(false);
@@ -72,9 +75,19 @@ export function RefImageBox({ img, onClose }: { img: RefImg; onClose: () => void
       const r = parentRect();
       const avail = Math.max(90, Math.min(r.width - 30, r.height - 40));
       if (sizeRef.current > avail) { sizeRef.current = avail; setSize(avail); }
-      posRef.current = { x: Math.max(4, 12), y: Math.max(4, Math.min(12, r.height - sizeRef.current - 20)) };
+      // the remembered position wins; fall back to the top-left corner
+      const rx = SESSION.refBox.x, ry = SESSION.refBox.y;
+      posRef.current = { x: Math.max(4, rx || 12), y: Math.max(4, ry || 12) };
     }
     clampPos(sizeRef.current);
+  };
+  /** remember the window geometry (debounced inside the session) */
+  const remember = (p?: { x: number; y: number }, sz?: number, op?: number) => {
+    SESSION.setRefBox({
+      ...(p ? { x: Math.round(p.x), y: Math.round(p.y) } : {}),
+      ...(sz ? { size: Math.round(sz) } : {}),
+      ...(op !== undefined ? { opacity: Math.round(op) } : {}),
+    });
   };
   const draw = () => {
     const cv = cvRef.current, src = srcRef.current;
@@ -92,7 +105,9 @@ export function RefImageBox({ img, onClose }: { img: RefImg; onClose: () => void
     const w = img.w * sc, h = img.h * sc;
     ctx.imageSmoothingEnabled = sc < 1;
     if (sc < 1) ctx.imageSmoothingQuality = "high";
+    ctx.globalAlpha = Math.max(0.1, Math.min(1, opacity / 100));
     ctx.drawImage(src, (sz - w) / 2, (sz - h) / 2, w, h);
+    ctx.globalAlpha = 1;
   };
   // decode the imported pixels into an offscreen source once
   useEffect(() => {
@@ -110,7 +125,7 @@ export function RefImageBox({ img, onClose }: { img: RefImg; onClose: () => void
     return () => { window.clearTimeout(t); window.removeEventListener("resize", onResize); window.removeEventListener("orientationchange", onResize); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [img]);
-  useEffect(() => { const t = window.setTimeout(() => draw(), 0); return () => window.clearTimeout(t); }, [pos, size]);
+  useEffect(() => { const t = window.setTimeout(() => draw(), 0); return () => window.clearTimeout(t); }, [pos, size, opacity]);
 
   return (
     <div className={"prevbox" + (picking ? " picking" : "")} ref={boxRef} style={{ left: pos ? pos.x : 12, top: pos ? pos.y : 12, width: s, height: s, padding: 0 }}>
@@ -119,15 +134,17 @@ export function RefImageBox({ img, onClose }: { img: RefImg; onClose: () => void
         onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); } catch { /* ignore */ }
           if (pickingRef.current) { scanRef.current = true; lastSamp.current = -1; sampleAt(e); }
           else { const p = posRef.current ?? { x: 12, y: 12 }; grabStart.current = { px: e.clientX, py: e.clientY, lx: p.x, ly: p.y }; } }}
-        onPointerMove={(e) => { if (scanRef.current) { sampleAt(e); return; } const g = grabStart.current; if (!g) return; const p = { x: g.lx + (e.clientX - g.px), y: g.ly + (e.clientY - g.py) }; posRef.current = p; setPos(p); clampPos(sizeRef.current); }}
+        onPointerMove={(e) => { if (scanRef.current) { sampleAt(e); return; } const g = grabStart.current; if (!g) return; const p = { x: g.lx + (e.clientX - g.px), y: g.ly + (e.clientY - g.py) }; posRef.current = p; setPos(p); clampPos(sizeRef.current); remember(p); }}
         onPointerUp={(e) => { try { (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId); } catch { /* ignore */ } if (scanRef.current) { scanRef.current = false; return; } grabStart.current = null; }}
         onPointerCancel={() => { scanRef.current = false; grabStart.current = null; }}
       />
       <button className="ref-x" title="close" onClick={onClose}><Icon id="i-x" size={13} /></button>
       <button className={"ref-pick" + (picking ? " on" : "")} title={tp("refPickTitle")} aria-label={tp("refPickTitle")} onClick={togglePick}><Icon id="i-picker" size={13} /></button>
+      <input className="ref-op" type="range" min={10} max={100} step={5} value={opacity} title={tp("refOpacity")}
+        onChange={(e) => { const v = Number(e.target.value) || 100; setOpacity(v); remember(undefined, undefined, v); }} />
       <div className="prev-resize"
         onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); } catch { /* ignore */ } rzStart.current = { px: e.clientX, py: e.clientY, size: sizeRef.current }; }}
-        onPointerMove={(e) => { const rz = rzStart.current; if (!rz) return; const r = parentRect(); const delta = Math.max(e.clientX - rz.px, e.clientY - rz.py); const ns = Math.max(90, Math.min(Math.min(r.width - 20, r.height - 30, 380), rz.size + delta)); sizeRef.current = ns; setSize(ns); try { localStorage.setItem("pc.ref.size", String(Math.round(ns))); } catch { /* ignore */ } clampPos(ns); }}
+        onPointerMove={(e) => { const rz = rzStart.current; if (!rz) return; const r = parentRect(); const delta = Math.max(e.clientX - rz.px, e.clientY - rz.py); const ns = Math.max(90, Math.min(Math.min(r.width - 20, r.height - 30, 380), rz.size + delta)); sizeRef.current = ns; setSize(ns); clampPos(ns); remember(undefined, ns); }}
         onPointerUp={(e) => { try { (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId); } catch { /* ignore */ } rzStart.current = null; }}
         onPointerCancel={() => { rzStart.current = null; }}
       />

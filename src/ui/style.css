@@ -554,6 +554,8 @@ input[type=range]{width:64px;height:22px;accent-color:var(--accent)}
 /* reference image window close chip */
 .ref-x{position:absolute;left:4px;top:4px;width:22px;height:22px;z-index:6;border-radius:7px;padding:0;
   background:rgba(18,19,26,.8);border:1px solid var(--line);color:#dfe3f0;display:flex;align-items:center;justify-content:center}
+.ref-op{position:absolute;left:4px;bottom:4px;width:calc(100% - 40px);height:14px;z-index:6;margin:0;padding:0;
+  accent-color:var(--accent);opacity:.85;background:transparent;cursor:pointer}
 .ref-pick{position:absolute;left:28px;top:4px;width:22px;height:22px;z-index:6;border-radius:7px;padding:0;
   background:rgba(18,19,26,.8);border:1px solid var(--line);color:#dfe3f0;display:flex;align-items:center;justify-content:center}
 .ref-pick.on{outline:2px solid var(--accent);outline-offset:1px;color:#fff}

@@ -9,6 +9,8 @@ import * as fxE from "../engine/effects";
 import * as compositor from "../render/compositor";
 import * as project from "../io/project";
 import * as autosave from "../io/autosave";
+import * as refstore from "../io/refstore";
+import type { RefImg } from "../io/refstore";
 import { toast as toastFn } from "../io/bridge";
 import type { ToolId, BrushState, SymMode } from "../tools/registry";
 import { isShapeTool, nextSym, SYM_ANGLES } from "../tools/registry";
@@ -174,6 +176,42 @@ export class Session {
   playing = false;
   loopMode: LoopMode = "loop";
   private playDir: 1 | -1 = 1;
+  // ---------- reference image (persisted in IndexedDB) ----------
+  /** the floating reference picture, restored on launch */
+  refImg: RefImg | null = null;
+  /** its window geometry + opacity */
+  refBox: { x: number; y: number; size: number; opacity: number } = { x: 12, y: 12, size: 148, opacity: 100 };
+  private refTimer: number | null = null;
+
+  /** show a new reference image (null = hide) and remember it */
+  setRefImage(img: RefImg | null, box?: Partial<Session["refBox"]>): void {
+    if (box) this.refBox = { ...this.refBox, ...box };
+    this.refImg = img;
+    if (img) void refstore.saveRef({ ...img, ...this.refBox });
+    else void refstore.clearRef();
+    this.changed();
+  }
+  /** move / resize / fade the reference window (persisted, debounced) */
+  setRefBox(box: Partial<Session["refBox"]>): void {
+    this.refBox = { ...this.refBox, ...box };
+    if (this.refImg) {
+      if (this.refTimer !== null) window.clearTimeout(this.refTimer);
+      this.refTimer = window.setTimeout(() => {
+        this.refTimer = null;
+        if (this.refImg) void refstore.saveRef({ ...this.refImg, ...this.refBox });
+      }, 500);
+    }
+    this.changed();
+  }
+  /** called once at startup: bring back the last reference image */
+  async restoreRefImage(): Promise<void> {
+    const st = await refstore.loadRef();
+    if (!st) return;
+    this.refBox = { x: st.x, y: st.y, size: st.size, opacity: st.opacity };
+    this.refImg = { w: st.w, h: st.h, px: st.px, name: st.name };
+    this.changed();
+  }
+
   /** most recently used colours, newest first (palette panel "recent" mode) */
   recentColors: RGBA[] = [];
   private recentSaveTimer: number | null = null;
