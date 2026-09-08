@@ -531,6 +531,29 @@ function FloatingTools({ t, snap }: { t: ReturnType<typeof makeT>; snap: Snapsho
     return () => window.removeEventListener("pc-guide-tools", onTools);
   }, []);
 
+  // Android back: close whatever floating layer is on top before leaving.
+  // The handler reads the live state from a ref, because state updates inside
+  // the event would only be applied after the native side already decided.
+  const backState = useRef({ open, sub, sel, pal, fx });
+  backState.current = { open, sub, sel, pal, fx };
+  useEffect(() => {
+    const onBack = (e: Event) => {
+      const d = (e as CustomEvent<{ handled: boolean }>).detail;
+      if (!d || d.handled) return;
+      const st = backState.current;
+      const any = st.open || st.sub !== null || st.sel.open || st.pal.open || st.fx.open;
+      if (!any) return;
+      setOpen(false);
+      setSub(null);
+      if (st.sel.open) setSel({ ...st.sel, open: false });
+      if (st.pal.open) setPal({ ...st.pal, open: false });
+      if (st.fx.open) setFx({ ...st.fx, open: false });
+      d.handled = true;
+    };
+    window.addEventListener("pc-back", onBack);
+    return () => window.removeEventListener("pc-back", onBack);
+  }, []);
+
   // ---------- floating-ball dock ----------
   const landD = useLandscape();
   type BallId = "main" | "pal" | "fx";

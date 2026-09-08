@@ -1,5 +1,8 @@
 import { createRoot } from "react-dom/client";
 import { App } from "./ui/App";
+import { SESSION } from "./ui/singleton";
+import { makeT } from "./ui/i18n";
+import { backAction, type BackState } from "./ui/back";
 
 const host = document.getElementById("root");
 if (!host) throw new Error("no #root");
@@ -27,14 +30,29 @@ window.addEventListener("pc-toast", ((e: Event) => {
   window.setTimeout(() => t.classList.remove("show"), 1800);
 }) as EventListener);
 
-(window as unknown as { __pc_back: () => boolean }).__pc_back = (() => {
-  return () => {
-    // Close overlays via click on masks
-    const mask = document.querySelector<HTMLElement>(".dlg-mask, .panel-mask");
-    if (mask) {
-      mask.click();
-      return true;
-    }
-    return false;
-  };
-})();
+// Android back gesture / button.
+//
+// 1. anything layered on top is dismissed (dialogs, panels, floating-ball
+//    rings, the onboarding tour, an active selection) - each one answers the
+//    "pc-back" event and reports whether it consumed the press
+// 2. with nothing left to close the first press only warns, and a second
+//    press within two seconds actually leaves the app
+const backState: BackState = { warnAt: 0 };
+(window as unknown as { __pc_back: () => boolean }).__pc_back = () => {
+  // overlays with a mask are simply clicked shut
+  const mask = document.querySelector<HTMLElement>(".dlg-mask, .panel-mask, .fly-mask");
+  if (mask) {
+    mask.click();
+    backAction(true, backState, Date.now());
+    return true;
+  }
+  // React-side handlers (ball rings, tour, selection) claim the press
+  const detail: { handled: boolean } = { handled: false };
+  window.dispatchEvent(new CustomEvent("pc-back", { detail }));
+  const act = backAction(detail.handled, backState, Date.now());
+  if (act === "exit") return false;
+  if (act === "warn") {
+    window.dispatchEvent(new CustomEvent("pc-toast", { detail: makeT(SESSION.prefs.lang)("backExitHint") }));
+  }
+  return true;
+};

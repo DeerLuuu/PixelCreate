@@ -132,6 +132,19 @@ export function GuideOverlay({ steps, actions, onDone }: {
     setRect(null);
   };
 
+  // Android back leaves the tour instead of the app
+  useEffect(() => {
+    const onBack = (e: Event) => {
+      const d = (e as CustomEvent<{ handled: boolean }>).detail;
+      if (!d || d.handled) return;
+      d.handled = true;
+      finish(i);
+    };
+    window.addEventListener("pc-back", onBack);
+    return () => window.removeEventListener("pc-back", onBack);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [i, steps]);
+
   // a target that never appears is skipped so the tour keeps moving
   useEffect(() => {
     if (!step || !step.target || rect) return;

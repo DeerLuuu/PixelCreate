@@ -160,6 +160,7 @@ const zh: Dict = {
   },
   guideModuleCanvas: "画布", guideModuleTools: "工具与颜色", guideModuleOrbs: "浮动球",
   guideModuleTimeline: "图层与帧", guideModuleFiles: "文件与保存", guideModuleGestures: "手势与导航",
+  backExitHint: "再按一次返回键退出应用",
   guideSkip: "跳过", guideBack: "上一步", guideNext: "下一步", guideDone: "完成", guideReplay: "新手引导", guideSkipModule: "跳过本模块",
   docs: { w: "宽度(px)", h: "高度(px)", },
 };
@@ -322,6 +323,7 @@ const en: Dict = {
   },
   guideModuleCanvas: "Canvas", guideModuleTools: "Tools & colours", guideModuleOrbs: "Floating orbs",
   guideModuleTimeline: "Layers & frames", guideModuleFiles: "Files & saving", guideModuleGestures: "Gestures & navigation",
+  backExitHint: "Press back again to exit",
   guideSkip: "Skip", guideBack: "Back", guideNext: "Next", guideDone: "Done", guideReplay: "Onboarding guide", guideSkipModule: "Skip section",
   docs: { w: "Width (px)", h: "Height (px)", },
 };
