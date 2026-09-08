@@ -1,5 +1,7 @@
 // Interactive viewport: composite drawing, pan/zoom gestures, tool strokes.
 import type { Doc } from "../engine/doc";
+import type { Rect } from "../engine/types";
+import { clampRect, screenRectOf, unionRect } from "./rect";
 import { Sel } from "../engine/doc";
 import * as comp from "./compositor";
 import * as bridge from "../io/bridge";
@@ -44,6 +46,18 @@ export class View {
   private composite: HTMLCanvasElement | null = null;
   private compKey = "";
   private compDirty = true;
+  /** when compDirty: the stale region in doc space (null = the whole frame) */
+  private compRect: Rect | null = null;
+  /** the whole pix canvas has to be redrawn (view transform / viewport change) */
+  private blitFull = true;
+  /** pending animation frame of a coalesced repaint */
+  private raf = 0;
+  private composeCache = comp.newComposeCache();
+  /** identity + version of the selection the cached tint image belongs to */
+  private selTintSel: unknown = null;
+  private selTintVer = -1;
+  /** view transform of the last blit (a change forces a full redraw) */
+  private lastView = { ox: NaN, oy: NaN, zoom: NaN, w: 0, h: 0 };
   /** first layout handled: later resizes (orientation/panels) preserve pan+zoom */
   private firstFit = false;
   private cursor: { x: number; y: number; size: number } | null = null;
@@ -142,6 +156,8 @@ export class View {
   destroy(): void {
     this.ro?.disconnect();
     this.stopAnts();
+    if (this.raf) window.cancelAnimationFrame(this.raf);
+    this.raf = 0;
     this.host.replaceChildren();
   }
 
@@ -167,11 +183,13 @@ export class View {
     void doc;
     this.composite = null;
     this.compKey = "";
+    this.composeCache.ghosts.clear();
   }
   setFrame(fi: number): void {
     void fi;
     this.composite = null;
     this.compKey = "";
+    this.composeCache.ghosts.clear();
   }
 
   fit(): void {
@@ -214,9 +232,32 @@ export class View {
   }
 
   // ---------------------------------------------------------------- render
-  /** mark composite stale (pixels changed) */
-  markDirty(): void {
-    this.compDirty = true;
+  /** Mark the composite stale. `rect` (doc space) limits the work to the region
+   *  a live stroke touched; omit it for a full rebuild + full redraw. */
+  markDirty(rect?: Rect | null): void {
+    if (!rect) {
+      this.compDirty = true;
+      this.compRect = null;
+      this.blitFull = true;
+      return;
+    }
+    if (!this.compDirty) {
+      this.compDirty = true;
+      this.compRect = rect;
+      return;
+    }
+    if (this.compRect) this.compRect = unionRect(this.compRect, rect);
+  }
+
+  /** Coalesce paints into one per animation frame: a stroke fires dozens of
+   *  pointermove events per second and each one used to repaint immediately. */
+  invalidate(rect?: Rect | null): void {
+    this.markDirty(rect ?? null);
+    if (this.raf) return;
+    this.raf = window.requestAnimationFrame(() => {
+      this.raf = 0;
+      this.refresh(false);
+    });
   }
 
   /** commit a still-open gesture (e.g. bucket fill whose pointerup was lost) as its own history step */
@@ -233,13 +274,38 @@ export class View {
     const s = this.session;
     const doc = s.doc;
     if (!doc) return;
+    const vw = this.host.clientWidth, vh = this.host.clientHeight;
+    // pan/zoom/resize invalidate the whole blit, not just the changed pixels
+    const lv = this.lastView;
+    if (lv.ox !== this.ox || lv.oy !== this.oy || lv.zoom !== this.zoom || lv.w !== vw || lv.h !== vh) this.blitFull = true;
+    this.lastView = { ox: this.ox, oy: this.oy, zoom: this.zoom, w: vw, h: vh };
     const need = force || this.compDirty;
-    this.buildComposite(need);
-    if (need) this.compDirty = false;
+    if (!need && !this.blitFull) {
+      // nothing changed on the pixel canvas (e.g. only the overlay moved)
+      this.drawOverlay(false);
+      return;
+    }
+    let region: Rect | null = null;
+    if (need) {
+      const full = this.buildComposite(force);
+      if (!full && !this.blitFull && this.compRect) {
+        region = clampRect(screenRectOf(this.compRect, this.ox, this.oy, this.zoom), vw, vh);
+      }
+      this.compDirty = false;
+      this.compRect = null;
+    }
     const ctx = this.pix.getContext("2d")!;
     const dpr = this.dpr;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, this.host.clientWidth, this.host.clientHeight);
+    if (region) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(region.x, region.y, region.w, region.h);
+      ctx.clip();
+      ctx.clearRect(region.x, region.y, region.w, region.h);
+    } else {
+      ctx.clearRect(0, 0, vw, vh);
+    }
     ctx.imageSmoothingEnabled = false;
     const z = this.zoom;
     if (!doc.bg) {
@@ -278,25 +344,37 @@ export class View {
       ctx.stroke();
       ctx.restore();
     }
+    if (region) ctx.restore(); // end the dirty-rect clip
+    this.blitFull = false;
     this.drawOverlay(need);
   }
 
-  private buildComposite(force: boolean): void {
+  /** returns true when the whole composite had to be rebuilt */
+  private buildComposite(force: boolean): boolean {
     const s = this.session;
     const doc = s.doc;
     const fi = s.curFrame();
     const p = s.prefs;
     const onionKey = p.onionOn ? "1:" + p.onionBefore + ":" + p.onionAfter + ":" + p.onionAlpha + ":" + (p.onionTint ? 1 : 0) : "0";
     const key = fi + "|" + doc.layers.map((l) => (l.visible ? 1 : 0) + ":" + l.opacity + ":" + l.blend + (doc.bg ? "B" : "T")).join() + "|on" + onionKey;
-    if (!force && this.composite && this.compKey === key) return;
-    this.compKey = key;
     const onion = {
       before: p.onionOn ? p.onionBefore : 0,
       after: p.onionOn ? p.onionAfter : 0,
       alpha: p.onionAlpha / 100,
       tint: p.onionTint,
     };
-    this.composite = comp.composeFrameWithOnion(doc, fi, onion);
+    if (!force && this.composite && this.compKey === key) {
+      // same frame / layers / onion config: only the changed region is stale
+      if (this.compRect) {
+        comp.composeRectInto(doc, fi, onion, this.compRect, this.composite, this.composeCache);
+        return false;
+      }
+      return true;
+    }
+    this.compKey = key;
+    this.composeCache.ghosts.clear(); // frame or layer config changed
+    this.composite = comp.composeFrameWithOnion(doc, fi, onion, this.composeCache);
+    return true;
   }
 
   private drawOverlay(rebuildTint = false): void {
@@ -311,7 +389,10 @@ export class View {
     this.drawIsoGuide(ctx);
     // selection tint + ants
     if (doc.sel && doc.sel.hasAny()) {
-      if (rebuildTint || !this.selTint || this.selTint.width !== doc.w || this.selTint.height !== doc.h) {
+      // the tint only depends on the mask, so it is cached on the mask version:
+      // a live stroke (mask unchanged) never rebuilds it
+      if (rebuildTint || !this.selTint || this.selTintSel !== doc.sel || this.selTintVer !== doc.sel.ver ||
+        this.selTint.width !== doc.w || this.selTint.height !== doc.h) {
         const sc = document.createElement("canvas");
         sc.width = doc.w; sc.height = doc.h;
         const sctx = sc.getContext("2d")!;
@@ -328,6 +409,8 @@ export class View {
         sctx.putImageData(img, 0, 0);
         this.selTint = sc;
         this.selTintBounds = doc.sel.bounds();
+        this.selTintSel = doc.sel;
+        this.selTintVer = doc.sel.ver;
       }
       const b = this.selTintBounds;
       ctx.save();
@@ -898,7 +981,7 @@ export class View {
       return;
     }
     this.stroke.startAt(pp.x, pp.y);
-    s.repaint();
+    s.repaintRect(this.stroke.takeDirty());
   }
 
   private onMove(e: PointerEvent): void {
@@ -1018,7 +1101,8 @@ export class View {
       const inView = pt.x >= 0 && pt.y >= 0 && pt.x <= this.host.clientWidth && pt.y <= this.host.clientHeight;
       this.cursor = inView ? { x: pp.x, y: pp.y, size: this.session.brushSize } : null;
       this.stroke.moveTo(pp.x, pp.y, e.pointerType === "pen" ? e.pressure : 1);
-      this.session.repaint();
+      // only the pixels this move touched need recompositing and repainting
+      this.session.repaintRect(this.stroke.takeDirty());
       return;
     }
     if (this.selDrag) {
@@ -1385,7 +1469,7 @@ export class View {
     const doc = this.session.doc;
     const cel = doc.celAt(g.li, g.fi);
     if (cel) cel.data.set(g.st.before);
-    if (doc.sel) doc.sel.mask.set(g.st.mask);
+    if (doc.sel) { doc.sel.mask.set(g.st.mask); doc.sel.bump(); }
     this.session.repaint();
   }
 

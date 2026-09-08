@@ -2,6 +2,9 @@
 
 export type RGBA = [number, number, number, number];
 
+/** integer rectangle in document pixels (used by the incremental renderer) */
+export interface Rect { x: number; y: number; w: number; h: number }
+
 export type BlendMode =
   | "normal" | "multiply" | "screen" | "overlay" | "darken" | "lighten"
   | "dodge" | "burn" | "hardlight" | "softlight" | "difference" | "exclusion";

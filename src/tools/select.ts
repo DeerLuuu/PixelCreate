@@ -92,6 +92,7 @@ export function growSelection(doc: Doc, px: number): void {
     }
   }
   doc.sel.mask = out;
+  doc.sel.bump(); // the tint cache keys on this
 }
 
 export function shrinkSelection(doc: Doc, px: number): void {
@@ -112,6 +113,7 @@ export function shrinkSelection(doc: Doc, px: number): void {
     }
   }
   doc.sel.mask = out;
+  doc.sel.bump(); // the tint cache keys on this
 }
 
 export function outlineSelected(doc: Doc, history: History, li: number, fi: number, color: RGBA): void {
@@ -264,8 +266,9 @@ export const selOps = {
   invert(doc: Doc): void {
     if (!doc.sel) doc.sel = new Sel(doc.w, doc.h, false);
     const m = doc.sel.mask;
-    if (!doc.sel.hasAny()) { m.fill(1); return; }
+    if (!doc.sel.hasAny()) { m.fill(1); doc.sel.bump(); return; }
     for (let i = 0; i < m.length; i++) m[i] = m[i] ? 0 : 1;
+    doc.sel.bump();
   },
   clear(doc: Doc): void {
     if (doc.sel) doc.sel.clear();
@@ -421,6 +424,7 @@ export const selOps = {
         }
       }
     }
+    doc.sel.bump();
   },
   // ---- Aseprite-style floating helpers: while a selection drags, the grabbed
   // pixels live OUTSIDE the cel; the layer only sees them when dropped. ----
@@ -481,5 +485,6 @@ export const selOps = {
         }
       }
     }
+    doc.sel.bump();
   },
 };

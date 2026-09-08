@@ -1,6 +1,6 @@
 import { Doc } from "../engine/doc";
 import { History } from "../engine/history";
-import type { RGBA, BlendMode } from "../engine/types";
+import type { Rect, RGBA, BlendMode } from "../engine/types";
 import { defaultPalette } from "../data/palettes";
 import * as ops from "../engine/ops";
 import * as fxE from "../engine/effects";
@@ -299,8 +299,14 @@ export class Session {
 
   // ---------- canvas ----------
   repaint(): void {
-    this.view_?.markDirty();
-    this.view_?.refresh(false);
+    this.view_?.invalidate();
+    this.firePreviews();
+    this.scheduleAutosave();
+  }
+  /** Live-stroke repaint: only `rect` (doc space) changed, so the compositor
+   *  and the canvas update just that region. null = full frame. */
+  repaintRect(rect: Rect | null): void {
+    this.view_?.invalidate(rect);
     this.firePreviews();
     this.scheduleAutosave();
   }

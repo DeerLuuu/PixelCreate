@@ -11,6 +11,7 @@ import { testOrbLayout } from "./orb.test";
 import { testGuide } from "./guide.test";
 import { testGuideLayout } from "./guide-layout.test";
 import { testGuideAnchors } from "./guide-anchors.test";
+import { testRender } from "./render.test";
 
 console.log("--- history ---");
 testHistory();
@@ -36,4 +37,6 @@ console.log("--- guide layout ---");
 testGuideLayout();
 console.log("--- guide anchors ---");
 testGuideAnchors();
+console.log("--- render ---");
+testRender();
 finish();

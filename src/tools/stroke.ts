@@ -1,7 +1,7 @@
 // Per-gesture stroke engine for drawing tools.
 import type { Doc } from "../engine/doc";
 import { Cel } from "../engine/cel";
-import type { RGBA } from "../engine/types";
+import type { RGBA, Rect } from "../engine/types";
 import { squareCells, brushStamp, lineCells, floodFill, floodErase, globalFill, globalErase, paintAt, eraseAt, type MaskFn } from "../engine/paint";
 import { ellipseFill, ellipseOutline } from "../engine/shape";
 import type { History } from "../engine/history";
@@ -36,6 +36,13 @@ export class Stroke {
   last: [number, number] | null = null;
   start: [number, number] | null = null;
   private everPainted = false;
+  /** bounding box of everything touched since the last takeDirty() (doc space) */
+  private dty: { x0: number; y0: number; x1: number; y1: number } | null = null;
+  /** the whole frame changed (flood fill / shape reset): no useful box */
+  private dtyAll = false;
+  /** bounding box of the shape drawn so far (a shape redraws from scratch, so
+   *  the previous outline has to be repainted as well) */
+  private shapeBox: { x0: number; y0: number; x1: number; y1: number } | null = null;
 
   constructor(doc: Doc, li: number, fi: number, kind: ToolKind, brush: BrushState, layerLocked: boolean, sym: SymMode, shapeSides = 6, fill = true, ox = 0, oy = 0, angDeg = 90, symFour = false, bucketGlobal = false) {
     this.doc = doc;
@@ -91,10 +98,45 @@ export class Stroke {
     return out;
   }
 
+  private markCell(x: number, y: number): void {
+    if (x < 0 || y < 0 || x >= this.doc.w || y >= this.doc.h) return;
+    const d = this.dty;
+    if (!d) this.dty = { x0: x, y0: y, x1: x, y1: y };
+    else {
+      if (x < d.x0) d.x0 = x;
+      if (x > d.x1) d.x1 = x;
+      if (y < d.y0) d.y0 = y;
+      if (y > d.y1) d.y1 = y;
+    }
+  }
+  /** mark a bounding box (corners are clamped: a shape may extend past the
+   *  frame, and a dropped corner would silently shrink the dirty region) */
+  private markBox(b: { x0: number; y0: number; x1: number; y1: number } | null): void {
+    if (!b) return;
+    const cx = (v: number, n: number): number => Math.max(0, Math.min(n - 1, v));
+    this.markCell(cx(b.x0, this.doc.w), cx(b.y0, this.doc.h));
+    this.markCell(cx(b.x1, this.doc.w), cx(b.y1, this.doc.h));
+  }
+
+  /** Take the changed region since the previous call (null = nothing painted).
+   *  The view uses it to recomposite and repaint only that part of the screen. */
+  takeDirty(): Rect | null {
+    if (this.dtyAll) {
+      this.dtyAll = false;
+      this.dty = null;
+      return { x: 0, y: 0, w: this.doc.w, h: this.doc.h };
+    }
+    const d = this.dty;
+    this.dty = null;
+    if (!d) return null;
+    return { x: d.x0, y: d.y0, w: d.x1 - d.x0 + 1, h: d.y1 - d.y0 + 1 };
+  }
+
   /** paint/erase a single cell plus all its symmetric partners */
   private touch(x: number, y: number): boolean {
     let any = false;
     for (const [X, Y] of this.mirrorPts(x, y)) {
+      this.markCell(X, Y);
       if (this.color[3] === 0 ? eraseAt(this.cel, X, Y, this.mask) : paintAt(this.cel, X, Y, this.color, this.mask)) any = true;
     }
     return any;
@@ -103,6 +145,7 @@ export class Stroke {
   private touchErase(x: number, y: number): boolean {
     let any = false;
     for (const [X, Y] of this.mirrorPts(x, y)) {
+      this.markCell(X, Y);
       if (eraseAt(this.cel, X, Y, this.mask)) any = true;
     }
     return any;
@@ -129,6 +172,7 @@ export class Stroke {
           else floodFill(this.cel, x, y, this.color, this.mask);
         }
         this.everPainted = true; // flood fill writes pixels directly
+        this.dtyAll = true; // the filled region can be the whole layer
         break;
       default:
         this.redrawShape(x, y);
@@ -180,6 +224,8 @@ export class Stroke {
   private resetToBefore(): void {
     if (this.before) this.cel.data.set(this.before);
     else this.cel.data.fill(0);
+    // the previous outline of the same shape has to be repainted too
+    this.markBox(this.shapeBox);
   }
 
   private redrawShape(x: number, y: number): void {
@@ -187,8 +233,14 @@ export class Stroke {
     const xa = Math.min(s[0], x), xb = Math.max(s[0], x);
     const ya = Math.min(s[1], y), yb = Math.max(s[1], y);
     const erase = this.color[3] === 0;
+    // the brush stamp widens every drawn cell by half the brush size
+    const pad = Math.max(1, Math.ceil(this.size / 2));
+    const box = { x0: xa - pad, y0: ya - pad, x1: xb + pad, y1: yb + pad };
+    this.markBox(this.shapeBox);
+    this.shapeBox = box;
     const paint = (px: number, py: number) => {
       for (const [X, Y] of this.mirrorPts(px, py)) {
+        this.markCell(X, Y);
         if (erase ? eraseAt(this.cel, X, Y, this.mask) : paintAt(this.cel, X, Y, this.color, this.mask)) this.everPainted = true;
       }
     };

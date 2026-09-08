@@ -20,6 +20,9 @@ export class Sel {
   readonly w: number;
   readonly h: number;
   mask: Uint8Array;
+  /** bumped on every mask change: the view caches the selection tint on it, so
+   *  a live stroke never has to rebuild the tint image */
+  ver = 0;
 
   constructor(w: number, h: number, all = false) {
     this.w = w;
@@ -33,6 +36,11 @@ export class Sel {
   }
   set(x: number, y: number, v: number): void {
     if (x >= 0 && y >= 0 && x < this.w && y < this.h) this.mask[y * this.w + x] = v ? 1 : 0;
+    this.ver++;
+  }
+  /** call after writing to `mask` directly (bulk operations) */
+  bump(): void {
+    this.ver++;
   }
   hasAny(): boolean {
     for (let i = 0; i < this.mask.length; i++) if (this.mask[i]) return true;
@@ -40,9 +48,11 @@ export class Sel {
   }
   clear(): void {
     this.mask.fill(0);
+    this.ver++;
   }
   fillAll(): void {
     this.mask.fill(1);
+    this.ver++;
   }
   clone(): Sel {
     const s = new Sel(this.w, this.h);
