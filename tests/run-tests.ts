@@ -12,6 +12,7 @@ import { testGuide } from "./guide.test";
 import { testGuideLayout } from "./guide-layout.test";
 import { testGuideAnchors } from "./guide-anchors.test";
 import { testRender } from "./render.test";
+import { testExport } from "./export.test";
 
 console.log("--- history ---");
 testHistory();
@@ -39,4 +40,6 @@ console.log("--- guide anchors ---");
 testGuideAnchors();
 console.log("--- render ---");
 testRender();
+console.log("--- export ---");
+testExport();
 finish();

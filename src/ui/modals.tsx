@@ -404,18 +404,23 @@ export function ExportModal({ t, snap, onClose }: { t: ReturnType<typeof makeT>;
   const [scale, setScale] = useState(1);
   const [bgMode, setBgMode] = useState<"transparent" | "white">("transparent");
   const [cols, setCols] = useState(Math.min(8, snap.frameCount));
+  // frame range for the multi-frame formats (GIF / spritesheet / per layer)
+  const [rFrom, setRFrom] = useState(1);
+  const [rTo, setRTo] = useState(snap.frameCount);
+  const range: [number, number] = [rFrom - 1, rTo - 1];
+  const rangeAll = rFrom === 1 && rTo === snap.frameCount;
   const selAvail = snap.selActive;
   const saveOne = (name: string, mime: string, bytes: Uint8Array) =>
     new Promise<boolean>((res) => bridge.saveBytes(name, mime, bytes, (ok) => res(ok)));
   const exportLayersFlow = async () => {
     const doc = SESSION.doc;
     const bg: [number, number, number, number] | null = bgMode === "white" ? [255, 255, 255, 255] : null;
-    const o = { bg, scale };
+    const o = { bg, scale, range };
     const multi = doc.frames.length > 1;
     let okN = 0;
     for (let li = 0; li < doc.layers.length; li++) {
       const lname = exporters.sanitizeName(doc.layers[li].name) || "layer" + (li + 1);
-      for (let fi = 0; fi < doc.frames.length; fi++) {
+      for (let fi = range[0]; fi <= range[1]; fi++) {
         const r = await exporters.exportPNG(doc, fi, { ...o, li });
         if (!r) continue;
         const name = exporters.sanitizeName(doc.name) + "_" + lname + (multi ? "_" + (fi + 1) : "") + ".png";
@@ -431,8 +436,8 @@ export function ExportModal({ t, snap, onClose }: { t: ReturnType<typeof makeT>;
     const bg: [number, number, number, number] | null = bgMode === "white" ? [255, 255, 255, 255] : null;
     const o = { bg, scale, li, bounds: b };
     if (tab === "png") { void exporters.exportPNG(doc, snap.frameIdx, o).then((r) => { if (r) bridge.saveBytes(r.name, "image/png", r.bytes, (ok) => bridge.toast(ok ? t("exported") : t("saveCancel"))); }); }
-    else if (tab === "gif") { void exporters.exportGIF(doc, o).then((r) => { bridge.saveBytes(r.name, "image/gif", r.bytes, (ok) => bridge.toast(ok ? t("exported") : t("saveCancel"))); }); }
-    else if (tab === "sheet") { void exporters.exportSheet(doc, { ...o, cols }).then((r) => { if (!r) return; bridge.saveBytes(r.name, "image/png", r.png, (ok1) => { if (ok1) bridge.saveBytes(r.jsonName, "application/json", r.json, (ok2) => bridge.toast(ok2 ? t("exported") : t("saveCancel"))); else bridge.toast(t("saveCancel")); }); }); }
+    else if (tab === "gif") { void exporters.exportGIF(doc, { ...o, range }).then((r) => { bridge.saveBytes(r.name, "image/gif", r.bytes, (ok) => bridge.toast(ok ? t("exported") : t("saveCancel"))); }); }
+    else if (tab === "sheet") { void exporters.exportSheet(doc, { ...o, cols, range }).then((r) => { if (!r) return; bridge.saveBytes(r.name, "image/png", r.png, (ok1) => { if (ok1) bridge.saveBytes(r.jsonName, "application/json", r.json, (ok2) => bridge.toast(ok2 ? t("exported") : t("saveCancel"))); else bridge.toast(t("saveCancel")); }); }); }
     else { void exportLayersFlow(); }
   };
   return (
@@ -464,7 +469,31 @@ export function ExportModal({ t, snap, onClose }: { t: ReturnType<typeof makeT>;
           <div className="chips">{([1, 2, 4, 8] as const).map((s) => (
             <button key={s} className={"chip" + (scale === s ? " on" : "")} onClick={() => setScale(s)}>{s}x</button>
           ))}</div>
-          {tab === "sheet" && (<><label className="rowlabel">{t("columns")}</label><ScrubNum min={1} max={snap.frameCount} value={cols} onChange={(v) => setCols(Math.max(1, Math.min(snap.frameCount, Number(v) || 1)))} /></>)}
+          {tab !== "png" && (<>
+            <label className="rowlabel">{t("frameRange")}</label>
+            <div className="chips fsel-range">
+              <ScrubNum min={1} max={snap.frameCount} value={rFrom} onChange={(v) => {
+                const n = Math.max(1, Math.min(snap.frameCount, Number(v) || 1));
+                setRFrom(n);
+                if (n > rTo) setRTo(n);
+              }} />
+              <span className="fsel-dash">–</span>
+              <ScrubNum min={1} max={snap.frameCount} value={rTo} onChange={(v) => {
+                const n = Math.max(1, Math.min(snap.frameCount, Number(v) || 1));
+                setRTo(n);
+                if (n < rFrom) setRFrom(n);
+              }} />
+              <button className={"chip" + (rangeAll ? " on" : "")} onClick={() => { setRFrom(1); setRTo(snap.frameCount); }}>{t("frameRangeAll")}</button>
+              {snap.frameSel.length > 1 && (
+                <button className="chip" onClick={() => {
+                  const list = snap.frameSel;
+                  setRFrom(list[0] + 1);
+                  setRTo(list[list.length - 1] + 1);
+                }}>{t("frameRangePicked")}</button>
+              )}
+            </div>
+          </>)}
+          {tab === "sheet" && (<><label className="rowlabel">{t("columns")}</label><ScrubNum min={1} max={rTo - rFrom + 1} value={cols} onChange={(v) => setCols(Math.max(1, Math.min(rTo - rFrom + 1, Number(v) || 1)))} /></>)}
         </div>
         <div className="dlg-foot"><Btn label={t("cancel")} onClick={onClose} /><Btn label={t("export")} onClick={doExport} className="primary" /></div>
       </div>

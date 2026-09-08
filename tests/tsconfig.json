@@ -28,6 +28,7 @@
     "../tests/guide.test.ts",
     "../tests/guide-layout.test.ts",
     "../tests/guide-anchors.test.ts",
-    "../tests/render.test.ts"
+    "../tests/render.test.ts",
+    "../tests/export.test.ts"
   ]
 }

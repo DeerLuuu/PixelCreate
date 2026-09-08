@@ -201,6 +201,8 @@ input[type=range]{width:64px;height:22px;accent-color:var(--accent)}
 .ase-numcell.picked{background:var(--accent);color:#fff;font-weight:800}
 .ase-numcell.picked::before{content:"";position:absolute;left:3px;top:3px;width:4px;height:4px;border-radius:50%;background:#fff}
 .fsel-count{font-size:12px;font-weight:800;color:var(--accent);padding:0 4px;white-space:nowrap;align-self:center}
+.fsel-range{flex-wrap:wrap;align-items:center;gap:6px}
+.fsel-range .fsel-dash{color:var(--dim)}
 .ase-numcell.dragging{background:var(--accent);color:#fff;z-index:4}
 .ase-numcell.drop::after{content:"";position:absolute;left:-1px;top:2px;bottom:2px;width:3px;border-radius:2px;background:var(--accent)}
 .ase-lcell{position:sticky;left:0;z-index:2;justify-content:flex-start;gap:2px;padding:0 3px;cursor:pointer;touch-action:none}

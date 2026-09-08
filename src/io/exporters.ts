@@ -41,6 +41,21 @@ export interface ExportOpts {
   scale?: number;
   li?: number | null;
   bounds?: RectLike | null;
+  /** frames to export, 0-based inclusive; omitted = every frame */
+  range?: [number, number] | null;
+}
+
+/** clamp an export frame range against the document (pure, unit tested) */
+export function frameRange(o: ExportOpts, count: number): { from: number; to: number; n: number } {
+  const last = Math.max(0, count - 1);
+  let from = 0;
+  let to = last;
+  if (o.range) {
+    from = Math.max(0, Math.min(last, Math.round(o.range[0])));
+    to = Math.max(0, Math.min(last, Math.round(o.range[1])));
+    if (from > to) { const t = from; from = to; to = t; }
+  }
+  return { from, to, n: to - from + 1 };
 }
 
 function medianCut(colors: [number, number, number][], maxColors: number): [number, number, number][] {
@@ -187,36 +202,39 @@ export async function exportPNG(doc: Doc, fi: number, o: ExportOpts = {}): Promi
 }
 
 export async function exportGIF(doc: Doc, o: ExportOpts = {}): Promise<{ bytes: Uint8Array; name: string }> {
+  const r = frameRange(o, doc.frames.length);
   const frames: FrameData[] = [];
-  for (let fi = 0; fi < doc.frames.length; fi++) {
+  for (let fi = r.from; fi <= r.to; fi++) {
     const c = rawExportCanvas(doc, fi, o);
     frames.push({ data: c.getContext("2d")!.getImageData(0, 0, c.width, c.height).data, delayMs: doc.frames[fi].durationMs });
   }
-  const first = rawExportCanvas(doc, 0, o);
+  const first = rawExportCanvas(doc, r.from, o);
   const bytes = encodeGIF(frames, first.width, first.height, { transparent: o.bg == null });
-  const suffix = o.bounds ? "_sel" : o.li != null ? "_l" + (o.li + 1) : "";
+  const suffix = (o.bounds ? "_sel" : o.li != null ? "_l" + (o.li + 1) : "") + (r.n < doc.frames.length ? "_f" + (r.from + 1) + "-" + (r.to + 1) : "");
   return { bytes, name: sanitizeName(doc.name) + suffix + ".gif" };
 }
 
 export async function exportSheet(doc: Doc, o: ExportOpts & { cols?: number } = {}): Promise<{ png: Uint8Array; json: Uint8Array; name: string; jsonName: string } | null> {
-  const cols = Math.max(1, Math.min(doc.frames.length, o.cols || doc.frames.length));
-  const rows = Math.ceil(doc.frames.length / cols);
-  const frame0 = rawExportCanvas(doc, 0, o);
+  const r = frameRange(o, doc.frames.length);
+  const cols = Math.max(1, Math.min(r.n, o.cols || r.n));
+  const rows = Math.ceil(r.n / cols);
+  const frame0 = rawExportCanvas(doc, r.from, o);
   const fw = frame0.width, fh = frame0.height;
   const c = document.createElement("canvas");
   c.width = fw * cols;
   c.height = fh * rows;
   const x = c.getContext("2d")!;
   x.imageSmoothingEnabled = false;
-  for (let fi = 0; fi < doc.frames.length; fi++) {
+  for (let fi = r.from; fi <= r.to; fi++) {
+    const k = fi - r.from;
     const fr = rawExportCanvas(doc, fi, o);
-    x.drawImage(fr, (fi % cols) * fw, Math.floor(fi / cols) * fh);
+    x.drawImage(fr, (k % cols) * fw, Math.floor(k / cols) * fh);
   }
   const base = sanitizeName(doc.name);
-  const suffix = o.bounds ? "_sel" : o.li != null ? "_l" + (o.li + 1) : "";
-  const frames = doc.frames.map((f, fi) => ({
-    filename: base + suffix + "_" + (fi + 1) + ".png",
-    frame: { x: (fi % cols) * fw, y: Math.floor(fi / cols) * fh, w: fw, h: fh },
+  const suffix = (o.bounds ? "_sel" : o.li != null ? "_l" + (o.li + 1) : "") + (r.n < doc.frames.length ? "_f" + (r.from + 1) + "-" + (r.to + 1) : "");
+  const frames = doc.frames.slice(r.from, r.to + 1).map((f, k) => ({
+    filename: base + suffix + "_" + (r.from + k + 1) + ".png",
+    frame: { x: (k % cols) * fw, y: Math.floor(k / cols) * fh, w: fw, h: fh },
     duration: f.durationMs,
   }));
   const meta = { frames, meta: { app: "PixelCraft", version: "2.0", image: base + suffix + "_sheet.png", size: { w: c.width, h: c.height }, scale: o.scale || 1 } };
