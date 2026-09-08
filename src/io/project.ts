@@ -46,7 +46,8 @@ async function dataURLToPixels(dataURL: string, expectW: number, expectH: number
   });
 }
 
-export async function serialize(doc: Doc): Promise<string> {
+/** `history` is the already-encoded history payload (see historyfile.ts) */
+export async function serialize(doc: Doc, history?: unknown): Promise<string> {
   const cels: [string, string][] = [];
   for (const [k, cel] of doc.cels) {
     const png = await celToDataURL(cel);
@@ -63,7 +64,25 @@ export async function serialize(doc: Doc): Promise<string> {
     frames: doc.frames.map((f) => ({ durationMs: f.durationMs })),
     palette: doc.palette.map((c) => [...c]),
     cels,
+    history: history ?? undefined,
   });
+}
+
+export interface ParsedProject {
+  doc: Doc;
+  history: unknown | null;
+}
+
+/** parse a .pxc file including its optional operation history */
+export async function parseProject(text: string): Promise<ParsedProject | null> {
+  const doc = await parse(text);
+  if (!doc) return null;
+  let history: unknown | null = null;
+  try {
+    const o = JSON.parse(text) as { history?: unknown };
+    if (o && o.history) history = o.history;
+  } catch { /* ignore */ }
+  return { doc, history };
 }
 
 export async function parse(text: string): Promise<Doc | null> {

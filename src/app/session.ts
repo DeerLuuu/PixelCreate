@@ -8,11 +8,14 @@ import * as ops from "../engine/ops";
 import * as fxE from "../engine/effects";
 import * as compositor from "../render/compositor";
 import * as project from "../io/project";
+import * as historyFile from "../io/historyfile";
+import { scalarActions, type ScalarData } from "./history-io";
 import * as autosave from "../io/autosave";
 import * as refstore from "../io/refstore";
 import type { RefImg } from "../io/refstore";
 import { toast as toastFn } from "../io/bridge";
 import type { ToolId, BrushState, SymMode } from "../tools/registry";
+import { GESTURES, isActionAllowed, type GestureActionId } from "./gestures";
 import { isShapeTool, nextSym, SYM_ANGLES } from "../tools/registry";
 import type { View } from "../render/view";
 import * as selM from "../tools/select";
@@ -43,6 +46,8 @@ export interface Prefs {
   /** tint ghosts (previous red / next green) instead of drawing them as-is */
   onionTint: boolean;
   autosave: boolean;
+  /** store the operation history inside saved project files */
+  recordHistory: boolean;
   /** add frame via FrameAdd: clone current frame's cels into the new one */
   newFrameCopy: boolean;
 
@@ -82,7 +87,13 @@ export interface Prefs {
   zoomMin: number;
   zoomMax: number;
   haptic: boolean;
-  marginUndo: boolean;
+  /** gesture → action mapping (see src/app/gestures.ts) */
+  gDoubleTapMargin: GestureActionId;
+  gDoubleTapCanvas: GestureActionId;
+  gTwoFingerDoubleTap: GestureActionId;
+  gTripleTap: GestureActionId;
+  gFourFinger: GestureActionId;
+  gLongPress: GestureActionId;
   /** landscape: swap side rails (default on: control rail right, actions left) */
   railSwap: boolean;
   previewBg: "white" | "black" | "checker";
@@ -285,6 +296,58 @@ export class Session {
     this.prefs.palette = this.doc.palette.map((c) => "#" + [c[0], c[1], c[2]]
       .map((v) => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, "0")).join(""));
     this.scheduleSavePrefs();
+  }
+
+  /** Run the action a gesture is mapped to. Returns false when nothing ran.
+   *  UI-level actions (timeline / preview / palette) are broadcast as a
+   *  "pc-gesture" event so the React shell can open the right thing. */
+  runGestureAction(action: GestureActionId, ctx?: { x?: number; y?: number }): boolean {
+    const v = this.view_;
+    switch (action) {
+      case "none":
+        return false;
+      case "undo":
+        if (this.history.canUndo()) this.undo();
+        return true;
+      case "redo":
+        if (this.history.canRedo()) this.redo();
+        return true;
+      case "zoomIn":
+        if (v) v.zoomAt(Math.min(this.prefs.zoomMax, v.zoom * this.prefs.tripleTapZoom), ctx?.x, ctx?.y);
+        return true;
+      case "zoomOut":
+        if (v) v.zoomAt(Math.max(this.prefs.zoomMin, v.zoom / this.prefs.tripleTapZoom), ctx?.x, ctx?.y);
+        return true;
+      case "fitView":
+        if (v) { v.fit(); v.refresh(false); }
+        return true;
+      case "togglePlay":
+        this.togglePlay();
+        return true;
+      case "toggleOnion":
+        this.toggleOnion();
+        return true;
+      case "toggleGrid":
+        this.setGridMode(this.prefs.gridMode === "off" ? "pixel" : "off");
+        return true;
+      case "toggleSymmetry":
+        this.cycleSym();
+        return true;
+      case "nextFrame":
+        this.setFrame(this.curFrame() + 1);
+        return true;
+      case "prevFrame":
+        this.setFrame(this.curFrame() - 1);
+        return true;
+      case "toggleTimeline":
+      case "framePreview":
+      case "openPalette":
+        window.dispatchEvent(new CustomEvent("pc-gesture", { detail: action }));
+        return true;
+      case "pickColor":
+        // the view owns the pixel coordinates; it handles this one itself
+        return false;
+    }
   }
 
   /** enforce the configured recording mode on the history stack */
@@ -509,7 +572,7 @@ export class Session {
     const p: Prefs = {
       lang: "zh", gridMode: "off", gridSize: 1, magZoom: 12, loupe: true,
       onionOn: false, onionBefore: 1, onionAfter: 0, onionAlpha: 55, onionTint: true, onionWrap: true,
-      autosave: true, newFrameCopy: false, railSwap: true, previewBg: "white", tlH: 116,
+      autosave: true, recordHistory: true, newFrameCopy: false, railSwap: true, previewBg: "white", tlH: 116,
       histMode: "steps", histSteps: 120, shadowNewLayer: false, autoPan: true,
       bucketGlobal: false, loopMode: "loop", recentColorsMax: 16, selectionTolerance: 8,
       brushSize: 1, brushAlpha: 255, fgColor: "#141414", bgColor: "#ffffff",
@@ -519,7 +582,9 @@ export class Session {
       palette: [], newDocW: 64, newDocH: 64, newDocBg: "transparent",
       longPressMs: 300, doubleTapMs: 420, tripleTapZoom: 2, fourFingerPx: 15,
       autoPanMargin: 34, autoPanSpeed: 3, zoomMin: 0.05, zoomMax: 32,
-      haptic: true, marginUndo: true,
+      haptic: true,
+      gDoubleTapMargin: "undo", gDoubleTapCanvas: "none", gTwoFingerDoubleTap: "redo",
+      gTripleTap: "zoomIn", gFourFinger: "framePreview", gLongPress: "pickColor",
     };
     try {
       const saved = JSON.parse(localStorage.getItem("pc.prefs") ?? "{}");
@@ -540,6 +605,7 @@ export class Session {
       if (typeof saved.onionWrap === "boolean") p.onionWrap = saved.onionWrap;
       if (saved.previewBg === "black" || saved.previewBg === "checker" || saved.previewBg === "white") p.previewBg = saved.previewBg;
       if (typeof saved.autosave === "boolean") p.autosave = saved.autosave;
+      if (typeof saved.recordHistory === "boolean") p.recordHistory = saved.recordHistory;
       if (typeof saved.newFrameCopy === "boolean") p.newFrameCopy = saved.newFrameCopy;
       if (typeof saved.railSwap === "boolean") p.railSwap = saved.railSwap;
       if (typeof saved.tlH === "number") p.tlH = Math.max(56, Math.min(340, Math.round(saved.tlH)));
@@ -588,7 +654,13 @@ export class Session {
       if (typeof saved.zoomMax === "number") p.zoomMax = Math.max(2, Math.min(64, saved.zoomMax));
       if (p.zoomMax < p.zoomMin * 2) p.zoomMax = Math.min(64, p.zoomMin * 8);
       if (typeof saved.haptic === "boolean") p.haptic = saved.haptic;
-      if (typeof saved.marginUndo === "boolean") p.marginUndo = saved.marginUndo;
+      // gesture mapping: only accept actions the gesture actually offers
+      for (const g of GESTURES) {
+        const v = (saved as Record<string, unknown>)[g.field];
+        if (typeof v === "string" && isActionAllowed(g.id, v)) {
+          (p as unknown as Record<string, string>)[g.field] = v;
+        }
+      }
       /* palette floater style fixed to ball */
     } catch {
       /* ignore */
@@ -996,7 +1068,7 @@ export class Session {
     this.history.record("palette-add", {
       apply: () => { if (doc.palette.length <= idx) doc.palette.push(col); },
       unapply: () => { if (doc.palette[idx]) doc.palette.splice(idx, 1); },
-    });
+    }, { k: "palette-add", idx, color: col });
     this.rememberPalette();
     this.changed();
   }
@@ -1008,7 +1080,7 @@ export class Session {
     this.history.record("palette-remove", {
       apply: () => { if (doc.palette.length > idx) doc.palette.splice(idx, 1); },
       unapply: () => { doc.palette.splice(Math.min(idx, doc.palette.length), 0, col); },
-    });
+    }, { k: "palette-remove", idx, color: col });
     this.rememberPalette();
     this.changed();
   }
@@ -1089,7 +1161,7 @@ export class Session {
       this.history.record("frame-switch", {
         apply: () => this.applyFrame(next),
         unapply: () => this.applyFrame(prev),
-      });
+      }, { k: "frame-switch", fi: next, prev });
     }
     this.applyFrame(next);
   }
@@ -1242,10 +1314,53 @@ export class Session {
   }
 
   /** cheap scalar command: fn applied now; undo restores via back(). */
-  private cheap(label: string, fn: () => void, back: () => void): void {
+  private cheap(label: string, fn: () => void, back: () => void, data?: ScalarData): void {
     fn();
-    this.history.record(label, { apply: fn, unapply: back });
+    this.history.record(label, { apply: fn, unapply: back }, data);
     this.syncAfterDocChange();
+  }
+
+  // ---------- operation history inside project files ----------
+  /** true when saves should carry the operation history */
+  get recordHistory(): boolean {
+    return this.prefs.recordHistory;
+  }
+  /** switch the visible frame without touching the history stack */
+  showFrame(fi: number): void {
+    this.applyFramePublic(fi);
+  }
+  private applyFramePublic(fi: number): void {
+    this.frameIdx = Math.max(0, Math.min(this.doc.frames.length - 1, fi));
+    this.view_?.setFrame(this.frameIdx);
+    this.repaintAll();
+    this.changed();
+  }
+  /** serialize the current document (plus history when enabled) as .pxc text */
+  async serializeProject(): Promise<string> {
+    let hist: unknown = null;
+    if (this.prefs.recordHistory) {
+      const dump = this.history.dump();
+      hist = historyFile.encodeHistory(dump, this.doc.w, this.doc.h);
+    }
+    return project.serialize(this.doc, hist);
+  }
+  /** load a .pxc (with its history) into the session */
+  async loadProjectText(text: string): Promise<boolean> {
+    const parsed = await project.parseProject(text);
+    if (!parsed) return false;
+    const ok = await this.replaceDoc(parsed.doc);
+    if (!ok) return false;
+    const dump = parsed.history ? historyFile.decodeHistory(parsed.history) : null;
+    if (dump) {
+      this.history.loadDump(dump, {
+        doc: this.doc,
+        scalarActions: (d: ScalarData) => scalarActions(d, { doc: this.doc, showFrame: (fi) => this.applyFramePublic(fi) }),
+      });
+    } else {
+      this.history.clear();
+    }
+    this.changed();
+    return true;
   }
 
   // ---------- documents ----------
@@ -1328,7 +1443,8 @@ export class Session {
     const old = L.visible;
     this.cheap("layer-visible",
       () => { const N = this.doc.layers[li]; if (N) N.visible = !old; },
-      () => { const N = this.doc.layers[li]; if (N) N.visible = old; });
+      () => { const N = this.doc.layers[li]; if (N) N.visible = old; },
+      { k: "layer-visible", li, on: !old, prev: old });
   }
   toggleLayerLock(li: number): void {
     const L = this.doc.layers[li];
@@ -1336,7 +1452,8 @@ export class Session {
     const old = L.locked;
     this.cheap("layer-lock",
       () => { const N = this.doc.layers[li]; if (N) N.locked = !old; },
-      () => { const N = this.doc.layers[li]; if (N) N.locked = old; });
+      () => { const N = this.doc.layers[li]; if (N) N.locked = old; },
+      { k: "layer-lock", li, on: !old, prev: old });
   }
   renameLayer(li: number, name: string): void {
     if (!name.trim()) return;
@@ -1346,7 +1463,8 @@ export class Session {
     const next = name.trim();
     this.cheap("layer-rename",
       () => { const N = this.doc.layers[li]; if (N) N.name = next; },
-      () => { const N = this.doc.layers[li]; if (N) N.name = old; });
+      () => { const N = this.doc.layers[li]; if (N) N.name = old; },
+      { k: "layer-rename", li, name: next, prev: old });
   }
   setLayerOpacity(li: number, o: number): void {
     const L = this.doc.layers[li];
@@ -1355,7 +1473,8 @@ export class Session {
     const old = L.opacity;
     this.cheap("layer-opacity",
       () => { const N = this.doc.layers[li]; if (N) N.opacity = v; },
-      () => { const N = this.doc.layers[li]; if (N) N.opacity = old; });
+      () => { const N = this.doc.layers[li]; if (N) N.opacity = old; },
+      { k: "layer-opacity", li, v, prev: old });
   }
   /** live slider edits: mutate + repaint, but coalesce into ONE history step */
   editLayerOpacity(li: number, o: number): void {
@@ -1375,7 +1494,7 @@ export class Session {
     this.history.record("layer-opacity", {
       apply: () => { const L = this.doc.layers[live.li]; if (L) L.opacity = live.to; },
       unapply: () => { const L = this.doc.layers[live.li]; if (L) L.opacity = live.from; },
-    });
+    }, { k: "layer-opacity", li: live.li, v: live.to, prev: live.from });
     this.changed();
   }
   setLayerBlend(li: number, b: BlendMode): void {
@@ -1384,7 +1503,8 @@ export class Session {
     const old = L.blend;
     this.cheap("layer-blend",
       () => { const N = this.doc.layers[li]; if (N) N.blend = b; },
-      () => { const N = this.doc.layers[li]; if (N) N.blend = old; });
+      () => { const N = this.doc.layers[li]; if (N) N.blend = old; },
+      { k: "layer-blend", li, b, prev: old });
   }
 
   // ---------- frames ----------
@@ -1481,7 +1601,8 @@ export class Session {
     const olds = list.map((fi) => this.doc.frames[fi]?.durationMs ?? 100);
     this.cheap("frames-duration",
       () => { for (const fi of list) { const f = this.doc.frames[fi]; if (f) f.durationMs = v; } },
-      () => { list.forEach((fi, k) => { const f = this.doc.frames[fi]; if (f) f.durationMs = olds[k]; }); });
+      () => { list.forEach((fi, k) => { const f = this.doc.frames[fi]; if (f) f.durationMs = olds[k]; }); },
+      { k: "frames-duration", list, v, olds });
     return list.length;
   }
   frameMove(dir: -1 | 1): void {
@@ -1514,7 +1635,8 @@ export class Session {
     const old = f.durationMs;
     this.cheap("frame-duration",
       () => { const N = this.doc.frames[fi]; if (N) N.durationMs = v; },
-      () => { const N = this.doc.frames[fi]; if (N) N.durationMs = old; });
+      () => { const N = this.doc.frames[fi]; if (N) N.durationMs = old; },
+      { k: "frame-duration", fi, ms: v, prev: old });
   }
   // ---------- image size (Aseprite-style) ----------
   /** ax/ay in {-1,0,1}: -1 = top/left, 0 = center, 1 = bottom/right */

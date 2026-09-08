@@ -10,7 +10,6 @@ import { HsvWheel } from "./HsvWheel";
 import { HoldAdjust } from "./hold";
 import { PALETTE_PACKS } from "../data/palettes";
 import { tryReadGif } from "../io/gifread";
-import * as project from "../io/project";
 import * as compose from "../render/compositor";
 import * as exporters from "../io/exporters";
 import * as bridge from "../io/bridge";
@@ -25,7 +24,7 @@ export type SheetData = { w: number; h: number; px: Uint8ClampedArray; name: str
 
 export async function saveProject(): Promise<void> {
   const doc = SESSION.doc;
-  const txt = await project.serialize(doc);
+  const txt = await SESSION.serializeProject();
   const bytes = new TextEncoder().encode(txt);
   bridge.saveBytes((doc.name || "art") + ".pxc", "application/json", bytes, (ok) =>
     bridge.toast(ok ? makeT(SESSION.prefs.lang)("saved") : makeT(SESSION.prefs.lang)("saveCancel"))
@@ -228,8 +227,7 @@ async function openFlow(mode: "new" | "layer"): Promise<void> {
   if (!isGif && (ext === "pxc" || f.name.toLowerCase().endsWith(".pxc") || ext === "json")) {
     if (mode !== "new") { bridge.toast(t("importFail")); return; }
     const txt = new TextDecoder().decode(f.bytes);
-    const doc = await project.parse(txt);
-    if (doc) { if (await SESSION.replaceDoc(doc)) bridge.toast(t("docLoaded")); } else bridge.toast(t("importFail"));
+    if (await SESSION.loadProjectText(txt)) bridge.toast(t("docLoaded")); else bridge.toast(t("importFail"));
     return;
   }
   if (isGif) {

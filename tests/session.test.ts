@@ -2,6 +2,10 @@ import { Session } from "../src/app/session";
 import {
   SETTINGS, settingsOfGroup, coerceSetting, exportSettings, importSettings, isDefault, resetSetting,
 } from "../src/app/settings";
+import { GESTURES, GESTURE_ACTIONS, gesturePath, isActionAllowed } from "../src/app/gestures";
+import { History } from "../src/engine/history";
+import { scalarActions } from "../src/app/history-io";
+import * as historyFile from "../src/io/historyfile";
 import { eq, ok } from "./common";
 
 /** minimal DOM-less environment for Session (no View attached) */
@@ -238,7 +242,6 @@ export function testSession(): void {
     a.setSetting("gesture.zoomMin", "0.25");
     a.setSetting("gesture.zoomMax", "64");
     a.setSetting("gesture.haptic", false);
-    a.setSetting("gesture.marginUndo", false);
     const b = new Session();
     eq("gesture.longPress", b.prefs.longPressMs, 500);
     eq("gesture.doubleTap", b.prefs.doubleTapMs, 300);
@@ -249,7 +252,6 @@ export function testSession(): void {
     eq("gesture.zoomMin", b.prefs.zoomMin, 0.25);
     eq("gesture.zoomMax", b.prefs.zoomMax, 64);
     eq("gesture.haptic", b.prefs.haptic, false);
-    eq("gesture.marginUndo", b.prefs.marginUndo, false);
     // out-of-range values are clamped on load
     (globalThis as unknown as { localStorage: { setItem(k: string, v: string): void } }).localStorage.setItem(
       "pc.prefs", JSON.stringify({ longPressMs: 9999, fourFingerPx: 1, zoomMin: 0.5, zoomMax: 0.6 }));
@@ -257,6 +259,124 @@ export function testSession(): void {
     eq("gesture.clamp.longPress", c.prefs.longPressMs, 800);
     eq("gesture.clamp.fourFinger", c.prefs.fourFingerPx, 8);
     ok("gesture.clamp.zoomRange", c.prefs.zoomMax > c.prefs.zoomMin, c.prefs.zoomMin + "/" + c.prefs.zoomMax);
+  }
+
+  // --- gesture -> action mapping ---
+  {
+    // registry integrity
+    const ids = new Set(GESTURES.map((g) => g.id));
+    eq("gesture.ids.unique", ids.size, GESTURES.length);
+    ok("gesture.every-default-allowed", GESTURES.every((g) => g.actions.includes(g.defaultAction)));
+    ok("gesture.every-action-known", GESTURE_ACTIONS.length >= 12 && GESTURES.every((g) => g.actions.every((a) => GESTURE_ACTIONS.some((x) => x.id === a))));
+    ok("gesture.pick-only-where-sensible", isActionAllowed("longPress", "pickColor") && !isActionAllowed("doubleTapMargin", "pickColor"));
+    ok("gesture.bad-id", !isActionAllowed("nope" as never, "undo"));
+    // every gesture has a settings entry with matching options
+    for (const g of GESTURES) {
+      const def = SETTINGS.find((d) => d.path === gesturePath(g.id));
+      ok("gesture.setting." + g.id, !!def && def.kind === "enum" && def.default === g.defaultAction, def ? "" : "missing");
+      eq("gesture.setting.options." + g.id, (def?.options ?? []).map((o) => o.value), g.actions);
+    }
+
+    // dispatcher: session-level actions really run
+    (globalThis as unknown as { localStorage: { clear(): void } }).localStorage.clear();
+    const g = new Session();
+    g.setPalette([[1, 2, 3, 255], [4, 5, 6, 255]]);
+    g.history.clear();
+    g.paletteRemove(0);
+    ok("gesture.can-undo", g.history.canUndo());
+    ok("gesture.undo", g.runGestureAction("undo"));
+    eq("gesture.undo.result", g.doc.palette.length, 2);
+    ok("gesture.redo", g.runGestureAction("redo"));
+    eq("gesture.redo.result", g.doc.palette.length, 1);
+    ok("gesture.none", !g.runGestureAction("none"));
+    const grid0 = g.prefs.gridMode;
+    ok("gesture.grid", g.runGestureAction("toggleGrid"));
+    ok("gesture.grid.changed", g.prefs.gridMode !== grid0);
+    const onion0 = g.prefs.onionOn;
+    ok("gesture.onion", g.runGestureAction("toggleOnion"));
+    ok("gesture.onion.changed", g.prefs.onionOn !== onion0);
+    const sym0 = g.sym;
+    ok("gesture.sym", g.runGestureAction("toggleSymmetry"));
+    ok("gesture.sym.changed", g.sym !== sym0);
+    // frame navigation clamps at the ends
+    g.runGestureAction("nextFrame");
+    eq("gesture.nextFrame.clamp", g.curFrame(), 0);
+    // the mapping survives a restart
+    g.setSetting("gesture.doubleTapMargin", "redo");
+    g.setSetting("gesture.fourFinger", "toggleGrid");
+    const h = new Session();
+    eq("gesture.persist.margin", h.prefs.gDoubleTapMargin, "redo");
+    eq("gesture.persist.four", h.prefs.gFourFinger, "toggleGrid");
+    // invalid stored values fall back to the default
+    (globalThis as unknown as { localStorage: { setItem(k: string, v: string): void } }).localStorage.setItem(
+      "pc.prefs", JSON.stringify({ gDoubleTapMargin: "explode" }));
+    const k = new Session();
+    eq("gesture.invalid.fallback", k.prefs.gDoubleTapMargin, "undo");
+  }
+
+  // --- operation history inside project files ---
+  {
+    (globalThis as unknown as { localStorage: { clear(): void } }).localStorage.clear();
+    const s2 = new Session();
+    const doc = s2.doc;
+    const cel = doc.ensureCel(0, 0);
+    const before = new Uint8ClampedArray(cel.data);
+    cel.data[0] = 200; cel.data[3] = 255;
+    s2.history.pushPixels("stroke", doc, [{ li: 0, fi: 0, before, after: new Uint8ClampedArray(cel.data) }]);
+    s2.layerAdd();                 // struct snapshot step
+    s2.toggleLayerVisible(0);      // scalar step (hides layer 0)
+    eq("hist.steps", s2.history.list().labels.length, 3);
+
+    const dump = s2.history.dump();
+    eq("hist.dump.count", dump.entries.length, 3);
+    eq("hist.dump.index", dump.index, 3);
+    eq("hist.dump.kinds", dump.entries.map((e) => e.kind), ["pixels", "struct", "scalar"]);
+
+    // encode -> JSON -> decode (this is what a .pxc file carries)
+    const enc = historyFile.encodeHistory(dump, doc.w, doc.h);
+    ok("hist.encode.some", !!enc);
+    const round = historyFile.decodeHistory(JSON.parse(JSON.stringify(enc)));
+    ok("hist.decode", !!round && round.entries.length === 3);
+
+    // load into a fresh stack bound to the same document, then undo everything
+    const h2 = new History();
+    h2.loadDump(round!, { doc, scalarActions: (d) => scalarActions(d, { doc, showFrame: () => {} }) });
+    eq("hist.load.can-undo", h2.canUndo(), true);
+    eq("hist.load.index", h2.list().index, 3);
+    h2.undo();
+    h2.undo();
+    h2.undo();
+    eq("hist.undo.pixel", doc.celAt(0, 0)?.data[3] ?? -1, 0);
+    eq("hist.undo.layers", doc.layers.length, 1);
+    eq("hist.undo.visible", doc.layers[0].visible, true);
+    h2.redo();
+    h2.redo();
+    h2.redo();
+    eq("hist.redo.pixel", doc.celAt(0, 0)?.data[3] ?? -1, 255);
+    eq("hist.redo.layers", doc.layers.length, 2);
+    eq("hist.redo.visible", doc.layers[0].visible, false);
+
+    // a step with no serializable payload truncates everything older
+    s2.history.record("opaque-step", { apply: () => {}, unapply: () => {} });
+    s2.toggleLayerVisible(0);
+    const d2 = s2.history.dump();
+    eq("hist.truncate.count", d2.entries.length, 1);
+    eq("hist.truncate.index", d2.index, 1);
+    eq("hist.truncate.kind", d2.entries[0].kind, "scalar");
+
+    // frame switching is part of the history too
+    s2.frameAdd();
+    s2.setFrame(1);
+    const d3 = s2.history.dump();
+    const last = d3.entries[d3.entries.length - 1];
+    eq("hist.frame-switch.kind", last.kind, "scalar");
+    eq("hist.frame-switch.data", (last.data as { k: string }).k, "frame-switch");
+
+    // the setting controls whether saves carry it
+    eq("hist.setting.default", s2.prefs.recordHistory, true);
+    s2.setSetting("data.recordHistory", false);
+    const s3 = new Session();
+    eq("hist.setting.persist", s3.prefs.recordHistory, false);
   }
 
   // --- user-saved palettes ---

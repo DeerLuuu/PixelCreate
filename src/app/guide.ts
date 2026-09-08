@@ -265,6 +265,11 @@ export const GUIDE: GuideStep[] = [
     title: "guide.exportPalette.title", body: "guide.exportPalette.body",
   },
   {
+    // operation history is stored inside the project file
+    id: "files.history", module: "files", since: "1.0.7.3", target: '[data-guide="btn-save"]', place: "bottom",
+    title: "guide.history.title", body: "guide.history.body",
+  },
+  {
     // the tour opens the real Settings dialog for this step, so the user sees
     // what is inside it instead of only the menu entry that leads there
     id: "files.menuSettings", module: "files", since: "1.0.6.0", target: '[data-guide="dlg-settings"]', place: "auto", peek: true,
@@ -307,6 +312,11 @@ export const GUIDE: GuideStep[] = [
   {
     id: "gestures.back", module: "gestures", since: "1.0.7",
     title: "guide.back.title", body: "guide.back.body",
+  },
+  {
+    // the mapping lives in Settings -> Gestures & Touch
+    id: "gestures.map", module: "gestures", since: "1.0.7.3",
+    title: "guide.gestures.title", body: "guide.gestures.body",
   },
   {
     id: "gestures.fourFinger", module: "gestures", since: "1.0.6.0", demo: "fourFingerSwipe",

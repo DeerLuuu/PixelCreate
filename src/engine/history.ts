@@ -1,5 +1,6 @@
 import { Doc, type DocSnapshot } from "./doc";
 import { Cel } from "./cel";
+import type { ScalarData } from "../app/history-io";
 
 export interface PixelChange {
   li: number;
@@ -12,6 +13,32 @@ interface Entry {
   label: string;
   fwd: () => void;
   back: () => void;
+  /** raw material kept for project-file serialization */
+  enc?: EncChange[];
+  snap?: { before: DocSnapshot; after: DocSnapshot };
+  data?: ScalarData;
+}
+
+/** one serializable history step (raw typed arrays / snapshots, not base64) */
+export interface HistoryDumpEntry {
+  label: string;
+  kind: "pixels" | "struct" | "scalar";
+  enc?: EncChange[];
+  before?: DocSnapshot;
+  after?: DocSnapshot;
+  data?: ScalarData;
+}
+
+export interface HistoryDump {
+  /** how many entries of `entries` are currently applied */
+  index: number;
+  entries: HistoryDumpEntry[];
+}
+
+/** host hooks needed to rebuild steps after a reload */
+export interface HistoryHost {
+  doc: Doc;
+  scalarActions: (data: ScalarData) => { apply: () => void; unapply: () => void };
 }
 
 /** Compact per-cel pixel change. idx is a list of PIXEL indices (not byte
@@ -167,8 +194,8 @@ export class History {
    * inverse. Prefer this over pushStruct (deep snapshot) whenever the inverse
    * can be expressed directly.
    */
-  record(label: string, actions: { apply: () => void; unapply: () => void }): void {
-    this.push({ label, fwd: () => actions.apply(), back: () => actions.unapply() });
+  record(label: string, actions: { apply: () => void; unapply: () => void }, data?: ScalarData): void {
+    this.push({ label, fwd: () => actions.apply(), back: () => actions.unapply(), data });
   }
 
   /** Pixel-level change. The caller must have ALREADY applied "after" to the doc. */
@@ -183,6 +210,7 @@ export class History {
       label,
       fwd: () => { for (const e of enc) applyFwd(doc, e); },
       back: () => { for (let i = enc.length - 1; i >= 0; i--) applyBack(doc, enc[i]); },
+      enc,
     });
   }
 
@@ -198,7 +226,59 @@ export class History {
       label,
       fwd: () => restore(after),
       back: () => restore(before),
+      snap: { before, after },
     });
+  }
+
+  /** Export the stack for a project file. Steps that have no serializable
+   *  payload stop the export: everything older than the newest such step is
+   *  dropped so the remaining history stays correct. */
+  dump(): HistoryDump {
+    const all = [...this.undoStack, ...this.redoStack];
+    let start = 0;
+    for (let i = 0; i < all.length; i++) {
+      if (!all[i].enc && !all[i].snap && !all[i].data) start = i + 1;
+    }
+    const entries: HistoryDumpEntry[] = [];
+    for (let i = start; i < all.length; i++) {
+      const e = all[i];
+      if (e.enc) entries.push({ label: e.label, kind: "pixels", enc: e.enc });
+      else if (e.snap) entries.push({ label: e.label, kind: "struct", before: e.snap.before, after: e.snap.after });
+      else if (e.data) entries.push({ label: e.label, kind: "scalar", data: e.data });
+    }
+    return { index: Math.max(0, this.undoStack.length - start), entries };
+  }
+
+  /** Rebuild a stack previously written by dump() + the project encoder. */
+  loadDump(dump: HistoryDump, host: HistoryHost): void {
+    this.clear();
+    const doc = host.doc;
+    const built: Entry[] = [];
+    for (const e of dump.entries) {
+      if (e.kind === "pixels" && e.enc) {
+        const enc = e.enc;
+        built.push({
+          label: e.label,
+          fwd: () => { for (const c of enc) applyFwd(doc, c); },
+          back: () => { for (let i = enc.length - 1; i >= 0; i--) applyBack(doc, enc[i]); },
+          enc,
+        });
+      } else if (e.kind === "struct" && e.before && e.after) {
+        const before = e.before, after = e.after;
+        built.push({
+          label: e.label,
+          fwd: () => doc.restore(after),
+          back: () => doc.restore(before),
+          snap: { before, after },
+        });
+      } else if (e.kind === "scalar" && e.data) {
+        const acts = host.scalarActions(e.data);
+        built.push({ label: e.label, fwd: () => acts.apply(), back: () => acts.unapply(), data: e.data });
+      }
+    }
+    const idx = Math.max(0, Math.min(built.length, dump.index));
+    this.undoStack = built.slice(0, idx);
+    this.redoStack = built.slice(idx);
   }
 
   undo(): string | null {

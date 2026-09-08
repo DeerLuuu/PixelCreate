@@ -333,6 +333,18 @@ export function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }), []);
 
+  // gestures can be re-mapped to UI-level actions (timeline / preview / palette)
+  useEffect(() => {
+    const onGesture = (e: Event) => {
+      const what = (e as CustomEvent<string>).detail;
+      if (what === "toggleTimeline") setTlOn((v) => !v);
+      else if (what === "framePreview") setModal("framePrev");
+      else if (what === "openPalette") setPanel("palette");
+    };
+    window.addEventListener("pc-gesture", onGesture);
+    return () => window.removeEventListener("pc-gesture", onGesture);
+  }, []);
+
   const finishGuide = (shown: string[]) => {
     try {
       const prev = JSON.parse(localStorage.getItem("pc.guide.seen") ?? "[]");

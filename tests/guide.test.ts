@@ -36,7 +36,7 @@ export function testGuide(): void {
   {
     const orbs = guideStepsOfModule("orbs");
     ok("guide.module.orbs", orbs.length >= 3 && orbs.every((s) => s.module === "orbs"));
-    eq("guide.module.gestures", guideStepsOfModule("gestures").length, 5);
+    eq("guide.module.gestures", guideStepsOfModule("gestures").length, 6);
   }
 
   // --- every orb step pops docked balls out first (they may be parked away) ---

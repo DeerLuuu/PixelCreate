@@ -7,6 +7,7 @@
 // this table, so adding a setting means adding one entry plus its strings —
 // no UI plumbing, no new session setter, no extra localStorage key.
 import type { Prefs, Session } from "./session";
+import { GESTURES, GESTURE_ACTIONS, gesturePath } from "./gestures";
 
 export type SettingValue = boolean | number | string;
 export type SettingKind = "bool" | "int" | "enum";
@@ -124,6 +125,10 @@ export function importSettings(s: Session, raw: unknown): { applied: number; ski
   }
   return { applied, skipped };
 }
+
+const GESTURE_ACTION_LABELS: Record<string, string> = Object.fromEntries(
+  GESTURE_ACTIONS.map((a) => [a.id, a.label]),
+);
 
 export const SETTING_GROUPS: Array<{ id: SettingGroupId; label: string }> = [
   { id: "general", label: "groupGeneral" },
@@ -296,10 +301,18 @@ const defs: SettingDef[] = [
     path: "gesture.haptic", field: "haptic", kind: "bool", group: "gesture",
     label: "hapticLabel", desc: "hapticDesc", default: true, refresh: "none",
   },
-  {
-    path: "gesture.marginUndo", field: "marginUndo", kind: "bool", group: "gesture",
-    label: "marginUndoLabel", desc: "marginUndoDesc", default: true, refresh: "none",
-  },
+  // one entry per gesture: which function it runs (see src/app/gestures.ts)
+  ...GESTURES.map((g): SettingDef => ({
+    path: gesturePath(g.id),
+    field: g.field as keyof Prefs,
+    kind: "enum",
+    group: "gesture",
+    label: g.label,
+    desc: g.desc,
+    default: g.defaultAction,
+    options: g.actions.map((a) => ({ value: a, label: GESTURE_ACTION_LABELS[a] })),
+    refresh: "none",
+  })),
 
   // -------------------------------------------------------------- onion
   {
@@ -378,6 +391,10 @@ const defs: SettingDef[] = [
   },
 
   // --------------------------------------------------------------- data
+  {
+    path: "data.recordHistory", field: "recordHistory", kind: "bool", group: "data",
+    label: "recordHistoryLabel", desc: "recordHistoryDesc", default: true, refresh: "none",
+  },
   {
     path: "data.autosave", field: "autosave", kind: "bool", group: "data",
     label: "autosave", default: true, refresh: "none",

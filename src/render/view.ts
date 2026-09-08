@@ -931,12 +931,15 @@ export class View {
     // long-press eyedropper: disabled while a selection is shown or a selection
     // tool is active (holds there mean marquee/transform, not colour picking)
     const pickAllowed = !selOn && tool !== "select" && tool !== "lasso" && tool !== "wand";
-    if (pickAllowed && pp.x >= 0 && pp.y >= 0 && pp.x < doc.w && pp.y < doc.h) {
+    const longAction = this.session.prefs.gLongPress;
+    const longWantsDoc = longAction === "pickColor" || longAction === "zoomIn" || longAction === "zoomOut";
+    if ((!longWantsDoc || pickAllowed) && pp.x >= 0 && pp.y >= 0 && pp.x < doc.w && pp.y < doc.h) {
       this.pickAnchor = [pp.x, pp.y];
       this.longT = window.setTimeout(() => {
         this.longT = null;
-        this.enterPickMode(pp.x, pp.y);
-      }, 300);
+        if (longAction === "pickColor") this.enterPickMode(pp.x, pp.y);
+        else if (longAction !== "none") this.session.runGestureAction(longAction, { x: pt.x, y: pt.y });
+      }, this.session.prefs.longPressMs);
     }
     // grab a transform handle (rotate / scale) of an existing selection frame
     if (selOn && this.tryStartXf(pt)) return;
@@ -1171,9 +1174,11 @@ export class View {
         this.panLast = null;
         this.gestureMoved = false;
         this.session.repaint();
-        if (armed && this.onFramePreview) {
-          if (this.session.prefs.haptic) bridge.vibrate(24); // tactile confirmation before the sheet opens
-          this.onFramePreview();
+        if (armed) {
+          const fourAct = this.session.prefs.gFourFinger;
+          if (this.session.prefs.haptic) bridge.vibrate(24); // tactile confirmation before it fires
+          if (fourAct === "framePreview" && this.onFramePreview) this.onFramePreview();
+          else this.session.runGestureAction(fourAct, { x: pt.x, y: pt.y });
         }
         return;
       }
@@ -1190,7 +1195,8 @@ export class View {
         if (this.twoTapPt && now - this.twoTap < this.session.prefs.doubleTapMs && Math.hypot(mid.x - this.twoTapPt.x, mid.y - this.twoTapPt.y) < 80) {
           this.twoTap = 0;
           this.twoTapPt = null;
-          if (this.session.history.canRedo()) this.session.redo(); else this.session.repaint();
+          this.session.runGestureAction(this.session.prefs.gTwoFingerDoubleTap, { x: mid.x, y: mid.y });
+          this.session.repaint();
         } else {
           this.twoTap = now;
           this.twoTapPt = mid;
@@ -1210,19 +1216,24 @@ export class View {
         this.tapPt = pt;
         const ppc = this.screenToPixel(pt.x, pt.y);
         const overDoc = ppc.x >= 0 && ppc.y >= 0 && ppc.x < this.session.doc.w && ppc.y < this.session.doc.h;
-        if (this.tapN === 2 && !overDoc && !this.session.prefs.marginUndo) {
-          // margin-undo disabled: swallow the double tap
-          this.tapN = 0;
-          this.session.repaint();
-          return;
-        }
         if (this.tapN === 2 && !overDoc) {
-          // double-tap on the canvas margin -> quick undo
+          // double-tap on the canvas margin -> whatever the user mapped
           this.tapN = 0;
           if (this.stroke) { this.stroke.cancel(); this.stroke = null; }
           if (this.selDrag) this.endSelDrag();
           this.panLast = null; this.gestureMoved = false;
-          if (this.session.history.canUndo()) this.session.undo(); else this.session.repaint();
+          this.session.runGestureAction(this.session.prefs.gDoubleTapMargin, { x: pt.x, y: pt.y });
+          this.session.repaint();
+          return;
+        }
+        if (this.tapN === 2 && overDoc && this.session.prefs.gDoubleTapCanvas !== "none") {
+          // double-tap on the canvas itself (only when it is mapped to something;
+          // otherwise the second tap is swallowed so a triple tap can follow)
+          this.tapN = 0;
+          if (this.stroke) { this.stroke.cancel(); this.stroke = null; }
+          this.panLast = null; this.gestureMoved = false;
+          this.session.runGestureAction(this.session.prefs.gDoubleTapCanvas, { x: pt.x, y: pt.y });
+          this.session.repaint();
           return;
         }
         if (this.tapN === 3) {
@@ -1238,7 +1249,7 @@ export class View {
             this.lastTapWasDraw = false;
             this.lastTapChanged = false;
             this.session.repaint();
-            this.zoomAt(this.zoom * this.session.prefs.tripleTapZoom, pt.x, pt.y);
+            this.session.runGestureAction(this.session.prefs.gTripleTap, { x: pt.x, y: pt.y });
           } else this.session.repaint();
           return;
         }
