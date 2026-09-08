@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useRef, useState } from "react";
 import { SESSION } from "./singleton";
 import { makeT } from "./i18n";
 import type { Lang } from "./i18n";
@@ -30,7 +30,6 @@ export function PreviewBox() {
   const ensurePos = () => {
     if (!posRef.current) {
       const r = parentRect();
-      const s = sizeRef.current;
       const avail = Math.max(90, Math.min(r.width - 30, r.height - 40));
       if (sizeRef.current > avail) { sizeRef.current = avail; setSize(avail); }
       posRef.current = { x: Math.max(4, r.width - sizeRef.current - 14), y: Math.max(52, Math.min(r.height - sizeRef.current - 20, 62)) };
@@ -114,7 +113,7 @@ export function PreviewBox() {
           <canvas ref={cvRef} style={{ width: s, height: s, display: "block" }} />
           <div className="prev-grab"
             onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); } catch { /* ignore */ } const p = posRef.current ?? { x: 0, y: 10 }; grabStart.current = { px: e.clientX, py: e.clientY, lx: p.x, ly: p.y }; }}
-            onPointerMove={(e) => { const g = grabStart.current; if (!g) return; const r = parentRect(); const p = { x: g.lx + (e.clientX - g.px), y: g.ly + (e.clientY - g.py) }; posRef.current = p; setPos(p); clampPos(sizeRef.current); }}
+            onPointerMove={(e) => { const g = grabStart.current; if (!g) return; const p = { x: g.lx + (e.clientX - g.px), y: g.ly + (e.clientY - g.py) }; posRef.current = p; setPos(p); clampPos(sizeRef.current); }}
             onPointerUp={(e) => { try { (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId); } catch { /* ignore */ } grabStart.current = null; }}
             onPointerCancel={() => { grabStart.current = null; }}
           />

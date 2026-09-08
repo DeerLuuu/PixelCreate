@@ -1,4 +1,9 @@
-// Built-in preset palettes for quick loading
+// Preset palette packs — single source of truth for both the palette UI and
+// the default document palette. Data-layer module: no React/DOM imports, only
+// a one-way dependency on engine colour helpers.
+import { hexToRgba } from "../engine/color";
+import type { RGBA } from "../engine/types";
+
 export interface PalettePack {
   id: string;
   nameZh: string;
@@ -51,3 +56,9 @@ export const PALETTE_PACKS: PalettePack[] = [
     colors: ["#000000", "#1a1a1a", "#333333", "#4d4d4d", "#666666", "#808080", "#999999", "#b3b3b3", "#cccccc", "#e6e6e6", "#ffffff"],
   },
 ];
+
+/** Default document palette (the "default" pack, as RGBA). */
+export function defaultPalette(): RGBA[] {
+  const def = PALETTE_PACKS[0];
+  return def.colors.map((h) => hexToRgba(h));
+}

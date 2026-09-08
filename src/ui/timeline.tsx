@@ -6,6 +6,7 @@ import type { Snapshot } from "../app/session";
 import { Btn, Icon, useLandscape } from "./base";
 import { HoldAdjust } from "./hold";
 import { BLEND_MODES } from "../engine/types";
+import * as bridge from "../io/bridge";
 export function TimelineBar({ t, snap, onFrameDlg }: { t: ReturnType<typeof makeT>; snap: Snapshot; onFrameDlg: (fi: number) => void }) {
   const HEAD = 20, ROW = 24, CELL = 30, LEFT = 96;
   const land = useLandscape();
@@ -91,6 +92,76 @@ export function TimelineBar({ t, snap, onFrameDlg }: { t: ReturnType<typeof make
     SESSION.setFrame(fi);
   };
 
+  // drag a layer row vertically to reorder layers (long-press then drag)
+  const [ldl, setLdl] = useState<{ from: number; to: number; dy: number } | null>(null);
+  const lgRef = useRef<{ from: number; x: number; y: number; armed: boolean; moved: boolean; dead: boolean; captured?: boolean } | null>(null);
+  const ltmRef = useRef<number | null>(null);
+  const clearLtm = () => { if (ltmRef.current !== null) { window.clearTimeout(ltmRef.current); ltmRef.current = null; } };
+  const resetL = () => { clearLtm(); lgRef.current = null; setLdl(null); };
+  const layerDropAt = (e: React.PointerEvent, from: number): number => {
+    const els = Array.from(document.querySelectorAll(".ase-lcell")) as HTMLElement[];
+    let c = 0;
+    for (let i = 0; i < els.length; i++) {
+      if (i === from) continue;
+      const r = els[i].getBoundingClientRect();
+      if (r.top + r.height / 2 < e.clientY) c++;
+    }
+    return Math.max(0, Math.min(layers.length - 1, c));
+  };
+  const layDown = (li: number) => (e: React.PointerEvent<HTMLDivElement>) => {
+    const el = e.target as HTMLElement;
+    // the eye / lock buttons keep their own tap behaviour
+    if (el.closest(".eye") || el.closest(".lock")) return;
+    clearLtm();
+    lgRef.current = { from: li, x: e.clientX, y: e.clientY, armed: false, moved: false, dead: false, captured: false };
+    ltmRef.current = window.setTimeout(() => {
+      ltmRef.current = null;
+      const g = lgRef.current;
+      if (!g || g.dead) return;
+      SESSION.setLayer(g.from);
+      g.armed = true;
+      setLdl({ from: g.from, to: g.from, dy: 0 });
+    }, 300);
+  };
+  const layMove = (li: number) => (e: React.PointerEvent<HTMLDivElement>) => {
+    const g = lgRef.current;
+    if (!g || g.dead || li !== g.from) return;
+    const dx = e.clientX - g.x, dy = e.clientY - g.y;
+    if (!g.armed) {
+      // moved before the hold finished: the matrix scroll takes over
+      if (Math.hypot(dx, dy) > 10) { clearLtm(); g.dead = true; lgRef.current = null; }
+      return;
+    }
+    if (!g.captured) {
+      try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* ignore */ }
+      g.captured = true;
+    }
+    e.preventDefault();
+    if (Math.abs(dx) + Math.abs(dy) > 3) g.moved = true;
+    setLdl({ from: g.from, to: layerDropAt(e, g.from), dy });
+  };
+  const layUp = (li: number) => (e: React.PointerEvent<HTMLDivElement>) => {
+    const g = lgRef.current;
+    if (!g) return;
+    clearLtm();
+    lgRef.current = null;
+    try { e.currentTarget.releasePointerCapture(e.pointerId); } catch { /* ignore */ }
+    if (g.dead || li !== g.from) { setLdl(null); return; }
+    if (g.armed) {
+      if (!g.moved) { setLdl(null); return; }
+      const to = layerDropAt(e, g.from);
+      setLdl(null);
+      SESSION.layerMoveTo(g.from, to);
+      return;
+    }
+    setLdl(null);
+    SESSION.setLayer(li);
+  };
+  const layerDrop = (() => {
+    if (!ldl || ldl.to === ldl.from) return -1;
+    return ldl.to < ldl.from ? ldl.to : (ldl.to + 1 < layers.length ? ldl.to + 1 : -1);
+  })();
+
   // drag directly on the cel area to pan the matrix (frame numbers & left column keep their own logic)
   const panRef = useRef<{ x: number; y: number; sl: number; st: number; moved: boolean } | null>(null);
   const panT = useRef(0);
@@ -159,8 +230,6 @@ export function TimelineBar({ t, snap, onFrameDlg }: { t: ReturnType<typeof make
   })();
   const dragFrom = dl ? dl.from : -1;
 
-  const cols = frames.length + 1;
-  const rowsN = layers.length + 1;
   const gtc = LEFT + "px" + Array.from({ length: frames.length }, () => " " + CELL + "px").join("");
   // landscape: enlarge every layer row so the matrix fills the footer height
   let rowPx = ROW;
@@ -177,12 +246,13 @@ export function TimelineBar({ t, snap, onFrameDlg }: { t: ReturnType<typeof make
       <div className="tlctrl">
         <Btn icon="i-prev" onClick={() => SESSION.setFrame(snap.frameIdx - 1)} title={t("framePrev")} />
         <Btn icon={snap.playing ? "i-pause" : "i-play"} onClick={() => SESSION.togglePlay()} title={t(snap.playing ? "pause" : "play")} />
-        <Btn icon="i-loop" onClick={() => SESSION.toggleLoop()} active={snap.loop} title={t("loop")} />
+        <Btn icon="i-loop" onClick={() => { const m = SESSION.cycleLoopMode(); bridge.toast(t("loop." + m)); }}
+          active={snap.loopMode !== "once"} title={t("loop") + " · " + t("loop." + snap.loopMode)} />
         <Btn icon="i-next" onClick={() => SESSION.setFrame(snap.frameIdx + 1)} title={t("frameNext")} />
         <Btn icon="i-plus" onClick={() => SESSION.frameAdd()} title={t("frameAdd")} />
         <Btn icon="i-dupe" onClick={() => SESSION.frameDuplicate()} title={t("frameDupe")} />
         <Btn icon="i-minus" onClick={() => SESSION.frameDelete()} title={t("frameDel")} />
-        <Btn icon="i-onion" onClick={() => SESSION.cycleOnion()} active={snap.onion > 0} title={t("onion")} />
+        <Btn icon="i-onion" onClick={() => SESSION.toggleOnion()} active={snap.onionOn} title={t("onion")} guide="btn-onion" />
 
       </div>
       <div ref={scrollRef} className="ase-scroll" style={{ gridTemplateColumns: gtc, gridTemplateRows: gtr, maxHeight: SESSION.prefs.tlH }}
@@ -202,19 +272,25 @@ export function TimelineBar({ t, snap, onFrameDlg }: { t: ReturnType<typeof make
             </div>
           );
         })}
-        {/* layer rows */}
-        {layers.map((L, li) => (
-          <div key={"lh" + L.id} className={"ase-cell ase-lcell" + (li === snap.layerIdx ? " on" : "")} style={{ gridColumn: 1, gridRow: li + 2 }} onClick={() => SESSION.setLayer(li)}>
-            <button className="mini eye" title={L.visible ? t("layerHide") : t("layerShow")} onClick={(e) => { e.stopPropagation(); SESSION.toggleLayerVisible(li); }}>
-              <Icon id={L.visible ? "i-eye" : "i-eyeoff"} size={12} />
-            </button>
-            <button className="mini lock" title={L.locked ? t("lock") : t("unlock")} onClick={(e) => { e.stopPropagation(); SESSION.toggleLayerLock(li); }}>
-              <Icon id={L.locked ? "i-lock" : "i-unlock"} size={12} />
-            </button>
-            <button className="lname" title={L.name} onClick={(e) => { e.stopPropagation(); SESSION.setLayer(li); }}>{L.name}</button>
-
-          </div>
-        ))}
+        {/* layer rows (long-press + drag vertically to reorder) */}
+        {layers.map((L, li) => {
+          const isDrag = ldl !== null && ldl.from === li;
+          const isDrop = layerDrop === li;
+          return (
+            <div key={"lh" + L.id}
+              className={"ase-cell ase-lcell" + (li === snap.layerIdx ? " on" : "") + (isDrag ? " dragging" : "") + (isDrop ? " drop" : "")}
+              style={{ gridColumn: 1, gridRow: li + 2, transform: isDrag && ldl ? "translateY(" + ldl.dy + "px)" : undefined }}
+              onPointerDown={layDown(li)} onPointerMove={layMove(li)} onPointerUp={layUp(li)} onPointerCancel={resetL}>
+              <button className="mini eye" title={L.visible ? t("layerHide") : t("layerShow")} onClick={(e) => { e.stopPropagation(); SESSION.toggleLayerVisible(li); }}>
+                <Icon id={L.visible ? "i-eye" : "i-eyeoff"} size={12} />
+              </button>
+              <button className="mini lock" title={L.locked ? t("lock") : t("unlock")} onClick={(e) => { e.stopPropagation(); SESSION.toggleLayerLock(li); }}>
+                <Icon id={L.locked ? "i-lock" : "i-unlock"} size={12} />
+              </button>
+              <button className="lname" title={L.name} onClick={(e) => { e.stopPropagation(); SESSION.setLayer(li); }}>{L.name}</button>
+            </div>
+          );
+        })}
         {/* cel cells */}
         {layers.map((L, li) =>
           frames.map((f, fi) => {

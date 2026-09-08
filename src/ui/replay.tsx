@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { SESSION } from "./singleton";
 import type { Snapshot } from "../app/session";
 import { makeT } from "./i18n";
@@ -157,9 +157,4 @@ export function ReplayOverlay({
       </div>
     </div>
   );
-}
-
-/** true when the history contains at least one recorded step */
-export function canReplay(): boolean {
-  return SESSION.history.list().labels.length > 0;
 }

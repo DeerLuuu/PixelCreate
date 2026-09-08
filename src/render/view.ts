@@ -1,15 +1,12 @@
 // Interactive viewport: composite drawing, pan/zoom gestures, tool strokes.
 import type { Doc } from "../engine/doc";
 import { Sel } from "../engine/doc";
-import type { RGBA } from "../engine/types";
-import { cssColor, hexToRgba } from "../engine/color";
 import * as comp from "./compositor";
 import * as bridge from "../io/bridge";
-import { rgbaToHex } from "../engine/color";
 import { Stroke } from "../tools/stroke";
 import { isSymTool, SYM_ANGLES } from "../tools/registry";
 import { lineCells, brushStamp } from "../engine/paint";
-import { selOps, lassoFill, beginMove, xformSelection, xformFloating, type MoveState } from "../tools/select";
+import { selOps, lassoFill, beginMove, xformFloating, type MoveState } from "../tools/select";
 import type { Session } from "../app/session";
 import { clamp } from "../engine/types";
 
@@ -21,6 +18,12 @@ interface PxPoint {
 /** lock / unlock glyphs, matching the app's i-lock / i-unlock SVG symbols (24x24) */
 const LOCK_D = "M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z";
 const UNLOCK_D = "M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6h2c0-1.66 1.34-3 3-3s3 1.34 3 3v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm0 12H6V10h12v10z";
+
+/** a finger must travel this far (screen px, any direction) from its own
+ *  touchdown before it counts as "sliding"; two such fingers while >=4 are
+ *  down = the all-frames preview gesture. Big enough to ignore the jitter of
+ *  four fingers settling, small enough that any deliberate slide arms it. */
+const FOUR_MOVE_PX = 15;
 
 /** Selection scale follows Aseprite's transform: free (non-integer) scale
  *  factor, anchored at the handle opposite the one being dragged, rasterised
@@ -80,8 +83,6 @@ export class View {
   private pickAnchor: [number, number] | null = null;
   private pickMode = false;
   private pickLast: [number, number] | null = null;
-  private lastTap = 0;
-  private lastTapPt: PxPoint | null = null;
   /** has the current stroke left its starting cell? (false = pure tap) */
   private gestureMoved = false;
   private gestureStartPx: PxPoint | null = null;
@@ -91,6 +92,22 @@ export class View {
   private lastTapChanged = false;
   /** the gesture involved 2+ fingers (two-finger double-tap -> redo) */
   private gestureHadTwo = false;
+  /** four-finger gesture tracking (opens the all-frames preview) */
+  private fourSeen = false;
+  /** each finger's screen position at its own touchdown. Whether a finger is
+   *  "sliding" is measured from ITS own start, so fingers that land at
+   *  different times — or lift mid-gesture — never skew the result. */
+  private fourStart = new Map<number, { x: number; y: number }>();
+  /** latched as soon as four fingers are down and at least two of them are
+   *  sliding (each past FOUR_MOVE_PX in any direction): the preview fires on
+   *  the last lift even if the hand slid back or stopped before lifting */
+  private fourArmed = false;
+  /** viewport state when the first finger landed. Restored the instant a
+   *  four-finger contact is confirmed so jitter while fingers 2-4 land can
+   *  never zoom/pan the canvas underneath the gesture. */
+  private fourView0: { ox: number; oy: number; zoom: number } | null = null;
+  /** invoked after a clean four-finger gesture (wired up by the app shell) */
+  onFramePreview: (() => void) | null = null;
   /** the pinch actually zoomed (else it was a two-finger tap) */
   private pinchZoomed = false;
   /** midpoint of a two-finger tap, for double-tap detection */
@@ -268,10 +285,17 @@ export class View {
     const s = this.session;
     const doc = s.doc;
     const fi = s.curFrame();
-    const key = fi + "|" + doc.layers.map((l) => (l.visible ? 1 : 0) + ":" + l.opacity + ":" + l.blend + (doc.bg ? "B" : "T")).join() + "|on" + s.prefs.onion;
+    const p = s.prefs;
+    const onionKey = p.onionOn ? "1:" + p.onionBefore + ":" + p.onionAfter + ":" + p.onionAlpha + ":" + (p.onionTint ? 1 : 0) : "0";
+    const key = fi + "|" + doc.layers.map((l) => (l.visible ? 1 : 0) + ":" + l.opacity + ":" + l.blend + (doc.bg ? "B" : "T")).join() + "|on" + onionKey;
     if (!force && this.composite && this.compKey === key) return;
     this.compKey = key;
-    const onion = { mode: s.prefs.onion, max: 3 } as const;
+    const onion = {
+      before: p.onionOn ? p.onionBefore : 0,
+      after: p.onionOn ? p.onionAfter : 0,
+      alpha: p.onionAlpha / 100,
+      tint: p.onionTint,
+    };
     this.composite = comp.composeFrameWithOnion(doc, fi, onion);
   }
 
@@ -709,20 +733,71 @@ export class View {
     } catch { /* ignore */ }
     const pt = this.evPt(e);
     this.pointers.set(e.pointerId, pt);
+    // remember each finger's touchdown point — a finger counts as "sliding"
+    // from its OWN start — and freeze the view state as soon as the first
+    // finger lands so a confirmed 4-finger gesture can restore it
+    if (!this.fourStart.has(e.pointerId)) this.fourStart.set(e.pointerId, { x: pt.x, y: pt.y });
+    if (this.pointers.size === 1) this.fourView0 = { ox: this.ox, oy: this.oy, zoom: this.zoom };
     this.cancelPickTimer();
     this.pickMode = false;
+    if (this.pointers.size >= 4) {
+      // a four-finger gesture is never a two-finger tap sequence. Reset any
+      // pinch/pan state built up while fingers 2-4 were landing: setup jitter
+      // must never latch pinchZoomed (it would silently block the preview).
+      this.fourSeen = true;
+      this.fourArmed = false;
+      this.pinchBase = null;
+      this.pinchZoomed = false;
+      this.gestureHadTwo = false;
+      this.twoTap = 0;
+      this.twoTapPt = null;
+      this.twoTapMid = null;
+      this.panLast = null;
+      if (this.stroke) { this.stroke.cancel(); this.stroke = null; }
+      if (this.selDrag) {
+        if (this.selDrag.kind === "move" && this.selDrag.cut) this.endSelDrag(false);
+        else this.selDrag = null;
+      }
+      this.gestureMoved = false;
+      // undo any zoom/pan the first fingers caused while landing: from the
+      // 4th finger down the canvas must stay perfectly still mid-swipe
+      if (this.fourView0 &&
+        (this.fourView0.ox !== this.ox || this.fourView0.oy !== this.oy || this.fourView0.zoom !== this.zoom)) {
+        this.ox = this.fourView0.ox;
+        this.oy = this.fourView0.oy;
+        this.zoom = this.fourView0.zoom;
+        this.clampView();
+        this.refresh(false);
+      }
+      return;
+    }
+    // a third contact is no longer a two-finger pinch: in practice it means
+    // the hand is going for the 4-finger swipe, so anything the first two
+    // fingers started is dropped and the gesture waits quietly for the 4th
+    if (this.pointers.size >= 3) {
+      if (this.stroke) { this.stroke.cancel(); this.stroke = null; }
+      if (this.selDrag) {
+        if (this.selDrag.kind === "move" && this.selDrag.cut) this.endSelDrag(false);
+        else this.selDrag = null;
+      }
+      this.panLast = null;
+      this.gestureMoved = false;
+      this.pinchBase = null;
+      this.pinchZoomed = false;
+      this.gestureHadTwo = false;
+      this.twoTap = 0;
+      this.twoTapPt = null;
+      this.twoTapMid = null;
+      return;
+    }
     if (this.pointers.size >= 2) {
       if (this.stroke) {
-        // second finger = pinch zoom: a stroke that only placed its start dot
-        // must be rolled back, or every pinch would leave a stray pixel
-        if (this.gestureMoved) {
-          const rec = this.stroke.commit(this.session.history, this.labelFor(this.stroke.kind));
-          this.session.repaint();
-          if (rec) this.session.changed();
-        } else {
-          this.stroke.cancel();
-          this.session.repaint();
-        }
+        // a second contact means navigation (pinch / multi-finger gesture),
+        // never drawing: roll the half-drawn stroke back entirely instead of
+        // committing it, or every pinch / 4-finger swipe would leave the
+        // stroke started by the first finger behind as stray pixels
+        this.stroke.cancel();
+        this.session.repaint();
         this.stroke = null;
         this.gestureMoved = false;
       }
@@ -756,8 +831,6 @@ export class View {
       if (!this.session.symLocked) {
         const t = this.symHit(pt);
         if (t) {
-          this.lastTap = 0;
-          this.lastTapPt = null;
           this.cursor = null;
           this.symTarget = t;
           this.drawOverlay();
@@ -819,7 +892,7 @@ export class View {
     this.gestureStartPx = pp;
     try {
       this.stroke = new Stroke(doc, s.curLayer(), s.curFrame(), tool as never, s.brush(), s.layerLocked(), s.sym, s.shapeSides, s.shapeFill,
-        s.symOx, s.symOy, s.symAng, s.symFour);
+        s.symOx, s.symOy, s.symAng, s.symFour, s.prefs.bucketGlobal);
     } catch {
       this.stroke = null;
       return;
@@ -856,6 +929,23 @@ export class View {
       this.magCenter = { x: ppx.x, y: ppx.y };
       this.samplePickCell(ppx.x, ppx.y, false);
       this.drawOverlay();
+      return;
+    }
+    // four-finger gesture: once a contact ever reached 4 fingers it stays a
+    // frame-preview gesture until every finger lifts — never pan/zoom. It
+    // keeps watching while >=2 fingers stay down, so losing one finger
+    // mid-gesture no longer aborts it. It arms as soon as at least TWO of the
+    // fingers are sliding (each moved > FOUR_MOVE_PX from its own touchdown,
+    // in ANY direction — no upward swipe required): the preview fires on the
+    // last lift. Per-finger travel means fingers that land late or lift early
+    // never weaken the detection.
+    if (this.fourSeen && this.pointers.size >= 2) {
+      let moving = 0;
+      for (const [pid, p] of this.pointers) {
+        const s = this.fourStart.get(pid);
+        if (s && Math.hypot(p.x - s.x, p.y - s.y) > FOUR_MOVE_PX) moving++;
+      }
+      if (moving >= 2) this.fourArmed = true;
       return;
     }
     // pinch
@@ -972,9 +1062,43 @@ export class View {
       const hadTwo = this.gestureHadTwo, pinchZoomed = this.pinchZoomed;
       this.gestureHadTwo = false;
       this.pinchZoomed = false;
+      if (this.fourSeen) {
+        // four-finger gesture: it opened the all-frames preview as soon as
+        // four fingers were down with >=2 of them sliding; the preview opens
+        // when the last finger lifts. Anything else is swallowed so it can
+        // never redo/tap/paint.
+        this.fourSeen = false;
+        this.pinchBase = null;
+        this.twoTap = 0;
+        this.twoTapPt = null;
+        const armed = this.fourArmed;
+        this.fourArmed = false;
+        this.fourStart.clear();
+        this.fourView0 = null;
+        if (this.stroke) { this.stroke.cancel(); this.stroke = null; }
+        if (this.selDrag) {
+          if (this.selDrag.kind === "move" && this.selDrag.cut) this.endSelDrag(false);
+          else this.selDrag = null;
+        }
+        this.panLast = null;
+        this.gestureMoved = false;
+        this.session.repaint();
+        if (armed && this.onFramePreview) {
+          bridge.vibrate(24); // tactile confirmation before the sheet opens
+          this.onFramePreview();
+        }
+        return;
+      }
       if (hadTwo && !pinchZoomed && !this.stroke && !this.selDrag && !this.xf && this.twoTapMid) {
         const mid = this.twoTapMid;
         this.twoTapMid = null;
+        // the redo shortcut only fires outside the canvas: two-finger double
+        // taps over the artwork must never redo (too easy to hit while drawing)
+        const mpp = this.screenToPixel(mid.x, mid.y);
+        const midOverDoc = mpp.x >= 0 && mpp.y >= 0 && mpp.x < this.session.doc.w && mpp.y < this.session.doc.h;
+        this.gestureMoved = false;
+        this.panLast = null;
+        if (midOverDoc) { this.twoTap = 0; this.twoTapPt = null; return; }
         if (this.twoTapPt && now - this.twoTap < 420 && Math.hypot(mid.x - this.twoTapPt.x, mid.y - this.twoTapPt.y) < 80) {
           this.twoTap = 0;
           this.twoTapPt = null;
@@ -983,8 +1107,6 @@ export class View {
           this.twoTap = now;
           this.twoTapPt = mid;
         }
-        this.gestureMoved = false;
-        this.panLast = null;
         return;
       }
       const secondTapMoved = this.stroke ? this.gestureMoved : false;
@@ -1006,31 +1128,31 @@ export class View {
           if (this.stroke) { this.stroke.cancel(); this.stroke = null; }
           if (this.selDrag) this.endSelDrag();
           this.panLast = null; this.gestureMoved = false;
-          this.lastTap = 0; this.lastTapPt = null;
           if (this.session.history.canUndo()) this.session.undo(); else this.session.repaint();
           return;
         }
         if (this.tapN === 3) {
-          // triple-tap on the doc -> zoom (keep it clean: no stray tap dots)
+          // triple-tap on the doc -> zoom. Roll back the single swallowed tap
+          // dot (if there was one) so zooming leaves no stray pixel — but never
+          // undo anything the user painted before this gesture.
           this.tapN = 0;
           if (this.stroke) { this.stroke.cancel(); this.stroke = null; }
           if (this.selDrag) this.endSelDrag();
           this.panLast = null; this.gestureMoved = false;
-          this.lastTap = 0; this.lastTapPt = null;
           if (overDoc) {
-            if (this.session.history.canUndo()) this.session.undo();
+            if (this.lastTapWasDraw && this.lastTapChanged && this.session.history.canUndo()) this.session.undo();
+            this.lastTapWasDraw = false;
+            this.lastTapChanged = false;
             this.session.repaint();
             this.zoomAt(this.zoom * 2, pt.x, pt.y);
           } else this.session.repaint();
           return;
         }
         if (this.tapN === 2 && overDoc) {
-          // clean second tap over the doc: swallow it, wait for a possible 3rd
+          // second tap over the doc: swallow it and wait for a possible third
+          // tap (zoom). No undo here — undo belongs to the canvas margin only.
           if (this.stroke) { this.stroke.cancel(); this.stroke = null; }
-          if (this.lastTapWasDraw && this.lastTapChanged && this.session.history.canUndo()) this.session.undo();
-          else this.session.repaint();
           this.gestureMoved = false; this.panLast = null;
-          this.lastTapWasDraw = false; this.lastTapChanged = false;
           this.session.repaint();
           return;
         }
@@ -1059,8 +1181,6 @@ export class View {
       this.gestureMoved = false;
       this.panLast = null;
       if (this.selDrag) this.endSelDrag();
-      this.lastTap = now;
-      this.lastTapPt = pt;
     }
   }
 
@@ -1099,6 +1219,12 @@ export class View {
     this.gestureHadTwo = false;
     this.pinchZoomed = false;
     this.twoTapMid = null;
+    this.twoTap = 0;
+    this.twoTapPt = null;
+    this.fourSeen = false;
+    this.fourArmed = false;
+    this.fourView0 = null;
+    this.fourStart.clear();
     this.mag = false;
     this.magCenter = null;
     if (this.symTarget) this.symTarget = null;
@@ -1394,7 +1520,6 @@ export class View {
       if (lastp[0] === pp.x && lastp[1] === pp.y) return;
       g.moved = true;
       // keep path contiguous via line cells
-      const self = this;
       lineCells(lastp[0], lastp[1], pp.x, pp.y, (x, y) => {
         const lp = g.pts![g.pts!.length - 1];
         if (lp[0] !== x || lp[1] !== y) {
@@ -1484,8 +1609,4 @@ export class View {
     this.session.changed();
   }
 
-  // quick color helper (export convenience)
-  static hexToRgbaStatic(hex: string): RGBA {
-    return hexToRgba(hex);
-  }
 }

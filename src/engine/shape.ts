@@ -20,10 +20,6 @@ export function ellipseOutline(
   y1 = y0 - b1;
   a = 8 * a * a;
   b1 = 8 * b * b;
-  const initialY0 = y0;
-  const initialY1 = y1;
-  const initialX0 = x0;
-  const initialX1 = x1;
   do {
     emit(x1, y0); emit(x0, y0);
     emit(x0, y1); emit(x1, y1);
@@ -56,10 +52,6 @@ export function ellipseFill(
   y1 = y0 - b1;
   a = 8 * a * a;
   b1 = 8 * b * b;
-  const initialY0 = y0;
-  const initialY1 = y1;
-  const initialX0 = x0;
-  const initialX1 = x1;
   do {
     row(x0, y0, x1); row(x0, y1, x1);
     e2 = 2 * err;

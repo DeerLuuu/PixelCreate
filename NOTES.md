@@ -1,29 +1,43 @@
 # PixelCraft 工程状态速记（会话压缩用）
 
-## 位置与构建
+## 位置与构建（2026-09 起仓库自足，不再依赖 pc2）
 - 源: /storage/emulated/0/Download/ds文件夹/pixelcraft/src（TS+React18）
-- 打包: pc2 build = /data/data/com.dsharnessmobile.shell/files/home/pc2/build.sh（拷贝 src→tsc→rollup→写回 pixelcraft/app2/www）
-- 类型检查: cd pc2 && node node_modules/typescript/bin/tsc -p tsconfig.json --noEmit（须先把 pixelcraft/src 拷到 pc2/src）
-- 浏览器测试: node toolchain/devserver.js（app2/www, 8090，已在后台运行）；PWA manifest 就绪
-- 无 git / 无备份：改大文件前先 cp 副本；勿用行号拼接脚本（曾致 App.tsx 截断事故，已重建）
+- 仓库根自带构建配置：package.json + tsconfig.json + scripts/
+  - npm install 后：`sh scripts/build-web.sh` → 产出 app2/www/js/app.js + css/style.css（esbuild IIFE bundle，含 react）
+  - `sh scripts/run-tests.sh` → tsc 编译 tests/ + 引擎回归（history/ops/move/sym）
+  - 类型检查：`node node_modules/typescript/bin/tsc -p tsconfig.json --noEmit`（noUnusedLocals 已开）
+  - node_modules 在 /sdcard（FUSE）装不上时，可在容器私有区镜像安装后回拷产物
+- APK 构建仍在宿主机真机跑 build.sh（aapt2/javac/d8/apksigner 离线链，需 java+android-sdk；本仓库只产出 web assets）
+- 浏览器测试: node toolchain/devserver.js（app2/www, 8090）
+- git 已有 77+ 提交，大改动可 git 回滚
 
 ## 关键架构
 - Session 单例(app/session.ts): doc/history/prefs/工具状态; changed() 驱动 React(useSyncExternalStore)
-- History(engine/history.ts): record(廉价逆向)/pushPixels(像素差分)/pushStruct(全档快照,复杂操作); undo/redo/jumpTo(按 index=undoStack.length); list()
-- View(render/view.ts) 接管画布手势; 撤销前 flushStroke
-- Shape: 统一栅格 inside+border 实现实心/空心; 图形工具=line/rect/ellipse/circle/polygon; shapeFill 切换空心; polygon sides 3-12
-- 浮动球(FloatingTools): 主球/选区球/取色球(pal) 多球互斥(68px)+径向圈净空(166); 旋转 clamp
-- 取色: 点击取色球→PalBalls 四分之一扇形色球(新几何: 每环cols按半径自适应防重叠)
-- UI 横屏≥768px 侧栏grid(railSwap 对调); 窄屏/横屏wrap
-- i18n zh/en 各约110键; tooltip 全局底部中心(长按450ms, title+desc)
+- History(engine/history.ts): record(廉价逆向)/pushPixels(像素差分)/pushStruct(全档快照,复杂操作); undo/redo/jumpTo; histMode steps(默认60)/full(完整回放)
+- View(render/view.ts) 接管画布手势; 撤销前 flushStroke; 双击语义：画布边距双击=undo、双指双击=redo、画布上双击吞点等第三击、三击=2×放大
+- Shape: 统一栅格 inside+border 实心/空心; Zingl 椭圆; 笔刷 brushStamp 镜像对称 (Aseprite 移植)
+- 浮动球(FloatingTools): 主球/选区球/取色球(pal 扇形)/魔法球; 多球互斥 68px; dock 停靠持久化
+- 调色板唯一数据源: src/data/palettes.ts（PALETTE_PACKS + defaultPalette），勿再在别处复制色表
+- UI 横屏≥768px 侧栏grid; i18n zh/en 同文件 src/ui/i18n.ts（键请保持 zh/en 同步，删除键先 grep）
 
 ## 近期已做
-撤销重做全量Command化、调色板入史、滑条合并、导入为图层入史、操作记录HistoryModal(可跳点)、图形重构、形状图标、画布/精灵尺寸(锚点+等比锁)、系统剪贴板、PWA、全屏按钮、多球/扇形取色、PreviewBox 缩小用双线性防丢细线。
-
-## 当前任务热点
-- PalBalls 扇形弹球间距调整(正在做：改为按半径自适应列数+环距34px 紧凑排布)
-- devserver 已跑旧源码? 改后需 build.sh 重建并硬刷新
+撤销重做全量Command化、历史双模式+全量回放(HistoryModal/ReplayOverlay)、魔法球FX(描边/投影/外发光/反色/灰度/居中/智能裁剪)、图形即拖即选区、网格(off/pixel/iso)、三击缩放+loupe 取色放大镜、帧预览按钮、dock 持久化、全局长按菜单拦截、画布钳制+边缘自动平移。
+代码整理（2026-09-08）：删除旧 vanilla 版 app/www 与 boot-test/eng-test 旧脚本；i18n 死键与未用导出清理；调色板数据合并到 src/data/palettes.ts；构建配置收进仓库；view/session 等未用导入/字段清理（tsc noUnusedLocals 0 错误）。
 
 ## 待办/已知缺口
-- app2 产物由 pc2 生成, 工作区无构建配置; 建议后续把 rollup 配置收进 pixelcraft/
-- Android APK 仍是旧 vanilla (app/www), 未切 React
+- APK 打包只能在宿主机（本仓库无 java/android-sdk）；AndroidManifest versionCode/versionName 与 changelog 需手动同步
+- view.ts(~1460)/session.ts(~1020)/App.tsx(~900) 仍偏大：手势/渲染、会话、UI 可继续拆
+- 无键盘快捷键、性能全量合成未做脏矩形（见 docs/COMPARISON.md 优先级）
+
+## 协作约定（给后续会话/AI 用）
+- **测试副本与输出不要每次删**：容器里的 `/root/pcbuild/app/src`、`app/tests` 用 `cp -r <repo>/src/. app/src/` 增量覆盖同步，`app/tests/.ts-out` 用 tsc 增量编译，**不要 `rm -rf`**。累积约 5 次同步后再清理一次（计数放在 `/root/pcbuild/.sync-count`），或用户明确要求时清理。
+- **版本号**：`1.0.x` 的第三段由用户决定，不要自行递增；小改动只递增第四段（`1.0.6.0 → 1.0.6.1`），且只在用户要求出包时才改；`versionCode` 为覆盖安装需要可内部递增。
+- **声明式优先**：设置项走 `src/app/settings.ts`，引导步骤走 `src/app/guide.ts`；新增功能 = 一条声明 + i18n 文案，界面/引擎自动适配。
+- **出包流程**：改源码 → tsc → 引擎/逻辑测试 → `app2/www` 重建（esbuild，注意仓库中文路径需在 ASCII 目录构建后回拷）→ `/root/pk/rebuild.py` 换 assets 并改写 AXML 版本 → apksigner 签名 → 解析包内 manifest 复核。
+- **引导的“真操作演示”约定**（`src/app/guide.ts` + `src/ui/App.tsx` 的 `guideActions`）：
+  - 真操作一般放 **before**（放在 `after` 的演示会被下一步的遮罩盖住，等于看不见）；只有需要在离开步骤后继续的才放 `after`（如四指步骤→真的打开帧预览）。
+  - 每个演示必须**自还原**，且还原前检查当前值是否仍是演示设置的值——用户或下一步改过就不动。
+  - 会盖住画面或改动内容的（设置/更新日志窗口、调色板、特效）用 `peek: true` 把遮罩调浅，或只逐个高亮而不实际应用。
+  - 点控件统一用 `simulateTap()`（从 `src/ui/guide.tsx` 导出），它派发 pointerdown/up/click，和真手指一致。
+  - 新增选择器后跑 `tests/guide-anchors.test.ts`：它静态扫描 `src/ui` 源码，确认引导里每个 `[data-guide="..."]` 锚点真实存在（没有浏览器也能防“步骤指向已改名的按钮”）。
+

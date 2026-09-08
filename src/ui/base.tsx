@@ -2,7 +2,6 @@ import React, { useEffect, useRef, useState, useSyncExternalStore } from "react"
 import { SESSION } from "./singleton";
 import type { Snapshot } from "../app/session";
 import { showTip, hideTip, subscribeTip } from "./tooltip";
-import type { ReactNode } from "react";
 export function useSession(): Snapshot {
   return useSyncExternalStore(
     (cb) => SESSION.subscribe(cb),
@@ -33,9 +32,11 @@ export function Icon({ id, size = 20 }: { id: string; size?: number }) {
 }
 
 export function Btn({
-  icon, label, onClick, active, danger, title, desc, className = "", noTip,
+  icon, label, onClick, active, danger, title, desc, className = "", noTip, guide,
 }: {
   icon?: string; label?: string; onClick: () => void; active?: boolean; danger?: boolean; title?: string; desc?: string; className?: string; noTip?: boolean;
+  /** anchor id for the onboarding guide (rendered as data-guide) */
+  guide?: string;
 }) {
   const cls = ["btn"];
   if (active) cls.push("active");
@@ -68,6 +69,7 @@ export function Btn({
       <button
         type="button"
         className={cls.join(" ")}
+        data-guide={guide}
         onClick={onClick}
         title={tipTitle}
         aria-label={tipTitle}

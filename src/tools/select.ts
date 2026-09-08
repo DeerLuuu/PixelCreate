@@ -42,10 +42,6 @@ function grabFn(doc: Doc, li: number, fi: number): Cel | null {
   return out;
 }
 
-export interface Rect {
-  x: number; y: number; w: number; h: number;
-}
-
 
 // ---- mask growth / shrink / wand / outline ----
 export function wandSelect(doc: Doc, li: number, fi: number, x: number, y: number, tol: number): void {
@@ -197,67 +193,6 @@ export function beginMove(doc: Doc, li: number, fi: number): MoveState | null {
   };
 }
 
-/**
- * Rasterise the grabbed selection content transformed around the centre of its
- * original bounding box: rotate by `angleRad`, scale by (sx, sy). Idempotent per
- * gesture step: each call restarts from the drag-start picture, cuts the content
- * out of its original spot, draws the transformed pixels and updates the mask.
- */
-export function xformSelection(
-  doc: Doc, li: number, fi: number, st: MoveState,
-  angleRad: number, sx: number, sy: number,
-): void {
-  const cel = doc.celAt(li, fi);
-  if (!cel) return;
-  const content = st.content;
-  const cw = content.w, ch = content.h;
-  const w = doc.w, h = doc.h;
-  // cut: back to the pre-drag picture, then clear the grabbed pixels
-  cel.data.set(st.before);
-  for (let y = 0; y < ch; y++) {
-    for (let x = 0; x < cw; x++) {
-      const si = content.idx(x, y);
-      if (content.data[si + 3] === 0) continue;
-      const gx = st.ox + x, gy = st.oy + y;
-      if (gx < 0 || gy < 0 || gx >= w || gy >= h) continue;
-      const di = cel.idx(gx, gy);
-      cel.data[di] = 0; cel.data[di + 1] = 0; cel.data[di + 2] = 0; cel.data[di + 3] = 0;
-    }
-  }
-  const c = Math.cos(angleRad), s = Math.sin(angleRad);
-  const hx = (cw / 2) * Math.max(0.02, sx), hy = (ch / 2) * Math.max(0.02, sy);
-  const cx = st.ox + cw / 2, cy = st.oy + ch / 2;
-  // integer destination bounds (with a little pad, clamped to the canvas)
-  const spanX = Math.abs(c * hx) + Math.abs(s * hy);
-  const spanY = Math.abs(s * hx) + Math.abs(c * hy);
-  const x0 = Math.max(0, Math.floor(cx - spanX - 1));
-  const y0 = Math.max(0, Math.floor(cy - spanY - 1));
-  const x1 = Math.min(w - 1, Math.ceil(cx + spanX + 1));
-  const y1 = Math.min(h - 1, Math.ceil(cy + spanY + 1));
-  if (!doc.sel) doc.sel = new Sel(w, h, false);
-  const m = doc.sel.mask;
-  m.fill(0);
-  if (x0 > x1 || y0 > y1) return;
-  for (let py = y0; py <= y1; py++) {
-    for (let px = x0; px <= x1; px++) {
-      const dx0 = px + 0.5 - cx, dy0 = py + 0.5 - cy;
-      // inverse: R(-a) then divide by scale (both around the centre)
-      const vx = (dx0 * c + dy0 * s) / Math.max(0.02, sx);
-      const vy = (-dx0 * s + dy0 * c) / Math.max(0.02, sy);
-      const sxx = cx + vx - st.ox;
-      const syy = cy + vy - st.oy;
-      if (sxx < 0 || syy < 0 || sxx >= cw || syy >= ch) continue;
-      const si = content.idx(sxx | 0, syy | 0);
-      if (content.data[si + 3] === 0) continue;
-      const di = cel.idx(px, py);
-      cel.data[di] = content.data[si];
-      cel.data[di + 1] = content.data[si + 1];
-      cel.data[di + 2] = content.data[si + 2];
-      cel.data[di + 3] = content.data[si + 3];
-      m[py * w + px] = 1;
-    }
-  }
-}
 
 
 /**
@@ -323,6 +258,14 @@ export const selOps = {
   selectAll(doc: Doc): void {
     if (!doc.sel) doc.sel = new Sel(doc.w, doc.h, false);
     doc.sel.fillAll();
+  },
+  /** invert the selection: an empty selection becomes "everything", an
+   *  existing one flips every pixel between selected and unselected */
+  invert(doc: Doc): void {
+    if (!doc.sel) doc.sel = new Sel(doc.w, doc.h, false);
+    const m = doc.sel.mask;
+    if (!doc.sel.hasAny()) { m.fill(1); return; }
+    for (let i = 0; i < m.length; i++) m[i] = m[i] ? 0 : 1;
   },
   clear(doc: Doc): void {
     if (doc.sel) doc.sel.clear();

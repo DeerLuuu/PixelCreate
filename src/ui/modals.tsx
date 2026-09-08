@@ -1,21 +1,20 @@
-import React, { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { SESSION } from "./singleton";
 import { makeT } from "./i18n";
-import type { Lang } from "./i18n";
+import { SETTING_GROUPS, settingsOfGroup, type SettingDef } from "../app/settings";
 import type { Snapshot } from "../app/session";
 import { Doc } from "../engine/doc";
 import { Cel } from "../engine/cel";
-import type { BlendMode } from "../engine/types";
-import { BLEND_MODES } from "../engine/types";
 import { hexToRgba, rgbaToHex, hexToRgba as hrgb, chipCss } from "../engine/color";
 import { HsvWheel, colorToHex6 } from "./HsvWheel";
 import { HoldAdjust } from "./hold";
-import { PALETTE_PACKS } from "./palettes";
+import { PALETTE_PACKS } from "../data/palettes";
 import { tryReadGif } from "../io/gifread";
 import * as project from "../io/project";
 import * as compose from "../render/compositor";
 import * as exporters from "../io/exporters";
 import * as bridge from "../io/bridge";
+import * as autosave from "../io/autosave";
 import { Btn, Icon, useSession, ScrubNum } from "./base";
 import type { RefImg } from "./refimg";
 
@@ -32,6 +31,7 @@ export async function saveProject(): Promise<void> {
   );
 }
 export function PalettePanel({ t, onClose }: { t: ReturnType<typeof makeT>; onClose: () => void }) {
+  useSession(); // keep the canvas/recent swatches live while the panel is open
   const doc = SESSION.doc;
   const active = SESSION.currentColor();
   const [hex, setHex] = useState(rgbaToHex(active));
@@ -44,6 +44,9 @@ export function PalettePanel({ t, onClose }: { t: ReturnType<typeof makeT>; onCl
   // long-press a swatch to recolor it and remap matching pixels across the sprite
   const [recolor, setRecolor] = useState<{ i: number } | null>(null);
   const [recColor, setRecColor] = useState("#ffffff");
+  // which colour source the grid shows: the document palette, every colour
+  // used on the canvas, or the most recently used ones
+  const [palMode, setPalMode] = useState<"palette" | "doc" | "recent">("palette");
   const longRef = useRef<{ i: number; t: number } | null>(null);
   const skipRef = useRef(false);
   return (
@@ -69,6 +72,12 @@ export function PalettePanel({ t, onClose }: { t: ReturnType<typeof makeT>; onCl
             </button>
           ))}
         </div>
+        <div className="chips palmodes">
+          <button className={"chip" + (palMode === "palette" ? " on" : "")} data-guide="pal-mode-palette" onClick={() => setPalMode("palette")}>{t("palModePalette")}</button>
+          <button className={"chip" + (palMode === "doc" ? " on" : "")} data-guide="pal-mode-doc" onClick={() => setPalMode("doc")}>{t("palModeDoc")}</button>
+          <button className={"chip" + (palMode === "recent" ? " on" : "")} data-guide="pal-mode-recent" onClick={() => setPalMode("recent")}>{t("palModeRecent")}</button>
+        </div>
+        {palMode === "palette" ? (
         <div className="palgrid">
           {doc.palette.map((c, i) => {
             const cur = c[0] === active[0] && c[1] === active[1] && c[2] === active[2];
@@ -78,7 +87,19 @@ export function PalettePanel({ t, onClose }: { t: ReturnType<typeof makeT>; onCl
               onClick={() => { if (skipRef.current) { skipRef.current = false; return; } apply(c); }} />;
           })}
         </div>
-        {recolor !== null && doc.palette[recolor.i] && (
+        ) : (() => {
+          const list = palMode === "doc" ? SESSION.docColors() : SESSION.recentColors;
+          if (!list.length) return <div className="row-note">{palMode === "doc" ? t("palEmptyDoc") : t("palEmptyRecent")}</div>;
+          return (
+            <div className="palgrid">
+              {list.map((c, i) => {
+                const cur = c[0] === active[0] && c[1] === active[1] && c[2] === active[2];
+                return <button key={palMode + i} className={"palcell" + (cur ? " on" : "")} style={{ background: chipCss(c) }} title={rgbaToHex(c)} onClick={() => apply(c)} />;
+              })}
+            </div>
+          );
+        })()}
+        {palMode === "palette" && recolor !== null && doc.palette[recolor.i] && (
           <div className="recolor-row">
             <label className="rowlabel">{t("recolor")} · 旧色 #{rgbaToHex(doc.palette[recolor.i]).slice(1)}</label>
             <div className="ce-row">
@@ -91,6 +112,7 @@ export function PalettePanel({ t, onClose }: { t: ReturnType<typeof makeT>; onCl
             </div>
           </div>
         )}
+        {palMode === "palette" && (
         <div className="row-actions">
           <Btn icon="i-plus" label={t("paletteAdd")} onClick={() => SESSION.paletteAdd(active)} />
           <Btn icon="i-open" label={t("importPalette")} onClick={() => void (async () => {
@@ -103,6 +125,7 @@ export function PalettePanel({ t, onClose }: { t: ReturnType<typeof makeT>; onCl
           })()} />
           <Btn icon="i-save" label={t("exportPalette")} onClick={() => { bridge.saveBytes((SESSION.doc.name || "palette") + ".gpl", "text/plain", exportGplPalette()); bridge.toast(t("saved")); }} />
         </div>
+        )}
       </div>
     </>
   );
@@ -213,10 +236,19 @@ function parsePaletteBytes(b: Uint8Array): Array<[number, number, number, number
   }
   return out;
 }
-export function MenuModal({ t, snap, onClose, onOpen, onSheet, onRef }: { t: ReturnType<typeof makeT>; snap: Snapshot; onClose: () => void; onOpen: (m: ModalId) => void; onSheet: (d: SheetData) => void; onRef: (d: RefImg) => void }) {
-  const [sub, setSub] = useState<null | "import" | "export">(null);
-  const go = (modal: ModalId) => (label: string, icon: string) => <Btn label={label} icon={icon} onClick={() => onOpen(modal)} className="menuitem" />;
-  const act = (label: string, icon: string, fn: () => void) => <Btn label={label} icon={icon} onClick={() => { fn(); onClose(); }} className="menuitem" />;
+export function MenuModal({ t, snap, onClose, onOpen, onSheet, onRef, onGuide }: { t: ReturnType<typeof makeT>; snap: Snapshot; onClose: () => void; onOpen: (m: ModalId) => void; onSheet: (d: SheetData) => void; onRef: (d: RefImg) => void; onGuide: () => void }) {
+  // the onboarding tour may open a sub-menu when the menu is shown
+  const [sub, setSub] = useState<null | "import" | "export">(() => {
+    const g = (window as unknown as { __pcGuideMenuSub?: null | "import" | "export" }).__pcGuideMenuSub;
+    return g ?? null;
+  });
+  useEffect(() => {
+    const onSub = (e: Event) => setSub(((e as CustomEvent).detail ?? null) as null | "import" | "export");
+    window.addEventListener("pc-guide-menu-sub", onSub);
+    return () => window.removeEventListener("pc-guide-menu-sub", onSub);
+  }, []);
+  const go = (modal: ModalId) => (label: string, icon: string, guide?: string) => <Btn label={label} icon={icon} onClick={() => onOpen(modal)} className="menuitem" guide={guide} />;
+  const act = (label: string, icon: string, fn: () => void, guide?: string) => <Btn label={label} icon={icon} onClick={() => { fn(); onClose(); }} className="menuitem" guide={guide} />;
   const sheetPick = async () => {
     const f = await bridge.openFile("*/*");
     if (!f) return;
@@ -250,27 +282,28 @@ export function MenuModal({ t, snap, onClose, onOpen, onSheet, onRef }: { t: Ret
         <div className="dlg-head"><span>{t("menu")}</span><div className="grow" /><button className="btn small" onClick={onClose}><Icon id="i-x" size={16} /></button></div>
         <div className="dlg-body col">
           {!sub ? (<>
-            {go("newdoc")(t("newDoc"), "i-new")}
-            {act(t("save"), "i-save", () => void saveProject())}
-            {act(t("open"), "i-open", () => void openFlow("new"))}
-            <Btn label={t("import")} icon="i-import" className="menuitem" onClick={() => setSub("import")} />
-            <Btn label={t("export")} icon="i-export" className="menuitem" onClick={() => setSub("export")} />
-            {go("adjust")(t("adjust"), "i-size")}
-            {go("settings")(t("settings"), "i-gear")}
-            {go("changelog")(t("changelog"), "i-star")}
+            {go("newdoc")(t("newDoc"), "i-new", "menu-new")}
+            {act(t("save"), "i-save", () => void saveProject(), "menu-save")}
+            {act(t("open"), "i-open", () => void openFlow("new"), "menu-open")}
+            <Btn label={t("import")} icon="i-import" className="menuitem" guide="menu-import" onClick={() => setSub("import")} />
+            <Btn label={t("export")} icon="i-export" className="menuitem" guide="menu-export" onClick={() => setSub("export")} />
+            {go("adjust")(t("adjust"), "i-size", "menu-adjust")}
+            {go("settings")(t("settings"), "i-gear", "menu-settings")}
+            <Btn label={t("guideReplay")} icon="i-eye" className="menuitem" guide="menu-guide" onClick={onGuide} />
+            {go("changelog")(t("changelog"), "i-star", "menu-changelog")}
           </>) : (
             <>
               <Btn label={"‹ " + (sub === "import" ? t("import") : t("export"))} icon="" className="menuitem sub-back" onClick={() => setSub(null)} />
               {sub === "import" ? (<>
-                <Btn label={t("importImg")} icon="i-import" className="menuitem" onClick={() => { void importFlow(); setSub(null); onClose(); }} />
-                <Btn label={t("importLayerM")} icon="i-layers" className="menuitem" onClick={() => { void importLayerFlow(); setSub(null); onClose(); }} />
-                <Btn label={t("importSheet")} icon="i-open" className="menuitem" onClick={() => { void sheetPick(); setSub(null); }} />
-                <Btn label={t("refImg")} icon="i-eye" className="menuitem" onClick={() => { void refPick(); setSub(null); }} />
-                <Btn label={t("importPalette")} icon="i-palette" className="menuitem" onClick={() => { void importPaletteFlow(); setSub(null); onClose(); }} />
+                <Btn label={t("importImg")} icon="i-import" className="menuitem" guide="menu-import-img" onClick={() => { void importFlow(); setSub(null); onClose(); }} />
+                <Btn label={t("importLayerM")} icon="i-layers" className="menuitem" guide="menu-import-layer" onClick={() => { void importLayerFlow(); setSub(null); onClose(); }} />
+                <Btn label={t("importSheet")} icon="i-open" className="menuitem" guide="menu-import-sheet" onClick={() => { void sheetPick(); setSub(null); }} />
+                <Btn label={t("refImg")} icon="i-eye" className="menuitem" guide="menu-import-ref" onClick={() => { void refPick(); setSub(null); }} />
+                <Btn label={t("importPalette")} icon="i-palette" className="menuitem" guide="menu-import-palette" onClick={() => { void importPaletteFlow(); setSub(null); onClose(); }} />
               </>) : (
                 <>
-                  {go("export")(t("export"), "i-export")}
-                  <Btn label={t("exportPalette")} icon="i-save" className="menuitem" onClick={() => { exportPaletteFlow(); setSub(null); }} />
+                  {go("export")(t("export"), "i-export", "menu-export-dialog")}
+                  <Btn label={t("exportPalette")} icon="i-save" className="menuitem" guide="menu-export-palette" onClick={() => { exportPaletteFlow(); setSub(null); }} />
                 </>
               )}
             </>
@@ -471,68 +504,75 @@ export function AdjustModal({ t, onClose }: { t: ReturnType<typeof makeT>; onClo
     </>
   );
 }
+/** one settings row, generated from its declaration in src/app/settings.ts */
+function SettingRow({ def, t }: { def: SettingDef; t: ReturnType<typeof makeT> }) {
+  const v = SESSION.settingValue(def.path);
+  return (
+    <>
+      <label className="rowlabel">{t(def.label)}</label>
+      {def.kind === "bool" && (
+        <button className={"chip" + (v ? " on" : "")} onClick={() => SESSION.setSetting(def.path, !v)}>{v ? "ON" : "OFF"}</button>
+      )}
+      {def.kind === "enum" && (
+        <div className="chips">
+          {(def.options ?? []).map((o) => (
+            <button key={o.value} className={"chip" + (v === o.value ? " on" : "")} onClick={() => SESSION.setSetting(def.path, o.value)}>{t(o.label)}</button>
+          ))}
+        </div>
+      )}
+      {def.kind === "int" && (
+        <div className="row-actions">
+          <HoldAdjust dir="h" value={Number(v)} min={def.min ?? 0} max={def.max ?? 100} title={t(def.label)}
+            format={(n) => (def.unit ?? "") + n} reset={Number(def.reset ?? def.default)}
+            onChange={(n) => SESSION.setSetting(def.path, n)} />
+        </div>
+      )}
+      {def.desc && <div className="row-note">{t(def.desc)}</div>}
+    </>
+  );
+}
+
+/** Settings dialog, generated entirely from the declaration table in
+ *  src/app/settings.ts: adding a setting there makes it appear here. */
 export function SettingsModal({ t, onClose }: { t: ReturnType<typeof makeT>; onClose: () => void }) {
   const snap = useSession();
-  const setLang = (l: Lang) => { SESSION.prefs.lang = l; SESSION.savePrefs(); SESSION.changed(); };
+  const [asInfo, setAsInfo] = useState<autosave.AutosaveMeta | null>(null);
+  const [folded, setFolded] = useState<Record<string, boolean>>({});
+  useEffect(() => { void SESSION.autosaveInfo().then(setAsInfo); }, [snap]);
   return (
     <>
       <div className="dlg-mask" onClick={onClose} />
-      <div className="dlg">
+      <div className="dlg" data-guide="dlg-settings">
         <div className="dlg-head"><span>{t("settings")}</span><div className="grow" /><button className="btn small" onClick={onClose}><Icon id="i-x" size={16} /></button></div>
         <div className="dlg-body">
-          <label className="rowlabel">{t("lang")}</label>
-          <div className="chips">
-            <button className={"chip" + (snap.lang === "zh" ? " on" : "")} onClick={() => setLang("zh")}>{t("zhLabel")}</button>
-            <button className={"chip" + (snap.lang === "en" ? " on" : "")} onClick={() => setLang("en")}>{t("enLabel")}</button>
-          </div>
-          <label className="rowlabel">{t("newFrameCopy")}</label>
-          <button className={"chip" + (SESSION.prefs.newFrameCopy ? " on" : "")} onClick={() => SESSION.setNewFrameCopy(!SESSION.prefs.newFrameCopy)}>{SESSION.prefs.newFrameCopy ? "ON" : "OFF"}</button>
-          <label className="rowlabel">{t("swapRails")}</label>
-          <button className={"chip" + (SESSION.prefs.railSwap ? " on" : "")} onClick={() => SESSION.setRailSwap(!SESSION.prefs.railSwap)}>{SESSION.prefs.railSwap ? "ON" : "OFF"}</button>
-          <label className="rowlabel">{t("grid")}</label>
-          <div className="chips">
-            <button className={"chip" + (snap.gridMode === "off" ? " on" : "")} onClick={() => SESSION.setGridMode("off")}>{t("gridNone")}</button>
-            <button className={"chip" + (snap.gridMode === "pixel" ? " on" : "")} onClick={() => SESSION.setGridMode("pixel")}>{t("gridPixel")}</button>
-            <button className={"chip" + (snap.gridMode === "iso" ? " on" : "")} onClick={() => SESSION.setGridMode("iso")}>{t("gridIso")}</button>
-          </div>
-          {SESSION.prefs.gridMode !== "off" && (
-            <>
-              <label className="rowlabel">{t("gridSize")}</label>
-              <div className="row-actions"><HoldAdjust dir="h" value={SESSION.prefs.gridSize} min={1} max={32} title={t("gridSize")} format={(v) => v + "px"} reset={SESSION.prefs.gridMode === "iso" ? 8 : 1} onChange={(v) => SESSION.setGridSize(v)} /></div>
-            </>
-          )}
-          <label className="rowlabel">{t("loupe")}</label>
-          <button className={"chip" + (SESSION.prefs.loupe ? " on" : "")} onClick={() => SESSION.setLoupe(!SESSION.prefs.loupe)}>{SESSION.prefs.loupe ? "ON" : "OFF"}</button>
-          <label className="rowlabel">{t("magZoom")}</label>
-          <div className="row-actions"><HoldAdjust dir="h" value={SESSION.prefs.magZoom} min={8} max={20} title={t("magZoom")} format={(v) => v + "px"} reset={12} onChange={(v) => SESSION.setMagZoom(v)} /></div>
-          <label className="rowlabel">{t("shadowMode")}</label>
-          <div className="chips">
-            <button className={"chip" + (!SESSION.prefs.shadowNewLayer ? " on" : "")} onClick={() => SESSION.setShadowNewLayer(false)}>{t("shadowCur")}</button>
-            <button className={"chip" + (SESSION.prefs.shadowNewLayer ? " on" : "")} onClick={() => SESSION.setShadowNewLayer(true)}>{t("shadowNew")}</button>
-          </div>
-          <label className="rowlabel">{t("autoPan")}</label>
-          <button className={"chip" + (SESSION.prefs.autoPan ? " on" : "")} onClick={() => SESSION.setAutoPan(!SESSION.prefs.autoPan)}>{SESSION.prefs.autoPan ? "ON" : "OFF"}</button>
-          <label className="rowlabel">{t("tlHeight")}</label>
-          <div className="row-actions"><HoldAdjust dir="h" value={SESSION.prefs.tlH} min={56} max={340} title={t("tlHeight")} format={(v) => v + "px"} reset={116} onChange={(v) => SESSION.setTlHeight(v)} /></div>
-          <label className="rowlabel">{t("sel.wandTol")}</label>
-          <div className="row-actions"><HoldAdjust value={SESSION.selectionTolerance} min={0} max={64} title={t("sel.wandTol")} format={(v) => "T" + v} reset={8} onChange={(v) => SESSION.setSelectionTolerance(v)} /></div>
-          <label className="rowlabel">{t("histMode")}</label>
-          <div className="chips">
-            <button className={"chip" + (SESSION.prefs.histMode !== "full" ? " on" : "")} onClick={() => SESSION.setHistMode("steps")}>{t("histModeSteps")}</button>
-            <button className={"chip" + (SESSION.prefs.histMode === "full" ? " on" : "")} onClick={() => SESSION.setHistMode("full")}>{t("histModeFull")}</button>
-          </div>
-          {SESSION.prefs.histMode !== "full" && (
-            <>
-              <label className="rowlabel">{t("histStepsLabel")}</label>
-              <div className="row-actions"><HoldAdjust dir="h" value={SESSION.prefs.histSteps} min={10} max={500} title={t("histStepsLabel")} format={(v) => "◔" + v} reset={60} onChange={(v) => SESSION.setHistSteps(v)} /></div>
-            </>
-          )}
-          <label className="rowlabel">{t("previewBg")}</label>
-          <div className="chips">
-            <button className={"chip" + (snap.previewBg === "white" ? " on" : "")} onClick={() => SESSION.setPreviewBg("white")}>{t("previewWhite")}</button>
-            <button className={"chip" + (snap.previewBg === "black" ? " on" : "")} onClick={() => SESSION.setPreviewBg("black")}>{t("previewBlack")}</button>
-            <button className={"chip" + (snap.previewBg === "checker" ? " on" : "")} onClick={() => SESSION.setPreviewBg("checker")}>{t("previewChecker")}</button>
-          </div>
+          {SETTING_GROUPS.map((g) => {
+            const items = settingsOfGroup(SESSION, g.id);
+            if (!items.length) return null;
+            const open = !folded[g.id];
+            return (
+              <div key={g.id} className="set-group">
+                <button type="button" className="set-grouphead" onClick={() => setFolded({ ...folded, [g.id]: open })}>
+                  <span>{t(g.label)}</span>
+                  <i className={"chev" + (open ? " open" : "")}>▾</i>
+                </button>
+                {open && items.map((d) => <SettingRow key={d.path} def={d} t={t} />)}
+                {open && g.id === "data" && (
+                  <>
+                    <div className="row-note">
+                      {asInfo && asInfo.savedAt > 0
+                        ? t("autosaveAt") + new Date(asInfo.savedAt).toLocaleString() + " · " + Math.max(1, Math.round(asInfo.bytes / 1024)) + "KB"
+                          + (asInfo.name ? " · " + asInfo.name + " " + asInfo.w + "×" + asInfo.h : "")
+                        : t("autosaveNone")}
+                    </div>
+                    <div className="row-actions">
+                      <Btn label={t("autosaveNow")} onClick={() => { void SESSION.flushAutosave().then(() => SESSION.autosaveInfo().then(setAsInfo)); }} />
+                      <Btn label={t("autosaveClear")} className="danger" onClick={() => { void SESSION.clearAutosave().then(() => setAsInfo(null)); }} />
+                    </div>
+                  </>
+                )}
+              </div>
+            );
+          })}
         </div>
         <div className="dlg-foot"><Btn label={t("close")} onClick={onClose} /></div>
       </div>
@@ -555,8 +595,8 @@ export function FrameModal({ t, snap, fi, onClose }: { t: ReturnType<typeof make
     </>
   );
 }
-const H_ZH: Record<string, string> = { "canvas-size": "修改画布尺寸", "sprite-size": "整体缩放精灵", "layer-add": "新建图层", "layer-del": "删除图层", "layer-up": "上移图层", "layer-down": "下移图层", "layer-dupe": "复制图层", "layer-merge": "向下合并图层", "layer-visible": "图层可见性", "layer-lock": "锁定图层", "layer-rename": "重命名图层", "layer-opacity": "图层不透明度", "layer-blend": "图层混合模式", "frame-add": "新建帧", "frame-del": "删除帧", "frame-move": "移动帧", "frame-dupe": "复制帧", "frame-duration": "帧时长", "palette-set": "替换色板", "palette-add": "添加颜色", "palette-remove": "删除颜色", "import-layer": "导入为图层", "wand": "魔棒选区", "sel.grow": "扩展选区", "sel.shrink": "收缩选区", "sel.lasso": "套索选区", "sel.move": "移动选区", "sel.rotate": "旋转选区", "sel.scale": "缩放选区", "adjust-color": "颜色调整", "palette-recolor": "色卡换色(整幅同步)" };
-const H_EN: Record<string, string> = { "canvas-size": "Resize canvas", "sprite-size": "Scale sprite", "layer-add": "New layer", "layer-del": "Delete layer", "layer-up": "Move layer up", "layer-down": "Move layer down", "layer-dupe": "Duplicate layer", "layer-merge": "Merge layer down", "layer-visible": "Layer visibility", "layer-lock": "Lock layer", "layer-rename": "Rename layer", "layer-opacity": "Layer opacity", "layer-blend": "Layer blend mode", "frame-add": "New frame", "frame-del": "Delete frame", "frame-move": "Move frame", "frame-dupe": "Duplicate frame", "frame-duration": "Frame duration", "palette-set": "Replace palette", "palette-add": "Add color", "palette-remove": "Remove color", "import-layer": "Import as layer", "wand": "Magic wand select", "sel.grow": "Grow selection", "sel.shrink": "Shrink selection", "sel.lasso": "Lasso select", "sel.move": "Move selection", "sel.rotate": "Rotate selection", "sel.scale": "Scale selection", "adjust-color": "Adjust color", "palette-recolor": "Recolor palette (sprite)" };
+const H_ZH: Record<string, string> = { "canvas-size": "修改画布尺寸", "sprite-size": "整体缩放精灵", "layer-add": "新建图层", "layer-del": "删除图层", "layer-up": "上移图层", "layer-down": "下移图层", "layer-move": "拖拽重排图层", "layer-dupe": "复制图层", "layer-merge": "向下合并图层", "layer-visible": "图层可见性", "layer-lock": "锁定图层", "layer-rename": "重命名图层", "layer-opacity": "图层不透明度", "layer-blend": "图层混合模式", "frame-add": "新建帧", "frame-del": "删除帧", "frame-move": "移动帧", "frame-switch": "切换帧", "frame-dupe": "复制帧", "frame-duration": "帧时长", "palette-set": "替换色板", "palette-add": "添加颜色", "palette-remove": "删除颜色", "import-layer": "导入为图层", "wand": "魔棒选区", "sel.grow": "扩展选区", "sel.shrink": "收缩选区", "sel.invert": "反选", "sel.lasso": "套索选区", "sel.move": "移动选区", "sel.rotate": "旋转选区", "sel.scale": "缩放选区", "adjust-color": "颜色调整", "palette-recolor": "色卡换色(整幅同步)" };
+const H_EN: Record<string, string> = { "canvas-size": "Resize canvas", "sprite-size": "Scale sprite", "layer-add": "New layer", "layer-del": "Delete layer", "layer-up": "Move layer up", "layer-down": "Move layer down", "layer-move": "Reorder layer (drag)", "layer-dupe": "Duplicate layer", "layer-merge": "Merge layer down", "layer-visible": "Layer visibility", "layer-lock": "Lock layer", "layer-rename": "Rename layer", "layer-opacity": "Layer opacity", "layer-blend": "Layer blend mode", "frame-add": "New frame", "frame-del": "Delete frame", "frame-move": "Move frame", "frame-switch": "Switch frame", "frame-dupe": "Duplicate frame", "frame-duration": "Frame duration", "palette-set": "Replace palette", "palette-add": "Add color", "palette-remove": "Remove color", "import-layer": "Import as layer", "wand": "Magic wand select", "sel.grow": "Grow selection", "sel.shrink": "Shrink selection", "sel.invert": "Invert selection", "sel.lasso": "Lasso select", "sel.move": "Move selection", "sel.rotate": "Rotate selection", "sel.scale": "Scale selection", "adjust-color": "Adjust color", "palette-recolor": "Recolor palette (sprite)" };
 export function histName(label: string, t: ReturnType<typeof makeT>, lang: string): string {
   const m = lang === "zh" ? H_ZH : H_EN;
   if (m[label]) return m[label];

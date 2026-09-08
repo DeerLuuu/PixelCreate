@@ -17,6 +17,16 @@
     "../tests/run-tests.ts",
     "../tests/common.ts",
     "../tests/history.test.ts",
-    "../tests/ops.test.ts"
+    "../tests/ops.test.ts",
+    "../tests/move.test.ts",
+    "../tests/sym.test.ts",
+    "../tests/fill.test.ts",
+    "../tests/sel.test.ts",
+    "../tests/playback.test.ts",
+    "../tests/session.test.ts",
+    "../tests/orb.test.ts",
+    "../tests/guide.test.ts",
+    "../tests/guide-layout.test.ts",
+    "../tests/guide-anchors.test.ts"
   ]
 }

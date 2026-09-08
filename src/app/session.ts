@@ -1,11 +1,12 @@
 import { Doc } from "../engine/doc";
 import { History } from "../engine/history";
 import type { RGBA, BlendMode } from "../engine/types";
-import { defaultPalette } from "../engine/palette";
+import { defaultPalette } from "../data/palettes";
 import * as ops from "../engine/ops";
 import * as fxE from "../engine/effects";
 import * as compositor from "../render/compositor";
 import * as project from "../io/project";
+import * as autosave from "../io/autosave";
 import { toast as toastFn } from "../io/bridge";
 import type { ToolId, BrushState, SymMode } from "../tools/registry";
 import { isShapeTool, nextSym, SYM_ANGLES } from "../tools/registry";
@@ -13,6 +14,8 @@ import type { View } from "../render/view";
 import { rgbaToHex } from "../engine/color";
 import * as selM from "../tools/select";
 import { adjustPixel, type HslAdj } from "../engine/adjust";
+import { type LoopMode, nextLoopMode, nextPlayFrame, startPlayDir, startPlayFrame } from "./playback";
+import { SETTINGS_BY_PATH, normalizeSetting, type SettingValue } from "./settings";
 
 export interface Prefs {
   lang: "zh" | "en";
@@ -23,14 +26,20 @@ export interface Prefs {
   magZoom: number;
   /** show the pixel loupe while picking a colour */
   loupe: boolean;
-  onion: 0 | 1 | 2;
+  /** onion skin master switch */
+  onionOn: boolean;
+  /** how many previous / next frames are ghosted (0..3 each) */
+  onionBefore: number;
+  onionAfter: number;
+  /** opacity of the nearest ghost, percent (10..100) */
+  onionAlpha: number;
+  /** tint ghosts (previous red / next green) instead of drawing them as-is */
+  onionTint: boolean;
   autosave: boolean;
   /** add frame via FrameAdd: clone current frame's cels into the new one */
   newFrameCopy: boolean;
   /** landscape: swap side rails (default on: control rail right, actions left) */
   railSwap: boolean;
-  /** colour floater style: palette balls in a quarter-fan */
-  palMode: "ball";
   previewBg: "white" | "black" | "checker";
   /** timeline matrix max height in px (landscape friendly) */
   tlH: number;
@@ -42,6 +51,15 @@ export interface Prefs {
   shadowNewLayer: boolean;
   /** auto-pan the canvas when a brush/selection drag reaches the viewport edge */
   autoPan: boolean;
+  /** paint bucket: fill every matching pixel in the layer (true) or only the
+   *  connected region (false) */
+  bucketGlobal: boolean;
+  /** playback loop mode */
+  loopMode: LoopMode;
+  /** how many recently used colours the palette panel remembers (4..64) */
+  recentColorsMax: number;
+  /** magic-wand colour tolerance (0..64) */
+  selectionTolerance: number;
 }
 
 export interface Snapshot {
@@ -57,7 +75,7 @@ export interface Snapshot {
   frameCount: number;
   canUndo: boolean;
   canRedo: boolean;
-  onion: 0 | 1 | 2;
+  onionOn: boolean;
   gridMode: Prefs["gridMode"];
   gridSize: number;
   previewBg: Prefs["previewBg"];
@@ -66,7 +84,7 @@ export interface Snapshot {
   w: number;
   h: number;
   playing: boolean;
-  loop: boolean;
+  loopMode: LoopMode;
 }
 
 export class Session {
@@ -86,7 +104,6 @@ export class Session {
   frameIdx = 0;
   prefs: Prefs;
   clip: import("../engine/cel").Cel | null = null;
-  selectionTolerance = 8;
   colorPicking = false;
   sym: SymMode = "off";
   /** four-way symmetry: also mirror across the perpendicular axis (cross) */
@@ -104,7 +121,12 @@ export class Session {
   shapeFill = true;
   private lastColorAt = 0;
   playing = false;
-  loop = true;
+  loopMode: LoopMode = "loop";
+  private playDir: 1 | -1 = 1;
+  /** most recently used colours, newest first (palette panel "recent" mode) */
+  recentColors: RGBA[] = [];
+  private recentSaveTimer: number | null = null;
+  private docColorCache: { rev: number; colors: RGBA[] } | null = null;
   private playTimer: number | null = null;
   private autosaveTimer: number | null = null;
   private replayActive = false;
@@ -121,29 +143,30 @@ export class Session {
     this.doc = new Doc(64, 64, "untitled");
     this.doc.palette = defaultPalette();
     this.color = this.fg;
+    this.loopMode = this.prefs.loopMode;
+    this.recentColors = this.loadRecentColors();
     this.applyHistoryLimit();
+    // Android may kill a backgrounded WebView without warning: flush the
+    // autosave the moment the app is hidden so the last strokes survive
+    try {
+      if (typeof document !== "undefined") {
+        document.addEventListener("visibilitychange", () => {
+          if (document.hidden) void this.flushAutosave();
+        });
+      }
+    } catch { /* ignore */ }
   }
 
   /** enforce the configured recording mode on the history stack */
-  private applyHistoryLimit(): void {
+  applyHistoryLimit(): void {
     if (this.prefs.histMode === "full") this.history.setCap(Infinity);
     else {
       this.history.setCap(this.prefs.histSteps);
       this.history.trimToCap();
     }
   }
-  setHistMode(m: "steps" | "full"): void {
-    this.prefs.histMode = m;
-    this.savePrefs();
-    this.applyHistoryLimit();
-    this.changed();
-  }
-  setHistSteps(n: number): void {
-    this.prefs.histSteps = Math.max(10, Math.min(500, Math.round(n)));
-    this.savePrefs();
-    this.applyHistoryLimit();
-    this.changed();
-  }
+  setHistMode(m: "steps" | "full"): void { this.setSetting("history.mode", m); }
+  setHistSteps(n: number): void { this.setSetting("history.steps", n); }
 
 
   attachView(v: View): void {
@@ -218,7 +241,7 @@ export class Session {
       frameCount: this.doc.frames.length,
       canUndo: this.history.canUndo(),
       canRedo: this.history.canRedo(),
-      onion: this.prefs.onion,
+      onionOn: this.prefs.onionOn,
       gridMode: this.prefs.gridMode,
   gridSize: this.prefs.gridSize,
       previewBg: this.prefs.previewBg,
@@ -227,7 +250,7 @@ export class Session {
       w: this.doc.w,
       h: this.doc.h,
       playing: this.playing,
-      loop: this.loop,
+      loopMode: this.loopMode,
     };
     this.snapCache = snap;
     this.snapRev = this.rev;
@@ -245,6 +268,33 @@ export class Session {
   }
   layerLocked(): boolean {
     return this.doc.layers[this.curLayer()]?.locked ?? false;
+  }
+  /** magic-wand tolerance lives on prefs so it persists and shows in Settings */
+  get selectionTolerance(): number {
+    return this.prefs.selectionTolerance;
+  }
+
+  // ---------- settings registry (declared in src/app/settings.ts) ----------
+  /** current value of a declared setting by its dotted path */
+  settingValue(path: string): SettingValue {
+    const d = SETTINGS_BY_PATH.get(path);
+    if (!d) return false;
+    if (d.get) return d.get(this);
+    return this.prefs[d.field as keyof Prefs] as SettingValue;
+  }
+  /** store a setting by path: normalize, persist, then run its side effects */
+  setSetting(path: string, raw: SettingValue): void {
+    const d = SETTINGS_BY_PATH.get(path);
+    if (!d) return;
+    const v = normalizeSetting(d, raw);
+    if (v === null) return;
+    if (d.set) d.set(this, v);
+    else (this.prefs as unknown as Record<string, SettingValue>)[d.field as string] = v;
+    d.after?.(this, v);
+    this.savePrefs();
+    if (d.refresh === "repaintAll") this.repaintAll();
+    else if (d.refresh === "repaint") this.repaint();
+    this.changed();
   }
 
   // ---------- canvas ----------
@@ -273,22 +323,43 @@ export class Session {
   async writeAutosave(): Promise<void> {
     try {
       const txt = await project.serialize(this.doc);
-      if (txt.length > 4 * 1024 * 1024) {
-        if (Date.now() - this.lastSaveNote > 8000) {
-          this.lastSaveNote = Date.now();
-          toastFn(this.prefs.lang === "en" ? "Autosave skipped (canvas too large)" : "自动保存跳过(画布过大)");
-        }
-        return;
+      const meta = {
+        savedAt: Date.now(), bytes: txt.length, name: this.doc.name,
+        w: this.doc.w, h: this.doc.h,
+        frames: this.doc.frames.length, layers: this.doc.layers.length,
+      };
+      const where = await autosave.saveAutosave(txt, meta);
+      if ((where === "fail" || where === "too-big") && Date.now() - this.lastSaveNote > 8000) {
+        this.lastSaveNote = Date.now();
+        const en = this.prefs.lang === "en";
+        toastFn(where === "too-big"
+          ? (en ? "Autosave skipped (project too large)" : "自动保存跳过（工程过大）")
+          : (en ? "Autosave failed (storage full)" : "自动保存失败（存储空间不足）"));
       }
-      localStorage.setItem("pc.autosave2", txt);
     } catch { /* ignore */ }
+  }
+  /** write right now (page hidden / about to be killed): never lose the last strokes */
+  async flushAutosave(): Promise<void> {
+    if (!this.prefs.autosave || this.replayActive) return;
+    if (this.autosaveTimer !== null) {
+      window.clearTimeout(this.autosaveTimer);
+      this.autosaveTimer = null;
+    }
+    await this.writeAutosave();
   }
   async restoreAutosave(): Promise<Doc | null> {
     try {
-      const saved = localStorage.getItem("pc.autosave2");
-      if (!saved || saved.length < 120) return null;
-      return await project.parse(saved);
+      const rec = await autosave.loadAutosave();
+      if (!rec) return null;
+      return await project.parse(rec.text);
     } catch { return null; }
+  }
+  /** metadata of the newest autosave (settings screen) */
+  autosaveInfo(): Promise<autosave.AutosaveMeta | null> {
+    return autosave.autosaveMeta();
+  }
+  async clearAutosave(): Promise<void> {
+    await autosave.clearAutosave();
   }
   syncAll(): void {
     this.view_?.refresh(true);
@@ -297,7 +368,13 @@ export class Session {
   }
 
   private loadPrefs(): Prefs {
-    const p: Prefs = { lang: "zh", gridMode: "off", gridSize: 1, magZoom: 12, loupe: true, onion: 0, autosave: true, newFrameCopy: false, railSwap: true, palMode: "ball", previewBg: "white", tlH: 116, histMode: "steps", histSteps: 60, shadowNewLayer: false, autoPan: true };
+    const p: Prefs = {
+      lang: "zh", gridMode: "off", gridSize: 1, magZoom: 12, loupe: true,
+      onionOn: false, onionBefore: 1, onionAfter: 0, onionAlpha: 55, onionTint: true,
+      autosave: true, newFrameCopy: false, railSwap: true, previewBg: "white", tlH: 116,
+      histMode: "steps", histSteps: 120, shadowNewLayer: false, autoPan: true,
+      bucketGlobal: false, loopMode: "loop", recentColorsMax: 16, selectionTolerance: 8,
+    };
     try {
       const saved = JSON.parse(localStorage.getItem("pc.prefs") ?? "{}");
       if (saved.lang === "en") p.lang = "en";
@@ -306,7 +383,14 @@ export class Session {
       if (typeof saved.gridSize === "number") p.gridSize = Math.max(1, Math.min(64, Math.round(saved.gridSize)));
       if (typeof saved.magZoom === "number") p.magZoom = Math.max(8, Math.min(20, Math.round(saved.magZoom)));
       if (typeof saved.loupe === "boolean") p.loupe = saved.loupe;
-      if (saved.onion === 1 || saved.onion === 2) p.onion = saved.onion;
+      // onion: migrate the old 0/1/2 tri-state into the fine-grained prefs
+      if (saved.onion === 1) { p.onionOn = true; p.onionBefore = 1; p.onionAfter = 0; }
+      else if (saved.onion === 2) { p.onionOn = true; p.onionBefore = 1; p.onionAfter = 1; }
+      if (typeof saved.onionOn === "boolean") p.onionOn = saved.onionOn;
+      if (typeof saved.onionBefore === "number") p.onionBefore = Math.max(0, Math.min(3, Math.round(saved.onionBefore)));
+      if (typeof saved.onionAfter === "number") p.onionAfter = Math.max(0, Math.min(3, Math.round(saved.onionAfter)));
+      if (typeof saved.onionAlpha === "number") p.onionAlpha = Math.max(10, Math.min(100, Math.round(saved.onionAlpha)));
+      if (typeof saved.onionTint === "boolean") p.onionTint = saved.onionTint;
       if (saved.previewBg === "black" || saved.previewBg === "checker" || saved.previewBg === "white") p.previewBg = saved.previewBg;
       if (typeof saved.autosave === "boolean") p.autosave = saved.autosave;
       if (typeof saved.newFrameCopy === "boolean") p.newFrameCopy = saved.newFrameCopy;
@@ -316,6 +400,10 @@ export class Session {
       if (typeof saved.histSteps === "number") p.histSteps = Math.max(10, Math.min(500, Math.round(saved.histSteps)));
       if (typeof saved.shadowNewLayer === "boolean") p.shadowNewLayer = saved.shadowNewLayer;
       if (typeof saved.autoPan === "boolean") p.autoPan = saved.autoPan;
+      if (typeof saved.bucketGlobal === "boolean") p.bucketGlobal = saved.bucketGlobal;
+      if (saved.loopMode === "once" || saved.loopMode === "loop" || saved.loopMode === "pingpong" || saved.loopMode === "reverse") p.loopMode = saved.loopMode;
+      if (typeof saved.recentColorsMax === "number") p.recentColorsMax = Math.max(4, Math.min(64, Math.round(saved.recentColorsMax)));
+      if (typeof saved.selectionTolerance === "number") p.selectionTolerance = Math.max(0, Math.min(64, Math.round(saved.selectionTolerance)));
       /* palette floater style fixed to ball */
     } catch {
       /* ignore */
@@ -338,6 +426,7 @@ export class Session {
     const arr = this.color;
     arr[0] = c[0]; arr[1] = c[1]; arr[2] = c[2]; arr[3] = c[3];
     this.lastColorAt = Date.now();
+    this.pushRecentColor(arr);
     this.changed();
   }
   /** pickers set the fg slot and make it active (paint follows) */
@@ -347,6 +436,7 @@ export class Session {
     this.colorTarget = "fg";
     this.color = this.fg;
     this.lastColorAt = Date.now();
+    this.pushRecentColor(f);
     this.changed();
   }
   setColorTarget(t: "fg" | "bg"): void {
@@ -362,7 +452,81 @@ export class Session {
     b[0] = tmp[0]; b[1] = tmp[1]; b[2] = tmp[2]; b[3] = tmp[3];
     // `color` already aliases the active slot array; contents were swapped
     this.lastColorAt = Date.now();
+    this.pushRecentColor(this.color);
     this.changed();
+  }
+
+  // ---------- recent colours (palette panel "recent" mode) ----------
+  private loadRecentColors(): RGBA[] {
+    try {
+      const raw = JSON.parse(localStorage.getItem("pc.recentColors") ?? "[]");
+      if (!Array.isArray(raw)) return [];
+      return raw
+        .filter((c) => Array.isArray(c) && c.length >= 3 && c.every((n) => typeof n === "number"))
+        .slice(0, 64)
+        .map((c) => [c[0] | 0, c[1] | 0, c[2] | 0, c[3] === undefined ? 255 : c[3] | 0] as RGBA);
+    } catch { return []; }
+  }
+  private saveRecentColors(): void {
+    if (this.recentSaveTimer !== null) return;
+    this.recentSaveTimer = window.setTimeout(() => {
+      this.recentSaveTimer = null;
+      try { localStorage.setItem("pc.recentColors", JSON.stringify(this.recentColors)); } catch { /* ignore */ }
+    }, 800);
+  }
+  /** remember a colour the user just picked (newest first, de-duplicated) */
+  pushRecentColor(c: RGBA): void {
+    const max = Math.max(4, Math.min(64, Math.round(this.prefs.recentColorsMax)));
+    const same = (a: RGBA, b: RGBA): boolean => a[0] === b[0] && a[1] === b[1] && a[2] === b[2] && a[3] === b[3];
+    const col: RGBA = [c[0], c[1], c[2], c[3] === undefined ? 255 : c[3]];
+    const list = this.recentColors.filter((x) => !same(x, col));
+    list.unshift(col);
+    this.recentColors = list.slice(0, max);
+    this.saveRecentColors();
+  }
+  /** every distinct opaque colour currently used anywhere in the document */
+  docColors(): RGBA[] {
+    if (this.docColorCache && this.docColorCache.rev === this.rev) return this.docColorCache.colors;
+    const seen = new Set<number>();
+    const out: RGBA[] = [];
+    for (const cel of this.doc.cels.values()) {
+      const d = cel.data;
+      for (let i = 0; i < d.length; i += 4) {
+        if (d[i + 3] === 0) continue;
+        const key = (d[i] << 24) | (d[i + 1] << 16) | (d[i + 2] << 8) | d[i + 3];
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push([d[i], d[i + 1], d[i + 2], d[i + 3]]);
+        if (out.length >= 512) { this.docColorCache = { rev: this.rev, colors: out }; return out; }
+      }
+    }
+    this.docColorCache = { rev: this.rev, colors: out };
+    return out;
+  }
+  setRecentColorsMax(n: number): void { this.setSetting("display.recentColors", n); }
+  /** keep the recent-colour list within the configured limit */
+  trimRecentColors(): void {
+    const max = Math.max(4, Math.min(64, Math.round(this.prefs.recentColorsMax)));
+    if (this.recentColors.length > max) {
+      this.recentColors = this.recentColors.slice(0, max);
+      this.saveRecentColors();
+    }
+  }
+  /** paint bucket: fill only the connected region (false) or every matching pixel */
+  setBucketGlobal(on: boolean): void { this.setSetting("tools.bucketGlobal", on); }
+  /** colour source shown by the palette floater fan (swatch / canvas / recent) */
+  palOrbMode: "palette" | "doc" | "recent" = "palette";
+  cyclePalOrbMode(): void {
+    const order = ["palette", "doc", "recent"] as const;
+    const i = order.indexOf(this.palOrbMode);
+    this.palOrbMode = order[(i + 1) % order.length];
+    this.changed();
+  }
+  /** colours the palette floater should currently show */
+  palOrbColors(): RGBA[] {
+    if (this.palOrbMode === "doc") return this.docColors();
+    if (this.palOrbMode === "recent") return this.recentColors;
+    return this.doc.palette;
   }
 
   // ---------- HSL adjustment (live preview, one history step on commit) ----------
@@ -535,10 +699,7 @@ export class Session {
     this.brushSize = Math.max(1, Math.min(64, Math.round(n)));
     this.changed();
   }
-  setSelectionTolerance(n: number): void {
-    this.selectionTolerance = Math.max(0, Math.min(64, Math.round(n)));
-    this.changed();
-  }
+  setSelectionTolerance(n: number): void { this.setSetting("tools.wandTolerance", n); }
   maskOp(label: string, fn: () => void): void {
     this.history.pushStruct(label, this.doc, fn);
     this.repaintAll();
@@ -553,7 +714,24 @@ export class Session {
     this.color[3] = Math.max(0, Math.min(255, Math.round(n)));
     this.changed();
   }
-  setFrame(fi: number): void {
+  /** switch the visible frame. User-initiated switches (timeline taps, prev /
+   *  next buttons) are recorded as their own undo step; internal playback and
+   *  history restoration pass record=false. */
+  setFrame(fi: number, record = true): void {
+    const n = this.doc.frames.length;
+    const next = Math.max(0, Math.min(n - 1, fi));
+    const prev = this.curFrame();
+    if (next === prev) return;
+    if (record) {
+      this.history.record("frame-switch", {
+        apply: () => this.applyFrame(next),
+        unapply: () => this.applyFrame(prev),
+      });
+    }
+    this.applyFrame(next);
+  }
+  /** apply a frame index without touching the history stack */
+  private applyFrame(fi: number): void {
     this.frameIdx = Math.max(0, Math.min(this.doc.frames.length - 1, fi));
     this.view_?.setFrame(this.frameIdx);
     this.repaintAll();
@@ -563,57 +741,33 @@ export class Session {
     this.layerIdx = Math.max(0, Math.min(this.doc.layers.length - 1, li));
     this.changed();
   }
-  cycleOnion(): void {
-    this.prefs.onion = ((this.prefs.onion + 1) % 3) as 0 | 1 | 2;
+  /** onion skin master switch (fine-grained options live in Settings) */
+  toggleOnion(): void {
+    this.prefs.onionOn = !this.prefs.onionOn;
     this.savePrefs();
     this.repaintAll();
     this.changed();
   }
-  setPreviewBg(b: "white" | "black" | "checker"): void {
-    this.prefs.previewBg = b;
-    this.savePrefs();
-    this.changed();
-  }
+  setOnionOn(on: boolean): void { this.setSetting("onion.enabled", on); }
+  setOnionBefore(n: number): void { this.setSetting("onion.before", n); }
+  setOnionAfter(n: number): void { this.setSetting("onion.after", n); }
+  setOnionAlpha(n: number): void { this.setSetting("onion.alpha", n); }
+  setOnionTint(on: boolean): void { this.setSetting("onion.tint", on); }
+  setPreviewBg(b: "white" | "black" | "checker"): void { this.setSetting("display.previewBg", b); }
   /** helper grid mode: off | pixel | iso */
-  setGridMode(m: "off" | "pixel" | "iso"): void {
-    // a tiny gridSize makes the iso guide too dense; give it a sensible default
-    if (m === "iso" && this.prefs.gridSize < 4) this.prefs.gridSize = 8;
-    this.prefs.gridMode = m;
-    this.savePrefs();
-    this.repaintAll();
-    this.changed();
-  }
+  setGridMode(m: "off" | "pixel" | "iso"): void { this.setSetting("canvas.grid", m); }
   /** helper grid cell size / iso spacing (sprite px) */
-  setGridSize(n: number): void {
-    this.prefs.gridSize = Math.max(1, Math.min(64, Math.round(n)));
-    this.savePrefs();
-    this.repaintAll();
-    this.changed();
-  }
+  setGridSize(n: number): void { this.setSetting("canvas.gridSize", n); }
   /** pixel loupe magnification (css px per doc pixel) */
-  setMagZoom(n: number): void {
-    this.prefs.magZoom = Math.max(8, Math.min(20, Math.round(n)));
-    this.savePrefs();
-    this.changed();
-  }
+  setMagZoom(n: number): void { this.setSetting("display.magZoom", n); }
   /** show the pixel loupe while picking a colour */
-  setLoupe(on: boolean): void {
-    this.prefs.loupe = on;
-    this.savePrefs();
-    this.changed();
-  }
+  setLoupe(on: boolean): void { this.setSetting("display.loupe", on); }
   /** set where the drop-shadow lands: current layer (false) or a new shadow layer (true) */
-  setShadowNewLayer(on: boolean): void {
-    this.prefs.shadowNewLayer = on;
-    this.savePrefs();
-    this.changed();
-  }
+  setShadowNewLayer(on: boolean): void { this.setSetting("display.shadowTarget", on ? "new" : "cur"); }
   /** auto-pan when dragging near the viewport edge */
-  setAutoPan(on: boolean): void {
-    this.prefs.autoPan = on;
-    this.savePrefs();
-    this.changed();
-  }
+  setAutoPan(on: boolean): void { this.setSetting("canvas.autoPan", on); }
+  /** background autosave on/off */
+  setAutosave(on: boolean): void { this.setSetting("data.autosave", on); }
 
   /** One-tap drop shadow based ONLY on the current layer's image. Depending on
    *  the shadowNewLayer pref it is baked into the current layer (silhouette kept
@@ -786,6 +940,17 @@ export class Session {
     if (li >= this.doc.layers.length - 1) return;
     this.struct("layer-down", () => ops.moveLayer(this.doc, li, li + 1));
   }
+  /** drag reorder: move layer `from` so it ends up at index `to` (0-based) */
+  layerMoveTo(from: number, to: number): void {
+    const n = this.doc.layers.length;
+    if (from < 0 || from >= n) return;
+    const t = Math.max(0, Math.min(n - 1, Math.round(to)));
+    if (t === from) return;
+    const wasCur = this.curLayer() === from;
+    this.struct("layer-move", () => ops.moveLayer(this.doc, from, t));
+    if (wasCur) this.layerIdx = t;
+    this.changed();
+  }
   layerMergeDown(): void {
     const li = this.curLayer();
     if (li <= 0) return;
@@ -900,27 +1065,9 @@ export class Session {
     this.repaintAll();
     this.changed();
   }
-  setNewFrameCopy(v: boolean): void {
-    this.prefs.newFrameCopy = v;
-    this.savePrefs();
-    this.changed();
-  }
-  setRailSwap(v: boolean): void {
-    this.prefs.railSwap = v;
-    this.savePrefs();
-    this.changed();
-  }
-  setTlHeight(v: number): void {
-    this.prefs.tlH = Math.max(56, Math.min(340, Math.round(v)));
-    this.savePrefs();
-    this.changed();
-  }
-  /* palette floater fixed to ball mode */
-  setPalMode(m: "ball"): void {
-    this.prefs.palMode = m;
-    this.savePrefs();
-    this.changed();
-  }
+  setNewFrameCopy(v: boolean): void { this.setSetting("general.newFrameCopy", v); }
+  setRailSwap(v: boolean): void { this.setSetting("general.swapRails", v); }
+  setTlHeight(v: number): void { this.setSetting("canvas.timelineHeight", v); }
   setFrameDuration(fi: number, ms: number): void {
     const f = this.doc.frames[fi];
     if (!f) return;
@@ -965,7 +1112,9 @@ export class Session {
   startPlayback(): void {
     if (this.playing) return;
     const n = this.doc.frames.length;
-    if (!this.loop && n > 1 && this.curFrame() >= n - 1) this.setFrame(0);
+    this.playDir = startPlayDir(this.loopMode);
+    const start = startPlayFrame(this.loopMode, this.curFrame(), n);
+    if (start !== this.curFrame()) this.applyFrame(start); // rewind: no history step
     this.playing = true;
     this.changed();
     this.tickPlay();
@@ -989,23 +1138,24 @@ export class Session {
     const dur = Math.max(16, this.doc.frames[fi].durationMs);
     this.playTimer = window.setTimeout(() => {
       if (!this.playing) return;
-      let nf = fi + 1;
-      if (nf >= n) {
-        if (!this.loop) {
-          this.stopPlayback();
-          return;
-        }
-        nf = 0;
+      const step = nextPlayFrame(this.loopMode, this.curFrame(), n, this.playDir);
+      if (step.stop) {
+        this.stopPlayback();
+        return;
       }
-      this.setFrame(nf);
+      this.playDir = step.dir;
+      this.applyFrame(step.fi); // playback never pollutes the undo history
       this.tickPlay();
     }, dur);
   }
 
-  /** toggle wrap-around playback (loop ON restarts from frame 0 at the end) */
-  toggleLoop(): void {
-    this.loop = !this.loop;
+  /** cycle playback mode: once -> loop -> ping-pong -> reverse -> once */
+  cycleLoopMode(): LoopMode {
+    this.loopMode = nextLoopMode(this.loopMode);
+    this.prefs.loopMode = this.loopMode;
+    this.savePrefs();
     this.changed();
+    return this.loopMode;
   }
 
   /** composite-sample used by the eyedropper */
@@ -1013,7 +1163,7 @@ export class Session {
     // fast path: when no background and no onion ghosts the live composite is
     // already identical to a fresh no-bg compose, so just read one pixel
     const v = this.view_;
-    if (v && this.doc.bg === null && this.prefs.onion === 0) {
+    if (v && this.doc.bg === null && !this.prefs.onionOn) {
       const p = v.samplePixel(x, y);
       if (p) return p;
     }

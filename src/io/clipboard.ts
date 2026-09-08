@@ -14,35 +14,3 @@ export async function writeClipboardPng(canvas: HTMLCanvasElement): Promise<bool
   }
 }
 
-export async function readClipboardImage(): Promise<{ w: number; h: number; px: Uint8ClampedArray } | null> {
-  try {
-    if (!navigator.clipboard || !navigator.clipboard.read) return null;
-    const items = await navigator.clipboard.read();
-    for (const it of items) {
-      const t = it.types.find((x) => x.startsWith("image/"));
-      if (!t) continue;
-      const blob = await it.getType(t);
-      const url = URL.createObjectURL(blob);
-      try {
-        const img = await new Promise<HTMLImageElement>((res, rej) => {
-          const im = new Image();
-          im.onload = () => res(im);
-          im.onerror = () => rej(new Error("decode"));
-          im.src = url;
-        });
-        const w = img.naturalWidth, h = img.naturalHeight;
-        if (!w || !h) return null;
-        const c = document.createElement("canvas");
-        c.width = w; c.height = h;
-        const ctx = c.getContext("2d")!;
-        ctx.drawImage(img, 0, 0);
-        return { w, h, px: new Uint8ClampedArray(ctx.getImageData(0, 0, w, h).data) };
-      } finally {
-        URL.revokeObjectURL(url);
-      }
-    }
-    return null;
-  } catch {
-    return null;
-  }
-}

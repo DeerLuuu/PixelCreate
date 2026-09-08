@@ -1,0 +1,171 @@
+import { Session } from "../src/app/session";
+import { SETTINGS, settingsOfGroup } from "../src/app/settings";
+import { eq, ok } from "./common";
+
+/** minimal DOM-less environment for Session (no View attached) */
+function stubEnv(): void {
+  const g = globalThis as unknown as Record<string, unknown>;
+  if (!g.window) g.window = {};
+  const w = g.window as Record<string, unknown>;
+  w.setTimeout = () => 1;
+  w.clearTimeout = () => {};
+  w.setInterval = () => 1;
+  w.clearInterval = () => {};
+  w.addEventListener = () => {};
+  w.removeEventListener = () => {};
+  w.dispatchEvent = () => {};
+  w.PixelBridge = { toast: () => {}, vibrate: () => {} };
+  if (!g.localStorage) {
+    g.localStorage = { getItem: () => null, setItem: () => {}, removeItem: () => {} };
+  }
+}
+
+export function testSession(): void {
+  stubEnv();
+  const s = new Session();
+
+  // --- frame switching is recorded as its own undo step ---
+  s.frameAdd(); // second frame (records "frame-add")
+  eq("session.frames.count", s.doc.frames.length, 2);
+  s.history.clear();
+
+  eq("session.switch.start", s.curFrame(), 0);
+  s.setFrame(1);
+  eq("session.switch.moved", s.curFrame(), 1);
+  ok("session.switch.recorded", s.history.canUndo());
+  s.undo();
+  eq("session.switch.undo", s.curFrame(), 0);
+  s.redo();
+  eq("session.switch.redo", s.curFrame(), 1);
+
+  // --- switching to the frame you are already on records nothing ---
+  s.history.clear();
+  s.setFrame(1);
+  ok("session.switch.same-frame-no-record", !s.history.canUndo());
+
+  // --- playback must NOT pollute the undo history ---
+  s.setFrame(0);
+  s.history.clear();
+  s.loopMode = "loop";
+  s.startPlayback();
+  s.stopPlayback();
+  ok("session.play.no-record", !s.history.canUndo());
+
+  // --- history listing shows the frame switch label ---
+  s.history.clear();
+  s.setFrame(1);
+  const list = s.history.list();
+  eq("session.switch.label", list.labels[list.labels.length - 1], "frame-switch");
+
+  // --- layer drag reorder is a single undoable step ---
+  s.layerAdd();
+  s.layerAdd();
+  eq("session.layers.count", s.doc.layers.length, 3);
+  s.history.clear();
+  const firstName = s.doc.layers[0].name;
+  s.layerMoveTo(0, 2);
+  eq("session.layer-move.applied", s.doc.layers[2].name, firstName);
+  ok("session.layer-move.recorded", s.history.canUndo());
+  s.undo();
+  eq("session.layer-move.undo", s.doc.layers[0].name, firstName);
+
+  // --- bucket mode + recent colours bookkeeping ---
+  eq("session.bucket.default", s.prefs.bucketGlobal, false);
+  s.setBucketGlobal(true);
+  eq("session.bucket.on", s.prefs.bucketGlobal, true);
+
+  s.setRecentColorsMax(4);
+  for (let i = 0; i < 6; i++) s.pushRecentColor([i, 0, 0, 255]);
+  eq("session.recent.capped", s.recentColors.length, 4);
+  eq("session.recent.newest-first", s.recentColors[0], [5, 0, 0, 255]);
+  s.pushRecentColor([3, 0, 0, 255]); // already in the list -> moves to front, no dupe
+  eq("session.recent.dedupe", s.recentColors[0], [3, 0, 0, 255]);
+  eq("session.recent.dedupe-len", s.recentColors.length, 4);
+
+  // --- doc colours are collected from the canvas ---
+  const cel = s.doc.ensureCel(0, 0);
+  cel.data[0] = 10; cel.data[1] = 20; cel.data[2] = 30; cel.data[3] = 255;
+  cel.data[4] = 10; cel.data[5] = 20; cel.data[6] = 30; cel.data[7] = 255;
+  cel.data[8] = 200; cel.data[9] = 0; cel.data[10] = 0; cel.data[11] = 255;
+  const cols = s.docColors();
+  eq("session.doc-colors.count", cols.length, 2);
+  ok("session.doc-colors.has", cols.some((c) => c[0] === 200 && c[3] === 255));
+
+  // --- palette floater colour sources (fan menu) ---
+  eq("session.palOrb.default", s.palOrbMode, "palette");
+  eq("session.palOrb.palette", s.palOrbColors(), s.doc.palette);
+  s.cyclePalOrbMode();
+  eq("session.palOrb.doc-mode", s.palOrbMode, "doc");
+  eq("session.palOrb.doc-colors", s.palOrbColors().length, s.docColors().length);
+  s.cyclePalOrbMode();
+  eq("session.palOrb.recent-mode", s.palOrbMode, "recent");
+  eq("session.palOrb.recent-colors", s.palOrbColors(), s.recentColors);
+  s.cyclePalOrbMode();
+  eq("session.palOrb.wrap", s.palOrbMode, "palette");
+
+  // --- loop mode cycles and persists into prefs ---
+  s.loopMode = "once";
+  eq("session.loop.cycle1", s.cycleLoopMode(), "loop");
+  eq("session.loop.cycle2", s.cycleLoopMode(), "pingpong");
+  eq("session.loop.prefs", s.prefs.loopMode, "pingpong");
+
+  // --- onion skin setters drive the prefs used by the compositor ---
+  s.setOnionOn(true);
+  s.setOnionBefore(2);
+  s.setOnionAfter(1);
+  s.setOnionAlpha(80);
+  s.setOnionTint(false);
+  eq("session.onion.prefs", [s.prefs.onionOn, s.prefs.onionBefore, s.prefs.onionAfter, s.prefs.onionAlpha, s.prefs.onionTint], [true, 2, 1, 80, false]);
+
+  // --- Godot-style settings registry ---
+  eq("settings.default.lang", s.settingValue("general.language"), "zh");
+  s.setSetting("general.language", "en");
+  eq("settings.set.enum", s.prefs.lang, "en");
+  s.setSetting("general.language", "fr"); // invalid choice is rejected
+  eq("settings.reject.enum", s.prefs.lang, "en");
+
+  s.setSetting("canvas.gridSize", 999); // clamped to the declared maximum
+  eq("settings.clamp.max", s.prefs.gridSize, 32);
+  s.setSetting("canvas.gridSize", -5);
+  eq("settings.clamp.min", s.prefs.gridSize, 1);
+  s.setSetting("canvas.grid", "iso"); // after-hook raises a too-tiny iso spacing
+  eq("settings.after.iso-default", s.prefs.gridSize, 8);
+  eq("settings.read.enum", s.settingValue("canvas.grid"), "iso");
+
+  s.setSetting("canvas.autoPan", false);
+  eq("settings.set.bool", s.prefs.autoPan, false);
+  s.setSetting("canvas.autoPan", 1); // coerced to bool
+  eq("settings.coerce.bool", s.prefs.autoPan, true);
+
+  // custom getter/setter pair (bool stored, enum exposed)
+  eq("settings.custom.get.cur", s.settingValue("display.shadowTarget"), "cur");
+  s.setSetting("display.shadowTarget", "new");
+  eq("settings.custom.set", s.prefs.shadowNewLayer, true);
+  eq("settings.custom.get.new", s.settingValue("display.shadowTarget"), "new");
+
+  // dependency visibility: onion details only exist while onion is on
+  s.setSetting("onion.enabled", false);
+  ok("settings.visible.hidden", !settingsOfGroup(s, "onion").some((d) => d.path === "onion.alpha"));
+  s.setSetting("onion.enabled", true);
+  ok("settings.visible.shown", settingsOfGroup(s, "onion").some((d) => d.path === "onion.alpha"));
+  s.setSetting("onion.before", 2);
+  eq("settings.onion.before", s.prefs.onionBefore, 2);
+
+  // wand tolerance now persists through prefs (was a session-only field)
+  s.setSetting("tools.wandTolerance", 20);
+  eq("settings.wand.prefs", s.prefs.selectionTolerance, 20);
+  eq("settings.wand.getter", s.selectionTolerance, 20);
+
+  // history mode/steps side effect reaches the stack cap
+  s.setSetting("history.steps", 30);
+  eq("settings.hist.steps", s.prefs.histSteps, 30);
+  eq("settings.hist.cap", s.history.limit(), 30);
+
+  // every declared setting must resolve to a concrete value
+  let unresolved = 0;
+  for (const d of SETTINGS) {
+    const v = s.settingValue(d.path);
+    if (v === undefined || v === null) unresolved++;
+  }
+  eq("settings.all-resolve", unresolved, 0);
+}

@@ -1,15 +1,10 @@
 // Pixel "effects" helpers: outline, invert, desaturate … operate on one cel
 // (whole layer×frame). They mutate the cel in place; callers wrap them in one
 // history step via pushPixels so undo stays a single entry.
-import type { Doc } from "./doc";
 import type { RGBA } from "./types";
 
 function hasAlpha(d: Uint8ClampedArray, w: number, p: number): boolean {
   return d[p + 3] > 0;
-}
-
-function pxAt(d: Uint8ClampedArray, w: number, h: number, x: number, y: number): boolean {
-  return x >= 0 && y >= 0 && x < w && y < h && hasAlpha(d, w, (y * w + x) * 4);
 }
 
 /** Add an outer outline of `width` px around every opaque pixel of the cel,
@@ -62,19 +57,6 @@ export function desaturateCel(d: Uint8ClampedArray): void {
   }
 }
 
-/** Apply fn() over the current active cel and record one undo step. */
-export function runCelFx(
-  doc: Doc, li: number, fi: number, fn: (d: Uint8ClampedArray, w: number, h: number) => void
-): boolean {
-  const cel = doc.celAt(li, fi);
-  if (!cel) return false;
-  const before = new Uint8ClampedArray(cel.data);
-  fn(cel.data, cel.w, cel.h);
-  const after = new Uint8ClampedArray(cel.data);
-  let changed = false;
-  for (let i = 0; i < before.length; i++) if (before[i] !== after[i]) { changed = true; break; }
-  return changed;
-}
 /** One-tap drop shadow: silhouette offset (dx,dy) down-right, painted with
  * `color`, original pixels stay on top. Mutates in place. */
 export function dropShadowCel(d: Uint8ClampedArray, w: number, h: number, dx: number, dy: number, color: RGBA, keepOriginal = true): void {

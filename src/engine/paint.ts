@@ -22,19 +22,6 @@ export function eraseAt(cel: Cel, x: number, y: number, mask?: MaskFn | null): b
   return true;
 }
 
-/** cells inside a circular brush of radius r centered (x,y) */
-export function dotCells(x: number, y: number, radius: number): [number, number][] {
-  const out: [number, number][] = [];
-  const R = Math.max(0, Math.round(radius));
-  const rr = R * R;
-  for (let dy = -R; dy <= R; dy++) {
-    for (let dx = -R; dx <= R; dx++) {
-      if (dx * dx + dy * dy <= rr) out.push([x + dx, y + dy]);
-    }
-  }
-  return out;
-}
-
 /** Exact `size` x `size` square of cells (brush size = pixel diameter). */
 export function squareCells(x: number, y: number, size: number): [number, number][] {
   const s = Math.max(1, Math.round(size));
@@ -108,6 +95,44 @@ export function floodFill(cel: Cel, sx: number, sy: number, color: RGBA, mask?: 
     if (mask && !mask(x, y)) continue;
     paintAt(cel, x, y, color, null);
     stack.push([x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]);
+  }
+}
+
+/** Non-contiguous fill: replace EVERY pixel of the cel matching the seed
+ *  colour (tolerance 0), honouring an optional selection mask. Unlike
+ *  floodFill this ignores connectivity, so all identical pixels anywhere in
+ *  the layer are filled in one go. */
+export function globalFill(cel: Cel, sx: number, sy: number, color: RGBA, mask?: MaskFn | null): void {
+  const w = cel.w, h = cel.h, d = cel.data;
+  if (!cel.inBounds(sx, sy)) return;
+  const bi = cel.idx(sx, sy);
+  const baseR = d[bi], baseG = d[bi + 1], baseB = d[bi + 2], baseA = d[bi + 3];
+  // filling with the colour that is already there would be a no-op
+  if (color[0] === baseR && color[1] === baseG && color[2] === baseB && color[3] === baseA) return;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = cel.idx(x, y);
+      if (d[i] !== baseR || d[i + 1] !== baseG || d[i + 2] !== baseB || d[i + 3] !== baseA) continue;
+      if (mask && !mask(x, y)) continue;
+      paintAt(cel, x, y, color, null);
+    }
+  }
+}
+
+/** Non-contiguous erase: clear every pixel matching the seed colour. */
+export function globalErase(cel: Cel, sx: number, sy: number, mask?: MaskFn | null): void {
+  const w = cel.w, h = cel.h, d = cel.data;
+  if (!cel.inBounds(sx, sy)) return;
+  const bi = cel.idx(sx, sy);
+  const baseR = d[bi], baseG = d[bi + 1], baseB = d[bi + 2], baseA = d[bi + 3];
+  if (baseA === 0) return;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = cel.idx(x, y);
+      if (d[i] !== baseR || d[i + 1] !== baseG || d[i + 2] !== baseB || d[i + 3] !== baseA) continue;
+      if (mask && !mask(x, y)) continue;
+      d[i] = 0; d[i + 1] = 0; d[i + 2] = 0; d[i + 3] = 0;
+    }
   }
 }
 

@@ -81,33 +81,37 @@ export function tintCanvas(src: HTMLCanvasElement, tint: string, alpha: number):
 }
 
 export interface OnionSpec {
-  /** 0 off, 1 = previous frames behind, 2 = previous + next */
-  mode: 0 | 1 | 2;
-  max: number;
+  /** how many frames to ghost behind (previous) and ahead (next), 0..3 each */
+  before: number;
+  after: number;
+  /** opacity of the nearest ghost (0..1); further ghosts fade by 1/k */
+  alpha: number;
+  /** tint previous ghosts red / next ghosts green (off = draw them as-is) */
+  tint: boolean;
 }
 
-/** Frame image including onion ghosts of neighbouring frames. */
+/** Frame image including onion ghosts of neighbouring frames. Ghosts are
+ *  drawn far-to-near so the closest neighbour stays the most readable. */
 export function composeFrameWithOnion(doc: Doc, fi: number, onion: OnionSpec): HTMLCanvasElement {
   const out = composeFrame(doc, fi);
+  const before = Math.max(0, Math.min(3, Math.round(onion.before)));
+  const after = Math.max(0, Math.min(3, Math.round(onion.after)));
+  if (before <= 0 && after <= 0) return out;
   const ctx = out.getContext("2d")!;
-  const limit = Math.min(onion.max, 3);
-  if (onion.mode >= 1) {
-    for (let k = 1; k <= limit; k++) {
-      const f = fi - k;
-      if (f < 0) break;
-      const ghost = composeFrame(doc, f, { bgOverride: null });
-      ctx.globalAlpha = 0.55 / k;
-      ctx.drawImage(tintCanvas(ghost, "rgba(255,70,90,0.9)", 1), 0, 0);
-    }
+  const ghost = (f: number, k: number, prev: boolean): void => {
+    const src = composeFrame(doc, f, { bgOverride: null });
+    ctx.globalAlpha = Math.max(0.04, onion.alpha / k);
+    ctx.drawImage(onion.tint ? tintCanvas(src, prev ? "rgba(255,70,90,0.9)" : "rgba(90,230,130,0.95)", 1) : src, 0, 0);
+  };
+  for (let k = before; k >= 1; k--) {
+    const f = fi - k;
+    if (f < 0) continue;
+    ghost(f, k, true);
   }
-  if (onion.mode >= 2) {
-    for (let k = 1; k <= limit; k++) {
-      const f = fi + k;
-      if (f >= doc.frames.length) break;
-      const ghost = composeFrame(doc, f, { bgOverride: null });
-      ctx.globalAlpha = 0.55 / k;
-      ctx.drawImage(tintCanvas(ghost, "rgba(90,230,130,0.95)", 1), 0, 0);
-    }
+  for (let k = after; k >= 1; k--) {
+    const f = fi + k;
+    if (f >= doc.frames.length) continue;
+    ghost(f, k, false);
   }
   ctx.globalAlpha = 1;
   return out;

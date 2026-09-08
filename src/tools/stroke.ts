@@ -2,7 +2,7 @@
 import type { Doc } from "../engine/doc";
 import { Cel } from "../engine/cel";
 import type { RGBA } from "../engine/types";
-import { squareCells, brushStamp, lineCells, floodFill, floodErase, paintAt, eraseAt, type MaskFn } from "../engine/paint";
+import { squareCells, brushStamp, lineCells, floodFill, floodErase, globalFill, globalErase, paintAt, eraseAt, type MaskFn } from "../engine/paint";
 import { ellipseFill, ellipseOutline } from "../engine/shape";
 import type { History } from "../engine/history";
 import type { BrushState, SymMode } from "./registry";
@@ -29,13 +29,15 @@ export class Stroke {
   private readonly uy: number;
   /** also mirror across the perpendicular axis (four-way symmetry) */
   private readonly symFour: boolean;
+  /** bucket: fill every matching pixel in the layer instead of the connected region */
+  private readonly bucketGlobal: boolean;
   color: RGBA;
   size: number;
   last: [number, number] | null = null;
   start: [number, number] | null = null;
   private everPainted = false;
 
-  constructor(doc: Doc, li: number, fi: number, kind: ToolKind, brush: BrushState, layerLocked: boolean, sym: SymMode, shapeSides = 6, fill = true, ox = 0, oy = 0, angDeg = 90, symFour = false) {
+  constructor(doc: Doc, li: number, fi: number, kind: ToolKind, brush: BrushState, layerLocked: boolean, sym: SymMode, shapeSides = 6, fill = true, ox = 0, oy = 0, angDeg = 90, symFour = false, bucketGlobal = false) {
     this.doc = doc;
     this.li = li;
     this.fi = fi;
@@ -46,6 +48,7 @@ export class Stroke {
     this.ox = ox;
     this.oy = oy;
     this.symFour = symFour;
+    this.bucketGlobal = bucketGlobal;
     const rad = (angDeg * Math.PI) / 180;
     this.ux = Math.cos(rad);
     this.uy = Math.sin(rad);
@@ -117,8 +120,14 @@ export class Stroke {
         this.eraseDot(x, y, this.size);
         break;
       case "bucket":
-        if (this.color[3] === 0) floodErase(this.cel, x, y, this.mask);
-        else floodFill(this.cel, x, y, this.color, this.mask);
+        // contiguous (default) or global: every matching pixel in the layer
+        if (this.color[3] === 0) {
+          if (this.bucketGlobal) globalErase(this.cel, x, y, this.mask);
+          else floodErase(this.cel, x, y, this.mask);
+        } else {
+          if (this.bucketGlobal) globalFill(this.cel, x, y, this.color, this.mask);
+          else floodFill(this.cel, x, y, this.color, this.mask);
+        }
         this.everPainted = true; // flood fill writes pixels directly
         break;
       default:

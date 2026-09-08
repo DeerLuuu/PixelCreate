@@ -15,9 +15,10 @@ tests/.ts-out/
 !/toolchain/env.sh
 !/toolchain/devserver.js
 !/toolchain/make-icon.js
-!/toolchain/eng-test.cjs
-!/toolchain/boot-test.js
 !/toolchain/resolve.js
+
+# ---- self-contained web build deps (npm install in repo root) ----
+node_modules/
 
 # ---- signing key (secret) ----
 **/debug.keystore

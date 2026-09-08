@@ -1,13 +1,13 @@
 // Release notes (更新日志): data + modal. Auto-shown on first launch after an
 // update (version marker in localStorage); also reachable from the main menu.
-import React, { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { SESSION } from "./singleton";
 import { makeT } from "./i18n";
 import type { Lang } from "./i18n";
 import { Icon } from "./base";
 
 /** keep in sync with android/AndroidManifest.xml versionName on every release */
-export const APP_VERSION = "1.0.2";
+export const APP_VERSION = "1.0.6.0";
 
 export type ClgKind = "add" | "imp" | "fix";
 export interface ClgItem { kind: ClgKind; zh: string; en: string }
@@ -16,6 +16,71 @@ export interface ClgVersion { v: string; date: string; items: ClgItem[] }
 const it = (kind: ClgKind, zh: string, en: string): ClgItem => ({ kind, zh, en });
 
 export const CHANGELOG: ClgVersion[] = [
+  {
+    v: "1.0.6.0",
+    date: "2026-09-08",
+    items: [
+      it("fix", "取色球的颜色来源胶囊改为固定槽位：始终位于浮动球正下方固定距离（不随色球数量跳动、绝不压住浮动球，底部空间不足时翻到上方），色球布局自动避开该位置", "The colour-source chip of the colour orb now occupies a fixed slot: a constant distance below the floater (never jumping as colours change, never covering the floater, flipping above when the bottom is tight), and the swatch layout keeps that slot clear"),
+      it("imp", "更新日志面板改为固定尺寸：版本改成纵向列表（列表区内部滚动），选中版本的说明单独滚动，版本再多也不会把面板撑高", "Release-notes dialog now has a fixed size: versions are a scrollable vertical list and the notes pane scrolls on its own, so the panel never grows with the number of releases"),
+      it("add", "新增模块化新手引导：分步高亮真实控件（画布 / 工具与颜色 / 浮动球 / 图层与帧 / 文件与保存 / 手势与导航），首次安装展示全部，之后每次大版本更新只展示新增步骤，主菜单里可随时重放", "New modular onboarding guide: step-by-step spotlight on the real controls (canvas / tools & colours / floating orbs / layers & frames / files & saving / gestures), shows everything on a first install, only the NEW steps after a later release, and can be replayed any time from the main menu"),
+      it("imp", "引导支持“先示范再讲解”：讲到选区球时会自动在画布上框出一个选区把它呼出来（不写入撤销记录），讲完恢复原来的选区状态；步骤动作也支持一次声明多个", "The tour can now demonstrate before it explains: the selection-orb step frames a selection on the canvas to summon the orb (without touching the undo stack) and restores the previous selection afterwards. Steps may also declare several actions at once"),
+      it("add", "引导细化到具体按钮：会自动打开工具环（含形状/选区子环）与主菜单，逐个高亮工具、菜单项，以及导入/导出二级菜单里的具体功能（导入图片、导入精灵表、参考图、导出对话框、导出调色板等）", "The tour now drills down to individual buttons: it opens the tool ring (including the shape and selection sub-rings) and the main menu by itself, spotlighting each tool, every menu entry, and the concrete import/export sub-menu items (import image, spritesheet, reference image, export dialog, export palette)"),
+      it("add", "交互操作改为“真操作演示”：引导会真的替你点下按钮——点开浮动球与工具环、展开形状/选区子环、打开主菜单并进入导入/导出二级菜单、打开时间轴与洋葱皮（讲完自动恢复原状）；缩放/绘制/点击/四指等手势步骤另有虚拟触点动画演示", "Interactive steps now really perform the action: the tour taps the controls for you (opening the floating orbs and tool ring, expanding the shape/selection sub-rings, opening the main menu and its import/export sub-menus, switching on the timeline and onion skin — all restored when the tour ends), while gesture steps such as zoom, draw, taps and four-finger also play the virtual-finger animation"),
+      it("add", "引导每个模块都补上了“真操作演示”：缩放步骤真的缩放一次再还原、工具步骤真的切换工具（橡皮/直线/框选）再切回、笔刷步骤真的调大再调回、前景背景真的交换一次、对称真的开一条轴再关掉、取色球真的循环颜色来源、洋葱皮真的打开并翻到下一帧给你看前后帧参考、三连击真的放大 2×、四连指结束引导后真的弹出“预览所有帧”", "Every tour section now performs a real demonstration: the zoom step really zooms and restores, the tool steps really switch tool (eraser / line / marquee) and switch back, the brush step really changes the size and restores it, fg/bg really swap once, symmetry really turns one axis on and off, the colour orb really cycles its colour source, onion skin really switches on and steps to the next frame, triple-tap really zooms 2x, and finishing the four-finger step really opens the all-frames preview"),
+      it("add", "设置与更新日志两步直接打开真实窗口来讲解（这两步的遮罩更浅，能看清窗口内容，讲完自动关掉）；特效球因为会真的改动画面，改为逐个高亮可用特效而不实际应用", "The Settings and release-notes steps now open the real windows to explain them (with a lighter backdrop on those steps so the window stays readable, and closed again afterwards); the magic-orb effects would change the artwork, so that step lights up each effect in turn instead of applying one"),
+      it("fix", "修复“双指双击 = 重做”的手势演示：之前误用了双指拖动的动画，现在改为两根手指同时双击的动画；同时三连击步骤会把画布留在高亮区域，真实放大效果看得见", "Fix the two-finger double-tap (redo) demo: it wrongly played the two-finger pan animation and now shows two fingers double-tapping together; the triple-tap step also keeps the canvas inside the highlight so the real zoom is visible"),
+      it("imp", "引导文案补齐细节：形状工具松手后自动变选区（可拖动/缩放）、魔棒容差在设置→工具、帧号格点一下切帧/长按设时长/长按拖动重排、洋葱皮至少需要 2 帧、新建或打开会替换当前作品、导入精灵表需要先填单元格尺寸、预览里点任意一帧即可跳转", "Tour copy filled in the details: shapes become a movable/scalable selection when you lift, wand tolerance lives in Settings -> Tools, frame numbers switch frame / hold to set duration / hold-drag to reorder, onion skin needs at least 2 frames, new or open replaces the artwork, spritesheet import needs the cell size first, and tapping any frame in the preview jumps to it"),
+      it("add", "新增静态锚点测试：自动检查引导里用到的每个控件选择器都真实存在于界面源码中，避免步骤指向已经改名的按钮而被静默跳过", "New static anchor test: it verifies that every control selector the tour uses really exists in the UI sources, so a renamed button can never make a step silently point at nothing"),
+      it("fix", "引导气泡不再遮挡正在讲解的内容：依次尝试四个方向挑选不与高亮区域重叠的位置；目标占满屏幕时自动把高亮范围收缩到中心，气泡始终完整显示在屏幕内", "The guide card no longer covers what it explains: it tries all four sides for a spot that does not overlap the highlight, shrinks the highlight to its centre when the target fills the screen, and always stays fully on screen"),
+      it("add", "引导新增“跳过本模块”：一键跳过当前模块剩余的步骤，直接进入下一个模块", "The tour gains a Skip section button: jumps straight past the remaining steps of the current section"),
+      it("fix", "修复引导气泡超出屏幕：定位改为先测量真实高度并双向钳制，并去掉会二次偏移坐标的入场位移动画（气泡跑偏的根因）；引导时若浮动球被收进存储区会自动弹出，结束后恢复原来的停靠布局", "Fix the guide bubble leaving the screen: the card is measured first and clamped on both axes, and the entrance animation no longer shifts its coordinates (that was the root cause). Dock-parked orbs are popped out for the tour and restored to their storage layout afterwards"),
+    ],
+  },
+  {
+    v: "1.0.5",
+    date: "2026-09-08",
+    items: [
+      it("fix", "历史色板（画布颜色 / 最近使用）入口移到取色球扇形菜单：点色板旁的模式胶囊即可在“色板 / 画布颜色 / 最近使用”之间切换，新使用的颜色立即出现（调色板面板同样支持）", "Canvas/Recent colour sources moved into the colour-orb fan: tap the mode chip beside the ball to switch between Palette / Canvas colours / Recent, and newly used colours appear immediately (the palette panel supports the same)"),
+      it("imp", "设置系统重构为声明式注册表（Godot 风格）：所有设置集中声明（点号路径/类型/默认值/范围/分组/依赖显示/刷新策略/自定义读写），设置界面按声明自动生成并分组折叠，新增设置只需加一条声明 + 文案；魔法棒容差等设置现在也会持久化", "Settings rebuilt as a declarative registry (Godot style): every setting is declared once (dotted path / type / default / range / group / visibility / refresh policy / custom accessors), the dialog is generated from that table with collapsible groups, and adding a setting now means adding one declaration plus its strings. Wand tolerance and friends persist properly too"),
+    ],
+  },
+  {
+    v: "1.0.4",
+    date: "2026-09-08",
+    items: [
+      it("add", "油漆桶新增“连续/非连续”开关（仅在油漆桶工具时出现在控制栏）：非连续=整层所有同色像素一次填充，连续=只填连通区域", "Paint bucket gains a contiguous / global switch (shown only while the bucket tool is active): global fills every matching pixel in the layer at once, contiguous fills just the connected region"),
+      it("add", "图层长按拖拽重排：在时间轴左侧图层行按住约 0.3 秒后上下拖动即可调整图层顺序（一次撤销可还原）", "Layer drag reordering: hold a layer row in the timeline for ~0.3s then drag vertically to reorder layers (a single undo restores it)"),
+      it("add", "播放新增循环模式：单次 → 循环 → 来回循环（乒乓）→ 倒流循环，点循环按钮循环切换并提示当前模式", "New playback loop modes: once → loop → ping-pong → reverse; the loop button cycles through them and shows the current mode"),
+      it("add", "洋葱皮设置进入设置页：总开关、前/后帧数量（各 0–3）、不透明度、是否着色（前帧红/后帧绿）", "Onion skin settings moved into Settings: master switch, frames before/after (0–3 each), opacity, and optional tint (previous red / next green)"),
+      it("add", "选区浮动球新增“反选”按钮（无选区时=全选）", "Selection ball gains an Invert button (inverts an existing selection, selects everything when empty)"),
+      it("add", "调色板面板新增“画布颜色 / 最近使用”两种取色模式：可列出当前作品用到的全部颜色，以及最近使用的颜色；最近颜色数量可在设置里调整（4–64）", "Palette panel gains Canvas-colours and Recent modes: every colour used in the artwork, and the most recently used colours; how many to keep is configurable in Settings (4–64)"),
+      it("imp", "自动保存更可靠：改用 IndexedDB（大画布不再因 4MB 上限被跳过，旧数据自动迁移），切到后台立即保存，设置页显示上次保存时间并可立即保存 / 清除", "More reliable autosave: now stored in IndexedDB (large canvases are no longer skipped at the 4MB cap, old data migrates automatically), flushed immediately when the app goes to the background, and the Settings screen shows the last save with Save now / Clear buttons"),
+      it("imp", "撤销默认步数由 60 提升到 120", "Default undo steps raised from 60 to 120"),
+      it("imp", "切换帧现在也会记入撤销/重做（点击帧或上一帧/下一帧可撤销回到之前查看的帧；播放过程中的切帧不会污染记录）", "Frame switching is now part of undo/redo (tapping a frame or prev/next can be undone; playback frame changes never pollute the history)"),
+    ],
+  },
+  {
+    v: "1.0.3",
+    date: "2026-09-08",
+    items: [
+      it("add", "对称系统全面升级：单一对称模式 + 可调轴角度（0/45/90/135°）+ 四向对称开关；辅助线可随手势拖动/旋转（像素级吸附），新增锁定按钮（SVG 图标、移到视口边缘防误触），锁定时自动隐藏对称调节芯片", "Symmetry overhaul: one unified mode with adjustable axis angle (0/45/90/135°) and a four-way toggle; dashed guides are draggable/rotatable with pixel-snapped steps, a lock button (SVG glyph) sits at the viewport edge, and the adjust chips hide while locked"),
+      it("add", "统一网格辅助线：关/像素格/等距三模式、尺寸可调；等距网格改为真实 30° 斜线", "Unified grid helper: off / pixel grid / isometric with adjustable size; iso now draws true 30° lines"),
+      it("add", "快捷手势：画布边距双击=撤销、边距双指双击=重做、画布上三连击=2× 放大；取色时屏幕角落显示像素放大镜（可调倍率、可关闭，仅取色时出现）", "Quick gestures: double-tap the margin = undo, two-finger double-tap the margin = redo, triple-tap the canvas = 2× zoom; a pixel loupe (adjustable magnification, optional) appears while picking colours"),
+      it("add", "选区缩放完全复刻 Aseprite：任意比例自由缩放、锚定在对侧手柄、截断最近邻采样，缩放吸附保持像素清晰", "Selection scale replicates Aseprite: free non-integer factor anchored at the opposite handle with truncating nearest-neighbour sampling and pixel-crisp snapping"),
+      it("add", "帧预览（全部帧缩略图）改为方形卡片并接入新入口按钮（不透明度旁）；新增独立 SVG 按钮图标", "All-frames preview now shows square frame cards and gets a new entry button beside opacity with its own SVG icon"),
+      it("add", "选区/魔法球操作归位：删除选区内容移入“选区球”；魔法球新增清空画布、投影与发光目标可选当前层或新建 shadow 图层", "Selection & Magic Ball cleanup: delete-selection lives in the Selection Ball; Magic Ball gains clear-canvas and drop-shadow/glow target options (current layer or a new shadow layer)"),
+      it("add", "浮动球停靠布局持久化：重启应用后已停靠的球保持原位", "Docked floating-ball layout persists across app restarts"),
+      it("add", "界面完善：空状态操作提示、缩放百分比 HUD 与“适配视图”按钮、旋转/缩放后保持视口、画布平移始终被钳制在视口内不丢失、边缘自动平移（可开关并限速）", "UI polish: empty-state toasts, zoom % HUD with fit-to-view, viewport kept on resize, pan clamped so the canvas never leaves the view, edge auto-pan (toggleable, speed-capped)"),
+      it("add", "四指上滑快速打开“预览所有帧”：四指按住向上滑动即可查看全部帧（期间画布不会移动/缩放）", "Four-finger swipe up opens the all-frames preview (the canvas stays put during the gesture)"),
+      it("add", "全应用拦截浏览器长按菜单与文本选择，绘画过程不再误弹系统菜单", "Browser long-press menus and text selection are blocked app-wide so drawing never triggers system menus"),
+      it("fix", "撤销/重做快捷手势只在画布外生效：画布内双击不再误触发撤销，三连击放大也不再误撤此前画下的笔划", "Undo/redo shortcuts only fire outside the canvas; in-canvas double-taps and triple-tap zoom never undo earlier strokes"),
+      it("fix", "铅笔/橡皮足迹光标不再在画布边缘卡住；对称圆形笔刷奇偶尺寸逐像素一致的真圆，无右侧/底部扁边", "Brush/eraser footprint no longer freezes at the canvas border; symmetric stamps are true circles for every size with no flat chords"),
+      it("fix", "投影生成到新图层时会复制当前图层内容作为阴影来源（此前得到空图层）", "Drop-shadow onto a new layer copies the current layer as its shadow source (was blank)"),
+      it("fix", "修复帧预览图标 SVG 被错误嵌套进时间轴图标的问题", "Fix the frame-preview icon SVG being accidentally nested inside the timeline icon"),
+      it("fix", "四指手势改为“四指按住 + 至少两指滑动”即触发预览：不再要求特定上滑距离/方向，任意方向滑动（每指自落点位移超过抖动阈值）即激活；快速甩动、中途抬指、先滑后回滑都能稳定打开，误触（仅一指动、轻放不动、滑动发生在第四指落下前）被排除，触发前有震动反馈", "Four-finger gesture now opens the preview whenever >=4 fingers are down and at least two of them slide: no upward swipe or distance is required any more — any-direction travel past the jitter threshold (measured per finger from its own touchdown) arms it. Fast flicks, a finger lifting mid-way and slide-then-slide-back all work reliably, while false triggers (only one finger moving, a still touch, sliding only before the 4th finger lands) are rejected, with a haptic tick before the sheet opens"),
+      it("imp", "工程整理：web 构建/测试链收进仓库（npm 一键构建），移除已废弃的旧版程序与脚本", "Housekeeping: self-contained npm build & test scripts shipped in-repo; legacy app code removed"),
+    ],
+  },
   {
     v: "1.0.2",
     date: "2025-09-07",
@@ -78,6 +143,7 @@ export function changelogNeedsShow(): boolean {
 export function ChangelogModal({ onClose }: { onClose: () => void }) {
   const lang = langOf();
   const t = useMemo(() => makeT(lang), [lang]);
+  const listRef = useRef<HTMLDivElement | null>(null);
   const [vi, setVi] = useState(() => {
     const i = CHANGELOG.findIndex((v) => v.v === APP_VERSION);
     return i >= 0 ? i : 0;
@@ -86,6 +152,10 @@ export function ChangelogModal({ onClose }: { onClose: () => void }) {
   useEffect(() => {
     try { localStorage.setItem("pc.changelog.seen", APP_VERSION); } catch { /* ignore */ }
   }, []);
+  // keep the selected row visible in the (fixed-height, scrollable) version list
+  useEffect(() => {
+    listRef.current?.querySelector<HTMLElement>(".clg-v.on")?.scrollIntoView({ block: "nearest" });
+  }, [vi]);
   const ver = CHANGELOG[vi] ?? CHANGELOG[0];
   const secs: [ClgKind, string][] = [
     ["add", t("clgAdd")],
@@ -95,14 +165,14 @@ export function ChangelogModal({ onClose }: { onClose: () => void }) {
   return (
     <>
       <div className="dlg-mask" onClick={onClose} />
-      <div className="dlg clg-dlg">
+      <div className="dlg clg-dlg" data-guide="dlg-changelog">
         <div className="dlg-head">
           <span>{t("changelog")}</span>
           <div className="grow" />
           <button className="btn small" onClick={onClose}><Icon id="i-x" size={16} /></button>
         </div>
         <div className="dlg-body">
-          <div className="clg-vers">
+          <div className="clg-vers" ref={listRef}>
             {CHANGELOG.map((v, i) => (
               <button key={v.v} className={"clg-v" + (i === vi ? " on" : "") + (v.v === APP_VERSION ? " cur" : "")} onClick={() => setVi(i)}>
                 <span className="clg-vname">{v.v}</span>

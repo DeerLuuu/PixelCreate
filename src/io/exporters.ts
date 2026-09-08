@@ -109,10 +109,6 @@ function rawExportCanvas(doc: Doc, fi: number, o: ExportOpts = {}): HTMLCanvasEl
   return out;
 }
 
-export function exportCanvas(doc: Doc, fi: number, o: ExportOpts = {}): HTMLCanvasElement {
-  return rawExportCanvas(doc, fi, o);
-}
-
 export function encodeGIF(frames: FrameData[], w: number, h: number, opts: { transparent?: boolean }): Uint8Array {
   if (typeof window === "undefined" || !window.GifWriter) throw new Error("gif-writer-missing");
   const useTrans = opts.transparent !== false;

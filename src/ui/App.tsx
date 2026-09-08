@@ -1,28 +1,21 @@
-import React, { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { SESSION } from "./singleton";
 import type { Snapshot } from "../app/session";
 import { makeT } from "./i18n";
 import type { Lang } from "./i18n";
-import { CORE_TOOLS, SHAPE_TOOLS, SELECT_TOOLS, isShapeTool, isSelectTool, isSymTool } from "../tools/registry";
+import { CORE_TOOLS, SHAPE_TOOLS, SELECT_TOOLS, isShapeTool, isSelectTool, isSymTool, type ToolId } from "../tools/registry";
 import { View } from "../render/view";
-import { Doc } from "../engine/doc";
-import { Cel } from "../engine/cel";
-import { rgbaToHex, hexToRgba, chipCss } from "../engine/color";
+import { rgbaToHex, chipCss } from "../engine/color";
+import { paintAt } from "../engine/paint";
 import * as selOps from "../tools/select";
 import * as fxE from "../engine/effects";
-import { BLEND_MODES } from "../engine/types";
-import { HsvWheel, colorToHex6 } from "./HsvWheel";
 import * as compositor from "../render/compositor";
-import { tryReadGif } from "../io/gifread";
-import { HoldAdjust, ColorHoldChip, hsvToRgb } from "./hold";
-import { PALETTE_PACKS } from "./palettes";
+import { HoldAdjust, ColorHoldChip } from "./hold";
+import { palChipPos, chipBox, swatchHitsChip } from "./orb-layout";
 import { ReplayOverlay } from "./replay";
-import { hexToRgba as hrgb } from "../engine/color";
-import * as project from "../io/project";
-import * as exporters from "../io/exporters";
 import * as bridge from "../io/bridge";
-import { writeClipboardPng, readClipboardImage } from "../io/clipboard";
-import { showTip, hideTip, subscribeTip } from "./tooltip";
+import { writeClipboardPng } from "../io/clipboard";
+import { showTip, hideTip } from "./tooltip";
 import { Icon, Btn, TipHost, Keep, Overlay, useSession, useLandscape } from "./base";
 import { TimelineBar } from "./timeline";
 import { PreviewBox } from "./preview";
@@ -30,6 +23,8 @@ import { RefImageBox } from "./refimg";
 import type { RefImg } from "./refimg";
 import { PalettePanel, MenuModal, SizeModal, SheetModal, NewDocModal, ExportModal, AdjustModal, SettingsModal, FrameModal, FramePreviewModal, HistoryModal, histName, saveProject } from "./modals";
 import { ChangelogModal, changelogNeedsShow } from "./changelog";
+import { GUIDE, guideStepsFor, type GuideAction, type GuideStep } from "../app/guide";
+import { GuideOverlay, simulateTap } from "./guide";
 import type { ModalId, SizeMode, SheetData } from "./modals";
 
 type PanelId = "layers" | "palette" | null;
@@ -66,6 +61,10 @@ export function App() {
   const [replayOn, setReplayOn] = useState(false);
   const [refImg, setRefImg] = useState<RefImg | null>(null);
   const [confirmQ, setConfirmQ] = useState<{ msg: string; yes: string; no: string; res: (ok: boolean) => void } | null>(null);
+  /** onboarding tour: steps still unseen by this user (null = not running) */
+  const [guide, setGuide] = useState<GuideStep[] | null>(null);
+  /** app state before the tour started (the tour really taps buttons) */
+  const guideState = useRef<{ tlOn: boolean; onionOn: boolean } | null>(null);
 
   useEffect(() => {
     SESSION.setConfirmAsk((q) => new Promise<boolean>((resolve) => setConfirmQ({ msg: q.msg, yes: q.yes, no: q.no, res: resolve })));
@@ -77,6 +76,264 @@ export function App() {
     if (changelogNeedsShow()) setModal("changelog");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // onboarding: first run shows everything, a later release only shows the NEW
+  // steps (those whose ids were never recorded), and only once per launch
+  useEffect(() => {
+    let seen: string[] = [];
+    let fresh = true;
+    try {
+      const raw = localStorage.getItem("pc.guide.seen");
+      if (raw) {
+        const arr = JSON.parse(raw);
+        if (Array.isArray(arr)) {
+          seen = arr.filter((x): x is string => typeof x === "string");
+          fresh = false;
+        }
+      }
+    } catch { /* ignore */ }
+    const todo = guideStepsFor(seen, fresh);
+    if (!todo.length) return;
+    guideState.current = { tlOn, onionOn: SESSION.prefs.onionOn };
+    const id = window.setTimeout(() => setGuide(todo), 900);
+    return () => window.clearTimeout(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /** selection demonstrated for the selection-orb step, restored afterwards */
+  const selBackup = useRef<{ had: boolean; mask: Uint8Array | null } | null>(null);
+  const demoSelection = () => {
+    const d = SESSION.doc;
+    if (!selBackup.current) {
+      selBackup.current = { had: !!d.sel && d.sel.hasAny(), mask: d.sel ? new Uint8Array(d.sel.mask) : null };
+    }
+    // a centred rectangle (no history entry: the tour must not pollute undo)
+    const w = Math.max(2, Math.round(d.w * 0.4));
+    const h = Math.max(2, Math.round(d.h * 0.4));
+    const x0 = Math.max(0, Math.round((d.w - w) / 2));
+    const y0 = Math.max(0, Math.round((d.h - h) / 2));
+    selOps.selOps.setRect(d, x0, y0, x0 + w - 1, y0 + h - 1);
+    SESSION.repaintAll();
+    SESSION.changed();
+  };
+  const restoreSelection = () => {
+    const bak = selBackup.current;
+    selBackup.current = null;
+    if (!bak) return;
+    const d = SESSION.doc;
+    if (bak.had && bak.mask && d.sel) d.sel.mask.set(bak.mask);
+    else selOps.selOps.clear(d);
+    SESSION.repaintAll();
+    SESSION.changed();
+  };
+
+  /** host actions the guide can request (declared in src/app/guide.ts) */
+  const guideActions = useMemo<Partial<Record<GuideAction, () => void>>>(() => ({
+    openTimeline: () => setTlOn(true),
+    closeTimeline: () => setTlOn(false),
+    closeOverlays: () => { setPanel(null); setModal(null); },
+    // docked orbs live in the storage area, not on screen: pop them out for the
+    // tour and put the layout back afterwards (FloatingTools listens for these)
+    undockOrbs: () => window.dispatchEvent(new Event("pc-guide-undock")),
+    redockOrbs: () => window.dispatchEvent(new Event("pc-guide-redock")),
+    demoSelection,
+    restoreSelection,
+    // really paint a short stroke on the canvas, then undo it: the user sees a
+    // real mark appear and disappear (the history step is tagged so a stroke
+    // the user draws meanwhile is never rolled back by mistake)
+    demoStroke: () => {
+      const d = SESSION.doc;
+      const li = SESSION.curLayer(), fi = SESSION.curFrame();
+      const cel = d.ensureCel(li, fi);
+      const before = new Uint8ClampedArray(cel.data);
+      const len = Math.max(6, Math.round(d.w * 0.25));
+      const x0 = Math.max(1, Math.round((d.w - len) / 2));
+      const y0 = Math.round(d.h / 2);
+      for (let i = 0; i < len; i++) {
+        const x = x0 + i;
+        const y = y0 + Math.round(Math.sin((i / len) * Math.PI) * 2);
+        paintAt(cel, x, y, SESSION.color);
+      }
+      SESSION.history.pushPixels("guide-demo", d, [{ li, fi, before, after: new Uint8ClampedArray(cel.data) }]);
+      SESSION.repaint();
+      SESSION.changed();
+      window.setTimeout(() => {
+        const l = SESSION.history.list();
+        const last = l.labels[l.labels.length - 1];
+        if (last === "guide-demo" && l.index === l.labels.length) SESSION.undo();
+      }, 1500);
+    },
+    // tool ring: opened by the tour so every individual tool can be highlighted
+    openToolRing: () => window.dispatchEvent(new CustomEvent("pc-guide-tools", { detail: "open" })),
+    closeToolRing: () => window.dispatchEvent(new CustomEvent("pc-guide-tools", { detail: "close" })),
+    toolSubShape: () => window.dispatchEvent(new CustomEvent("pc-guide-tools", { detail: "shape" })),
+    toolSubSelect: () => window.dispatchEvent(new CustomEvent("pc-guide-tools", { detail: "select" })),
+    toolSubBack: () => window.dispatchEvent(new CustomEvent("pc-guide-tools", { detail: "back" })),
+    // main menu + its sub-menus: MenuModal takes the initial sub from this
+    // window flag (it mounts after the click) and follows the event afterwards
+    openMenu: () => {
+      (window as unknown as { __pcGuideMenuSub?: null | "import" | "export" }).__pcGuideMenuSub = null;
+      setModal("menu");
+      window.setTimeout(() => window.dispatchEvent(new CustomEvent("pc-guide-menu-sub", { detail: null })), 0);
+    },
+    closeMenu: () => {
+      (window as unknown as { __pcGuideMenuSub?: null | "import" | "export" }).__pcGuideMenuSub = null;
+      setModal(null);
+    },
+    menuSubImport: () => window.dispatchEvent(new CustomEvent("pc-guide-menu-sub", { detail: "import" })),
+    menuSubExport: () => window.dispatchEvent(new CustomEvent("pc-guide-menu-sub", { detail: "export" })),
+    menuSubBack: () => window.dispatchEvent(new CustomEvent("pc-guide-menu-sub", { detail: null })),
+    // close every floating-ball ring (used when the tour ends)
+    closeOrbs: () => window.dispatchEvent(new CustomEvent("pc-guide-tools", { detail: "closeall" })),
+
+    // ---------------------------------------------------------------- demos
+    // Every demo below performs the REAL action and then puts the app back the
+    // way it found it. Restores are guarded: if the user (or the next step)
+    // changed the same thing meanwhile, the demo leaves it alone.
+    //
+    // the view really zooms out and back in while the finger dots play
+    demoZoom: () => {
+      const v = SESSION.view;
+      if (!v) return;
+      const z0 = v.zoom, ox0 = v.ox, oy0 = v.oy;
+      const seq = [0.75, 0.55, 0.75, 1];
+      seq.forEach((k, i) => window.setTimeout(() => {
+        const want = i === 0 ? z0 : z0 * seq[i - 1];
+        if (Math.abs(v.zoom - want) > 1e-6) return; // user took over: stop touching it
+        v.zoomAt(z0 * k);
+      }, 260 + i * 300));
+      window.setTimeout(() => {
+        if (Math.abs(v.zoom - z0) > 1e-6) return;
+        v.zoom = z0; v.ox = ox0; v.oy = oy0; v.refresh(false);
+      }, 260 + seq.length * 300 + 200);
+    },
+    // triple-tap really zooms 2x around the canvas centre, then goes back
+    demoZoomIn: () => {
+      const v = SESSION.view;
+      if (!v) return;
+      const z0 = v.zoom, ox0 = v.ox, oy0 = v.oy;
+      const z1 = Math.min(32, z0 * 2);
+      if (Math.abs(z1 - z0) < 1e-6) return;
+      v.zoomAt(z1);
+      window.setTimeout(() => {
+        if (Math.abs(v.zoom - z1) > 1e-6) return; // user zoomed: keep their view
+        v.zoom = z0; v.ox = ox0; v.oy = oy0; v.refresh(false);
+      }, 1800);
+    },
+    // really select another tool, then hand the previous one back
+    demoToolSwitch: () => {
+      const prev = SESSION.tool;
+      const alt: ToolId = prev === "eraser" ? "pencil" : "eraser";
+      SESSION.setTool(alt);
+      window.setTimeout(() => { if (SESSION.tool === alt) SESSION.setTool(prev); }, 1600);
+    },
+    demoShapeTool: () => {
+      const prev = SESSION.tool;
+      SESSION.setTool("line");
+      window.setTimeout(() => { if (SESSION.tool === "line") SESSION.setTool(prev); }, 1600);
+    },
+    demoMarquee: () => {
+      const prev = SESSION.tool;
+      SESSION.setTool("select");
+      window.setTimeout(() => { if (SESSION.tool === "select") SESSION.setTool(prev); }, 1600);
+    },
+    // really change the brush size, then restore the previous one
+    demoBrushSize: () => {
+      const prev = SESSION.brushSize;
+      const alt = prev === 1 ? 8 : 1;
+      SESSION.setBrushSize(alt);
+      window.setTimeout(() => { if (SESSION.brushSize === alt) SESSION.setBrushSize(prev); }, 1600);
+    },
+    // really swap FG/BG, then swap the contents back (a second swapColors()
+    // would also reorder the recent-colour list)
+    demoSwapColors: () => {
+      const f0 = [...SESSION.fg] as typeof SESSION.fg;
+      const b0 = [...SESSION.bg] as typeof SESSION.bg;
+      SESSION.swapColors();
+      window.setTimeout(() => {
+        if (SESSION.fg[0] !== b0[0] || SESSION.fg[1] !== b0[1] || SESSION.fg[2] !== b0[2] || SESSION.fg[3] !== b0[3]) return;
+        SESSION.fg[0] = f0[0]; SESSION.fg[1] = f0[1]; SESSION.fg[2] = f0[2]; SESSION.fg[3] = f0[3];
+        SESSION.bg[0] = b0[0]; SESSION.bg[1] = b0[1]; SESSION.bg[2] = b0[2]; SESSION.bg[3] = b0[3];
+        SESSION.changed();
+      }, 1600);
+    },
+    // really turn a symmetry axis on (the guides appear on the canvas), then off
+    demoSymmetry: () => {
+      const prev = { sym: SESSION.sym, four: SESSION.symFour, tweaked: SESSION.symTweaked };
+      const on = SESSION.cycleSym();
+      window.setTimeout(() => {
+        if (SESSION.sym !== on) return; // the user changed it: keep their choice
+        SESSION.sym = prev.sym; SESSION.symFour = prev.four; SESSION.symTweaked = prev.tweaked;
+        SESSION.repaint();
+        SESSION.changed();
+      }, 1900);
+    },
+    // really tap the colour-source chip of the palette fan: the fan redraws
+    // with canvas colours, then recent colours, then cycles back to the start
+    demoPalMode: () => {
+      const mode0 = SESSION.palOrbMode;
+      const tap = () => simulateTap('[data-guide="pal-mode-chip"]');
+      window.setTimeout(tap, 700);
+      window.setTimeout(tap, 1500);
+      window.setTimeout(() => {
+        let guard = 0;
+        while (SESSION.palOrbMode !== mode0 && guard++ < 4) SESSION.cyclePalOrbMode();
+      }, 2400);
+    },
+    // the FX ring really exists at this point; applying an effect would change
+    // the artwork, so the demo lights up every effect in turn instead
+    demoFx: () => {
+      const items = Array.from(document.querySelectorAll<HTMLElement>(".radial-layer .orb-item"));
+      items.forEach((el, i) => {
+        window.setTimeout(() => el.classList.add("guide-flash"), 240 + i * 240);
+        window.setTimeout(() => el.classList.remove("guide-flash"), 240 + i * 240 + 460);
+      });
+    },
+    // onion skin really shows the neighbouring frame (no history entry)
+    demoOnionFrame: () => {
+      const d = SESSION.doc;
+      if (d.frames.length < 2) return;
+      const fi0 = SESSION.curFrame();
+      if (!SESSION.prefs.onionOn) SESSION.setOnionOn(true);
+      const fi1 = (fi0 + 1) % d.frames.length;
+      SESSION.setFrame(fi1, false);
+      window.setTimeout(() => { if (SESSION.curFrame() === fi1) SESSION.setFrame(fi0, false); }, 2000);
+    },
+    // the four-finger preview, for real: opens, then closes itself
+    demoFramePreview: () => {
+      setModal("framePrev");
+      window.setTimeout(() => setModal((m) => (m === "framePrev" ? null : m)), 2800);
+    },
+    // the settings / changelog dialogs, for real (the guide spotlights them)
+    demoSettings: () => setModal("settings"),
+    closeSettings: () => setModal((m) => (m === "settings" ? null : m)),
+    demoChangelog: () => setModal("changelog"),
+    closeChangelog: () => setModal((m) => (m === "changelog" ? null : m)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), []);
+
+  const finishGuide = (shown: string[]) => {
+    try {
+      const prev = JSON.parse(localStorage.getItem("pc.guide.seen") ?? "[]");
+      const set = new Set<string>(Array.isArray(prev) ? prev : []);
+      for (const id of shown) set.add(id);
+      localStorage.setItem("pc.guide.seen", JSON.stringify([...set]));
+    } catch { /* ignore */ }
+    // restore whatever the tour changed: docked orbs, demonstrated selection,
+    // an open tool ring or main menu
+    window.dispatchEvent(new Event("pc-guide-redock"));
+    window.dispatchEvent(new CustomEvent("pc-guide-tools", { detail: "closeall" }));
+    (window as unknown as { __pcGuideMenuSub?: null | "import" | "export" }).__pcGuideMenuSub = null;
+    setModal((m) => (m === "menu" ? null : m));
+    restoreSelection();
+    // the tour tapped the timeline / onion buttons for real: put them back
+    if (guideState.current) {
+      setTlOn(guideState.current.tlOn);
+      if (SESSION.prefs.onionOn !== guideState.current.onionOn) SESSION.setOnionOn(guideState.current.onionOn);
+      guideState.current = null;
+    }
+    setGuide(null);
+  };
 
   return (
     <div className={"app-root" + (SESSION.prefs.railSwap ? " rails-swap" : "")} onContextMenu={(e) => e.preventDefault()} onDragStart={(e) => e.preventDefault()}>
@@ -94,6 +351,7 @@ export function App() {
           onColorClick={() => setPanel("palette")}
           refImg={refImg}
           onRefClose={() => setRefImg(null)}
+          onFramePrev={() => setModal("framePrev")}
         />
       </div>
       <ControlBar t={t} snap={snap} onPanel={setPanel} onAdjust={() => setModal("adjust")} onFramePrev={() => setModal("framePrev")} />
@@ -109,7 +367,7 @@ export function App() {
           <PalettePanel t={t} onClose={() => setPanel(null)} />
         </Overlay>
       ) : null} />
-      <Keep on={modal === "menu"} el={modal === "menu" ? <MenuModal t={t} snap={snap} onClose={() => setModal(null)} onOpen={setModal} onSheet={(d) => { setSheet(d); setModal("sheet"); }} onRef={(d) => setRefImg(d)} /> : null} />
+      <Keep on={modal === "menu"} el={modal === "menu" ? <MenuModal t={t} snap={snap} onClose={() => setModal(null)} onOpen={setModal} onSheet={(d) => { setSheet(d); setModal("sheet"); }} onRef={(d) => setRefImg(d)} onGuide={() => { setModal(null); setGuide(GUIDE.slice()); }} /> : null} />
       <Keep on={modal === "size"} el={modal === "size" ? <SizeModal t={t} snap={snap} initial={sizeMode} onClose={() => setModal(null)} /> : null} />
       <Keep on={modal === "sheet" && sheet !== null} el={modal === "sheet" && sheet ? <SheetModal t={t} img={sheet} onClose={() => { setModal(null); setSheet(null); }} /> : null} />
       <Keep on={modal === "newdoc"} el={modal === "newdoc" ? <NewDocModal t={t} onClose={() => setModal(null)} /> : null} />
@@ -120,6 +378,7 @@ export function App() {
       <Keep on={modal === "history"} el={modal === "history" ? <HistoryModal t={t} snap={snap} onClose={() => setModal(null)} onReplay={() => { setModal(null); setReplayOn(true); }} /> : null} />
       <Keep on={modal === "framePrev"} el={modal === "framePrev" ? <FramePreviewModal t={t} onClose={() => setModal(null)} /> : null} />
       <Keep on={modal === "changelog"} el={modal === "changelog" ? <ChangelogModal onClose={() => setModal(null)} /> : null} />
+      {guide && <GuideOverlay steps={guide} actions={guideActions} onDone={finishGuide} />}
       {confirmQ && (
         <div className="cfm-layer">
           <div className="dlg-mask" onClick={() => { confirmQ.res(false); setConfirmQ(null); }} />
@@ -199,15 +458,15 @@ function TopBar({
   };
   return (
     <header className="topbar">
-      <Btn icon="i-gear" onClick={onMenu} title={t("menu")} desc={bd(snap.lang, "menu")} />
+      <Btn icon="i-gear" onClick={onMenu} title={t("menu")} desc={bd(snap.lang, "menu")} guide="btn-menu" />
       <div className="grow" />
-      <Btn icon="i-history" onClick={onHistory} title={t("historyTitle")} desc={bd(snap.lang, "hist")} />
-      <Btn icon="i-undo" onClick={() => SESSION.undo()} title={t("undo")} desc={bd(snap.lang, "undo")} className={snap.canUndo ? "" : "off"} />
-      <Btn icon="i-redo" onClick={() => SESSION.redo()} title={t("redo")} desc={bd(snap.lang, "redo")} className={snap.canRedo ? "" : "off"} />
-      <Btn icon="i-export" onClick={onExport} title={t("export")} desc={bd(snap.lang, "export")} />
-      <Btn icon="i-save" onClick={saveProject} title={t("save")} desc={bd(snap.lang, "save")} />
-      <Btn icon="i-timeline" onClick={onToggleTl} active={tlOn} title={t(tlOn ? "timelineHide" : "timelineShow")} />
-      <Btn icon="i-size" onClick={onResize} title={t("resizeTitle")} desc={bd(snap.lang, "resize")} />
+      <Btn icon="i-history" onClick={onHistory} title={t("historyTitle")} desc={bd(snap.lang, "hist")} guide="btn-history" />
+      <Btn icon="i-undo" onClick={() => SESSION.undo()} title={t("undo")} desc={bd(snap.lang, "undo")} className={snap.canUndo ? "" : "off"} guide="btn-undo" />
+      <Btn icon="i-redo" onClick={() => SESSION.redo()} title={t("redo")} desc={bd(snap.lang, "redo")} className={snap.canRedo ? "" : "off"} guide="btn-redo" />
+      <Btn icon="i-export" onClick={onExport} title={t("export")} desc={bd(snap.lang, "export")} guide="btn-export" />
+      <Btn icon="i-save" onClick={saveProject} title={t("save")} desc={bd(snap.lang, "save")} guide="btn-save" />
+      <Btn icon="i-timeline" onClick={onToggleTl} active={tlOn} title={t(tlOn ? "timelineHide" : "timelineShow")} guide="btn-timeline" />
+      <Btn icon="i-size" onClick={onResize} title={t("resizeTitle")} desc={bd(snap.lang, "resize")} guide="btn-size" />
       <Btn icon={fs ? "i-fsexit" : "i-fit"} onClick={() => void toggleFs()} title={t(fs ? "exitFullscreen" : "fullscreen")} desc={bd(snap.lang, "fs")} className={fs ? "fs-on" : ""} />
     </header>
   );
@@ -251,6 +510,26 @@ function FloatingTools({ t, snap }: { t: ReturnType<typeof makeT>; snap: Snapsho
     open: false,
   }));
 
+  // the onboarding tour can open the tool ring and its sub-rings by itself
+  useEffect(() => {
+    const onTools = (e: Event) => {
+      const what = (e as CustomEvent<string>).detail;
+      if (what === "open") { setOpen(true); setSub(null); }
+      else if (what === "close") { setOpen(false); setSub(null); }
+      else if (what === "shape") { setOpen(true); setSub("shape"); }
+      else if (what === "select") { setOpen(true); setSub("select"); }
+      else if (what === "back") setSub(null);
+      else if (what === "closeall") {
+        setOpen(false); setSub(null);
+        setSel((v) => (v ? { ...v, open: false } : v));
+        setPal((v) => ({ ...v, open: false }));
+        setFx((v) => ({ ...v, open: false }));
+      }
+    };
+    window.addEventListener("pc-guide-tools", onTools);
+    return () => window.removeEventListener("pc-guide-tools", onTools);
+  }, []);
+
   // ---------- floating-ball dock ----------
   const landD = useLandscape();
   type BallId = "main" | "pal" | "fx";
@@ -267,8 +546,34 @@ function FloatingTools({ t, snap }: { t: ReturnType<typeof makeT>; snap: Snapsho
   };
   const [docked, setDocked] = useState<{ id: BallId; x: number; y: number }[]>(loadDock);
   // persist the docked-ball layout so a saved layout restores the storage area
+  const dockSaveSuspended = useRef(false);
   useEffect(() => {
+    if (dockSaveSuspended.current) return; // the guide temporarily popped the balls out
     try { localStorage.setItem(dockKey, JSON.stringify(docked)); } catch { /* ignore */ }
+  }, [docked]);
+  // the onboarding tour needs the balls on screen: pop every docked ball out
+  // (without touching the saved layout) and restore it when the tour ends
+  const dockBackup = useRef<Array<{ id: BallId; x: number; y: number }> | null>(null);
+  useEffect(() => {
+    const onUndock = () => {
+      if (dockBackup.current) return; // already popped out
+      dockBackup.current = docked;
+      dockSaveSuspended.current = true;
+      setDocked([]);
+      setDockOpen(false);
+    };
+    const onRedock = () => {
+      const bak = dockBackup.current;
+      dockBackup.current = null;
+      dockSaveSuspended.current = false;
+      if (bak && bak.length) setDocked(bak);
+    };
+    window.addEventListener("pc-guide-undock", onUndock);
+    window.addEventListener("pc-guide-redock", onRedock);
+    return () => {
+      window.removeEventListener("pc-guide-undock", onUndock);
+      window.removeEventListener("pc-guide-redock", onRedock);
+    };
   }, [docked]);
   const [dockOpen, setDockOpen] = useState(false);
   const [dockHover, setDockHover] = useState<number | null>(null);
@@ -420,7 +725,7 @@ function FloatingTools({ t, snap }: { t: ReturnType<typeof makeT>; snap: Snapsho
     if (which !== "fx") setFx((g) => (g ? { ...g, open: false } : g));
   };
 
-  type Item = { icon: string; label: string; act: () => void; active?: boolean; desc?: string };
+  type Item = { icon: string; label: string; act: () => void; active?: boolean; desc?: string; guide?: string };
   const tipT = useRef<number | null>(null);
   const tipO = useRef<{ x: number; y: number } | null>(null);
   const stopTip = () => {
@@ -450,6 +755,7 @@ function FloatingTools({ t, snap }: { t: ReturnType<typeof makeT>; snap: Snapsho
   const repaintChanged = () => { SESSION.repaint(); SESSION.changed(); };
   const selItems: Item[] = [
     { icon: "i-check", label: t("sel.all"), act: () => { selOps.selOps.selectAll(d); SESSION.repaint(); } },
+    { icon: "i-fx-inv", label: t("sel.invert"), act: () => SESSION.maskOp("sel.invert", () => selOps.selOps.invert(d)) },
     { icon: "i-x", label: t("sel.clear"), act: () => { selOps.selOps.clear(d); SESSION.repaint(); } },
     { icon: "i-bucket", label: t("sel.fill"), act: () => { if (!(d.sel && d.sel.hasAny())) { bridge.toast(t("noSel")); return; } selOps.selOps.fill(d, SESSION.history, li, fi, SESSION.color); repaintChanged(); } },
     { icon: "i-dupe", label: t("sel.copy"), act: () => { const c = selOps.selOps.copy(d, li, fi); SESSION.clip = c; if (c) void writeClipboardPng(compositor.celToCanvas(c)).then((ok) => bridge.toast(ok ? t("sysCopy") : t("copied"))); } },
@@ -529,13 +835,13 @@ function FloatingTools({ t, snap }: { t: ReturnType<typeof makeT>; snap: Snapsho
 
   const mainItems: Item[] = sub
     ? [
-        { icon: "", label: "\u2039", act: () => setSub(null) },
-        ...(sub === "shape" ? SHAPE_TOOLS : SELECT_TOOLS).map((dd) => ({ icon: dd.icon, label: t("tools." + dd.id), desc: td(dd.id), act: () => pickTool(sub, dd.id), active: snap.tool === dd.id })),
+        { icon: "", label: "\u2039", act: () => setSub(null), guide: "tool-back" },
+        ...(sub === "shape" ? SHAPE_TOOLS : SELECT_TOOLS).map((dd) => ({ icon: dd.icon, label: t("tools." + dd.id), desc: td(dd.id), act: () => pickTool(sub, dd.id), active: snap.tool === dd.id, guide: "tool-" + dd.id })),
       ]
     : [
-        ...CORE_TOOLS.map((dd) => ({ icon: dd.icon, label: t("tools." + dd.id), desc: td(dd.id), act: () => pickTool("core", dd.id), active: snap.tool === dd.id })),
-        { icon: defOf(snap.shape)?.icon || "i-rect", label: t("shapeGroup"), desc: snap.lang === "zh" ? "图形工具：直线 / 矩形 / 椭圆" : "Shape tools: line / rect / ellipse", act: () => { setSub("shape"); if (sel) setSel({ ...sel, open: false }); }, active: isShapeTool(snap.tool) },
-        { icon: (snap.tool !== "line" && isSelectTool(snap.tool) ? defOf(snap.tool)?.icon : defOf(SESSION.currentSelect)?.icon) || "i-select", label: t("sel.active"), desc: snap.lang === "zh" ? "选区工具：框选 / 魔棒 / 套索" : "Select tools: rect / wand / lasso", act: () => { setSub("select"); if (sel) setSel({ ...sel, open: false }); }, active: isSelectTool(snap.tool) },
+        ...CORE_TOOLS.map((dd) => ({ icon: dd.icon, label: t("tools." + dd.id), desc: td(dd.id), act: () => pickTool("core", dd.id), active: snap.tool === dd.id, guide: "tool-" + dd.id })),
+        { icon: defOf(snap.shape)?.icon || "i-rect", label: t("shapeGroup"), desc: snap.lang === "zh" ? "图形工具：直线 / 矩形 / 椭圆" : "Shape tools: line / rect / ellipse", act: () => { setSub("shape"); if (sel) setSel({ ...sel, open: false }); }, active: isShapeTool(snap.tool), guide: "tool-shape-group" },
+        { icon: (snap.tool !== "line" && isSelectTool(snap.tool) ? defOf(snap.tool)?.icon : defOf(SESSION.currentSelect)?.icon) || "i-select", label: t("sel.active"), desc: snap.lang === "zh" ? "选区工具：框选 / 魔棒 / 套索" : "Select tools: rect / wand / lasso", act: () => { setSub("select"); if (sel) setSel({ ...sel, open: false }); }, active: isSelectTool(snap.tool), guide: "tool-select-group" },
       ];
 
   const baseIcon =
@@ -571,6 +877,7 @@ function FloatingTools({ t, snap }: { t: ReturnType<typeof makeT>; snap: Snapsho
       key={which}
       className={"orb" + (isOpen ? " open" : "") + (which !== "main" ? " sub" : "")}
       style={{ left: p.x, top: p.y }}
+      data-guide={"orb-" + which}
       title={title}
       onPointerDown={(e) => {
         e.preventDefault();
@@ -625,6 +932,7 @@ function FloatingTools({ t, snap }: { t: ReturnType<typeof makeT>; snap: Snapsho
         return (
           <button
             key={it.label + i}
+            data-guide={it.guide}
             className={"orb-item" + (it.active ? " on" : "")}
             style={{ left: pt.x, top: pt.y, "--st": (i * 16) + "ms" } as unknown as React.CSSProperties}
             title={it.desc || it.label}
@@ -785,22 +1093,28 @@ function FloatingTools({ t, snap }: { t: ReturnType<typeof makeT>; snap: Snapsho
   );
 }
 
-
-
-
-/** quarter-fan colour picker for the palette floater */
-/** palette floater: big outward quarter-fan or coloured-ball cloud */
 /** palette floater: palette-coloured balls laid out in an outward quarter-fan */
 function palQuadrant(x: number, y: number) {
   const right = window.innerWidth - (x + 52) >= x;
   const bottom = window.innerHeight - (y + 52) >= y;
   return { sx: right ? 1 : -1, sy: bottom ? 1 : -1 };
 }
+/** palette floater: colours laid out in an outward quarter-fan. The fan shows
+ *  the document palette, every colour used on the canvas, or the most recently
+ *  used ones — a chip beside the ball cycles the source (and the list redraws
+ *  the moment a new colour is picked). */
 function PalBalls({ x, y, onDone }: { x: number; y: number; onDone: () => void }) {
-  const colors = SESSION.doc.palette;
-  if (!colors.length) return null;
+  const t = makeT(SESSION.prefs.lang as Lang);
+  useSession(); // subscribe: a newly used colour must appear immediately
+  const mode = SESSION.palOrbMode;
+  const colors = SESSION.palOrbColors();
   const { sx, sy } = palQuadrant(x, y);
   const cx = x + 26, cy = y + 26;
+  // the source chip owns a FIXED slot under the floater: its position never
+  // depends on how many colours the fan shows, and swatches are laid out
+  // around it so the two can never overlap
+  const chip = palChipPos(cx, cy, window.innerWidth, window.innerHeight);
+  const chipArea = chipBox(chip.x, chip.y);
   // neat lattice: regular grid clipped to an annulus sector (R0..R1 inside the quadrant)
   // pack tightly around the floater: candidates sorted by distance, take only what the palette needs
   const G = 32, R0 = 46, RMAX = 340;
@@ -809,29 +1123,42 @@ function PalBalls({ x, y, onDone }: { x: number; y: number; onDone: () => void }
     for (let j = 0; (j + 0.5) * G <= RMAX; j++) {
       const du = (i + 0.5) * G, dv = (j + 0.5) * G;
       const r = Math.hypot(du, dv);
-      if (r >= R0 && r <= RMAX) cand.push({ du, dv, r });
+      if (r < R0 || r > RMAX) continue;
+      if (swatchHitsChip(cx + sx * du, cy + sy * dv, chipArea)) continue; // keep the chip slot clear
+      cand.push({ du, dv, r });
     }
   }
   cand.sort((a, b) => a.r - b.r || Math.atan2(a.dv, a.du) - Math.atan2(b.dv, b.du));
   const n = Math.min(colors.length, cand.length);
-  const pts = cand.slice(0, n);
   const items: Array<{ c: [number, number, number, number]; px: number; py: number; i: number }> = [];
   for (let k = 0; k < n; k++) {
-    const p = pts[k];
+    const p = cand[k];
     const c = colors[k];
     items.push({ c, px: Math.round(cx + sx * p.du) - 15, py: Math.round(cy + sy * p.dv) - 15, i: k });
   }
-  if (!items.length) return null;
+  // the source chip keeps its fixed slot (see palChipPos above)
+  const { x: chipX, y: chipY } = chip;
+  const label = mode === "palette" ? t("palModePalette") : mode === "doc" ? t("palModeDoc") : t("palModeRecent");
   return (
     <div className="radial-layer">
       {items.map((it) => {
         const c = it.c;
         const cur = c[0] === SESSION.color[0] && c[1] === SESSION.color[1] && c[2] === SESSION.color[2];
         return (
-          <button key={"pb" + it.i} className={"orb-item pal-c" + (cur ? " on" : "")} style={{ left: it.px, top: it.py, background: chipCss(c), "--st": (Math.min(it.i, 40) * 8) + "ms" } as unknown as React.CSSProperties} title={rgbaToHex(c)} onContextMenu={(e) => e.preventDefault()}
+          <button key={"pb" + mode + it.i} className={"orb-item pal-c" + (cur ? " on" : "")} style={{ left: it.px, top: it.py, background: chipCss(c), "--st": (Math.min(it.i, 40) * 8) + "ms" } as unknown as React.CSSProperties} title={rgbaToHex(c)} onContextMenu={(e) => e.preventDefault()}
             onClick={() => { SESSION.setFgColor([c[0], c[1], c[2], 255]); onDone(); }} />
         );
       })}
+      {!items.length && (
+        <div className="orb-modechip orb-modeempty"
+          style={{ left: chipX, top: Math.max(14, Math.min(window.innerHeight - 14, chipY > cy ? chipY + 26 : chipY - 26)) }}>
+          {mode === "doc" ? t("palEmptyDoc") : t("palEmptyRecent")}
+        </div>
+      )}
+      <button type="button" className="orb-modechip" data-guide="pal-mode-chip" style={{ left: chipX, top: chipY }} title={t("palModeTap")}
+        onClick={(e) => { e.stopPropagation(); SESSION.cyclePalOrbMode(); }}>
+        {label}
+      </button>
     </div>
   );
 }
@@ -859,30 +1186,35 @@ function ControlBar({ t, snap, onPanel, onAdjust, onFramePrev }: { t: ReturnType
             onClick={() => SESSION.setColorTarget(SESSION.colorTarget === "bg" ? "fg" : "bg")}
             style={{ background: chipCss(SESSION.colorTarget === "bg" ? SESSION.fg : SESSION.bg) }} />
         </div>
-        <Btn label="⇄" className="swap-color" title={t("swapColors")} onClick={() => SESSION.swapColors()} />
-        <Btn icon="i-adjust" onClick={onAdjust} title={t("adjust")} />
+        <Btn label="⇄" className="swap-color" title={t("swapColors")} onClick={() => SESSION.swapColors()} guide="btn-swap" />
+        <Btn icon="i-adjust" onClick={onAdjust} title={t("adjust")} guide="btn-adjust" />
         <Btn label={SYM_GLYPH[sym]} className="sym-toggle" active={sym !== "off"} title={t(symKey[sym])} desc={bd(snap.lang, "sym")} onClick={() => { const m = SESSION.cycleSym(); bridge.toast(t(symKey[m])); }} />
       </div>
       <div className="cb-sliders">
         <HoldAdjust dir={dir} value={snap.brushSize} min={1} max={64} title={t("brushSize")} hint={bd(snap.lang, "brush")} format={(v) => "◉" + v} reset={1} onChange={(v) => SESSION.setBrushSize(v)} />
         <HoldAdjust dir={dir} value={snap.brushAlpha} min={0} max={255} title={t("opacity")} hint={bd(snap.lang, "alpha")} format={(v) => "◐" + v} reset={255} onChange={(v) => SESSION.setBrushAlpha(v)} />
-        <Btn icon="i-frameprev" onClick={onFramePrev} title={t("framePreview")} />
+        <Btn icon="i-frameprev" onClick={onFramePrev} title={t("framePreview")} guide="btn-frameprev" />
         {snap.tool === "polygon" && <HoldAdjust dir={dir} value={SESSION.shapeSides} min={3} max={12} title={t("sides")} hint={bd(snap.lang, "sides")} format={(v) => "◮" + v} reset={6} onChange={(v) => SESSION.setShapeSides(v)} />}
+        {snap.tool === "bucket" && <Btn label={SESSION.prefs.bucketGlobal ? "∞" : "◎"} active={SESSION.prefs.bucketGlobal} onClick={() => SESSION.setBucketGlobal(!SESSION.prefs.bucketGlobal)} title={SESSION.prefs.bucketGlobal ? t("bucketGlobalOn") : t("bucketGlobalOff")} />}
         {isShapeTool(snap.tool) && snap.tool !== "line" && <Btn icon={SESSION.shapeFill ? "i-rect" : "i-rectfill"} onClick={() => SESSION.setShapeFill(!SESSION.shapeFill)} title={SESSION.shapeFill ? t("shapeHollow") : t("shapeSolid")} />}
       </div>
     </section>
   );
 }
-function Viewport({ onColorClick, refImg, onRefClose }: { onColorClick: () => void; refImg: RefImg | null; onRefClose: () => void }) {
+function Viewport({ onColorClick, refImg, onRefClose, onFramePrev }: { onColorClick: () => void; refImg: RefImg | null; onRefClose: () => void; onFramePrev: () => void }) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<View | null>(null);
   const tv = makeT(SESSION.prefs.lang as Lang);
   const [, setTick] = useState(0);
+  const onFpRef = useRef(onFramePrev);
+  onFpRef.current = onFramePrev;
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
     const v = new View(host, SESSION);
     viewRef.current = v;
+    // four-finger swipe-up opens the all-frames preview
+    v.onFramePreview = () => onFpRef.current();
     SESSION.attachView(v);
     v.fit();
     const iv = window.setInterval(() => setTick((x) => x + 1), 300);
