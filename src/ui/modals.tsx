@@ -15,7 +15,7 @@ import * as compose from "../render/compositor";
 import * as exporters from "../io/exporters";
 import * as bridge from "../io/bridge";
 import * as autosave from "../io/autosave";
-import { Btn, Icon, useSession, ScrubNum } from "./base";
+import { Btn, Icon, useSession, ScrubNum, useBlankTap } from "./base";
 import { DropMenu, TabBar } from "./tabs";
 import type { RefImg } from "./refimg";
 
@@ -50,10 +50,12 @@ export function PalettePanel({ t, onClose }: { t: ReturnType<typeof makeT>; onCl
   const [sortMode, setSortMode] = useState<"hue" | "light">("hue");
   const longRef = useRef<{ i: number; t: number } | null>(null);
   const skipRef = useRef(false);
+  // tapping the blank part of the panel (below / beside the controls) closes it
+  const blankTap = useBlankTap(onClose);
   return (
     <>
       <div className="panel-head"><span>{t("palette")}</span><div className="grow" /><button className="btn small" onClick={onClose}><Icon id="i-x" size={16} /></button></div>
-      <div className="panel-body">
+      <div className="panel-body" {...blankTap}>
         <HsvWheel color={active} onChange={apply} />
         <div className="ce-row">
           <span className="ce-hex">#</span>

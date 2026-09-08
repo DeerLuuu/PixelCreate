@@ -14,6 +14,7 @@ import type { ToolId, BrushState, SymMode } from "../tools/registry";
 import { isShapeTool, nextSym, SYM_ANGLES } from "../tools/registry";
 import type { View } from "../render/view";
 import * as selM from "../tools/select";
+import { mirrorMaskInPlace } from "../engine/symmetry";
 import { adjustPixel, type HslAdj } from "../engine/adjust";
 import { type LoopMode, nextLoopMode, nextPlayFrame, startPlayDir, startPlayFrame } from "./playback";
 import { SETTINGS_BY_PATH, normalizeSetting, type SettingValue } from "./settings";
@@ -68,6 +69,18 @@ export interface Prefs {
   newDocW: number;
   newDocH: number;
   newDocBg: "transparent" | "white";
+
+  // ---- touch / gesture tuning ----
+  longPressMs: number;
+  doubleTapMs: number;
+  tripleTapZoom: number;
+  fourFingerPx: number;
+  autoPanMargin: number;
+  autoPanSpeed: number;
+  zoomMin: number;
+  zoomMax: number;
+  haptic: boolean;
+  marginUndo: boolean;
   /** landscape: swap side rails (default on: control rail right, actions left) */
   railSwap: boolean;
   previewBg: "white" | "black" | "checker";
@@ -466,6 +479,9 @@ export class Session {
       brushShape: "circle", shapeSides: 6, shapeFill: true, shapeFromCenter: false,
       sym: "off", symFour: false, symLocked: false, symAng: 90, symOx: 0, symOy: 0,
       palette: [], newDocW: 64, newDocH: 64, newDocBg: "transparent",
+      longPressMs: 300, doubleTapMs: 420, tripleTapZoom: 2, fourFingerPx: 15,
+      autoPanMargin: 34, autoPanSpeed: 3, zoomMin: 0.05, zoomMax: 32,
+      haptic: true, marginUndo: true,
     };
     try {
       const saved = JSON.parse(localStorage.getItem("pc.prefs") ?? "{}");
@@ -524,6 +540,17 @@ export class Session {
       if (typeof saved.newDocW === "number") p.newDocW = Math.max(1, Math.min(1024, Math.round(saved.newDocW)));
       if (typeof saved.newDocH === "number") p.newDocH = Math.max(1, Math.min(1024, Math.round(saved.newDocH)));
       if (saved.newDocBg === "white" || saved.newDocBg === "transparent") p.newDocBg = saved.newDocBg;
+      if (typeof saved.longPressMs === "number") p.longPressMs = Math.max(200, Math.min(800, Math.round(saved.longPressMs)));
+      if (typeof saved.doubleTapMs === "number") p.doubleTapMs = Math.max(250, Math.min(600, Math.round(saved.doubleTapMs)));
+      if (typeof saved.tripleTapZoom === "number") p.tripleTapZoom = Math.max(1, Math.min(4, Math.round(saved.tripleTapZoom)));
+      if (typeof saved.fourFingerPx === "number") p.fourFingerPx = Math.max(8, Math.min(40, Math.round(saved.fourFingerPx)));
+      if (typeof saved.autoPanMargin === "number") p.autoPanMargin = Math.max(16, Math.min(80, Math.round(saved.autoPanMargin)));
+      if (typeof saved.autoPanSpeed === "number") p.autoPanSpeed = Math.max(1, Math.min(6, Math.round(saved.autoPanSpeed)));
+      if (typeof saved.zoomMin === "number") p.zoomMin = Math.max(0.05, Math.min(1, saved.zoomMin));
+      if (typeof saved.zoomMax === "number") p.zoomMax = Math.max(2, Math.min(64, saved.zoomMax));
+      if (p.zoomMax < p.zoomMin * 2) p.zoomMax = Math.min(64, p.zoomMin * 8);
+      if (typeof saved.haptic === "boolean") p.haptic = saved.haptic;
+      if (typeof saved.marginUndo === "boolean") p.marginUndo = saved.marginUndo;
       /* palette floater style fixed to ball */
     } catch {
       /* ignore */
@@ -986,7 +1013,18 @@ export class Session {
   wandAt(x: number, y: number): void {
     this.maskOp("wand", () => {
       selM.wandSelect(this.doc, this.curLayer(), this.curFrame(), x, y, this.selectionTolerance);
+      this.mirrorSelectionMask();
     });
+  }
+  /** when drawing symmetry is on, selection tools mirror their mask too */
+  mirrorSelectionMask(): boolean {
+    const sel = this.doc.sel;
+    if (this.sym === "off" || !sel) return false;
+    const changed = mirrorMaskInPlace(sel.mask, this.doc.w, this.doc.h, {
+      on: true, four: this.symFour, ox: this.symOx, oy: this.symOy, angDeg: this.symAng,
+    });
+    if (changed) sel.bump();
+    return changed;
   }
   setBrushAlpha(n: number): void {
     this.color[3] = Math.max(0, Math.min(255, Math.round(n)));

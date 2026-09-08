@@ -134,6 +134,29 @@ export function Keep({ on, el, ms = 200 }: { on: boolean; el: React.ReactNode; m
 }
 
 
+/** Tap the empty area of a container itself (not its children) to run an
+ *  action. Scrolls and long presses are ignored so dragging inside a list
+ *  never closes it by accident. */
+export function useBlankTap(onTap: () => void, moveTol = 8): {
+  onPointerDown: (e: React.PointerEvent) => void;
+  onPointerUp: (e: React.PointerEvent) => void;
+} {
+  const down = useRef<{ x: number; y: number; t: number } | null>(null);
+  return {
+    onPointerDown: (e: React.PointerEvent) => {
+      down.current = { x: e.clientX, y: e.clientY, t: Date.now() };
+    },
+    onPointerUp: (e: React.PointerEvent) => {
+      const d = down.current;
+      down.current = null;
+      if (!d) return;
+      if (Math.hypot(e.clientX - d.x, e.clientY - d.y) > moveTol) return;
+      if (Date.now() - d.t > 700) return;
+      if (e.target === e.currentTarget) onTap();
+    },
+  };
+}
+
 /**
  * Numeric input with a scrub gesture: long-press (no typing) then slide
  * up/down or left/right to change the value. The per-step magnitude is

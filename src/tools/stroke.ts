@@ -3,6 +3,7 @@ import type { Doc } from "../engine/doc";
 import { Cel } from "../engine/cel";
 import type { RGBA, Rect } from "../engine/types";
 import { brushStamp, lineCells, floodFill, floodErase, globalFill, globalErase, paintAt, eraseAt, type BrushShape, type MaskFn } from "../engine/paint";
+import { mirrorCells, type SymAxis } from "../engine/symmetry";
 import { ellipseFill, ellipseOutline } from "../engine/shape";
 import type { History } from "../engine/history";
 import type { BrushState, SymMode } from "./registry";
@@ -24,9 +25,8 @@ export class Stroke {
   /** mirror-axis pivot offsets from the doc centre (doc gridline units) */
   readonly ox: number;
   readonly oy: number;
-  /** mirror-line angle (degrees, 0 = horizontal); direction unit cached */
-  private readonly ux: number;
-  private readonly uy: number;
+  /** mirror-line angle (degrees, 0 = horizontal) */
+  private readonly angDeg: number;
   /** also mirror across the perpendicular axis (four-way symmetry) */
   private readonly symFour: boolean;
   /** bucket: fill every matching pixel in the layer instead of the connected region */
@@ -63,9 +63,7 @@ export class Stroke {
     this.bucketGlobal = bucketGlobal;
     this.brushShape = brushShape;
     this.shapeFromCenter = shapeFromCenter;
-    const rad = (angDeg * Math.PI) / 180;
-    this.ux = Math.cos(rad);
-    this.uy = Math.sin(rad);
+    this.angDeg = angDeg;
     if (layerLocked) throw new Error("layer-locked");
     const cel = doc.celAt(li, fi);
     this.before = cel ? new Uint8ClampedArray(cel.data) : null;
@@ -77,32 +75,15 @@ export class Stroke {
     this.mask = doc.selectionActive() ? (x: number, y: number) => doc.selAt(x, y) === 1 : null;
   }
 
-  /** reflect one cell centre across the mirror line through (px,py) with unit direction (ux,uy) */
-  private reflCell(x: number, y: number, px: number, py: number, ux: number, uy: number): [number, number] {
-    const cx = x + 0.5 - px, cy = y + 0.5 - py;
-    const dot = cx * ux + cy * uy;
-    return [
-      Math.round(px + 2 * dot * ux - cx - 0.5),
-      Math.round(py + 2 * dot * uy - cy - 0.5),
-    ];
+  /** the axis description handed to the shared symmetry helper */
+  private symAxis(): SymAxis {
+    return { on: this.sym !== "off", four: this.symFour, ox: this.ox, oy: this.oy, angDeg: this.angDeg };
   }
 
-  /** mirror-coordinate expansion for the current mode: the axis is the line
-   *  through the doc centre offset (ox,oy) rotated to angDeg; if four-way is
-   *  on, the perpendicular axis through the same pivot is added (4 images) */
-  private mirrorPts(x: number, y: number): [number, number][] {
-    if (this.sym === "off") return [[x, y]];
-    const px = this.doc.w / 2 + this.ox;
-    const py = this.doc.h / 2 + this.oy;
-    const out: [number, number][] = [[x, y]];
-    out.push(this.reflCell(x, y, px, py, this.ux, this.uy));
-    if (this.symFour) {
-      const u2x = -this.uy, u2y = this.ux;
-      const m2 = this.reflCell(x, y, px, py, u2x, u2y);
-      out.push(m2);
-      out.push(this.reflCell(m2[0], m2[1], px, py, this.ux, this.uy));
-    }
-    return out;
+  /** mirror-coordinate expansion for the current mode (shared with the
+   *  selection tools so a symmetric selection matches a symmetric stroke) */
+  private mirrorPts(x: number, y: number): Array<[number, number]> {
+    return mirrorCells(x, y, this.doc.w, this.doc.h, this.symAxis());
   }
 
   private markCell(x: number, y: number): void {

@@ -25,7 +25,8 @@ const UNLOCK_D = "M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6h2c0-1.66 1.34-3 3-3s3 
  *  touchdown before it counts as "sliding"; two such fingers while >=4 are
  *  down = the all-frames preview gesture. Big enough to ignore the jitter of
  *  four fingers settling, small enough that any deliberate slide arms it. */
-const FOUR_MOVE_PX = 15;
+/** fallback when a caller has no session yet (never used in the app) */
+const FOUR_MOVE_PX_DEFAULT = 15;
 
 /** Selection scale follows Aseprite's transform: free (non-integer) scale
  *  factor, anchored at the handle opposite the one being dragged, rasterised
@@ -199,7 +200,7 @@ export class View {
     let z = Math.min(aw / doc.w, ah / doc.h);
     const zi = Math.floor(z);
     if (zi >= 1 && Math.abs(z - zi) < 0.18) z = zi;
-    this.zoom = clamp(z, 0.05, 32);
+    this.zoom = clamp(z, this.session.prefs.zoomMin, this.session.prefs.zoomMax);
     this.ox = (this.host.clientWidth - doc.w * this.zoom) / 2;
     this.oy = (this.host.clientHeight - doc.h * this.zoom) / 2;
   }
@@ -218,7 +219,7 @@ export class View {
     const vpW = this.host.clientWidth, vpH = this.host.clientHeight;
     const mx = cx === undefined ? vpW / 2 : cx;
     const my = cy === undefined ? vpH / 2 : cy;
-    z = clamp(z, 0.05, 32);
+    z = clamp(z, this.session.prefs.zoomMin, this.session.prefs.zoomMax);
     const k = z / this.zoom;
     this.ox = mx - (mx - this.ox) * k;
     this.oy = my - (my - this.oy) * k;
@@ -789,8 +790,7 @@ export class View {
       const changed = this.pickLast == null || this.pickLast[0] !== x || this.pickLast[1] !== y;
       if (changed) {
         this.session.setFgColor(c);
-        if (strong) bridge.vibrate(26);
-        else bridge.vibrate(10);
+        if (this.session.prefs.haptic) { if (strong) bridge.vibrate(26); else bridge.vibrate(10); }
         this.session.repaint();
       }
     }
@@ -993,8 +993,9 @@ export class View {
     // Speed scales with how deep into the edge zone the pointer is, but is capped
     // per event so the scroll stays slow, smooth and controllable.
     if (this.session.prefs.autoPan && wasDown && this.pointers.size === 1 && (this.stroke || this.xf || this.selDrag)) {
-      const M = 34, w = this.host.clientWidth, h = this.host.clientHeight;
-      const SPEED = 0.28, MAX = 3; // px per event
+      const M = this.session.prefs.autoPanMargin, w = this.host.clientWidth, h = this.host.clientHeight;
+      const MAX = this.session.prefs.autoPanSpeed; // px per event, 1..6
+      const SPEED = 0.28 * (MAX / 3);
       let panx = 0, pany = 0;
       if (pt.x < M) panx = (pt.x - M) * SPEED; else if (pt.x > w - M) panx = (pt.x - (w - M)) * SPEED;
       if (pt.y < M) pany = (pt.y - M) * SPEED; else if (pt.y > h - M) pany = (pt.y - (h - M)) * SPEED;
@@ -1027,7 +1028,7 @@ export class View {
       let moving = 0;
       for (const [pid, p] of this.pointers) {
         const s = this.fourStart.get(pid);
-        if (s && Math.hypot(p.x - s.x, p.y - s.y) > FOUR_MOVE_PX) moving++;
+        if (s && Math.hypot(p.x - s.x, p.y - s.y) > (this.session.prefs.fourFingerPx || FOUR_MOVE_PX_DEFAULT)) moving++;
       }
       if (moving >= 2) this.fourArmed = true;
       return;
@@ -1038,7 +1039,7 @@ export class View {
       const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
       const dist = Math.max(1, Math.hypot(b.x - a.x, b.y - a.y));
       const k = dist / this.pinchBase.dist;
-      const z = clamp(this.pinchBase.zoom * k, 0.05, 32);
+      const z = clamp(this.pinchBase.zoom * k, this.session.prefs.zoomMin, this.session.prefs.zoomMax);
       const sc = z / this.pinchBase.zoom;
       this.ox = mx - (this.pinchBase.mx - this.pinchBase.ox) * sc;
       this.oy = my - (this.pinchBase.my - this.pinchBase.oy) * sc;
@@ -1171,7 +1172,7 @@ export class View {
         this.gestureMoved = false;
         this.session.repaint();
         if (armed && this.onFramePreview) {
-          bridge.vibrate(24); // tactile confirmation before the sheet opens
+          if (this.session.prefs.haptic) bridge.vibrate(24); // tactile confirmation before the sheet opens
           this.onFramePreview();
         }
         return;
@@ -1186,7 +1187,7 @@ export class View {
         this.gestureMoved = false;
         this.panLast = null;
         if (midOverDoc) { this.twoTap = 0; this.twoTapPt = null; return; }
-        if (this.twoTapPt && now - this.twoTap < 420 && Math.hypot(mid.x - this.twoTapPt.x, mid.y - this.twoTapPt.y) < 80) {
+        if (this.twoTapPt && now - this.twoTap < this.session.prefs.doubleTapMs && Math.hypot(mid.x - this.twoTapPt.x, mid.y - this.twoTapPt.y) < 80) {
           this.twoTap = 0;
           this.twoTapPt = null;
           if (this.session.history.canRedo()) this.session.redo(); else this.session.repaint();
@@ -1209,6 +1210,12 @@ export class View {
         this.tapPt = pt;
         const ppc = this.screenToPixel(pt.x, pt.y);
         const overDoc = ppc.x >= 0 && ppc.y >= 0 && ppc.x < this.session.doc.w && ppc.y < this.session.doc.h;
+        if (this.tapN === 2 && !overDoc && !this.session.prefs.marginUndo) {
+          // margin-undo disabled: swallow the double tap
+          this.tapN = 0;
+          this.session.repaint();
+          return;
+        }
         if (this.tapN === 2 && !overDoc) {
           // double-tap on the canvas margin -> quick undo
           this.tapN = 0;
@@ -1231,7 +1238,7 @@ export class View {
             this.lastTapWasDraw = false;
             this.lastTapChanged = false;
             this.session.repaint();
-            this.zoomAt(this.zoom * 2, pt.x, pt.y);
+            this.zoomAt(this.zoom * this.session.prefs.tripleTapZoom, pt.x, pt.y);
           } else this.session.repaint();
           return;
         }
@@ -1622,6 +1629,7 @@ export class View {
       g.x1 = pp.x;
       g.y1 = pp.y;
       selOps.setRect(this.session.doc, g.x0, g.y0, g.x1, g.y1);
+      this.session.mirrorSelectionMask();
       this.session.repaint();
       this.startAnts();
       return;
@@ -1649,7 +1657,7 @@ export class View {
     if (g.kind === "lasso") {
       if (g.moved && g.pts && g.pts.length >= 3) {
         const pts = g.pts;
-        s.maskOp("sel.lasso", () => lassoFill(doc, pts));
+        s.maskOp("sel.lasso", () => { lassoFill(doc, pts); s.mirrorSelectionMask(); });
       } else if (doc.sel) {
         doc.sel.clear();
         s.repaint();

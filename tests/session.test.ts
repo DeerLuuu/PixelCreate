@@ -225,6 +225,40 @@ export function testSession(): void {
     eq("persist.symOy", d.symOy, -2);
   }
 
+  // --- gesture / touch settings ---
+  {
+    (globalThis as unknown as { localStorage: { clear(): void } }).localStorage.clear();
+    const a = new Session();
+    a.setSetting("gesture.longPressMs", 500);
+    a.setSetting("gesture.doubleTapMs", 300);
+    a.setSetting("gesture.tripleTapZoom", 4);
+    a.setSetting("gesture.fourFingerPx", 25);
+    a.setSetting("gesture.autoPanMargin", 60);
+    a.setSetting("gesture.autoPanSpeed", 6);
+    a.setSetting("gesture.zoomMin", "0.25");
+    a.setSetting("gesture.zoomMax", "64");
+    a.setSetting("gesture.haptic", false);
+    a.setSetting("gesture.marginUndo", false);
+    const b = new Session();
+    eq("gesture.longPress", b.prefs.longPressMs, 500);
+    eq("gesture.doubleTap", b.prefs.doubleTapMs, 300);
+    eq("gesture.tripleZoom", b.prefs.tripleTapZoom, 4);
+    eq("gesture.fourFinger", b.prefs.fourFingerPx, 25);
+    eq("gesture.autoPanMargin", b.prefs.autoPanMargin, 60);
+    eq("gesture.autoPanSpeed", b.prefs.autoPanSpeed, 6);
+    eq("gesture.zoomMin", b.prefs.zoomMin, 0.25);
+    eq("gesture.zoomMax", b.prefs.zoomMax, 64);
+    eq("gesture.haptic", b.prefs.haptic, false);
+    eq("gesture.marginUndo", b.prefs.marginUndo, false);
+    // out-of-range values are clamped on load
+    (globalThis as unknown as { localStorage: { setItem(k: string, v: string): void } }).localStorage.setItem(
+      "pc.prefs", JSON.stringify({ longPressMs: 9999, fourFingerPx: 1, zoomMin: 0.5, zoomMax: 0.6 }));
+    const c = new Session();
+    eq("gesture.clamp.longPress", c.prefs.longPressMs, 800);
+    eq("gesture.clamp.fourFinger", c.prefs.fourFingerPx, 8);
+    ok("gesture.clamp.zoomRange", c.prefs.zoomMax > c.prefs.zoomMin, c.prefs.zoomMin + "/" + c.prefs.zoomMax);
+  }
+
   // --- user-saved palettes ---
   {
     const p = new Session();

@@ -7,6 +7,7 @@ import { clampRect, coversAll, screenRectOf, unionRect } from "../src/render/rec
 import { growSelection, selOps, shrinkSelection } from "../src/tools/select";
 import { onionGhosts } from "../src/render/onion";
 import { brushStamp } from "../src/engine/paint";
+import { mirrorCells, mirrorMaskInPlace } from "../src/engine/symmetry";
 import { eq, ok } from "./common";
 
 const brush = (size = 1, color: [number, number, number, number] = [255, 0, 0, 255]): BrushState => ({
@@ -131,6 +132,31 @@ export function testRender(): void {
     const v3 = sel.ver;
     sel.bump();
     ok("render.sel.ver-bump", sel.ver > v3);
+  }
+
+  // ------------------------------------------------- symmetry maths
+  {
+    const ax = { on: true, four: false, ox: 0, oy: 0, angDeg: 90 };
+    // vertical axis through the centre of an 8-wide doc: x -> 7-x
+    eq("sym.mirror.h", mirrorCells(1, 3, 8, 8, ax), [[1, 3], [6, 3]]);
+    const ax0 = { on: true, four: false, ox: 0, oy: 0, angDeg: 0 };
+    eq("sym.mirror.v", mirrorCells(3, 1, 8, 8, ax0), [[3, 1], [3, 6]]);
+    eq("sym.mirror.off", mirrorCells(1, 3, 8, 8, { ...ax, on: false }), [[1, 3]]);
+    const four = mirrorCells(1, 1, 8, 8, { on: true, four: true, ox: 0, oy: 0, angDeg: 90 });
+    eq("sym.mirror.four", four.length, 4);
+    ok("sym.mirror.four.set", new Set(four.map(([x, y]) => x + "," + y)).size === 4, JSON.stringify(four));
+
+    // mask mirroring: one cell becomes its mirror partner
+    const m = new Uint8Array(8 * 8);
+    m[3 * 8 + 1] = 1;
+    ok("sym.mask.changed", mirrorMaskInPlace(m, 8, 8, ax));
+    eq("sym.mask.pair", [m[3 * 8 + 1], m[3 * 8 + 6]], [1, 1]);
+    // idempotent: mirroring again adds nothing
+    ok("sym.mask.idempotent", !mirrorMaskInPlace(m, 8, 8, ax));
+    // off = untouched
+    const m2 = new Uint8Array(4);
+    m2[0] = 1;
+    ok("sym.mask.off", !mirrorMaskInPlace(m2, 2, 2, { ...ax, on: false }) && m2[1] === 0);
   }
 
   // ------------------------------------------------- brush tip shapes

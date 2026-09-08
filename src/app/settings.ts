@@ -13,7 +13,7 @@ export type SettingKind = "bool" | "int" | "enum";
 /** how the app must react when a value changes */
 export type SettingRefresh = "none" | "changed" | "repaint" | "repaintAll";
 
-export type SettingGroupId = "general" | "canvas" | "tools" | "onion" | "history" | "display" | "data";
+export type SettingGroupId = "general" | "canvas" | "tools" | "gesture" | "onion" | "history" | "display" | "data";
 
 export interface SettingOption {
   value: string;
@@ -129,6 +129,7 @@ export const SETTING_GROUPS: Array<{ id: SettingGroupId; label: string }> = [
   { id: "general", label: "groupGeneral" },
   { id: "canvas", label: "groupCanvas" },
   { id: "tools", label: "groupTools" },
+  { id: "gesture", label: "groupGesture" },
   { id: "onion", label: "groupOnion" },
   { id: "history", label: "groupHistory" },
   { id: "display", label: "groupDisplay" },
@@ -248,6 +249,56 @@ const defs: SettingDef[] = [
   {
     path: "tools.wandTolerance", field: "selectionTolerance", kind: "int", group: "tools",
     label: "sel.wandTol", default: 8, min: 0, max: 64, unit: "T", reset: 8, refresh: "changed",
+  },
+
+  // ------------------------------------------------------------ gesture
+  {
+    path: "gesture.longPressMs", field: "longPressMs", kind: "int", group: "gesture",
+    label: "longPressMsLabel", desc: "longPressMsDesc", default: 300, min: 200, max: 800, unit: "ms", reset: 300, refresh: "none",
+  },
+  {
+    path: "gesture.doubleTapMs", field: "doubleTapMs", kind: "int", group: "gesture",
+    label: "doubleTapMsLabel", desc: "doubleTapMsDesc", default: 420, min: 250, max: 600, unit: "ms", reset: 420, refresh: "none",
+  },
+  {
+    path: "gesture.tripleTapZoom", field: "tripleTapZoom", kind: "int", group: "gesture",
+    label: "tripleTapZoomLabel", default: 2, min: 1, max: 4, unit: "×", reset: 2, refresh: "none",
+  },
+  {
+    path: "gesture.fourFingerPx", field: "fourFingerPx", kind: "int", group: "gesture",
+    label: "fourFingerPxLabel", desc: "fourFingerPxDesc", default: 15, min: 8, max: 40, unit: "px", reset: 15, refresh: "none",
+  },
+  {
+    path: "gesture.autoPanMargin", field: "autoPanMargin", kind: "int", group: "gesture",
+    label: "autoPanMarginLabel", default: 34, min: 16, max: 80, unit: "px", reset: 34, refresh: "none",
+    visible: (s) => s.prefs.autoPan,
+  },
+  {
+    path: "gesture.autoPanSpeed", field: "autoPanSpeed", kind: "int", group: "gesture",
+    label: "autoPanSpeedLabel", default: 3, min: 1, max: 6, reset: 3, refresh: "none",
+    visible: (s) => s.prefs.autoPan,
+  },
+  {
+    path: "gesture.zoomMin", field: "zoomMin", kind: "enum", group: "gesture",
+    label: "zoomMinLabel", default: "0.05", refresh: "none",
+    options: [{ value: "0.05", label: "5%" }, { value: "0.1", label: "10%" }, { value: "0.25", label: "25%" }, { value: "0.5", label: "50%" }],
+    get: (s) => String(s.prefs.zoomMin),
+    set: (s, v) => { s.prefs.zoomMin = Number(v) || 0.05; },
+  },
+  {
+    path: "gesture.zoomMax", field: "zoomMax", kind: "enum", group: "gesture",
+    label: "zoomMaxLabel", default: "32", refresh: "none",
+    options: [{ value: "8", label: "8×" }, { value: "16", label: "16×" }, { value: "32", label: "32×" }, { value: "64", label: "64×" }],
+    get: (s) => String(s.prefs.zoomMax),
+    set: (s, v) => { s.prefs.zoomMax = Number(v) || 32; },
+  },
+  {
+    path: "gesture.haptic", field: "haptic", kind: "bool", group: "gesture",
+    label: "hapticLabel", desc: "hapticDesc", default: true, refresh: "none",
+  },
+  {
+    path: "gesture.marginUndo", field: "marginUndo", kind: "bool", group: "gesture",
+    label: "marginUndoLabel", desc: "marginUndoDesc", default: true, refresh: "none",
   },
 
   // -------------------------------------------------------------- onion
