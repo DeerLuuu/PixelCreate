@@ -129,10 +129,21 @@ globalFill(cel, sx, sy, color, mask?): void;          // 整层同色替换
 globalErase(cel, sx, sy, mask?): void;
 
 interface BrushStamp { size: number; cells: [number,number][]; outline: [number,number][] }
-brushStamp(size: number): BrushStamp;                 // Aseprite 风格圆形笔尖（带缓存）
+brushStamp(size: number, shape?: BrushShape): BrushStamp;  // 圆笔尖/方笔尖（带缓存）
 ```
 
 ---
+
+## 4b. 对称数学
+
+`src/engine/symmetry.ts` —— 笔迹与选区共用的镜像计算（纯函数）。
+
+```ts
+interface SymAxis { on: boolean; four: boolean; ox: number; oy: number; angDeg: number }
+
+mirrorCells(x, y, w, h, ax): Array<[number, number]>   // 一个格子映射到的所有格子（含自身）
+mirrorMaskInPlace(mask, w, h, ax): boolean             // 把选区的镜像副本并回掩码，返回是否有新增
+```
 
 ## 5. 形状与特效
 
@@ -236,6 +247,7 @@ adjustPixel(r, g, b, a, adj): [number, number, number]
 type ToolId = "pencil" | "eraser" | "bucket" | "picker"
   | "line" | "rect" | "rectfill" | "ellipse" | "ellipsefill" | "circle" | "polygon"
   | "select" | "wand" | "lasso";
+type BrushShape = "circle" | "square";   // engine/paint.ts 导出
 
 interface ToolDef { id: ToolId; icon: string; drawing: boolean; shape: boolean }
 const CORE_TOOLS / SHAPE_TOOLS / SELECT_TOOLS: ToolDef[];
@@ -255,7 +267,8 @@ type ToolKind = "pencil" | "eraser" | "bucket" | "line" | "rect" | "ellipse" | "
 
 class Stroke {
   constructor(doc, li, fi, kind, brush: BrushState, layerLocked, sym: SymMode,
-              shapeSides = 6, fill = true, ox = 0, oy = 0, angDeg = 90, symFour = false, bucketGlobal = false);
+              shapeSides = 6, fill = true, ox = 0, oy = 0, angDeg = 90, symFour = false, bucketGlobal = false,
+              brushShape: BrushShape = "circle", shapeFromCenter = false);
   // 图层锁定时构造抛错 "layer-locked"
 
   startAt(x, y): void;                       // 落笔
@@ -400,6 +413,18 @@ undo() / redo() / jumpHistory(index)
 struct(label, fn)             // 结构快照式撤销
 ```
 
+### 11.9b 记忆的工具状态
+
+```ts
+setBrushSize(n) / setBrushAlpha(n) / setBrushShape("circle" | "square")
+setShapeSides(n) / setShapeFill(on) / setShapeFromCenter(on)
+setCurrentShape(id) / setCurrentSelect(id)      // 形状 / 选区子环记忆
+rememberSym(): void                              // 对称轴状态写盘（角度/轴心/四向/锁定）
+rememberPalette(): void                          // 当前色板写盘（新文档沿用它）
+scheduleSavePrefs(): void                        // 热路径防抖写盘（600ms）
+mirrorSelectionMask(): boolean                   // 对称开启时把选区按轴镜像
+```
+
 ### 11.10 设置 / 持久化
 
 ```ts
@@ -420,6 +445,7 @@ autosaveInfo() / clearAutosave()
 type SettingValue = boolean | number | string;
 type SettingKind = "bool" | "int" | "enum";
 type SettingRefresh = "none" | "changed" | "repaint" | "repaintAll";
+// 分组：general | canvas | tools | gesture | onion | history | display | data
 
 interface SettingDef {
   path: string;                 // "onion.before"
@@ -591,7 +617,18 @@ pngBytes(canvas): Promise<Uint8Array | null>
 sanitizeName(n): string
 ```
 
-### 16.3 工程文件 / 自动保存 / GIF 读取 / 剪贴板
+### 16.3 参考图存储 `src/io/refstore.ts`
+
+```ts
+interface RefImg { w: number; h: number; px: Uint8ClampedArray; name: string }
+interface RefState extends RefImg { x: number; y: number; size: number; opacity: number }
+
+saveRef(state: RefState): Promise<boolean>   // IndexedDB，上限 12MB
+loadRef(): Promise<RefState | null>
+clearRef(): Promise<void>
+```
+
+### 16.4 工程文件 / 自动保存 / GIF 读取 / 剪贴板
 
 ```ts
 // src/io/project.ts
@@ -628,6 +665,8 @@ writeClipboardPng(canvas): Promise<boolean>
 | `GuideDemo` | `ui/guide-demo.tsx` | 虚拟触点动画 |
 | `View` | `render/view.ts` | 画布视口（非 React 组件） |
 | `HsvWheel` / `HoldAdjust` / `PreviewBox` / `RefImageBox` / `ReplayOverlay` | 各自文件 | 色轮、长按拖动数值、预览浮窗、参考图、历史回放 |
+| `TabBar` / `DropMenu` | `ui/tabs.tsx` | 共用选项卡与可展开下拉（色板 / 导出 / 更新日志） |
+| `useBlankTap` | `ui/base.tsx` | 点容器空白处执行动作（调色板面板点击关闭） |
 
 ### 17.2 自定义事件
 
