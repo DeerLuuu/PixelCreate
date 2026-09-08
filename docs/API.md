@@ -189,6 +189,24 @@ contentBounds(doc): Rect | null              // 所有内容的包围盒（智�
 
 ---
 
+## 6b. 手势映射 `app/gestures.ts`
+
+```ts
+type GestureId = "doubleTapMargin" | "doubleTapCanvas" | "twoFingerDoubleTap"
+  | "tripleTap" | "fourFinger" | "longPress";
+type GestureActionId = "none" | "undo" | "redo" | "zoomIn" | "zoomOut" | "fitView"
+  | "togglePlay" | "toggleOnion" | "toggleGrid" | "toggleSymmetry"
+  | "toggleTimeline" | "framePreview" | "nextFrame" | "prevFrame"
+  | "openPalette" | "pickColor";
+
+const GESTURE_ACTIONS: Array<{ id: GestureActionId; label: string }>;
+const GESTURES: GestureDef[];            // id / label / desc / defaultAction / actions / field
+gesturePath(id): string                  // "gesture.tripleTap"
+isActionAllowed(id, action): boolean     // 校验从磁盘读回的值
+```
+
+设置面板由 `GESTURES` 自动生成（每个手势一个下拉），`Session.runGestureAction()` 执行；UI 级动作（时间轴 / 帧预览 / 调色板）通过 `pc-gesture` 事件交给 React 壳。
+
 ## 7. 撤销栈
 
 `src/engine/history.ts`
@@ -206,7 +224,21 @@ class History {
   canUndo(): boolean; canRedo(): boolean;
   list(): { labels: string[]; index: number };
   clear(): void; setCap(n: number): void; limit(): number; trimToCap(): void;
+
+  // 工程文件用：导出/重建整个栈
+  dump(): HistoryDump;                                  // 无法序列化的步骤会截断更旧的记录
+  loadDump(dump: HistoryDump, host: HistoryHost): void;
 }
+
+interface HistoryDump { index: number; entries: HistoryDumpEntry[] }
+interface HistoryDumpEntry {
+  label: string;
+  kind: "pixels" | "struct" | "scalar";
+  enc?: EncChange[];                                    // 像素增量
+  before?: DocSnapshot; after?: DocSnapshot;            // 结构快照
+  data?: ScalarData;                                    // 标量载荷（app/history-io.ts）
+}
+interface HistoryHost { doc: Doc; scalarActions: (d: ScalarData) => { apply(): void; unapply(): void } }
 ```
 
 > 所有破坏性操作都必须经过这三者之一，才能保证“一步撤销”。
@@ -411,6 +443,16 @@ sampleComposite(x, y): RGBA | null        // 取合成后的颜色
 ```ts
 undo() / redo() / jumpHistory(index)
 struct(label, fn)             // 结构快照式撤销
+```
+
+### 11.9a 手势与操作记录
+
+```ts
+runGestureAction(action: GestureActionId, ctx?: { x?: number; y?: number }): boolean
+showFrame(fi: number): void          // 切帧但不记录历史（供恢复的历史步骤使用）
+get recordHistory(): boolean         // 工程文件是否写入操作记录
+serializeProject(): Promise<string>  // 文档 +（可选）操作记录
+loadProjectText(text): Promise<boolean>
 ```
 
 ### 11.9b 记忆的工具状态
@@ -628,12 +670,21 @@ loadRef(): Promise<RefState | null>
 clearRef(): Promise<void>
 ```
 
-### 16.4 工程文件 / 自动保存 / GIF 读取 / 剪贴板
+### 16.4 操作记录编解码 `src/io/historyfile.ts`
+
+```ts
+encodeHistory(dump: HistoryDump, w: number, h: number): unknown | null   // JSON 安全（缓冲区 base64）
+decodeHistory(raw: unknown): HistoryDump | null
+// 依赖 src/engine/b64.ts 的 bytesToB64 / b64ToBytes（纯实现，浏览器与 Node 通用）
+```
+
+### 16.5 工程文件 / 自动保存 / GIF 读取 / 剪贴板
 
 ```ts
 // src/io/project.ts
-serialize(doc): Promise<string>          // .pxc（JSON）
+serialize(doc, history?): Promise<string>   // .pxc（JSON，history 由 historyfile 编码）
 parse(text): Promise<Doc | null>
+parseProject(text): Promise<{ doc: Doc; history: unknown | null } | null>
 
 // src/io/autosave.ts
 saveAutosave(text, meta): Promise<"idb" | "local" | "too-big" | "fail">
