@@ -5,6 +5,8 @@ import { useState } from "react";
 export interface TabItem<T extends string> {
   id: T;
   label: string;
+  /** small dim text after the label (e.g. a release date) */
+  badge?: string;
   /** optional data-guide anchor for the onboarding tour */
   guide?: string;
 }
@@ -30,6 +32,7 @@ export function TabBar<T extends string>({ items, value, onChange, right, classN
             onClick={() => onChange(it.id)}
           >
             {it.label}
+            {it.badge ? <i className="tabbar-badge">{it.badge}</i> : null}
           </button>
         ))}
       </div>

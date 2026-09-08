@@ -1,10 +1,11 @@
 // Release notes (更新日志): data + modal. Auto-shown on first launch after an
 // update (version marker in localStorage); also reachable from the main menu.
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { SESSION } from "./singleton";
 import { makeT } from "./i18n";
 import type { Lang } from "./i18n";
 import { Icon } from "./base";
+import { TabBar } from "./tabs";
 
 /** keep in sync with android/AndroidManifest.xml versionName on every release */
 export const APP_VERSION = "1.0.7";
@@ -158,19 +159,17 @@ export function changelogNeedsShow(): boolean {
 export function ChangelogModal({ onClose }: { onClose: () => void }) {
   const lang = langOf();
   const t = useMemo(() => makeT(lang), [lang]);
-  const listRef = useRef<HTMLDivElement | null>(null);
   const [vi, setVi] = useState(() => {
     const i = CHANGELOG.findIndex((v) => v.v === APP_VERSION);
     return i >= 0 ? i : 0;
   });
+  // category groups fold away individually (keyed by version + kind)
+  const [folded, setFolded] = useState<Record<string, boolean>>({});
+  const toggleGroup = (key: string) => setFolded((f) => ({ ...f, [key]: !f[key] }));
   // opening the log (auto or manual) marks the current version as seen
   useEffect(() => {
     try { localStorage.setItem("pc.changelog.seen", APP_VERSION); } catch { /* ignore */ }
   }, []);
-  // keep the selected row visible in the (fixed-height, scrollable) version list
-  useEffect(() => {
-    listRef.current?.querySelector<HTMLElement>(".clg-v.on")?.scrollIntoView({ block: "nearest" });
-  }, [vi]);
   const ver = CHANGELOG[vi] ?? CHANGELOG[0];
   const secs: [ClgKind, string][] = [
     ["add", t("clgAdd")],
@@ -187,27 +186,37 @@ export function ChangelogModal({ onClose }: { onClose: () => void }) {
           <button className="btn small" onClick={onClose}><Icon id="i-x" size={16} /></button>
         </div>
         <div className="dlg-body">
-          <div className="clg-vers" ref={listRef}>
-            {CHANGELOG.map((v, i) => (
-              <button key={v.v} className={"clg-v" + (i === vi ? " on" : "") + (v.v === APP_VERSION ? " cur" : "")} onClick={() => setVi(i)}>
-                <span className="clg-vname">{v.v}</span>
-                <span className="clg-vdate">{v.date}</span>
-                {v.v === APP_VERSION && <span className="clg-curtag">{t("clgCurrent")}</span>}
-              </button>
-            ))}
-          </div>
+          <TabBar
+            className="clg-tabs"
+            items={CHANGELOG.map((v) => ({
+              id: v.v,
+              label: v.v + (v.v === APP_VERSION ? " *" : ""),
+              badge: v.date,
+            }))}
+            value={ver.v}
+            onChange={(v) => setVi(Math.max(0, CHANGELOG.findIndex((x) => x.v === v)))}
+          />
           <div className="clg-view" key={"v" + ver.v}>
-          <div className="clg-title">PixelCraft {ver.v} <span className="clg-date">· {ver.date}</span></div>
+          <div className="clg-title">PixelCraft {ver.v} <span className="clg-date">· {ver.date}</span>
+            {ver.v === APP_VERSION && <span className="clg-curtag">{t("clgCurrent")}</span>}
+          </div>
           <div className="clg-list">
             {secs.map(([kind, label]) => {
               const rows = ver.items.filter((x) => x.kind === kind);
               if (!rows.length) return null;
+              const gkey = ver.v + ":" + kind;
+              const open = !folded[gkey];
               return (
-                <div className="clg-sec" key={kind}>
-                  <div className={"clg-sec-h " + kind}><i /><b>{label}</b></div>
-                  <ul className="clg-ul">
-                    {rows.map((x, i) => <li key={i}>{langOf() === "zh" ? x.zh : x.en}</li>)}
-                  </ul>
+                <div className={"clg-sec" + (open ? "" : " folded")} key={kind}>
+                  <button type="button" className={"clg-sec-h " + kind} onClick={() => toggleGroup(gkey)}>
+                    <i /><b>{label}</b><span className="clg-sec-n">{rows.length}</span>
+                    <span className="clg-sec-chev">▾</span>
+                  </button>
+                  {open && (
+                    <ul className="clg-ul">
+                      {rows.map((x, i) => <li key={i}>{langOf() === "zh" ? x.zh : x.en}</li>)}
+                    </ul>
+                  )}
                 </div>
               );
             })}
