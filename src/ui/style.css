@@ -433,6 +433,30 @@ input[type=range]{width:64px;height:22px;accent-color:var(--accent)}
 .preset-row{display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:8px;border:1px solid var(--line);background:var(--bg3);color:var(--dim);font-size:12px}
 .preset-row:active{background:var(--bg4)}
 .preset-name{flex:0 0 auto}
+/* shared tab strip + dropdown */
+.tabbar{display:flex;align-items:center;gap:8px;margin:2px 0 8px}
+.tabbar-tabs{display:flex;gap:2px;flex:1;min-width:0;overflow-x:auto;background:var(--bg3);border:1px solid var(--line);
+  border-radius:10px;padding:2px}
+.tabbar-tab{flex:0 0 auto;padding:6px 12px;border:0;border-radius:8px;background:transparent;color:var(--dim);
+  font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap}
+.tabbar-tab.on{background:var(--accent);color:#fff}
+.tabbar-right{display:flex;gap:6px;align-items:center;flex:0 0 auto}
+.dropmenu{position:relative}
+.dropmenu-btn{display:inline-flex;align-items:center;gap:4px;padding:6px 9px;border-radius:9px;border:1px solid var(--line);
+  background:var(--bg3);color:var(--fg);font-family:inherit;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap}
+.dropmenu-btn.on{background:var(--accent);color:#fff;border-color:#fff}
+.dropmenu-chev{font-style:normal;font-size:10px;opacity:.8}
+.dropmenu-back{position:fixed;inset:0;z-index:60}
+.dropmenu-list{position:absolute;right:0;top:calc(100% + 4px);z-index:61;min-width:132px;padding:4px;
+  background:var(--bg2);border:1px solid var(--line);border-radius:10px;box-shadow:0 10px 30px rgba(0,0,0,.55)}
+.dropmenu-item{display:block;width:100%;text-align:left;padding:7px 10px;border:0;border-radius:7px;background:transparent;
+  color:var(--fg);font-family:inherit;font-size:13px;cursor:pointer;white-space:nowrap}
+.dropmenu-item.on{background:var(--accent);color:#fff;font-weight:700}
+.iconbtn{width:30px;height:30px;display:grid;place-items:center;border-radius:9px;border:1px solid var(--line);
+  background:var(--bg3);color:var(--fg);cursor:pointer;padding:0}
+.iconbtn:active{background:var(--accent);color:#fff;border-color:#fff}
+.preset-row.mine .preset-name{color:var(--accent)}
+.preset-merge.danger{color:#ff7a7a;font-size:16px}
 .preset-merge{width:22px;height:22px;flex:0 0 22px;display:grid;place-items:center;border-radius:7px;border:1px solid var(--line);
   background:rgba(255,255,255,.06);color:var(--accent);font-weight:800;font-size:14px;line-height:1;cursor:pointer}
 .preset-merge:active{background:var(--accent);color:#fff}

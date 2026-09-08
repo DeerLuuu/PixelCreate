@@ -6,7 +6,7 @@ import type { Snapshot } from "../app/session";
 import { Doc } from "../engine/doc";
 import { Cel } from "../engine/cel";
 import { hexToRgba, rgbaToHex, hexToRgba as hrgb, chipCss } from "../engine/color";
-import { HsvWheel, colorToHex6 } from "./HsvWheel";
+import { HsvWheel } from "./HsvWheel";
 import { HoldAdjust } from "./hold";
 import { PALETTE_PACKS } from "../data/palettes";
 import { tryReadGif } from "../io/gifread";
@@ -16,6 +16,7 @@ import * as exporters from "../io/exporters";
 import * as bridge from "../io/bridge";
 import * as autosave from "../io/autosave";
 import { Btn, Icon, useSession, ScrubNum } from "./base";
+import { DropMenu, TabBar } from "./tabs";
 import type { RefImg } from "./refimg";
 
 export type ModalId = "menu" | "changelog" | "newdoc" | "export" | "adjust" | "settings" | "frame" | "framePrev" | "size" | "sheet" | "history" | null;
@@ -35,7 +36,6 @@ export function PalettePanel({ t, onClose }: { t: ReturnType<typeof makeT>; onCl
   const doc = SESSION.doc;
   const active = SESSION.currentColor();
   const [hex, setHex] = useState(rgbaToHex(active));
-  const alpha = active[3];
   // selecting a colour applies it FULLY OPAQUE: a stale low/zero alpha from a
   // previous translucent/eraser setting must not make every new colour look
   // wrong (drawing transparent looks like erasing). Use the opacity slider
@@ -47,6 +47,7 @@ export function PalettePanel({ t, onClose }: { t: ReturnType<typeof makeT>; onCl
   // which colour source the grid shows: the document palette, every colour
   // used on the canvas, or the most recently used ones
   const [palMode, setPalMode] = useState<"palette" | "doc" | "recent">("palette");
+  const [sortMode, setSortMode] = useState<"hue" | "light">("hue");
   const longRef = useRef<{ i: number; t: number } | null>(null);
   const skipRef = useRef(false);
   return (
@@ -61,7 +62,6 @@ export function PalettePanel({ t, onClose }: { t: ReturnType<typeof makeT>; onCl
             setHex(v ? "#" + v : "#");
             if (v.length >= 6) { const c = hrgb(v); if (v.length === 8) SESSION.setColor([c[0], c[1], c[2], c[3]]); else { const o: [number, number, number, number] = [c[0], c[1], c[2], 255]; SESSION.setColor(o); setHex(rgbaToHex(o)); } }
           }} />
-          <input type="color" value={colorToHex6(active)} onChange={(e) => { const c = hrgb(e.target.value); apply([c[0], c[1], c[2], alpha]); }} />
         </div>
         <label className="rowlabel">{t("presets")}</label>
         <div className="preset-list">
@@ -76,19 +76,52 @@ export function PalettePanel({ t, onClose }: { t: ReturnType<typeof makeT>; onCl
               }}>+</span>
             </button>
           ))}
+          {SESSION.myPalettes.map((pack) => (
+            <button key={pack.id} className="preset-row mine" title={t("palPresetReplace")} onClick={() => SESSION.setPalette(pack.colors.map((hc) => { const x = hexToRgba(hc); return [x[0], x[1], x[2], x[3]]; }))}>
+              <span className="preset-name">{pack.name}</span>
+              <span className="preset-dots">{pack.colors.slice(0, 6).map((hc, i) => <i key={i} style={{ background: hc }} />)}</span>
+              <span className="preset-merge" role="button" title={t("palMerge")} onClick={(e) => {
+                e.stopPropagation();
+                const n = SESSION.paletteMerge(pack.colors.map((hc) => { const x = hexToRgba(hc); return [x[0], x[1], x[2], x[3]]; }));
+                bridge.toast(n ? t("palMerged") + n : t("palMergeNone"));
+              }}>+</span>
+              <span className="preset-merge danger" role="button" title={t("palPresetDelete")} onClick={(e) => {
+                e.stopPropagation();
+                SESSION.deletePalettePreset(pack.id);
+              }}>×</span>
+            </button>
+          ))}
         </div>
-        <div className="chips palops" data-guide="pal-ops">
-          <button className="chip" title={t("palDedupeHint")} onClick={() => {
-            const n = SESSION.paletteDedupe();
-            bridge.toast(n ? t("palDedupeDone") + n : t("palDedupeNone"));
-          }}>{t("palDedupe")}</button>
-          <button className="chip" title={t("palSortHint")} onClick={() => SESSION.paletteSort("hue")}>{t("palSortHue")}</button>
-          <button className="chip" title={t("palSortHint")} onClick={() => SESSION.paletteSort("light")}>{t("palSortLight")}</button>
+        <div className="row-actions">
+          <Btn icon="i-plus" label={t("palPresetSave")} onClick={() => {
+            const name = SESSION.savePalettePreset();
+            bridge.toast(name ? t("palPresetSaved") + name : t("palDedupeNone"));
+          }} />
         </div>
-        <div className="chips palmodes">
-          <button className={"chip" + (palMode === "palette" ? " on" : "")} data-guide="pal-mode-palette" onClick={() => setPalMode("palette")}>{t("palModePalette")}</button>
-          <button className={"chip" + (palMode === "doc" ? " on" : "")} data-guide="pal-mode-doc" onClick={() => setPalMode("doc")}>{t("palModeDoc")}</button>
-          <button className={"chip" + (palMode === "recent" ? " on" : "")} data-guide="pal-mode-recent" onClick={() => setPalMode("recent")}>{t("palModeRecent")}</button>
+        <div data-guide="pal-ops">
+          <TabBar<"palette" | "doc" | "recent">
+            items={[
+              { id: "palette", label: t("palModePalette"), guide: "pal-mode-palette" },
+              { id: "doc", label: t("palModeDoc"), guide: "pal-mode-doc" },
+              { id: "recent", label: t("palModeRecent"), guide: "pal-mode-recent" },
+            ]}
+            value={palMode}
+            onChange={setPalMode}
+            right={<>
+              <DropMenu
+                guide="pal-sort"
+                label={t("palSort") + " · " + t(sortMode === "hue" ? "palSortHue" : "palSortLight")}
+                title={t("palSortHint")}
+                value={sortMode}
+                options={[{ id: "hue", label: t("palSortHue") }, { id: "light", label: t("palSortLight") }]}
+                onPick={(m) => { setSortMode(m); SESSION.paletteSort(m); }}
+              />
+              <button type="button" className="iconbtn" title={t("palDedupeHint")} onClick={() => {
+                const n = SESSION.paletteDedupe();
+                bridge.toast(n ? t("palDedupeDone") + n : t("palDedupeNone"));
+              }}><Icon id="i-fx-inv" size={15} /></button>
+            </>}
+          />
         </div>
         {palMode === "palette" ? (
         <div className="palgrid">

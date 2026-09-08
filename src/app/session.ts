@@ -152,6 +152,7 @@ export class Session {
     this.color = this.fg;
     this.loopMode = this.prefs.loopMode;
     this.recentColors = this.loadRecentColors();
+    this.myPalettes = this.loadMyPalettes();
     this.applyHistoryLimit();
     // Android may kill a backgrounded WebView without warning: flush the
     // autosave the moment the app is hidden so the last strokes survive
@@ -470,6 +471,50 @@ export class Session {
     this.lastColorAt = Date.now();
     this.pushRecentColor(this.color);
     this.changed();
+  }
+
+  // ---------- user-saved palettes ----------
+  /** palettes the user saved from the current document palette (persisted) */
+  myPalettes: Array<{ id: string; name: string; colors: string[] }> = [];
+  private static readonly MY_PAL_KEY = "pc.palettes.mine";
+
+  private loadMyPalettes(): Array<{ id: string; name: string; colors: string[] }> {
+    try {
+      const raw = JSON.parse(localStorage.getItem(Session.MY_PAL_KEY) ?? "[]");
+      if (!Array.isArray(raw)) return [];
+      return raw
+        .filter((p) => p && typeof p.id === "string" && Array.isArray(p.colors))
+        .map((p) => ({
+          id: String(p.id),
+          name: String(p.name ?? "palette"),
+          colors: (p.colors as unknown[]).filter((c): c is string => typeof c === "string" && /^#[0-9a-fA-F]{6,8}$/.test(c)).slice(0, 512),
+        }))
+        .filter((p) => p.colors.length > 0);
+    } catch {
+      return [];
+    }
+  }
+  private saveMyPalettes(): void {
+    try { localStorage.setItem(Session.MY_PAL_KEY, JSON.stringify(this.myPalettes)); } catch { /* ignore */ }
+  }
+  /** store the current document palette as a named preset; returns its name */
+  savePalettePreset(name?: string): string {
+    const colors = this.doc.palette.map((c) => "#" + [c[0], c[1], c[2]]
+      .map((v) => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, "0")).join(""));
+    if (!colors.length) return "";
+    const label = (name ?? "").trim() || (this.prefs.lang === "en" ? "My palette " : "我的色板 ") + (this.myPalettes.length + 1);
+    this.myPalettes = [...this.myPalettes, { id: "my" + Date.now().toString(36), name: label, colors }];
+    this.saveMyPalettes();
+    this.changed();
+    return label;
+  }
+  deletePalettePreset(id: string): boolean {
+    const before = this.myPalettes.length;
+    this.myPalettes = this.myPalettes.filter((p) => p.id !== id);
+    if (this.myPalettes.length === before) return false;
+    this.saveMyPalettes();
+    this.changed();
+    return true;
   }
 
   // ---------- recent colours (palette panel "recent" mode) ----------
