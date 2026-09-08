@@ -169,6 +169,38 @@ export function testSession(): void {
   }
   eq("settings.all-resolve", unresolved, 0);
 
+  // --- palette sort / merge / dedupe ---
+  {
+    const p = new Session();
+    p.setPalette([[255, 0, 0, 255], [0, 0, 255, 255], [255, 0, 0, 255], [0, 255, 0, 255], [128, 128, 128, 255]]);
+    eq("pal.setup", p.doc.palette.length, 5);
+    eq("pal.dedupe.removed", p.paletteDedupe(), 1);
+    eq("pal.dedupe.len", p.doc.palette.length, 4);
+    eq("pal.dedupe.none", p.paletteDedupe(), 0);
+    p.history.undo();
+    eq("pal.dedupe.undo", p.doc.palette.length, 5);
+
+    eq("pal.merge.added", p.paletteMerge([[0, 0, 255, 255], [1, 2, 3, 255]]), 1);
+    eq("pal.merge.len", p.doc.palette.length, 6);
+    eq("pal.merge.none", p.paletteMerge([[0, 0, 255, 255]]), 0);
+
+    // hue sort: red -> green -> blue, greys grouped at the end
+    p.setPalette([[0, 0, 255, 255], [255, 0, 0, 255], [128, 128, 128, 255], [0, 255, 0, 255]]);
+    p.paletteSort("hue");
+    eq("pal.sort.hue", p.doc.palette.map((c) => c[0] + "," + c[1] + "," + c[2]),
+      ["255,0,0", "0,255,0", "0,0,255", "128,128,128"]);
+
+    // lightness sort: dark -> light
+    p.setPalette([[128, 128, 128, 255], [0, 0, 0, 255], [255, 255, 255, 255]]);
+    p.paletteSort("light");
+    eq("pal.sort.light", p.doc.palette.map((c) => c[0]), [0, 128, 255]);
+
+    // already sorted: no extra undo step
+    const steps = p.history.list().labels.length;
+    p.paletteSort("light");
+    eq("pal.sort.noop", p.history.list().labels.length, steps);
+  }
+
   // --- multi-frame selection: batch duplicate / delete / duration ---
   {
     const f = new Session();

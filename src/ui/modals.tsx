@@ -66,11 +66,24 @@ export function PalettePanel({ t, onClose }: { t: ReturnType<typeof makeT>; onCl
         <label className="rowlabel">{t("presets")}</label>
         <div className="preset-list">
           {PALETTE_PACKS.map((pack) => (
-            <button key={pack.id} className="preset-row" onClick={() => SESSION.setPalette(pack.colors.map((hc) => { const x = hexToRgba(hc); return [x[0], x[1], x[2], x[3]]; }))}>
+            <button key={pack.id} className="preset-row" title={t("palPresetReplace")} onClick={() => SESSION.setPalette(pack.colors.map((hc) => { const x = hexToRgba(hc); return [x[0], x[1], x[2], x[3]]; }))}>
               <span className="preset-name">{SESSION.prefs.lang === "zh" ? pack.nameZh : pack.nameEn}</span>
               <span className="preset-dots">{pack.colors.slice(0, 6).map((hc, i) => <i key={i} style={{ background: hc }} />)}</span>
+              <span className="preset-merge" role="button" title={t("palMerge")} onClick={(e) => {
+                e.stopPropagation();
+                const n = SESSION.paletteMerge(pack.colors.map((hc) => { const x = hexToRgba(hc); return [x[0], x[1], x[2], x[3]]; }));
+                bridge.toast(n ? t("palMerged") + n : t("palMergeNone"));
+              }}>+</span>
             </button>
           ))}
+        </div>
+        <div className="chips palops">
+          <button className="chip" title={t("palDedupeHint")} onClick={() => {
+            const n = SESSION.paletteDedupe();
+            bridge.toast(n ? t("palDedupeDone") + n : t("palDedupeNone"));
+          }}>{t("palDedupe")}</button>
+          <button className="chip" title={t("palSortHint")} onClick={() => SESSION.paletteSort("hue")}>{t("palSortHue")}</button>
+          <button className="chip" title={t("palSortHint")} onClick={() => SESSION.paletteSort("light")}>{t("palSortLight")}</button>
         </div>
         <div className="chips palmodes">
           <button className={"chip" + (palMode === "palette" ? " on" : "")} data-guide="pal-mode-palette" onClick={() => setPalMode("palette")}>{t("palModePalette")}</button>

@@ -422,6 +422,9 @@ input[type=range]{width:64px;height:22px;accent-color:var(--accent)}
 .preset-row{display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:8px;border:1px solid var(--line);background:var(--bg3);color:var(--dim);font-size:12px}
 .preset-row:active{background:var(--bg4)}
 .preset-name{flex:0 0 auto}
+.preset-merge{width:22px;height:22px;flex:0 0 22px;display:grid;place-items:center;border-radius:7px;border:1px solid var(--line);
+  background:rgba(255,255,255,.06);color:var(--accent);font-weight:800;font-size:14px;line-height:1;cursor:pointer}
+.preset-merge:active{background:var(--accent);color:#fff}
 .preset-dots{display:flex;gap:2px;flex:1 1 auto;overflow:hidden}
 .preset-dots i{width:14px;height:14px;border-radius:3px;display:inline-block}
 /* bars keep a single row whenever possible; wrap only when controls overflow */

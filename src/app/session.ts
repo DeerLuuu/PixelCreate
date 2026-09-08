@@ -670,6 +670,66 @@ export class Session {
       this.doc.palette = colors.slice(0, 512).map((c) => [c[0], c[1], c[2], c[3]]);
     });
   }
+  /** drop duplicate swatches (exact RGBA match, first occurrence wins) */
+  paletteDedupe(): number {
+    const p = this.doc.palette;
+    const seen = new Set<string>();
+    const out: RGBA[] = [];
+    for (const c of p) {
+      const k = c[0] + "," + c[1] + "," + c[2] + "," + c[3];
+      if (seen.has(k)) continue;
+      seen.add(k);
+      out.push([c[0], c[1], c[2], c[3]]);
+    }
+    const removed = p.length - out.length;
+    if (removed > 0) this.setPalette(out);
+    return removed;
+  }
+  /** merge colours in, skipping the ones the palette already has */
+  paletteMerge(colors: Array<[number, number, number, number]>): number {
+    const have = new Set(this.doc.palette.map((c) => c[0] + "," + c[1] + "," + c[2] + "," + c[3]));
+    const add: RGBA[] = [];
+    for (const c of colors) {
+      const k = c[0] + "," + c[1] + "," + c[2] + "," + c[3];
+      if (have.has(k)) continue;
+      have.add(k);
+      add.push([c[0], c[1], c[2], c[3]]);
+    }
+    if (!add.length) return 0;
+    this.setPalette([...this.doc.palette, ...add]);
+    return add.length;
+  }
+  /** sort the palette by hue (then saturation/lightness) or by lightness */
+  paletteSort(mode: "hue" | "light"): void {
+    const key = (c: RGBA): number[] => {
+      const r = c[0] / 255, g = c[1] / 255, b = c[2] / 255;
+      const mx = Math.max(r, g, b), mn = Math.min(r, g, b);
+      const l = (mx + mn) / 2;
+      const d = mx - mn;
+      let h = 0, sat = 0;
+      if (d > 0) {
+        sat = d / (1 - Math.abs(2 * l - 1) || 1);
+        if (mx === r) h = ((g - b) / d + (g < b ? 6 : 0)) / 6;
+        else if (mx === g) h = ((b - r) / d + 2) / 6;
+        else h = ((r - g) / d + 4) / 6;
+      }
+      // grey colours (no hue) group at the end of a hue sort
+      return mode === "hue" ? [sat === 0 ? 1 : 0, h, sat, l] : [l, h, sat];
+    };
+    const sorted = this.doc.palette
+      .map((c, i) => ({ c, i, k: key(c) }))
+      .sort((a, b) => {
+        for (let j = 0; j < a.k.length; j++) {
+          if (a.k[j] !== b.k[j]) return a.k[j] - b.k[j];
+        }
+        return a.i - b.i; // stable
+      })
+      .map((e) => e.c);
+    // nothing to do when the order is already right
+    if (sorted.every((c, i) => c === this.doc.palette[i])) return;
+    this.setPalette(sorted);
+  }
+
   /** replace a palette swatch AND recolor every matching pixel (whole sprite) */
   recolorPaletteColor(idx: number, newC: RGBA): void {
     const doc = this.doc;
