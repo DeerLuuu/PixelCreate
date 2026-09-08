@@ -3,6 +3,7 @@ declare global {
   interface Window {
     PixelBridge?: {
       saveFile: (name: string, mime: string, base64: string, reqId: string) => void;
+      hasVibrator?: () => boolean;
       openFile: (mime: string) => void;
       toast: (msg: string) => void;
       vibrate: (ms: number) => void;
@@ -38,8 +39,35 @@ export function toast(msg: string): void {
   window.dispatchEvent(ev);
 }
 
-export function vibrate(ms: number): void {
-  window.PixelBridge?.vibrate?.(Math.max(5, Math.min(60, Math.round(ms))));
+/** short haptic tick. Uses the native bridge first, then the WebView's own
+ *  navigator.vibrate (both need android.permission.VIBRATE, which the app
+ *  declares). Failures are silent: vibration is only a nicety. */
+export function vibrate(ms: number): boolean {
+  const d = Math.max(5, Math.min(100, Math.round(ms)));
+  let ok = false;
+  try {
+    const b = window.PixelBridge;
+    if (b?.vibrate) { b.vibrate(d); ok = true; }
+  } catch { /* ignore */ }
+  if (!ok) {
+    try {
+      const nav = navigator as Navigator & { vibrate?: (p: number | number[]) => boolean };
+      if (nav.vibrate) ok = nav.vibrate(d);
+    } catch { /* ignore */ }
+  }
+  return ok;
+}
+
+/** true when the device reports a usable vibrator (null = unknown) */
+export function canVibrate(): boolean | null {
+  try {
+    const b = window.PixelBridge;
+    if (b?.hasVibrator) return !!b.hasVibrator();
+  } catch { /* ignore */ }
+  try {
+    return typeof (navigator as Navigator & { vibrate?: unknown }).vibrate === "function";
+  } catch { /* ignore */ }
+  return null;
 }
 
 export function saveBytes(name: string, mime: string, bytes: Uint8Array, onDone?: (ok: boolean) => void): void {

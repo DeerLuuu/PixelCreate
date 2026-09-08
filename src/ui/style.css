@@ -410,6 +410,9 @@ input[type=range]{width:64px;height:22px;accent-color:var(--accent)}
   color:var(--fg);font-family:inherit;font-size:13px;padding:7px 10px}
 .set-search input:focus{outline:none;border-color:var(--accent)}
 .set-io{margin-bottom:6px}
+.set-drop{margin:2px 10px 6px}
+.set-drop .dropmenu-btn{width:100%;justify-content:space-between;font-size:13px;padding:8px 10px}
+.set-drop .dropmenu-list{left:0;right:auto;max-height:240px;overflow-y:auto;min-width:100%}
 .set-reset{width:20px;height:20px;margin-left:6px;padding:0;display:inline-grid;place-items:center;border-radius:6px;
   border:1px solid var(--line);background:rgba(255,255,255,.06);color:var(--dim);cursor:pointer;vertical-align:middle}
 .set-reset:active{background:var(--accent);color:#fff;border-color:#fff}

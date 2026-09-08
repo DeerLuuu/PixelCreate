@@ -16,6 +16,7 @@ import * as bridge from "../io/bridge";
 import * as autosave from "../io/autosave";
 import { Btn, Icon, useSession, ScrubNum, useBlankTap } from "./base";
 import { DropMenu, TabBar } from "./tabs";
+import { canVibrate } from "../io/bridge";
 import type { RefImg } from "./refimg";
 
 export type ModalId = "menu" | "changelog" | "newdoc" | "export" | "adjust" | "settings" | "frame" | "framePrev" | "size" | "sheet" | "history" | null;
@@ -626,13 +627,31 @@ function SettingRow({ def, t }: { def: SettingDef; t: ReturnType<typeof makeT> }
         <span>{t(def.label)}</span>
         {resetBtn}
       </label>
-      {def.kind === "enum" && (
-        <div className="chips">
-          {(def.options ?? []).map((o) => (
-            <button key={o.value} className={"chip" + (v === o.value ? " on" : "")} onClick={() => SESSION.setSetting(def.path, o.value)}>{t(o.label)}</button>
-          ))}
-        </div>
-      )}
+      {def.kind === "enum" && (() => {
+        const opts = def.options ?? [];
+        const asDrop = def.control === "dropdown" || (def.control !== "chips" && opts.length > 6);
+        if (!asDrop) {
+          return (
+            <div className="chips">
+              {opts.map((o) => (
+                <button key={o.value} className={"chip" + (v === o.value ? " on" : "")} onClick={() => SESSION.setSetting(def.path, o.value)}>{t(o.label)}</button>
+              ))}
+            </div>
+          );
+        }
+        const cur = opts.find((o) => o.value === v);
+        return (
+          <div className="row-actions set-drop">
+            <DropMenu
+              label={cur ? t(cur.label) : String(v)}
+              title={t(def.label)}
+              value={String(v)}
+              options={opts.map((o) => ({ id: o.value, label: t(o.label) }))}
+              onPick={(id) => SESSION.setSetting(def.path, id)}
+            />
+          </div>
+        );
+      })()}
       {def.desc && <div className="row-note">{t(def.desc)}</div>}
     </>
   );
@@ -691,6 +710,9 @@ export function SettingsModal({ t, onClose }: { t: ReturnType<typeof makeT>; onC
                   <i className={"chev" + (open ? " open" : "")}>▾</i>
                 </button>
                 {open && items.map((d) => <SettingRow key={d.path} def={d} t={t} />)}
+                {open && g.id === "gesture" && canVibrate() === false && (
+                  <div className="row-note">{t("hapticUnsupported")}</div>
+                )}
                 {open && g.id === "data" && (
                   <>
                     <div className="row-note">

@@ -277,6 +277,13 @@ export function testSession(): void {
       eq("gesture.setting.options." + g.id, (def?.options ?? []).map((o) => o.value), g.actions);
     }
 
+    // the mapping rows are rendered as dropdowns (palette-sort style)
+    for (const g of GESTURES) {
+      const def = SETTINGS.find((d) => d.path === gesturePath(g.id));
+      eq("gesture.control." + g.id, def?.control, "dropdown");
+    }
+    ok("gesture.drop.long-list", (SETTINGS.find((d) => d.path === "tools.defaultTool")?.options?.length ?? 0) > 6);
+
     // dispatcher: session-level actions really run
     (globalThis as unknown as { localStorage: { clear(): void } }).localStorage.clear();
     const g = new Session();

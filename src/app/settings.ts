@@ -8,6 +8,7 @@
 // no UI plumbing, no new session setter, no extra localStorage key.
 import type { Prefs, Session } from "./session";
 import { GESTURES, GESTURE_ACTIONS, gesturePath } from "./gestures";
+import * as bridge from "../io/bridge";
 
 export type SettingValue = boolean | number | string;
 export type SettingKind = "bool" | "int" | "enum";
@@ -48,6 +49,9 @@ export interface SettingDef {
   visible?: (s: Session) => boolean;
   /** UI reaction after the value is stored */
   refresh?: SettingRefresh;
+  /** enum rendering: a chip row (default) or an expandable dropdown.
+   *  Omitted = chips for <= 6 options, dropdown above that. */
+  control?: "chips" | "dropdown";
   /** custom read (defaults to prefs[field]) */
   get?: (s: Session) => SettingValue;
   /** custom write (defaults to prefs[field]) */
@@ -300,9 +304,12 @@ const defs: SettingDef[] = [
   {
     path: "gesture.haptic", field: "haptic", kind: "bool", group: "gesture",
     label: "hapticLabel", desc: "hapticDesc", default: true, refresh: "none",
+    // a tick right when it is switched on, so the effect is obvious
+    after: (_s, v) => { if (v) bridge.vibrate(30); },
   },
   // one entry per gesture: which function it runs (see src/app/gestures.ts)
   ...GESTURES.map((g): SettingDef => ({
+    control: "dropdown" as const,
     path: gesturePath(g.id),
     field: g.field as keyof Prefs,
     kind: "enum",

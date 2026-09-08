@@ -8,7 +8,7 @@ import { Icon } from "./base";
 import { TabBar } from "./tabs";
 
 /** keep in sync with android/AndroidManifest.xml versionName on every release */
-export const APP_VERSION = "1.0.7.3";
+export const APP_VERSION = "1.0.7.4";
 
 export type ClgKind = "add" | "imp" | "fix";
 export interface ClgItem { kind: ClgKind; zh: string; en: string }
@@ -17,6 +17,14 @@ export interface ClgVersion { v: string; date: string; items: ClgItem[] }
 const it = (kind: ClgKind, zh: string, en: string): ClgItem => ({ kind, zh, en });
 
 export const CHANGELOG: ClgVersion[] = [
+  {
+    v: "1.0.7.4",
+    date: "2026-09-08",
+    items: [
+      it("fix", "修复应用内震动不生效：原生改用 VibratorManager（Android 12+）并在失败时回退旧接口，震动时长上限从 60ms 提到 100ms；打开“震动反馈”开关会立刻震一下，长按拖拽开始时也会震；设备没有可用马达时在设置里给出提示", "Fix in-app vibration: the native side now uses VibratorManager (Android 12+) with a legacy fallback, the maximum pulse went from 60ms to 100ms, switching Haptic feedback on ticks immediately, long-press drags tick as well, and Settings warns when no vibrator is available"),
+      it("imp", "手势功能映射改用下拉选择（和调色板排序同款的可展开样式），选项多的设置项（如启动工具）也自动用下拉，不再铺一屏按钮", "Gesture mappings now use the same expandable dropdown as the palette sort control, and any setting with many options (like the launch tool) switches to it automatically instead of filling the panel with buttons"),
+    ],
+  },
   {
     v: "1.0.7.3",
     date: "2026-09-08",

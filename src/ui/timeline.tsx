@@ -54,6 +54,7 @@ export function TimelineBar({ t, snap, onFrameDlg }: { t: ReturnType<typeof make
       SESSION.setFrame(g.from);
       g.armed = true;
       setDl({ from: g.from, to: g.from, dx: 0 });
+      if (SESSION.prefs.haptic) bridge.vibrate(18);
     }, SESSION.prefs.longPressMs);
   };
   const numMove = (fi: number) => (e: React.PointerEvent<HTMLDivElement>) => {
@@ -123,6 +124,7 @@ export function TimelineBar({ t, snap, onFrameDlg }: { t: ReturnType<typeof make
       SESSION.setLayer(g.from);
       g.armed = true;
       setLdl({ from: g.from, to: g.from, dy: 0 });
+      if (SESSION.prefs.haptic) bridge.vibrate(18);
     }, SESSION.prefs.longPressMs);
   };
   const layMove = (li: number) => (e: React.PointerEvent<HTMLDivElement>) => {
