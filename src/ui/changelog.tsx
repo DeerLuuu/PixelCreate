@@ -8,7 +8,7 @@ import { Icon } from "./base";
 import { TabBar } from "./tabs";
 
 /** keep in sync with android/AndroidManifest.xml versionName on every release */
-export const APP_VERSION = "1.0.7.1";
+export const APP_VERSION = "1.0.7.2";
 
 export type ClgKind = "add" | "imp" | "fix";
 export interface ClgItem { kind: ClgKind; zh: string; en: string }
@@ -17,6 +17,21 @@ export interface ClgVersion { v: string; date: string; items: ClgItem[] }
 const it = (kind: ClgKind, zh: string, en: string): ClgItem => ({ kind, zh, en });
 
 export const CHANGELOG: ClgVersion[] = [
+  {
+    v: "1.0.7.2",
+    date: "2026-09-08",
+    items: [
+      it("add", "状态跨启动保持：笔刷大小/不透明度、前景与背景色（含透明度）、当前工具与形状/选区子环、对称轴（开关/角度/轴心/四向/锁定）、最后使用的色板、新建文档的尺寸与背景、参考图，重启后全部还在", "Everything survives a restart now: brush size and opacity, foreground/background colours (including alpha), the active tool plus its shape/selection sub-ring, the whole symmetry axis (on/off, angle, pivot, four-way, lock), the last palette, new-document size and background, and the reference image"),
+      it("add", "笔尖形状可切换：圆笔尖（默认）与方笔尖，笔迹和图形描边都跟着变；控制栏加了切换按钮，设置里也有", "Switchable brush tip: round (default) or square, applied to both freehand strokes and shape outlines, with a control-bar toggle and a Settings entry"),
+      it("add", "图形新增“从中心绘制”：矩形/椭圆/圆/多边形以按下点为中心向外生长，控制栏有开关、设置里有默认值", "New Draw shapes from the centre option: rect/ellipse/circle/polygon grow outwards from the touch point, with a control-bar toggle and a Settings default"),
+      it("add", "多边形边数进入设置（3–32，控制栏上限也从 12 提到 32），并可设置图形默认实心/空心", "Polygon side count is now a setting (3–32, the control-bar slider also goes to 32) and shapes can default to filled or hollow"),
+      it("add", "对称开启时选区工具（框选 / 套索 / 魔棒）也会按对称轴镜像选区，和画笔保持一致", "With symmetry on, the selection tools (marquee / lasso / wand) mirror the selection across the axis too, matching the brush"),
+      it("add", "新增“手势与触控”设置组：长按判定时间、双击判定间隔、三连击放大倍率、四指滑动阈值、边缘自动平移范围与速度、最小/最大缩放、震动反馈开关、边距双击撤销开关", "New Gestures & Touch settings group: long-press delay, double-tap window, triple-tap zoom factor, four-finger slide threshold, auto-pan edge zone and speed, minimum/maximum zoom, haptic feedback and margin double-tap undo"),
+      it("add", "参考图持久化：导入的参考图连同窗口位置、大小与不透明度一起保存，重启后自动恢复；窗口左下角新增不透明度滑块", "Reference images persist: the picture plus its window position, size and opacity are restored on launch, and the window gains an opacity slider"),
+      it("imp", "调色板面板：点击面板空白区域即可关闭（滚动或长按不会误触）", "Palette panel: tapping its blank area closes it (scrolling or long-pressing never does)"),
+      it("add", "设置新增：启动时使用的工具、新建文档宽高与背景", "New settings: the tool selected on launch, plus new-document width, height and background"),
+    ],
+  },
   {
     v: "1.0.7.1",
     date: "2026-09-08",
