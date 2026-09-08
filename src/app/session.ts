@@ -1,5 +1,6 @@
 import { Doc } from "../engine/doc";
 import { History } from "../engine/history";
+import { uid } from "../engine/types";
 import type { Rect, RGBA, BlendMode } from "../engine/types";
 import { defaultPalette } from "../data/palettes";
 import * as ops from "../engine/ops";
@@ -503,7 +504,7 @@ export class Session {
       .map((v) => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, "0")).join(""));
     if (!colors.length) return "";
     const label = (name ?? "").trim() || (this.prefs.lang === "en" ? "My palette " : "我的色板 ") + (this.myPalettes.length + 1);
-    this.myPalettes = [...this.myPalettes, { id: "my" + Date.now().toString(36), name: label, colors }];
+    this.myPalettes = [...this.myPalettes, { id: "my" + uid(), name: label, colors }];
     this.saveMyPalettes();
     this.changed();
     return label;

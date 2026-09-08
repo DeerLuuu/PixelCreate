@@ -171,6 +171,24 @@ export function testSession(): void {
   }
   eq("settings.all-resolve", unresolved, 0);
 
+  // --- user-saved palettes ---
+  {
+    const p = new Session();
+    p.setPalette([[255, 0, 0, 255], [0, 255, 0, 255]]);
+    eq("mypal.empty", p.myPalettes.length, 0);
+    const name = p.savePalettePreset();
+    ok("mypal.saved-name", name.length > 0, name);
+    eq("mypal.count", p.myPalettes.length, 1);
+    eq("mypal.colors", p.myPalettes[0].colors, ["#ff0000", "#00ff00"]);
+    const custom = p.savePalettePreset("My set");
+    eq("mypal.custom-name", custom, "My set");
+    eq("mypal.count2", p.myPalettes.length, 2);
+    const id = p.myPalettes[0].id;
+    ok("mypal.delete", p.deletePalettePreset(id));
+    eq("mypal.after-delete", p.myPalettes.length, 1);
+    eq("mypal.delete.missing", p.deletePalettePreset("nope"), false);
+  }
+
   // --- settings: per-row reset + file export/import ---
   {
     const g = new Session();
