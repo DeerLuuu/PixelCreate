@@ -1,5 +1,7 @@
 import { Session } from "../src/app/session";
-import { SETTINGS, settingsOfGroup } from "../src/app/settings";
+import {
+  SETTINGS, settingsOfGroup, coerceSetting, exportSettings, importSettings, isDefault, resetSetting,
+} from "../src/app/settings";
 import { eq, ok } from "./common";
 
 /** minimal DOM-less environment for Session (no View attached) */
@@ -168,6 +170,51 @@ export function testSession(): void {
     if (v === undefined || v === null) unresolved++;
   }
   eq("settings.all-resolve", unresolved, 0);
+
+  // --- settings: per-row reset + file export/import ---
+  {
+    const g = new Session();
+    const intDef = SETTINGS.find((d) => d.path === "onion.before")!;
+    const boolDef = SETTINGS.find((d) => d.path === "onion.tint")!;
+    const enumDef = SETTINGS.find((d) => d.path === "display.previewBg")!;
+
+    ok("settings.isdefault.true", isDefault(g, intDef));
+    g.setSetting("onion.before", 3);
+    ok("settings.isdefault.false", !isDefault(g, intDef));
+    resetSetting(g, intDef);
+    eq("settings.reset", g.settingValue("onion.before"), 1);
+    ok("settings.reset.idempotent", isDefault(g, intDef));
+
+    // coercion of values coming from a file
+    eq("settings.coerce.bool.true", coerceSetting(boolDef, "true"), true);
+    eq("settings.coerce.bool.one", coerceSetting(boolDef, 1), true);
+    eq("settings.coerce.bool.bad", coerceSetting(boolDef, "yes"), undefined);
+    eq("settings.coerce.int.clamp", coerceSetting(intDef, 99), 3);
+    eq("settings.coerce.int.round", coerceSetting(intDef, "2.6"), 3);
+    eq("settings.coerce.int.bad", coerceSetting(intDef, "abc"), undefined);
+    eq("settings.coerce.enum.ok", coerceSetting(enumDef, "black"), "black");
+    eq("settings.coerce.enum.bad", coerceSetting(enumDef, "purple"), undefined);
+
+    // export -> import round trip
+    g.setSetting("onion.before", 2);
+    g.setSetting("display.previewBg", "black");
+    const file = exportSettings(g);
+    eq("settings.export.app", file.app, "PixelCraft");
+    eq("settings.export.version", file.version, 1);
+    ok("settings.export.all-paths", Object.keys(file.values).length === SETTINGS.length, "n=" + Object.keys(file.values).length);
+    const h = new Session();
+    const r = importSettings(h, file);
+    eq("settings.import.applied", r.applied, SETTINGS.length);
+    eq("settings.import.value", h.settingValue("onion.before"), 2);
+    eq("settings.import.enum", h.settingValue("display.previewBg"), "black");
+
+    // unknown keys are ignored, invalid values are skipped, ints are clamped
+    const r2 = importSettings(h, { values: { "onion.before": 99, "nope.x": 1, "display.previewBg": "purple" } });
+    eq("settings.import.skipped", r2.skipped, 1);
+    eq("settings.import.clamped", h.settingValue("onion.before"), 3);
+    eq("settings.import.bad-kept", h.settingValue("display.previewBg"), "black");
+    eq("settings.import.garbage", importSettings(h, null), { applied: 0, skipped: 0 });
+  }
 
   // --- palette sort / merge / dedupe ---
   {

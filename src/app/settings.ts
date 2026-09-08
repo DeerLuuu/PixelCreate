@@ -55,6 +55,76 @@ export interface SettingDef {
   after?: (s: Session, v: SettingValue) => void;
 }
 
+
+// ---------------------------------------------------------------- helpers
+/** true when the setting currently holds its declared default */
+export function isDefault(s: Session, d: SettingDef): boolean {
+  const v = s.settingValue(d.path);
+  return typeof v === "number" && typeof d.default === "number"
+    ? Math.abs(v - d.default) < 1e-9
+    : v === d.default;
+}
+
+/** put one setting back to its declared default */
+export function resetSetting(s: Session, d: SettingDef): void {
+  if (isDefault(s, d)) return;
+  s.setSetting(d.path, d.default);
+}
+
+/** validate/normalise a value coming from a settings file (undefined = reject) */
+export function coerceSetting(d: SettingDef, v: unknown): SettingValue | undefined {
+  if (d.kind === "bool") {
+    if (typeof v === "boolean") return v;
+    if (v === 1 || v === "1" || v === "true") return true;
+    if (v === 0 || v === "0" || v === "false") return false;
+    return undefined;
+  }
+  if (d.kind === "int") {
+    const n = typeof v === "number" ? v : typeof v === "string" && v.trim() !== "" ? Number(v) : NaN;
+    if (!Number.isFinite(n)) return undefined;
+    const lo = d.min ?? -Infinity;
+    const hi = d.max ?? Infinity;
+    return Math.max(lo, Math.min(hi, Math.round(n)));
+  }
+  if (typeof v !== "string") return undefined;
+  return (d.options ?? []).some((o) => o.value === v) ? v : undefined;
+}
+
+export interface SettingsFile {
+  app: string;
+  version: number;
+  savedAt: string;
+  values: Record<string, SettingValue>;
+}
+
+export const SETTINGS_FILE_VERSION = 1;
+
+/** every declared setting as a plain object, ready to be written as JSON */
+export function exportSettings(s: Session): SettingsFile {
+  const values: Record<string, SettingValue> = {};
+  for (const d of defs) values[d.path] = s.settingValue(d.path);
+  return { app: "PixelCraft", version: SETTINGS_FILE_VERSION, savedAt: new Date().toISOString(), values };
+}
+
+/** apply a settings file (the exported object or a bare values map).
+ *  Unknown keys and invalid values are counted as skipped, never applied. */
+export function importSettings(s: Session, raw: unknown): { applied: number; skipped: number } {
+  const src = (raw && typeof raw === "object" && "values" in (raw as Record<string, unknown>)
+    ? (raw as { values?: unknown }).values
+    : raw) as Record<string, unknown> | null | undefined;
+  if (!src || typeof src !== "object") return { applied: 0, skipped: 0 };
+  let applied = 0;
+  let skipped = 0;
+  for (const d of defs) {
+    if (!(d.path in src)) continue;
+    const v = coerceSetting(d, src[d.path]);
+    if (v === undefined) { skipped++; continue; }
+    s.setSetting(d.path, v);
+    applied++;
+  }
+  return { applied, skipped };
+}
+
 export const SETTING_GROUPS: Array<{ id: SettingGroupId; label: string }> = [
   { id: "general", label: "groupGeneral" },
   { id: "canvas", label: "groupCanvas" },

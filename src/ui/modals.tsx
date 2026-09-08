@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { SESSION } from "./singleton";
 import { makeT } from "./i18n";
-import { SETTING_GROUPS, settingsOfGroup, type SettingDef } from "../app/settings";
+import { SETTING_GROUPS, settingsOfGroup, isDefault, resetSetting, exportSettings, importSettings, type SettingDef } from "../app/settings";
 import type { Snapshot } from "../app/session";
 import { Doc } from "../engine/doc";
 import { Cel } from "../engine/cel";
@@ -549,9 +549,17 @@ export function AdjustModal({ t, onClose }: { t: ReturnType<typeof makeT>; onClo
 /** one settings row, generated from its declaration in src/app/settings.ts */
 function SettingRow({ def, t }: { def: SettingDef; t: ReturnType<typeof makeT> }) {
   const v = SESSION.settingValue(def.path);
+  const changed = !isDefault(SESSION, def);
   return (
     <>
-      <label className="rowlabel">{t(def.label)}</label>
+      <label className="rowlabel">
+        <span>{t(def.label)}</span>
+        {changed && (
+          <button type="button" className="set-reset" title={t("setReset")} onClick={() => resetSetting(SESSION, def)}>
+            <Icon id="i-undo" size={11} />
+          </button>
+        )}
+      </label>
       {def.kind === "bool" && (
         <button className={"chip" + (v ? " on" : "")} onClick={() => SESSION.setSetting(def.path, !v)}>{v ? "ON" : "OFF"}</button>
       )}
@@ -580,17 +588,46 @@ export function SettingsModal({ t, onClose }: { t: ReturnType<typeof makeT>; onC
   const snap = useSession();
   const [asInfo, setAsInfo] = useState<autosave.AutosaveMeta | null>(null);
   const [folded, setFolded] = useState<Record<string, boolean>>({});
+  const [q, setQ] = useState("");
   useEffect(() => { void SESSION.autosaveInfo().then(setAsInfo); }, [snap]);
+  const query = q.trim().toLowerCase();
+  const hit = (d: SettingDef): boolean =>
+    !query || t(d.label).toLowerCase().includes(query) ||
+    (d.desc ? t(d.desc).toLowerCase().includes(query) : false) ||
+    d.path.toLowerCase().includes(query);
+  const doExport = () => {
+    const bytes = new TextEncoder().encode(JSON.stringify(exportSettings(SESSION), null, 2));
+    bridge.saveBytes("pixelcraft-settings.json", "application/json", bytes, (ok) => bridge.toast(ok ? t("exported") : t("saveCancel")));
+  };
+  const doImport = async () => {
+    const f = await bridge.openFile("application/json");
+    if (!f) return;
+    try {
+      const raw = JSON.parse(new TextDecoder().decode(f.bytes));
+      const r = importSettings(SESSION, raw);
+      bridge.toast(t("setImported") + r.applied + (r.skipped ? " · " + t("setSkipped") + r.skipped : ""));
+    } catch {
+      bridge.toast(t("setImportFail"));
+    }
+  };
   return (
     <>
       <div className="dlg-mask" onClick={onClose} />
       <div className="dlg" data-guide="dlg-settings">
         <div className="dlg-head"><span>{t("settings")}</span><div className="grow" /><button className="btn small" onClick={onClose}><Icon id="i-x" size={16} /></button></div>
         <div className="dlg-body">
+          <div className="set-search">
+            <input value={q} placeholder={t("setSearch")} onChange={(e) => setQ(e.target.value)} />
+            {q !== "" && <button type="button" className="btn small" onClick={() => setQ("")}><Icon id="i-x" size={14} /></button>}
+          </div>
+          <div className="row-actions set-io">
+            <Btn label={t("setExport")} onClick={doExport} />
+            <Btn label={t("setImport")} onClick={() => void doImport()} />
+          </div>
           {SETTING_GROUPS.map((g) => {
-            const items = settingsOfGroup(SESSION, g.id);
+            const items = settingsOfGroup(SESSION, g.id).filter(hit);
             if (!items.length) return null;
-            const open = !folded[g.id];
+            const open = query !== "" || !folded[g.id];
             return (
               <div key={g.id} className="set-group">
                 <button type="button" className="set-grouphead" onClick={() => setFolded({ ...folded, [g.id]: open })}>

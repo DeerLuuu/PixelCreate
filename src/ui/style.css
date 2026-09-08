@@ -403,6 +403,15 @@ input[type=range]{width:64px;height:22px;accent-color:var(--accent)}
 .orb-modechip:active{background:var(--accent);color:#fff;border-color:#fff}
 .orb-modechip.orb-modeempty{font-weight:500;color:var(--dim);background:rgba(21,23,32,.8)}
 /* settings dialog: groups generated from the declaration table */
+.set-search{display:flex;gap:6px;align-items:center;margin-bottom:8px}
+.set-search input{flex:1;min-width:0;background:var(--bg3);border:1px solid var(--line);border-radius:9px;
+  color:var(--fg);font-family:inherit;font-size:13px;padding:7px 10px}
+.set-search input:focus{outline:none;border-color:var(--accent)}
+.set-io{margin-bottom:6px}
+.set-reset{width:20px;height:20px;margin-left:6px;padding:0;display:inline-grid;place-items:center;border-radius:6px;
+  border:1px solid var(--line);background:rgba(255,255,255,.06);color:var(--dim);cursor:pointer;vertical-align:middle}
+.set-reset:active{background:var(--accent);color:#fff;border-color:#fff}
+.rowlabel{display:flex;align-items:center}
 .set-group{margin:0 0 6px;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:rgba(255,255,255,.02)}
 .set-grouphead{display:flex;align-items:center;gap:8px;width:100%;padding:8px 10px;background:rgba(255,255,255,.04);
   border:0;color:var(--text);font-size:13px;font-weight:800;text-align:left;cursor:pointer;touch-action:none}
