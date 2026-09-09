@@ -275,6 +275,12 @@ const defs: SettingDef[] = [
     set: (s, v) => s.setBrushShape(v === "square" ? "square" : "circle"),
   },
   {
+    path: "tools.pixelPerfect", kind: "bool", group: "tools",
+    label: "pixelPerfectLabel", desc: "pixelPerfectDesc", default: true, refresh: "changed",
+    get: (s) => s.pixelPerfect,
+    set: (s, v) => s.setPixelPerfect(!!v),
+  },
+  {
     path: "tools.shapeFill", kind: "bool", group: "tools",
     label: "shapeFillLabel", desc: "shapeFillDesc", default: true, refresh: "changed",
     get: (s) => s.shapeFill,

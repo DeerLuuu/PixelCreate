@@ -35,6 +35,16 @@ export class Stroke {
   readonly brushShape: BrushShape;
   /** shapes grow outwards from the touch point instead of the corner */
   readonly shapeFromCenter: boolean;
+  /** freehand tools only: drop the corner pixel of an L-shaped step, exactly
+   *  like Aseprite's IntertwineAsPixelPerfect (set by the view from prefs) */
+  pixelPerfect = false;
+  /** interpolated cells of the current pixel-perfect path */
+  private ppPts: Array<[number, number]> = [];
+  /** how many leading cells of ppPts are already on the cel (the last cell is
+   *  held back: the L rule needs one following point) */
+  private ppPainted = 0;
+  /** pixels the LAST painted stamp overwrote, so a corner erase can undo it */
+  private ppSaved: { cells: Array<[number, number]>; bytes: Uint8ClampedArray } | null = null;
   /** airbrush: random speck size range in px (set by the view from prefs) */
   sprayMin = 1;
   sprayMax = 3;
@@ -156,10 +166,12 @@ export class Stroke {
     this.last = [x, y];
     switch (this.kind) {
       case "pencil":
-        this.paintDot(x, y, this.size);
+        if (this.pixelPerfect) this.ppStart(x, y, this.size, this.color[3] === 0);
+        else this.paintDot(x, y, this.size);
         break;
       case "eraser":
-        this.eraseDot(x, y, this.size);
+        if (this.pixelPerfect) this.ppStart(x, y, this.size, true);
+        else this.eraseDot(x, y, this.size);
         break;
       case "airbrush":
         this.sprayBurst(1); // one speck right away, so a tap leaves a mark
@@ -195,12 +207,14 @@ export class Stroke {
       case "pencil": {
         let size = this.size;
         if (pressure > 0 && pressure < 1) size = Math.max(1, Math.round(this.size * (0.35 + pressure * 0.9)));
+        if (this.pixelPerfect) { this.ppSegment(x, y, size, this.color[3] === 0); break; }
         const self = this;
         if (this.last) lineCells(this.last[0], this.last[1], x, y, (px, py) => self.paintDot(px, py, size));
         else this.paintDot(x, y, size);
         break;
       }
       case "eraser": {
+        if (this.pixelPerfect) { this.ppSegment(x, y, this.size, true); break; }
         const self = this;
         if (this.last) lineCells(this.last[0], this.last[1], x, y, (px, py) => self.eraseDot(px, py, this.size));
         else this.eraseDot(x, y, this.size);
@@ -251,6 +265,105 @@ export class Stroke {
   private eraseDot(x: number, y: number, size: number): void {
     for (const [ox, oy] of brushStamp(size, this.brushShape).cells) {
       if (this.touchErase(x + ox, y + oy)) this.everPainted = true;
+    }
+  }
+
+  // ---- pixel-perfect freehand -------------------------------------------
+  // Ported from Aseprite's IntertwineAsPixelPerfect (app/tools/intertwiners.h):
+  // a cell that is the corner of an L — both neighbours orthogonally adjacent
+  // to it and diagonal to each other — is dropped, so a hand-drawn diagonal
+  // stays one pixel thick. The newest cell is held back until the next point
+  // arrives (the rule needs a following point); commit() flushes it.
+
+  /** the cells a stamp at (x,y) writes: mirror partners, in bounds, unmasked */
+  private stampCells(x: number, y: number, size: number): Array<[number, number]> {
+    const out: Array<[number, number]> = [];
+    for (const [ox, oy] of brushStamp(size, this.brushShape).cells) {
+      for (const [X, Y] of this.mirrorPts(x + ox, y + oy)) {
+        if (X < 0 || Y < 0 || X >= this.doc.w || Y >= this.doc.h) continue;
+        if (this.mask && !this.mask(X, Y)) continue;
+        out.push([X, Y]);
+      }
+    }
+    return out;
+  }
+  /** paint one stamp, remembering exactly what it overwrote (so the corner can
+   *  be put back if the next point turns it into an L) */
+  private ppStamp(x: number, y: number, size: number, erase: boolean): void {
+    const cells = this.stampCells(x, y, size);
+    if (!cells.length) { this.ppSaved = null; return; }
+    const bytes = new Uint8ClampedArray(cells.length * 4);
+    for (let i = 0; i < cells.length; i++) {
+      const p = (cells[i][1] * this.doc.w + cells[i][0]) * 4;
+      bytes[i * 4] = this.cel.data[p];
+      bytes[i * 4 + 1] = this.cel.data[p + 1];
+      bytes[i * 4 + 2] = this.cel.data[p + 2];
+      bytes[i * 4 + 3] = this.cel.data[p + 3];
+    }
+    for (const [X, Y] of cells) {
+      this.markCell(X, Y);
+      if (erase) { if (eraseAt(this.cel, X, Y, this.mask)) this.everPainted = true; }
+      else if (paintAt(this.cel, X, Y, this.color, this.mask)) this.everPainted = true;
+    }
+    this.ppSaved = { cells, bytes };
+  }
+  /** put the last stamp's pixels back (its corner was dropped) */
+  private ppRestore(): void {
+    const s = this.ppSaved;
+    if (!s) return;
+    for (let i = 0; i < s.cells.length; i++) {
+      const p = (s.cells[i][1] * this.doc.w + s.cells[i][0]) * 4;
+      this.cel.data[p] = s.bytes[i * 4];
+      this.cel.data[p + 1] = s.bytes[i * 4 + 1];
+      this.cel.data[p + 2] = s.bytes[i * 4 + 2];
+      this.cel.data[p + 3] = s.bytes[i * 4 + 3];
+    }
+    this.ppSaved = null;
+  }
+  private ppStart(x: number, y: number, size: number, erase: boolean): void {
+    this.ppPts = [[x, y]];
+    this.ppPainted = 0;
+    this.ppStamp(x, y, size, erase);
+    this.ppPainted = 1;
+  }
+  private ppAppend(x: number, y: number): void {
+    const last = this.ppPts[this.ppPts.length - 1];
+    if (last && last[0] === x && last[1] === y) return;
+    this.ppPts.push([x, y]);
+  }
+  /** drop every L corner the new points created */
+  private ppClean(): void {
+    const pts = this.ppPts;
+    const ortho = (p: [number, number], q: [number, number]): boolean => p[0] === q[0] || p[1] === q[1];
+    let c = Math.max(1, this.ppPainted - 1);
+    while (c + 1 < pts.length) {
+      const a = pts[c - 1], b = pts[c], d = pts[c + 1];
+      if (ortho(a, b) && ortho(d, b) && a[0] !== d[0] && a[1] !== d[1]) {
+        if (c === this.ppPainted - 1) { this.ppRestore(); this.ppPainted--; }
+        pts.splice(c, 1);
+        c = Math.max(1, c - 1);
+        continue;
+      }
+      c++;
+    }
+  }
+  private ppSegment(x: number, y: number, size: number, erase: boolean): void {
+    const last = this.last ?? [x, y];
+    lineCells(last[0], last[1], x, y, (px, py) => this.ppAppend(px, py));
+    this.ppClean();
+    while (this.ppPainted < this.ppPts.length - 1) {
+      const [px, py] = this.ppPts[this.ppPainted];
+      this.ppStamp(px, py, size, erase);
+      this.ppPainted++;
+    }
+  }
+  /** paint the cell the path is still holding back (stroke end) */
+  private ppFlush(size: number, erase: boolean): void {
+    if (!this.pixelPerfect) return;
+    while (this.ppPainted < this.ppPts.length) {
+      const [px, py] = this.ppPts[this.ppPainted];
+      this.ppStamp(px, py, size, erase);
+      this.ppPainted++;
     }
   }
 
@@ -380,6 +493,8 @@ export class Stroke {
 
   /** Commit into history; returns true when an undo step was recorded. */
   commit(history: History, label: string): boolean {
+    // the pixel-perfect path holds its newest cell back until the stroke ends
+    this.ppFlush(this.size, this.kind === "eraser" || this.color[3] === 0);
     if (!this.changed()) {
       // no real change -> remove a cel we created in vain
       if (!this.before && this.cel && !this.cel.hasAnyOpaque()) {

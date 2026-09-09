@@ -64,6 +64,8 @@ export interface Prefs {
   currentShape: ToolId;
   currentSelect: ToolId;
   brushShape: "circle" | "square";
+  /** freehand strokes drop the L-corner pixel (Aseprite pixel-perfect) */
+  pixelPerfect: boolean;
   shapeSides: number;
   shapeFill: boolean;
   shapeFromCenter: boolean;
@@ -439,6 +441,8 @@ export class Session {
   shapeFromCenter = false;
   /** brush tip: round disc (default) or square block */
   brushShape: "circle" | "square" = "circle";
+  /** pixel-perfect freehand strokes (see Stroke) */
+  pixelPerfect = true;
   private lastColorAt = 0;
   playing = false;
   loopMode: LoopMode = "loop";
@@ -526,6 +530,7 @@ export class Session {
     this.currentShape = p.currentShape;
     this.currentSelect = p.currentSelect;
     this.brushShape = p.brushShape;
+    this.pixelPerfect = p.pixelPerfect;
     this.shapeSides = p.shapeSides;
     this.shapeFill = p.shapeFill;
     this.shapeFromCenter = p.shapeFromCenter;
@@ -1168,7 +1173,7 @@ export class Session {
       airbrushMin: 1, airbrushMax: 3, airbrushRate: 20,
       brushSize: 1, brushAlpha: 255, fgColor: "#141414", bgColor: "#ffffff",
       tool: "pencil", currentShape: "line", currentSelect: "select",
-      brushShape: "circle", shapeSides: 6, shapeFill: true, shapeFromCenter: false,
+      brushShape: "circle", pixelPerfect: true, shapeSides: 6, shapeFill: true, shapeFromCenter: false,
       sym: "off", symFour: false, symLocked: false, symAng: 90, symOx: 0, symOy: 0,
       palette: [], newDocW: 64, newDocH: 64, newDocBg: "transparent",
       longPressMs: 300, doubleTapMs: 420, tripleTapZoom: 2, fourFingerPx: 15,
@@ -1243,6 +1248,7 @@ export class Session {
       if (typeof saved.currentShape === "string" && toolIds.includes(saved.currentShape)) p.currentShape = saved.currentShape;
       if (typeof saved.currentSelect === "string" && toolIds.includes(saved.currentSelect)) p.currentSelect = saved.currentSelect;
       if (saved.brushShape === "square" || saved.brushShape === "circle") p.brushShape = saved.brushShape;
+      if (typeof saved.pixelPerfect === "boolean") p.pixelPerfect = saved.pixelPerfect;
       if (typeof saved.shapeSides === "number") p.shapeSides = Math.max(3, Math.min(32, Math.round(saved.shapeSides)));
       if (typeof saved.shapeFill === "boolean") p.shapeFill = saved.shapeFill;
       if (typeof saved.shapeFromCenter === "boolean") p.shapeFromCenter = saved.shapeFromCenter;
@@ -1737,6 +1743,13 @@ export class Session {
   setBrushShape(s: "circle" | "square"): void {
     this.brushShape = s;
     this.prefs.brushShape = s;
+    this.savePrefs();
+    this.changed();
+  }
+  /** pixel-perfect freehand strokes (corner pixels of an L are dropped) */
+  setPixelPerfect(on: boolean): void {
+    this.pixelPerfect = on;
+    this.prefs.pixelPerfect = on;
     this.savePrefs();
     this.changed();
   }

@@ -1591,6 +1591,11 @@ function ControlBar({ t, snap, onPanel, onAdjust, onFramePrev }: { t: ReturnType
             onClick={() => SESSION.setBrushShape(SESSION.brushShape === "square" ? "circle" : "square")}
             title={SESSION.brushShape === "square" ? t("brushSquare") : t("brushCircle")} />
         )}
+        {(snap.tool === "pencil" || snap.tool === "eraser") && (
+          <Btn label="▘" active={SESSION.pixelPerfect}
+            onClick={() => SESSION.setPixelPerfect(!SESSION.pixelPerfect)}
+            title={t(SESSION.pixelPerfect ? "pixelPerfectOn" : "pixelPerfectOff")} guide="btn-pixelperfect" />
+        )}
         {snap.tool === "polygon" && <HoldAdjust dir={dir} value={SESSION.shapeSides} min={3} max={32} title={t("sides")} hint={bd(snap.lang, "sides")} format={(v) => "◮" + v} reset={6} onChange={(v) => SESSION.setShapeSides(v)} />}
         {isShapeTool(snap.tool) && snap.tool !== "line" && (
           <Btn label="✛" active={SESSION.shapeFromCenter} onClick={() => SESSION.setShapeFromCenter(!SESSION.shapeFromCenter)}

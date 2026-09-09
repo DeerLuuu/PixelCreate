@@ -8,6 +8,7 @@ import { growSelection, selOps, shrinkSelection } from "../src/tools/select";
 import { onionGhosts } from "../src/render/onion";
 import { compositeIsStale } from "../src/render/view";
 import { brushStamp } from "../src/engine/paint";
+import { History } from "../src/engine/history";
 import { mirrorCells, mirrorMaskInPlace } from "../src/engine/symmetry";
 import { eq, ok } from "./common";
 
@@ -269,5 +270,54 @@ export function testRender(): void {
     const v4 = s0.ver;
     selOps.invert(doc);
     ok("render.selop.invert-empty", s0.ver > v4 && s0.hasAny());
+  }
+  // ------------------------------------------------- pixel-perfect strokes
+  // Aseprite's IntertwineAsPixelPerfect rule: a cell that is the corner of an L
+  // (both neighbours orthogonal to it, and diagonal to each other) is dropped.
+  {
+    const run = (pp: boolean, pts: Array<[number, number]>): Doc => {
+      const doc = new Doc(16, 16, "pp");
+      const st = strokeOn(doc, "pencil", 1);
+      st.pixelPerfect = pp;
+      st.startAt(pts[0][0], pts[0][1]);
+      for (let i = 1; i < pts.length; i++) st.moveTo(pts[i][0], pts[i][1], 1);
+      st.commit(new History(), "tools.pencil");
+      return doc;
+    };
+    const at = (doc: Doc, x: number, y: number): number => {
+      const cel = doc.celAt(0, 0);
+      return cel ? cel.data[cel.idx(x, y) + 3] : 0;
+    };
+    // (0,0) -> (1,0) -> (1,1): the corner (1,0) is dropped
+    const withPP = run(true, [[0, 0], [1, 0], [1, 1]]);
+    eq("pp.corner.on", [at(withPP, 0, 0), at(withPP, 1, 0), at(withPP, 1, 1)], [255, 0, 255]);
+    const withoutPP = run(false, [[0, 0], [1, 0], [1, 1]]);
+    eq("pp.corner.off", [at(withoutPP, 0, 0), at(withoutPP, 1, 0), at(withoutPP, 1, 1)], [255, 255, 255]);
+    // a straight line is untouched
+    const straight = run(true, [[0, 0], [4, 0]]);
+    eq("pp.straight", [at(straight, 0, 0), at(straight, 2, 0), at(straight, 4, 0)], [255, 255, 255]);
+    // a staircase diagonal collapses to the plain diagonal
+    const stair = run(true, [[0, 0], [3, 1]]);
+    eq("pp.stair.keeps-slope", [at(stair, 0, 0), at(stair, 1, 0), at(stair, 2, 1), at(stair, 3, 1)], [255, 255, 255, 255]);
+    // the newest cell is held back until the stroke ends, then painted
+    const doc = new Doc(16, 16, "pp");
+    const st = strokeOn(doc, "pencil", 1);
+    st.pixelPerfect = true;
+    st.startAt(2, 2);
+    st.moveTo(6, 2, 1);
+    eq("pp.held-back-before-commit", at(doc, 6, 2), 0);
+    st.commit(new History(), "tools.pencil");
+    eq("pp.flushed-on-commit", at(doc, 6, 2), 255);
+    // eraser + pixel perfect
+    const ed = new Doc(16, 16, "pp");
+    const ec = ed.ensureCel(0, 0);
+    for (let i = 0; i < ec.data.length; i += 4) { ec.data[i] = 10; ec.data[i + 3] = 255; }
+    const est = strokeOn(ed, "eraser", 1);
+    est.pixelPerfect = true;
+    est.startAt(0, 0);
+    est.moveTo(1, 0, 1);
+    est.moveTo(1, 1, 1);
+    est.commit(new History(), "tools.eraser");
+    eq("pp.eraser.corner", [at(ed, 0, 0), at(ed, 1, 0), at(ed, 1, 1)], [0, 255, 0]);
   }
 }
