@@ -203,6 +203,40 @@ export function testView(): void {
     ok("view.doubletap-canvas-focus", s.docIdx === bi, "docIdx=" + s.docIdx);
     ok("view.doubletap-canvas-fits", view.zoom > 0);
 
+    // ---- view rotation: the logical->surface mapping round-trips and the
+    // pointer path (surface -> logical -> pixel) stays consistent ----
+    view.setRotation(90);
+    ok("view.rot.90", view.rot === 90);
+    const q = view.toSurface(0, 0);
+    ok("view.rot.surface-corner", q.x === 320 && q.y === 0, JSON.stringify(q));
+    const back = view.toLogical(q.x, q.y);
+    ok("view.rot.roundtrip", back.x === 0 && back.y === 0, JSON.stringify(back));
+    const p90 = view.toSurface(10, 20);
+    const l90 = view.toLogical(p90.x, p90.y);
+    ok("view.rot.roundtrip2", l90.x === 10 && l90.y === 20, JSON.stringify(l90));
+    const d90 = view.surfaceDelta(10, 0);
+    ok("view.rot.delta", Math.abs(d90.x) < 1e-9 && Math.abs(d90.y + 10 / view.zoom) < 1e-9, JSON.stringify(d90));
+    view.setRotation(180);
+    const p180 = view.toSurface(10, 20);
+    ok("view.rot.180", p180.x === 310 && p180.y === 220, JSON.stringify(p180));
+    const d180 = view.surfaceDelta(10, 0);
+    ok("view.rot.delta180", Math.abs(d180.x + 10 / view.zoom) < 1e-9 && Math.abs(d180.y) < 1e-9);
+    view.setRotation(270);
+    const p270 = view.toSurface(0, 0);
+    ok("view.rot.270", p270.x === 0 && p270.y === 240, JSON.stringify(p270));
+    view.setRotation(0);
+    ok("view.rot.reset", view.rot === 0);
+    // a logical pixel keeps hitting the same space cell at every rotation
+    const px0 = view.screenToPixel(40, 50);
+    for (const r of [90, 180, 270]) {
+      view.setRotation(r);
+      const sp = view.toSurface(40, 50);
+      const lp = view.toLogical(sp.x, sp.y);
+      const px = view.screenToPixel(lp.x, lp.y);
+      ok("view.rot.pixel-stable." + r, px.x === px0.x && px.y === px0.y, JSON.stringify([px0, px]));
+    }
+    view.setRotation(0);
+
     view.destroy();
   } finally {
     cmod.composeFrameWithOnion = origOnion;

@@ -55,6 +55,61 @@ export class View {
   zoom = 8;
   ox = 0;
   oy = 0;
+  /** view rotation in degrees clockwise: 0 / 90 / 180 / 270. Everything inside
+   *  the view keeps working in "logical" (unrotated) screen coordinates; the
+   *  canvas transform rotates on the way out and pointer events rotate back. */
+  rot: 0 | 90 | 180 | 270 = 0;
+
+  /** logical viewport width (swaps with the height when rotated by 90/270) */
+  private vpW(): number {
+    return this.rot % 180 ? this.host.clientHeight : this.host.clientWidth;
+  }
+  private vpH(): number {
+    return this.rot % 180 ? this.host.clientWidth : this.host.clientHeight;
+  }
+  /** canvas transform: logical viewport rect -> the real (surface) canvas */
+  private applyTransform(ctx: CanvasRenderingContext2D): void {
+    const d = this.dpr, w = this.host.clientWidth, h = this.host.clientHeight;
+    if (this.rot === 90) ctx.setTransform(0, d, -d, 0, w * d, 0);
+    else if (this.rot === 180) ctx.setTransform(-d, 0, 0, -d, w * d, h * d);
+    else if (this.rot === 270) ctx.setTransform(0, -d, d, 0, 0, h * d);
+    else ctx.setTransform(d, 0, 0, d, 0, 0);
+  }
+  /** surface (pointer / DOM) point -> logical point */
+  toLogical(x: number, y: number): { x: number; y: number } {
+    const w = this.host.clientWidth, h = this.host.clientHeight;
+    if (this.rot === 90) return { x: y, y: w - x };
+    if (this.rot === 180) return { x: w - x, y: h - y };
+    if (this.rot === 270) return { x: h - y, y: x };
+    return { x, y };
+  }
+  /** logical point -> surface point (DOM overlays sit in surface space) */
+  toSurface(x: number, y: number): { x: number; y: number } {
+    const w = this.host.clientWidth, h = this.host.clientHeight;
+    if (this.rot === 90) return { x: w - y, y: x };
+    if (this.rot === 180) return { x: w - x, y: h - y };
+    if (this.rot === 270) return { x: y, y: h - x };
+    return { x, y };
+  }
+  /** a surface drag delta expressed in space units (rotation aware) */
+  surfaceDelta(dx: number, dy: number): { x: number; y: number } {
+    const z = this.zoom;
+    if (this.rot === 90) return { x: dy / z, y: -dx / z };
+    if (this.rot === 180) return { x: -dx / z, y: -dy / z };
+    if (this.rot === 270) return { x: -dy / z, y: dx / z };
+    return { x: dx / z, y: dy / z };
+  }
+  /** rotate the view by `deg` (any multiple of 90) and redraw everything */
+  setRotation(deg: number): void {
+    const n = (((Math.round(deg / 90) * 90) % 360) + 360) % 360;
+    const r = (n === 90 || n === 180 || n === 270 ? n : 0) as 0 | 90 | 180 | 270;
+    if (r === this.rot) return;
+    this.rot = r;
+    this.clampView();
+    this.blitFull = true;
+    this.refresh(true);
+    this.drawOverlay(true);
+  }
 
   private composite: HTMLCanvasElement | null = null;
   private compKey = "";
@@ -263,16 +318,16 @@ export class View {
   /** the transform that fits the focused canvas into the viewport */
   fitTarget(): { zoom: number; ox: number; oy: number } {
     const doc = this.session.doc;
-    const aw = Math.max(24, this.host.clientWidth - 20);
-    const ah = Math.max(24, this.host.clientHeight - 20);
+    const aw = Math.max(24, this.vpW() - 20);
+    const ah = Math.max(24, this.vpH() - 20);
     let z = Math.min(aw / doc.w, ah / doc.h);
     const zi = Math.floor(z);
     if (zi >= 1 && Math.abs(z - zi) < 0.18) z = zi;
     z = clamp(z, this.session.prefs.zoomMin, this.session.prefs.zoomMax);
     return {
       zoom: z,
-      ox: (this.host.clientWidth - doc.w * z) / 2,
-      oy: (this.host.clientHeight - doc.h * z) / 2,
+      ox: (this.vpW() - doc.w * z) / 2,
+      oy: (this.vpH() - doc.h * z) / 2,
     };
   }
 
@@ -293,21 +348,21 @@ export class View {
 
   fit(): void {
     const doc = this.session.doc;
-    const aw = Math.max(24, this.host.clientWidth - 20);
-    const ah = Math.max(24, this.host.clientHeight - 20);
+    const aw = Math.max(24, this.vpW() - 20);
+    const ah = Math.max(24, this.vpH() - 20);
     let z = Math.min(aw / doc.w, ah / doc.h);
     const zi = Math.floor(z);
     if (zi >= 1 && Math.abs(z - zi) < 0.18) z = zi;
     this.zoom = clamp(z, this.session.prefs.zoomMin, this.session.prefs.zoomMax);
-    this.ox = (this.host.clientWidth - doc.w * this.zoom) / 2;
-    this.oy = (this.host.clientHeight - doc.h * this.zoom) / 2;
+    this.ox = (this.vpW() - doc.w * this.zoom) / 2;
+    this.oy = (this.vpH() - doc.h * this.zoom) / 2;
   }
 
   /** Keep the canvas in view: stop panning when a canvas edge reaches the
    *  viewport edge, so the artwork can never be dragged off-screen. */
   private clampView(): void {
     const s = this.session;
-    const w = this.host.clientWidth, h = this.host.clientHeight;
+    const w = this.vpW(), h = this.vpH();
     if (s.docs.length > 1) {
       // infinite space: keep a slice of the canvas bounding box on screen so
       // the artwork can never be panned away forever
@@ -330,7 +385,7 @@ export class View {
   }
 
   zoomAt(z: number, cx?: number, cy?: number): void {
-    const vpW = this.host.clientWidth, vpH = this.host.clientHeight;
+    const vpW = this.vpW(), vpH = this.vpH();
     const mx = cx === undefined ? vpW / 2 : cx;
     const my = cy === undefined ? vpH / 2 : cy;
     z = clamp(z, this.session.prefs.zoomMin, this.session.prefs.zoomMax);
@@ -420,7 +475,7 @@ export class View {
     const s = this.session;
     const doc = s.doc;
     if (!doc) return;
-    const vw = this.host.clientWidth, vh = this.host.clientHeight;
+    const vw = this.vpW(), vh = this.vpH();
     // pan/zoom/resize invalidate the whole blit, not just the changed pixels
     const lv = this.lastView;
     if (lv.ox !== this.ox || lv.oy !== this.oy || lv.zoom !== this.zoom || lv.w !== vw || lv.h !== vh) this.blitFull = true;
@@ -453,7 +508,7 @@ export class View {
     }
     const ctx = this.pix.getContext("2d")!;
     const dpr = this.dpr;
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    this.applyTransform(ctx);
     if (region) {
       ctx.save();
       ctx.beginPath();
@@ -627,9 +682,8 @@ export class View {
 
   private drawOverlay(rebuildTint = false): void {
     const ctx = this.ov.getContext("2d")!;
-    const dpr = this.dpr;
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, this.host.clientWidth, this.host.clientHeight);
+    this.applyTransform(ctx);
+    ctx.clearRect(0, 0, this.vpW(), this.vpH());
     const s = this.session;
     const doc = s.doc;
     if (!doc) return;
@@ -787,7 +841,7 @@ export class View {
     const cx = this.magCenter.x, cy = this.magCenter.y;
     const sx0 = Math.round(cx - half), sy0 = Math.round(cy - half);
     // fixed at the bottom-left corner of the viewport
-    const x = 10, y = this.host.clientHeight - L - 10;
+    const x = 10, y = this.vpH() - L - 10;
     ctx.save();
     ctx.imageSmoothingEnabled = false;
     ctx.fillStyle = "#1d2129";
@@ -838,7 +892,7 @@ export class View {
   /** stroke one infinite symmetry line: the overlay canvas clips it to the
    *  viewport, so it visibly runs past the canvas edges into the margins */
   private symStrokeSeg(ctx: CanvasRenderingContext2D, px: number, py: number, ux: number, uy: number): void {
-    const K = Math.hypot(this.host.clientWidth, this.host.clientHeight) + 8;
+    const K = Math.hypot(this.vpW(), this.vpH()) + 8;
     ctx.beginPath();
     ctx.moveTo(px - ux * K, py - uy * K);
     ctx.lineTo(px + ux * K, py + uy * K);
@@ -848,7 +902,7 @@ export class View {
   private symRotKnob(): [number, number] | null {
     const a = this.symAxis();
     if (!a || this.session.symLocked) return null;
-    const w = this.host.clientWidth, h = this.host.clientHeight;
+    const w = this.vpW(), h = this.vpH();
     const L = Math.min(92, Math.max(48, Math.min(w, h) * 0.24));
     for (const sgn of [-1, 1]) {
       const kx = a.px + a.ux * L * sgn, ky = a.py + a.uy * L * sgn;
@@ -866,7 +920,7 @@ export class View {
   private symLockBtn(): [number, number] | null {
     const a = this.symAxis();
     if (!a) return null;
-    const w = this.host.clientWidth, h = this.host.clientHeight;
+    const w = this.vpW(), h = this.vpH();
     const { px, py, ux, uy } = a;
     const tests: number[] = [];
     const test = (t: number): void => {
@@ -1377,7 +1431,7 @@ export class View {
 
   private evPt(e: PointerEvent): PxPoint {
     const r = this.host.getBoundingClientRect();
-    return { x: e.clientX - r.left, y: e.clientY - r.top };
+    return this.toLogical(e.clientX - r.left, e.clientY - r.top);
   }
 
 
@@ -1687,7 +1741,7 @@ export class View {
     // Speed scales with how deep into the edge zone the pointer is, but is capped
     // per event so the scroll stays slow, smooth and controllable.
     if (this.session.prefs.autoPan && wasDown && this.pointers.size === 1 && (this.stroke || this.xf || this.selDrag)) {
-      const M = this.session.prefs.autoPanMargin, w = this.host.clientWidth, h = this.host.clientHeight;
+      const M = this.session.prefs.autoPanMargin, w = this.vpW(), h = this.vpH();
       const MAX = this.session.prefs.autoPanSpeed; // px per event, 1..6
       const SPEED = 0.28 * (MAX / 3);
       let panx = 0, pany = 0;
@@ -1766,10 +1820,10 @@ export class View {
         // the axis passes through the finger; clamp to the visible viewport
         // (so it follows into the margins) and snap to the half-cell grid so
         // it moves in whole pixels instead of drifting continuously
-        const vx0 = Math.min(-this.ox, this.host.clientWidth - this.ox) / this.zoom;
-        const vx1 = Math.max(-this.ox, this.host.clientWidth - this.ox) / this.zoom;
-        const vy0 = Math.min(-this.oy, this.host.clientHeight - this.oy) / this.zoom;
-        const vy1 = Math.max(-this.oy, this.host.clientHeight - this.oy) / this.zoom;
+        const vx0 = Math.min(-this.ox, this.vpW() - this.ox) / this.zoom;
+        const vx1 = Math.max(-this.ox, this.vpW() - this.ox) / this.zoom;
+        const vy0 = Math.min(-this.oy, this.vpH() - this.oy) / this.zoom;
+        const vy1 = Math.max(-this.oy, this.vpH() - this.oy) / this.zoom;
         const pxa = Math.round(clamp((pt.x - this.ox) / this.zoom, vx0, vx1) * 2) / 2;
         const pya = Math.round(clamp((pt.y - this.oy) / this.zoom, vy0, vy1) * 2) / 2;
         s.symOx = pxa - doc.w / 2;
@@ -1798,7 +1852,7 @@ export class View {
       // keep the erase/draw footprint marker glued to the finger while stroking;
       // it follows the pointer even past the image border (marks are clipped to
       // the canvas), so it never freezes at the edge while the hand keeps moving
-      const inView = pt.x >= 0 && pt.y >= 0 && pt.x <= this.host.clientWidth && pt.y <= this.host.clientHeight;
+      const inView = pt.x >= 0 && pt.y >= 0 && pt.x <= this.vpW() && pt.y <= this.vpH();
       this.cursor = inView ? { x: pp.x, y: pp.y, size: this.session.brushSize } : null;
       this.stroke.moveTo(pp.x, pp.y, e.pointerType === "pen" ? e.pressure : 1);
       // only the pixels this move touched need recompositing and repainting
@@ -1818,7 +1872,7 @@ export class View {
     // area too (marks still clip to the canvas); it hides only off the view or
     // while the axis-adjust mode is on (painting is suspended there)
     const drawing = ["pencil", "eraser", "bucket", "line", "rect", "ellipse", "circle", "polygon"].includes(this.session.tool);
-    const inView = pt.x >= 0 && pt.y >= 0 && pt.x <= this.host.clientWidth && pt.y <= this.host.clientHeight;
+    const inView = pt.x >= 0 && pt.y >= 0 && pt.x <= this.vpW() && pt.y <= this.vpH();
     this.cursor = drawing && inView
       ? { x: ppx.x, y: ppx.y, size: this.session.brushSize }
       : null;

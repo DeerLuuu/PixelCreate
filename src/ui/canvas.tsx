@@ -37,12 +37,23 @@ export function CanvasTitles({ view, tick }: { view: View | null; tick: number }
   return (
     <>
       {SESSION.docs.map((e, i) => {
-        const cw = e.doc.w * z;                 // canvas width on screen
-        const narrow = cw < 118;                // canvas narrower than the bar
-        const width = narrow ? 118 : cw;
+        // the bar is positioned from the canvas rect mapped through the view
+        // (which may be rotated): use the bounding box of its four corners, so
+        // the bar stays glued above the canvas at every rotation
+        const lx = view.ox + (e.x - focus.x) * z;
+        const ly = view.oy + (e.y - focus.y) * z;
+        const cw = e.doc.w * z, ch = e.doc.h * z;
+        const cs = [view.toSurface(lx, ly), view.toSurface(lx + cw, ly),
+          view.toSurface(lx, ly + ch), view.toSurface(lx + cw, ly + ch)];
+        const minX = Math.min(cs[0].x, cs[1].x, cs[2].x, cs[3].x);
+        const maxX = Math.max(cs[0].x, cs[1].x, cs[2].x, cs[3].x);
+        const minY = Math.min(cs[0].y, cs[1].y, cs[2].y, cs[3].y);
+        const boxW = maxX - minX;               // canvas width on screen
+        const narrow = boxW < 118;              // canvas narrower than the bar
+        const width = narrow ? 118 : boxW;
         // when the bar is wider than the canvas it stays centred on it
-        const left = view.ox + (e.x - focus.x) * z - (width - cw) / 2;
-        const top = view.oy + (e.y - focus.y) * z - 30;
+        const left = (minX + maxX) / 2 - width / 2;
+        const top = minY - 30;
         const on = i === SESSION.docIdx;
         return (
           <div
@@ -79,8 +90,10 @@ export function CanvasTitles({ view, tick }: { view: View | null; tick: number }
               }
               d.moved = true;
               ev.preventDefault();
-              // magnetically align with the other canvases (and their groups)
-              const want = { x: d.x0 + dx / z, y: d.y0 + dy / z };
+              // magnetically align with the other canvases (and their groups);
+              // a rotated view turns the screen delta into a space delta
+              const sp = view.surfaceDelta(dx, dy);
+              const want = { x: d.x0 + sp.x, y: d.y0 + sp.y };
               const snap = SESSION.prefs.snapOn
                 ? SESSION.snapPosition(i, want.x, want.y, snapTol)
                 : { x: want.x, y: want.y, hit: null, zones: [] };

@@ -2307,6 +2307,18 @@ export class Session {
     this.scheduleAutosave();
     toastFn(this.prefs.lang === "en" ? "Un-snapped" : "已解除吸附");
   }
+  /** rotate the view 90° clockwise (the artwork itself is unchanged) */
+  rotateView(step = 90): void {
+    const v = this.view_;
+    if (!v) return;
+    v.setRotation(v.rot + step);
+    toastFn(this.prefs.lang === "en" ? "View rotated " + v.rot + "\u00b0" : "视图已旋转 " + v.rot + "\u00b0");
+    this.changed();
+  }
+  /** current view rotation in degrees (0/90/180/270) */
+  get viewRotation(): number {
+    return this.view_?.rot ?? 0;
+  }
   /** smoothly zoom the view to fit the focused canvas */
   fitCanvas(): void {
     this.view_?.fitAnimated();
