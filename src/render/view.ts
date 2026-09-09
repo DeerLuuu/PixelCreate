@@ -82,6 +82,8 @@ export class View {
   /** what the adjust gesture is currently holding (set while unlocked) */
   private symTarget: "mv" | "rot" | null = null;
   private ants = 0;
+  /** running view animation (fit / double-tap zoom) */
+  private anim = 0;
   private antTimer: number | null = null;
   /** cached selection tint layer (rebuilt only when the doc changes) */
   private selTint: HTMLCanvasElement | null = null;
@@ -185,6 +187,8 @@ export class View {
     this.ro?.disconnect();
     this.stopAnts();
     this.stopSpray();
+    if (this.anim) window.cancelAnimationFrame(this.anim);
+    this.anim = 0;
     if (this.raf) window.cancelAnimationFrame(this.raf);
     this.raf = 0;
     this.host.replaceChildren();
@@ -220,6 +224,47 @@ export class View {
     this.composite = null;
     this.compKey = "";
     this.composeCache.ghosts.clear();
+  }
+
+  /** animate the view to a new transform (fit / double-tap a canvas title) */
+  animateTo(z1: number, ox1: number, oy1: number, ms = 220): void {
+    if (this.anim) window.cancelAnimationFrame(this.anim);
+    const z0 = this.zoom, ox0 = this.ox, oy0 = this.oy;
+    const t0 = performance.now();
+    const step = (now: number): void => {
+      const k = Math.min(1, (now - t0) / Math.max(1, ms));
+      const e = 1 - Math.pow(1 - k, 3); // ease-out cubic
+      this.zoom = z0 + (z1 - z0) * e;
+      this.ox = ox0 + (ox1 - ox0) * e;
+      this.oy = oy0 + (oy1 - oy0) * e;
+      this.clampView();
+      this.refresh(false);
+      if (k < 1) this.anim = window.requestAnimationFrame(step);
+      else { this.anim = 0; this.zoom = z1; this.ox = ox1; this.oy = oy1; this.clampView(); this.refresh(false); }
+    };
+    this.anim = window.requestAnimationFrame(step);
+  }
+
+  /** the transform that fits the focused canvas into the viewport */
+  fitTarget(): { zoom: number; ox: number; oy: number } {
+    const doc = this.session.doc;
+    const aw = Math.max(24, this.host.clientWidth - 20);
+    const ah = Math.max(24, this.host.clientHeight - 20);
+    let z = Math.min(aw / doc.w, ah / doc.h);
+    const zi = Math.floor(z);
+    if (zi >= 1 && Math.abs(z - zi) < 0.18) z = zi;
+    z = clamp(z, this.session.prefs.zoomMin, this.session.prefs.zoomMax);
+    return {
+      zoom: z,
+      ox: (this.host.clientWidth - doc.w * z) / 2,
+      oy: (this.host.clientHeight - doc.h * z) / 2,
+    };
+  }
+
+  /** smooth zoom-to-fit of the focused canvas (double-tap a title) */
+  fitAnimated(ms = 220): void {
+    const t = this.fitTarget();
+    this.animateTo(t.zoom, t.ox, t.oy, ms);
   }
 
   /** keep the space visually still when the focused canvas changes: the new

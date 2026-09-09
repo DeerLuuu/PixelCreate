@@ -724,6 +724,30 @@ export function testSession(): void {
     eq("fsel.mode-off-clears", f.frameSelList(), []);
   }
 
+  // --- every canvas keeps its OWN undo stack ---
+  {
+    (globalThis as unknown as { localStorage: { clear(): void } }).localStorage.clear();
+    const h = new Session();
+    h.doc.name = "A";
+    const cel = h.doc.ensureCel(0, 0);
+    const before = new Uint8ClampedArray(cel.data);
+    cel.data[0] = 255; cel.data[3] = 255;
+    h.history.pushPixels("tools.pencil", h.doc, [{ li: 0, fi: 0, before, after: new Uint8ClampedArray(cel.data) }]);
+    ok("history.percanvas.a-can-undo", h.history.canUndo());
+    h.addCanvas(new Doc(8, 8, "B"));
+    ok("history.percanvas.b-empty", !h.history.canUndo());
+    h.focusCanvas(0);
+    ok("history.percanvas.a-kept", h.history.canUndo());
+    h.undo();
+    eq("history.percanvas.a-undone", h.doc.celAt(0, 0)!.data[3], 0);
+    h.redo();
+    eq("history.percanvas.a-redone", h.doc.celAt(0, 0)!.data[3], 255);
+    h.focusCanvas(1);
+    ok("history.percanvas.b-still-empty", !h.history.canUndo());
+    h.focusCanvas(0);
+    ok("history.percanvas.a-still-there", h.history.canUndo());
+  }
+
   // --- airbrush speck range stays ordered; the rate is clamped ---
   {
     (globalThis as unknown as { localStorage: { clear(): void } }).localStorage.clear();
@@ -785,8 +809,14 @@ export function testSession(): void {
     eq("canvas.close.count", m.docs.length, 1);
     eq("canvas.close.focus-name", m.doc.name, "two");
     eq("canvas.close.preview-shift", m.previews.map((p) => p.canvas), [0]);
-    // the last canvas can never be closed
+    // the last canvas CAN be closed: an empty project is a valid state
     void m.closeCanvas(0, false);
-    eq("canvas.close.last-guard", m.docs.length, 1);
+    eq("canvas.close.last-empty", m.docs.length, 0);
+    eq("canvas.close.last-previews", m.previews.length, 0);
+    eq("canvas.empty.doc-stub", m.doc.w, 1);
+    // ... and a new canvas can be created from the empty state
+    const back = m.addCanvas(new Doc(8, 8, "fresh"));
+    eq("canvas.empty.add-again", [m.docs.length, m.docIdx, back], [1, 0, 0]);
+    eq("canvas.empty.origin", [m.docs[0].x, m.docs[0].y], [0, 0]);
   }
 }

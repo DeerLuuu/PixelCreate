@@ -21,7 +21,7 @@ import { TimelineBar } from "./timeline";
 import { PreviewBox } from "./preview";
 import { RefImageBox } from "./refimg";
 import type { RefImg } from "./refimg";
-import { PalettePanel, MenuModal, SizeModal, SheetModal, NewDocModal, ExportModal, AdjustModal, SettingsModal, FrameModal, FramePreviewModal, HistoryModal, histName, saveProject } from "./modals";
+import { PalettePanel, MenuModal, SizeModal, SheetModal, NewDocModal, ExportModal, AdjustModal, SettingsModal, FrameModal, FramePreviewModal, HistoryModal, histName, importFlow } from "./modals";
 import { FxParamDialog, fxDefaults, type FxRun, type FxVals } from "./fxparam";
 import { CanvasTitles } from "./canvas";
 import { ChangelogModal, changelogNeedsShow } from "./changelog";
@@ -109,10 +109,13 @@ export function App() {
     const todo = guideStepsFor(seen, fresh);
     if (!todo.length) return;
     guideState.current = { tlOn, onionOn: SESSION.prefs.onionOn };
+    // nothing is open on a fresh install: wait until the first canvas exists,
+    // otherwise every step would spotlight a control that is not on screen
+    if (snap.canvasCount === 0) return;
     const id = window.setTimeout(() => setGuide(todo), 900);
     return () => window.clearTimeout(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [snap.canvasCount > 0]);
 
   /** selection demonstrated for the selection-orb step, restored afterwards */
   const selBackup = useRef<{ had: boolean; mask: Uint8Array | null } | null>(null);
@@ -179,6 +182,11 @@ export function App() {
     },
     // tool ring: opened by the tour so every individual tool can be highlighted
     openToolRing: () => window.dispatchEvent(new CustomEvent("pc-guide-tools", { detail: "open" })),
+    // canvas orb ring (page 1 / the "more" page)
+    openCanvasRing: () => window.dispatchEvent(new CustomEvent("pc-guide-canvas", { detail: "open" })),
+    closeCanvasRing: () => window.dispatchEvent(new CustomEvent("pc-guide-canvas", { detail: "close" })),
+    canvasMore: () => window.dispatchEvent(new CustomEvent("pc-guide-canvas", { detail: "more" })),
+    canvasBack: () => window.dispatchEvent(new CustomEvent("pc-guide-canvas", { detail: "back" })),
     closeToolRing: () => window.dispatchEvent(new CustomEvent("pc-guide-tools", { detail: "close" })),
     toolSubShape: () => window.dispatchEvent(new CustomEvent("pc-guide-tools", { detail: "shape" })),
     toolSubSelect: () => window.dispatchEvent(new CustomEvent("pc-guide-tools", { detail: "select" })),
@@ -186,16 +194,15 @@ export function App() {
     // main menu + its sub-menus: MenuModal takes the initial sub from this
     // window flag (it mounts after the click) and follows the event afterwards
     openMenu: () => {
-      (window as unknown as { __pcGuideMenuSub?: null | "import" | "export" }).__pcGuideMenuSub = null;
+      (window as unknown as { __pcGuideMenuSub?: null | "import" }).__pcGuideMenuSub = null;
       setModal("menu");
       window.setTimeout(() => window.dispatchEvent(new CustomEvent("pc-guide-menu-sub", { detail: null })), 0);
     },
     closeMenu: () => {
-      (window as unknown as { __pcGuideMenuSub?: null | "import" | "export" }).__pcGuideMenuSub = null;
+      (window as unknown as { __pcGuideMenuSub?: null | "import" }).__pcGuideMenuSub = null;
       setModal(null);
     },
     menuSubImport: () => window.dispatchEvent(new CustomEvent("pc-guide-menu-sub", { detail: "import" })),
-    menuSubExport: () => window.dispatchEvent(new CustomEvent("pc-guide-menu-sub", { detail: "export" })),
     menuSubBack: () => window.dispatchEvent(new CustomEvent("pc-guide-menu-sub", { detail: null })),
     // close every floating-ball ring (used when the tour ends)
     closeOrbs: () => window.dispatchEvent(new CustomEvent("pc-guide-tools", { detail: "closeall" })),
@@ -368,7 +375,7 @@ export function App() {
     // an open tool ring or main menu
     window.dispatchEvent(new Event("pc-guide-redock"));
     window.dispatchEvent(new CustomEvent("pc-guide-tools", { detail: "closeall" }));
-    (window as unknown as { __pcGuideMenuSub?: null | "import" | "export" }).__pcGuideMenuSub = null;
+    (window as unknown as { __pcGuideMenuSub?: null | "import" }).__pcGuideMenuSub = null;
     setModal((m) => (m === "menu" ? null : m));
     restoreSelection();
     // the tour tapped the timeline / onion buttons for real: put them back
@@ -410,7 +417,7 @@ export function App() {
 
   return (
     <div className={"app-root" + (SESSION.prefs.railSwap ? " rails-swap" : "") + (tlOn ? " has-tl" : "")} onContextMenu={(e) => e.preventDefault()} onDragStart={(e) => e.preventDefault()}>
-      <TopBar t={t} snap={snap} tlOn={tlOn} onToggleTl={() => {
+      <TopBar t={t} snap={snap} tlOn={tlOn} noCanvas={snap.canvasCount === 0} onToggleTl={() => {
         if (tlClosing) return;
         if (tlOn) {
           setTlClosing(true);
@@ -418,17 +425,19 @@ export function App() {
         } else {
           setTlOn(true);
         }
-      }} onMenu={() => setModal("menu")} onExport={() => setModal("export")} onResize={() => { setSizeMode("canvas"); setModal("size"); }} onHistory={() => setModal("history")} />
+      }} onMenu={() => setModal("menu")} onHistory={() => setModal("history")} />
       <div className="workspace">
-        <Viewport
-          onColorClick={() => setPanel("palette")}
-          refImg={refImg}
-          onRefClose={() => SESSION.setRefImage(null)}
-          onFramePrev={() => setModal("framePrev")}
-        />
+        {snap.canvasCount === 0
+          ? <EmptyCanvas t={t} onNew={() => setModal("newdoc")} onOpen={() => void importFlow()} />
+          : <Viewport
+            onColorClick={() => setPanel("palette")}
+            refImg={refImg}
+            onRefClose={() => SESSION.setRefImage(null)}
+            onFramePrev={() => setModal("framePrev")}
+          />}
       </div>
-      <ControlBar t={t} snap={snap} onPanel={setPanel} onAdjust={() => setModal("adjust")} onFramePrev={() => setModal("framePrev")} />
-      {tlOn && (
+      {snap.canvasCount > 0 && <ControlBar t={t} snap={snap} onPanel={setPanel} onAdjust={() => setModal("adjust")} onFramePrev={() => setModal("framePrev")} />}
+      {snap.canvasCount > 0 && tlOn && (
       <div className={"tline-wrap" + (tlClosing ? " closing" : "")}>
         <div className="tl-grip" data-guide="tl-grip" title={t("tlGripHint")}
           onPointerDown={gripDown} onPointerMove={gripMove} onPointerUp={gripUp} onPointerCancel={gripUp}
@@ -437,9 +446,11 @@ export function App() {
       </div>
       )}
       {tlDrag && <div className="tl-pill" style={{ top: Math.max(4, tlDrag.top - 30) }}>{tlDrag.h}px</div>}
-      <FloatingTools t={t} snap={snap}
+      {snap.canvasCount > 0 && <FloatingTools t={t} snap={snap}
         onCanvasNew={() => setModal("newdoc")}
-        onCanvasSize={() => { setSizeMode("canvas"); setModal("size"); }} />
+        onCanvasSize={() => { setSizeMode("canvas"); setModal("size"); }}
+        onCanvasAdjust={() => setModal("adjust")}
+        onCanvasExport={() => setModal("export")} />}
       {replayOn && <ReplayOverlay t={t} snap={snap} nameFn={(lb) => histName(lb, t, snap.lang)} onClose={() => { setModal(null); setReplayOn(false); }} />}
       <Keep on={panel === "palette"} el={panel === "palette" ? (
         <Overlay onClose={() => setPanel(null)}>
@@ -493,11 +504,11 @@ const B_DESC = {
   menu: { zh: "打开主功能菜单（新建 / 打开 / 导入导出 / 设置）", en: "Open the main menu" },
   undo: { zh: "撤销上一步操作", en: "Undo the last action" },
   redo: { zh: "重做已撤销的操作", en: "Redo the undone action" },
-  save: { zh: "把工程保存为 .pxc 文件", en: "Save the project (.pxc)" },
-  export: { zh: "导出 PNG / GIF 动画 / 精灵表", en: "Export PNG / GIF / spritesheet" },
+
+  export: { zh: "导出 PNG / GIF 动画 / 精灵表（已移到画布球）", en: "Export PNG / GIF / spritesheet (moved to the canvas orb)" },
   layers: { zh: "图层面板（新建 / 复制 / 合并 / 锁定）", en: "Layer panel" },
-  resize: { zh: "修改尺寸：画布尺寸（裁剪/扩边）或精灵尺寸（整体缩放）", en: "Resize canvas or sprite" },
-  fs: { zh: "进入 / 退出浏览器全屏", en: "Enter / exit browser fullscreen" },
+
+
   palette: { zh: "调色板与取色器", en: "Palette & color picker" },
   sym: { zh: "绘画对称：正常 → 左右 → 上下 → 四向", en: "Symmetry: normal / L-R / T-B / four-way" },
   framePrev: { zh: "上一帧", en: "Previous frame" },
@@ -523,46 +534,19 @@ function bd(lang: string, key: keyof typeof B_DESC): string {
 }
 
 function TopBar({
-  t, snap, tlOn, onToggleTl, onMenu, onExport, onResize, onHistory,
+  t, snap, tlOn, noCanvas, onToggleTl, onMenu, onHistory,
 }: {
-  t: ReturnType<typeof makeT>; snap: Snapshot; tlOn: boolean; onToggleTl: () => void; onMenu: () => void; onExport: () => void; onResize: () => void; onHistory: () => void;
+  t: ReturnType<typeof makeT>; snap: Snapshot; tlOn: boolean; noCanvas: boolean; onToggleTl: () => void; onMenu: () => void; onHistory: () => void;
 }) {
-  const [fs, setFs] = useState(false);
-  useEffect(() => {
-    const fn = () => setFs(!!document.fullscreenElement);
-    document.addEventListener("fullscreenchange", fn);
-    document.addEventListener("webkitfullscreenchange", fn as EventListener);
-    return () => {
-      document.removeEventListener("fullscreenchange", fn);
-      document.removeEventListener("webkitfullscreenchange", fn as EventListener);
-    };
-  }, []);
-  const toggleFs = async () => {
-    try {
-      const d = document as Document & { webkitExitFullscreen?: () => void; webkitFullscreenElement?: Element | null };
-      const root = document.documentElement as HTMLElement & { webkitRequestFullscreen?: () => void };
-      if (!d.fullscreenElement && !d.webkitFullscreenElement) {
-        const req = root.requestFullscreen ? root.requestFullscreen.bind(root) : root.webkitRequestFullscreen?.bind(root);
-        if (!req) { bridge.toast(t("fsUnsupported")); return; }
-        await req();
-      } else {
-        const ex = document.exitFullscreen ? document.exitFullscreen.bind(document) : d.webkitExitFullscreen?.bind(d);
-        if (ex) ex();
-      }
-    } catch { /* ignore */ }
-  };
+  const off = (fn: () => void) => (noCanvas ? () => { /* no canvas open */ } : fn);
   return (
     <header className="topbar">
       <Btn icon="i-gear" onClick={onMenu} title={t("menu")} desc={bd(snap.lang, "menu")} guide="btn-menu" />
       <div className="grow" />
-      <Btn icon="i-history" onClick={onHistory} title={t("historyTitle")} desc={bd(snap.lang, "hist")} guide="btn-history" />
-      <Btn icon="i-undo" onClick={() => SESSION.undo()} title={t("undo")} desc={bd(snap.lang, "undo")} className={snap.canUndo ? "" : "off"} guide="btn-undo" />
-      <Btn icon="i-redo" onClick={() => SESSION.redo()} title={t("redo")} desc={bd(snap.lang, "redo")} className={snap.canRedo ? "" : "off"} guide="btn-redo" />
-      <Btn icon="i-export" onClick={onExport} title={t("export")} desc={bd(snap.lang, "export")} guide="btn-export" />
-      <Btn icon="i-save" onClick={saveProject} title={t("save")} desc={bd(snap.lang, "save")} guide="btn-save" />
-      <Btn icon="i-timeline" onClick={onToggleTl} active={tlOn} title={t(tlOn ? "timelineHide" : "timelineShow")} guide="btn-timeline" />
-      <Btn icon="i-size" onClick={onResize} title={t("resizeTitle")} desc={bd(snap.lang, "resize")} guide="btn-size" />
-      <Btn icon={fs ? "i-fsexit" : "i-fit"} onClick={() => void toggleFs()} title={t(fs ? "exitFullscreen" : "fullscreen")} desc={bd(snap.lang, "fs")} className={fs ? "fs-on" : ""} />
+      <Btn icon="i-history" onClick={off(onHistory)} title={t("historyTitle")} desc={bd(snap.lang, "hist")} className={noCanvas ? "off" : ""} guide="btn-history" />
+      <Btn icon="i-undo" onClick={off(() => SESSION.undo())} title={t("undo")} desc={bd(snap.lang, "undo")} className={!noCanvas && snap.canUndo ? "" : "off"} guide="btn-undo" />
+      <Btn icon="i-redo" onClick={off(() => SESSION.redo())} title={t("redo")} desc={bd(snap.lang, "redo")} className={!noCanvas && snap.canRedo ? "" : "off"} guide="btn-redo" />
+      <Btn icon="i-timeline" onClick={off(onToggleTl)} active={tlOn && !noCanvas} title={t(tlOn ? "timelineHide" : "timelineShow")} className={noCanvas ? "off" : ""} guide="btn-timeline" />
     </header>
   );
 }
@@ -571,8 +555,26 @@ function TopBar({
 
 
 
-function FloatingTools({ t, snap, onCanvasNew, onCanvasSize }: {
+/** shown when no canvas is open at all (fresh install / everything closed) */
+function EmptyCanvas({ t, onNew, onOpen }: { t: ReturnType<typeof makeT>; onNew: () => void; onOpen: () => void }) {
+  return (
+    <div className="empty-canvas">
+      <div className="ec-card">
+        <div className="ec-logo"><Icon id="i-canvas" size={30} /></div>
+        <div className="ec-title">{t("emptyTitle")}</div>
+        <div className="ec-body">{t("emptyBody")}</div>
+        <div className="ec-actions">
+          <Btn icon="i-plus" label={t("emptyNew")} className="primary" onClick={onNew} guide="empty-new" />
+          <Btn icon="i-open" label={t("emptyOpen")} onClick={onOpen} guide="empty-open" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onCanvasExport }: {
   t: ReturnType<typeof makeT>; snap: Snapshot; onCanvasNew: () => void; onCanvasSize: () => void;
+  onCanvasAdjust: () => void; onCanvasExport: () => void;
 }) {
   const orbKey = "pc.orb.pos";
   const loadPos = () => {
@@ -606,6 +608,9 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize }: {
     y: Math.max(8, Math.round(window.innerHeight * 0.62)),
     open: false,
   }));
+  /** canvas orb second page + the tiling chooser dialog */
+  const [canvSub, setCanvSub] = useState<"more" | null>(null);
+  const [tileDlg, setTileDlg] = useState(false);
   /** canvas orb: actions on the focused canvas (rename / resize / close / preview) */
   const [canv, setCanv] = useState<{ x: number; y: number; open: boolean }>(() => ({
     x: Math.max(8, Math.round(window.innerWidth * 0.30)),
@@ -628,10 +633,24 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize }: {
         setPal((v) => ({ ...v, open: false }));
         setFx((v) => ({ ...v, open: false }));
         setCanv((v) => ({ ...v, open: false }));
+        setCanvSub(null);
       }
     };
     window.addEventListener("pc-guide-tools", onTools);
     return () => window.removeEventListener("pc-guide-tools", onTools);
+  }, []);
+
+  // the onboarding tour opens the canvas ring / its "more" page by itself
+  useEffect(() => {
+    const onCanv = (e: Event) => {
+      const what = (e as CustomEvent<string>).detail;
+      if (what === "open") { setCanv((g) => ({ ...g, open: true })); setCanvSub(null); }
+      else if (what === "close") { setCanv((g) => ({ ...g, open: false })); setCanvSub(null); }
+      else if (what === "more") setCanvSub("more");
+      else if (what === "back") setCanvSub(null);
+    };
+    window.addEventListener("pc-guide-canvas", onCanv);
+    return () => window.removeEventListener("pc-guide-canvas", onCanv);
   }, []);
 
   // Android back: close whatever floating layer is on top before leaving.
@@ -651,7 +670,7 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize }: {
       if (st.sel.open) setSel({ ...st.sel, open: false });
       if (st.pal.open) setPal({ ...st.pal, open: false });
       if (st.fx.open) setFx({ ...st.fx, open: false });
-      if (st.canv.open) setCanv({ ...st.canv, open: false });
+      if (st.canv.open) { setCanv({ ...st.canv, open: false }); setCanvSub(null); }
       d.handled = true;
     };
     window.addEventListener("pc-back", onBack);
@@ -811,13 +830,16 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize }: {
     if (sel) setSel({ ...sel, open: false });
   };
 
+  /** close the canvas ring (its items all dismiss it before acting) */
+  const closeCanv = () => { setCanv((g) => (g ? { ...g, open: false } : g)); setCanvSub(null); };
+
   const closeRadials = () => {
     setOpen(false);
     setSub(null);
     if (sel) setSel({ ...sel, open: false });
     if (pal) setPal({ ...pal, open: false });
     setFx((g) => (g ? { ...g, open: false } : g));
-    setCanv((g) => (g ? { ...g, open: false } : g));
+    closeCanv();
   };
 
   const separate = (m: { x: number; y: number }, o: { x: number; y: number } | null) => {
@@ -1070,21 +1092,30 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize }: {
     })),
   ];
 
-  // canvas orb: everything that acts on the FOCUSED canvas
-  const canvItems: Item[] = [
-    { icon: "i-plus", label: t("canvasNew"), desc: t("canvasNewDesc"), act: () => { setCanv({ ...canv, open: false }); onCanvasNew(); } },
+  // canvas orb: everything that acts on the FOCUSED canvas. Page 1 = the
+  // everyday actions, page 2 ("more") = preview / colour adjust / export /
+  // fit / tiling, so the ring never gets crowded.
+  const canvItems: Item[] = canvSub === "more" ? [
+    { icon: "", label: "\u2039", act: () => setCanvSub(null), guide: "canv-back" },
+    { icon: "i-eye", label: t("canvasPreview"), desc: t("canvasPreviewDesc"), act: () => { closeCanv(); SESSION.addPreview(); } },
+    { icon: "i-adjust", label: t("adjust"), desc: t("canvasAdjustDesc"), act: () => { closeCanv(); onCanvasAdjust(); } },
+    { icon: "i-export", label: t("export"), desc: t("canvasExportDesc"), act: () => { closeCanv(); onCanvasExport(); }, guide: "canv-export" },
+    { icon: "i-fit", label: t("fitView"), desc: t("canvasFitDesc"), act: () => { closeCanv(); SESSION.fitCanvas(); } },
+    { icon: "i-grid", label: t("canvasTile"), desc: t("canvasTileDesc"), act: () => { setCanv({ ...canv, open: false }); setCanvSub(null); setTileDlg(true); }, guide: "canv-tile" },
+  ] : [
+    { icon: "i-plus", label: t("canvasNew"), desc: t("canvasNewDesc"), act: () => { closeCanv(); onCanvasNew(); } },
     { icon: "i-pencil", label: t("canvasRename"), desc: t("canvasRenameDesc"), act: () => {
-      setCanv({ ...canv, open: false });
+      closeCanv();
       void (async () => {
         const i = SESSION.docIdx;
         const v = await SESSION.askText({ title: t("canvasRename"), value: SESSION.doc.name, ok: t("ok"), cancel: t("cancel") });
         if (v !== null) SESSION.renameCanvas(i, v);
       })();
     } },
-    { icon: "i-size", label: t("resizeTitle"), desc: t("canvasResizeDesc"), act: () => { setCanv({ ...canv, open: false }); onCanvasSize(); } },
-    { icon: "i-eye", label: t("canvasPreview"), desc: t("canvasPreviewDesc"), act: () => { setCanv({ ...canv, open: false }); SESSION.addPreview(); } },
-    { icon: "i-save", label: t("canvasCloseSave"), desc: t("canvasCloseSaveDesc"), act: () => {
-      setCanv({ ...canv, open: false });
+    { icon: "i-size", label: t("resizeTitle"), desc: t("canvasResizeDesc"), act: () => { closeCanv(); onCanvasSize(); } },
+    { icon: "i-save", label: t("canvasSave"), desc: t("canvasSaveDesc"), act: () => { closeCanv(); void SESSION.saveCanvas(); }, guide: "canv-save" },
+    { icon: "i-check", label: t("canvasCloseSave"), desc: t("canvasCloseSaveDesc"), act: () => {
+      closeCanv();
       void (async () => {
         const i = SESSION.docIdx;
         const name = SESSION.doc.name || "untitled";
@@ -1092,6 +1123,7 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize }: {
         if (ok) await SESSION.closeCanvas(i, true);
       })();
     } },
+    { icon: "i-more", label: t("canvasMore"), desc: t("canvasMoreDesc"), act: () => setCanvSub("more"), guide: "canv-more" },
   ];
 
   const mainItems: Item[] = sub
@@ -1314,6 +1346,7 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize }: {
             if (fp) setFx({ ...fp, open: false });
           }
         }
+        setCanvSub(null);
         setCanv({ ...canv, open: !canv.open });
       })}
       {(docked.length > 0 || dockOpen) && (
@@ -1375,6 +1408,24 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize }: {
       <Keep on={pal.open} el={pal.open ? <PalBalls x={pal.x} y={pal.y} onDone={() => setPal({ ...pal, open: false })} /> : null} />
       <Keep on={fx.open} el={fx.open ? ring({ x: fx.x, y: fx.y }, fxItems) : null} />
       <Keep on={canv.open} el={canv.open ? ring({ x: canv.x, y: canv.y }, canvItems) : null} />
+      <Keep on={tileDlg} el={tileDlg ? (
+        <>
+          <div className="dlg-mask" onClick={() => setTileDlg(false)} />
+          <div className="dlg tile-dlg">
+            <div className="dlg-head"><span>{t("canvasTilePick")}</span><div className="grow" /><button className="btn small" onClick={() => setTileDlg(false)}><Icon id="i-x" size={16} /></button></div>
+            <div className="dlg-body col">
+              {(["off", "row", "col", "grid"] as const).map((m) => (
+                <button key={m} type="button" className={"menuitem" + (SESSION.prefs.tileMode === m ? " on" : "")}
+                  onClick={() => { SESSION.setTileMode(m); setTileDlg(false); }}>
+                  <Icon id={m === "off" ? "i-x" : m === "row" ? "i-fliph" : m === "col" ? "i-flipv" : "i-grid"} size={16} />
+                  <span>{t(m === "off" ? "tileOff" : m === "row" ? "tileRow" : m === "col" ? "tileCol" : "tileGrid")}</span>
+                </button>
+              ))}
+            </div>
+            <div className="dlg-foot"><Btn label={t("close")} onClick={() => setTileDlg(false)} /></div>
+          </div>
+        </>
+      ) : null} />
       <Keep on={!!fxDlg} el={fxDlg ? <FxParamDialog run={fxDlg.run} vals={fxDlg.vals} onChange={fxChange} onApply={fxApplyDlg} onCancel={fxCance} /> : null} />
     </>
   );
@@ -1535,7 +1586,7 @@ function Viewport({ onColorClick, refImg, onRefClose, onFramePrev }: { onColorCl
     SESSION.attachView(v);
     v.fit();
     const iv = window.setInterval(() => setTick((x) => x + 1), 300);
-    return () => { window.clearInterval(iv); v.destroy(); viewRef.current = null; };
+    return () => { window.clearInterval(iv); v.destroy(); SESSION.attachView(null); viewRef.current = null; };
   }, []);
   const symOn = SESSION.sym !== "off" && isSymTool(SESSION.tool);
   const c = SESSION.color;
@@ -1555,7 +1606,6 @@ function Viewport({ onColorClick, refImg, onRefClose, onFramePrev }: { onColorCl
       )}
       <div className="zoom-hud">
         <span className="zoom-pct">{Math.round((viewRef.current?.zoom ?? 8) * 100)}%</span>
-        <button className="zoom-fit" type="button" title={tv("fitView")} onClick={() => { const v = viewRef.current; if (v) { v.fit(); v.refresh(false); } }}>{tv("fitView")}</button>
       </div>
       {visible && (
         <div className="canvas-corner">

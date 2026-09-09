@@ -14,7 +14,8 @@ export type GuideAction =
   | "undockOrbs" | "redockOrbs"
   | "demoSelection" | "restoreSelection" | "demoStroke"
   | "openToolRing" | "closeToolRing" | "toolSubShape" | "toolSubSelect" | "toolSubBack"
-  | "openMenu" | "closeMenu" | "menuSubImport" | "menuSubExport" | "menuSubBack"
+  | "openCanvasRing" | "closeCanvasRing" | "canvasMore" | "canvasBack"
+  | "openMenu" | "closeMenu" | "menuSubImport" | "menuSubBack"
   // real, self-restoring demonstrations: the app performs the action for a
   // moment and then puts everything back (see src/ui/App.tsx), so the tour
   // never leaves the document, the history or the layout changed
@@ -202,11 +203,14 @@ export const GUIDE: GuideStep[] = [
     title: "guide.undo.title", body: "guide.undo.body",
   },
   {
-    id: "files.save", module: "files", since: "1.0.6.0", target: '[data-guide="btn-save"]', place: "bottom",
+    // per-canvas save: the canvas orb page 1 (the toolbar no longer has it)
+    id: "files.save", module: "files", since: "1.0.6.0", target: '[data-guide="canv-save"]', place: "auto",
+    before: ["openCanvasRing"], after: "closeCanvasRing",
     title: "guide.save.title", body: "guide.save.body",
   },
   {
-    id: "files.export", module: "files", since: "1.0.6.0", target: '[data-guide="btn-export"]', place: "bottom",
+    id: "files.export", module: "files", since: "1.0.6.0", target: '[data-guide="canv-more"]', place: "auto",
+    before: ["openCanvasRing"], after: "closeCanvasRing",
     title: "guide.export.title", body: "guide.export.body",
   },
   // --- the main menu, opened for real by the tour ---
@@ -243,14 +247,14 @@ export const GUIDE: GuideStep[] = [
     title: "guide.refImg.title", body: "guide.refImg.body",
   },
   {
-    id: "files.menuExport", module: "files", since: "1.0.6.0", target: '[data-guide="menu-export"]', place: "right",
-    click: '[data-guide="menu-export"]',
-    before: ["openMenu", "menuSubBack"],
+    // the export entry lives on the canvas orb's second page now
+    id: "files.menuExport", module: "files", since: "1.0.6.0", target: '[data-guide="canv-export"]', place: "auto",
+    before: ["openCanvasRing", "canvasMore"], after: "closeCanvasRing",
     title: "guide.menuExport.title", body: "guide.menuExport.body",
   },
   {
-    id: "files.exportDialog", module: "files", since: "1.0.6.0", target: '[data-guide="menu-export-dialog"]', place: "right",
-    before: ["openMenu", "menuSubExport"],
+    id: "files.exportDialog", module: "files", since: "1.0.6.0", target: '[data-guide="dlg-export"]', place: "auto", peek: true,
+    before: ["closeCanvasRing", "demoExportRange"], after: "closeExport",
     title: "guide.exportDialog.title", body: "guide.exportDialog.body",
   },
   {
@@ -260,13 +264,15 @@ export const GUIDE: GuideStep[] = [
     title: "guide.exportRange.title", body: "guide.exportRange.body",
   },
   {
-    id: "files.exportPalette", module: "files", since: "1.0.6.0", target: '[data-guide="menu-export-palette"]', place: "right",
-    before: ["openMenu", "menuSubExport"],
+    // palette import/export lives in the palette panel now
+    id: "files.exportPalette", module: "files", since: "1.0.6.0", target: '[data-guide="pal-export"]', place: "auto",
+    before: ["openPalettePanel"], after: "closePalettePanel",
     title: "guide.exportPalette.title", body: "guide.exportPalette.body",
   },
   {
     // operation history is stored inside the project file
-    id: "files.history", module: "files", since: "1.0.7.3", target: '[data-guide="btn-save"]', place: "bottom",
+    id: "files.history", module: "files", since: "1.0.7.3", target: '[data-guide="menu-save"]', place: "right",
+    before: ["openMenu", "menuSubBack"],
     title: "guide.history.title", body: "guide.history.body",
   },
   {

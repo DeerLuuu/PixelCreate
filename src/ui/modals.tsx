@@ -162,7 +162,7 @@ export function PalettePanel({ t, onClose }: { t: ReturnType<typeof makeT>; onCl
           </div>
         )}
         {palMode === "palette" && (
-        <div className="row-actions">
+        <div className="row-actions" data-guide="pal-export">
           <Btn icon="i-plus" label={t("paletteAdd")} onClick={() => SESSION.paletteAdd(active)} />
           <Btn icon="i-open" label={t("importPalette")} onClick={() => void (async () => {
             const f = await bridge.openFile("*/*");
@@ -245,7 +245,7 @@ async function openFlow(mode: "new" | "layer"): Promise<void> {
   if (mode === "layer") { if (!addAsLayer(still.w, still.h, still.px, f.name)) bridge.toast(t("importFail") + " (size)"); else bridge.toast(t("importOk")); }
   else { if (await SESSION.replaceDoc(docFromPixels(still.w, still.h, still.px, f.name))) bridge.toast(t("importOk")); }
 }
-function importFlow(): Promise<void> { return openFlow("new"); }
+export function importFlow(): Promise<void> { return openFlow("new"); }
 function importLayerFlow(): Promise<void> { return openFlow("layer"); }
 function sheetDocFromPixels(cw: number, ch: number, img: SheetData): Doc | null {
   const cols = Math.floor(img.w / cw); const rows = Math.floor(img.h / ch);
@@ -286,12 +286,12 @@ function parsePaletteBytes(b: Uint8Array): Array<[number, number, number, number
 }
 export function MenuModal({ t, snap, onClose, onOpen, onSheet, onRef, onGuide }: { t: ReturnType<typeof makeT>; snap: Snapshot; onClose: () => void; onOpen: (m: ModalId) => void; onSheet: (d: SheetData) => void; onRef: (d: RefImg) => void; onGuide: () => void }) {
   // the onboarding tour may open a sub-menu when the menu is shown
-  const [sub, setSub] = useState<null | "import" | "export">(() => {
-    const g = (window as unknown as { __pcGuideMenuSub?: null | "import" | "export" }).__pcGuideMenuSub;
+  const [sub, setSub] = useState<null | "import">(() => {
+    const g = (window as unknown as { __pcGuideMenuSub?: null | "import" }).__pcGuideMenuSub;
     return g ?? null;
   });
   useEffect(() => {
-    const onSub = (e: Event) => setSub(((e as CustomEvent).detail ?? null) as null | "import" | "export");
+    const onSub = (e: Event) => setSub(((e as CustomEvent).detail ?? null) as null | "import");
     window.addEventListener("pc-guide-menu-sub", onSub);
     return () => window.removeEventListener("pc-guide-menu-sub", onSub);
   }, []);
@@ -322,7 +322,6 @@ export function MenuModal({ t, snap, onClose, onOpen, onSheet, onRef, onGuide }:
     onRef({ w: st.w, h: st.h, px: st.px, name: f.name || "ref" });
     bridge.toast(t("importOk"));
   };
-  const exportPaletteFlow = () => { bridge.saveBytes((SESSION.doc.name || "palette") + ".gpl", "text/plain", exportGplPalette()); bridge.toast(t("saved")); };
   return (
     <>
       <div className="dlg-mask" onClick={onClose} />
@@ -334,26 +333,17 @@ export function MenuModal({ t, snap, onClose, onOpen, onSheet, onRef, onGuide }:
             {act(t("save"), "i-save", () => void saveProject(), "menu-save")}
             {act(t("open"), "i-open", () => void openFlow("new"), "menu-open")}
             <Btn label={t("import")} icon="i-import" className="menuitem" guide="menu-import" onClick={() => setSub("import")} />
-            <Btn label={t("export")} icon="i-export" className="menuitem" guide="menu-export" onClick={() => setSub("export")} />
-            {go("adjust")(t("adjust"), "i-size", "menu-adjust")}
             {go("settings")(t("settings"), "i-gear", "menu-settings")}
             <Btn label={t("guideReplay")} icon="i-eye" className="menuitem" guide="menu-guide" onClick={onGuide} />
             {go("changelog")(t("changelog"), "i-star", "menu-changelog")}
           </>) : (
             <>
-              <Btn label={"‹ " + (sub === "import" ? t("import") : t("export"))} icon="" className="menuitem sub-back" onClick={() => setSub(null)} />
-              {sub === "import" ? (<>
-                <Btn label={t("importImg")} icon="i-import" className="menuitem" guide="menu-import-img" onClick={() => { void importFlow(); setSub(null); onClose(); }} />
-                <Btn label={t("importLayerM")} icon="i-layers" className="menuitem" guide="menu-import-layer" onClick={() => { void importLayerFlow(); setSub(null); onClose(); }} />
-                <Btn label={t("importSheet")} icon="i-open" className="menuitem" guide="menu-import-sheet" onClick={() => { void sheetPick(); setSub(null); }} />
-                <Btn label={t("refImg")} icon="i-eye" className="menuitem" guide="menu-import-ref" onClick={() => { void refPick(); setSub(null); }} />
-                <Btn label={t("importPalette")} icon="i-palette" className="menuitem" guide="menu-import-palette" onClick={() => { void importPaletteFlow(); setSub(null); onClose(); }} />
-              </>) : (
-                <>
-                  {go("export")(t("export"), "i-export", "menu-export-dialog")}
-                  <Btn label={t("exportPalette")} icon="i-save" className="menuitem" guide="menu-export-palette" onClick={() => { exportPaletteFlow(); setSub(null); }} />
-                </>
-              )}
+              <Btn label={"\u2039 " + t("import")} icon="" className="menuitem sub-back" onClick={() => setSub(null)} />
+              <Btn label={t("importImg")} icon="i-import" className="menuitem" guide="menu-import-img" onClick={() => { void importFlow(); setSub(null); onClose(); }} />
+              <Btn label={t("importLayerM")} icon="i-layers" className="menuitem" guide="menu-import-layer" onClick={() => { void importLayerFlow(); setSub(null); onClose(); }} />
+              <Btn label={t("importSheet")} icon="i-open" className="menuitem" guide="menu-import-sheet" onClick={() => { void sheetPick(); setSub(null); }} />
+              <Btn label={t("refImg")} icon="i-eye" className="menuitem" guide="menu-import-ref" onClick={() => { void refPick(); setSub(null); }} />
+              <Btn label={t("importPalette")} icon="i-palette" className="menuitem" guide="menu-import-palette" onClick={() => { void importPaletteFlow(); setSub(null); onClose(); }} />
             </>
           )}
         </div>
@@ -504,7 +494,7 @@ export function ExportModal({ t, snap, onClose }: { t: ReturnType<typeof makeT>;
   return (
     <>
       <div className="dlg-mask" onClick={onClose} />
-      <div className="dlg">
+      <div className="dlg" data-guide="dlg-export">
         <div className="dlg-head"><span>{t("export")}</span><div className="grow" /><button className="btn small" onClick={onClose}><Icon id="i-x" size={16} /></button></div>
         <div className="dlg-body">
           <div className="tabs">

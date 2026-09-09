@@ -111,12 +111,14 @@ export function testGuide(): void {
     const opensByTap = (s: { click?: string }): boolean =>
       s.click === '[data-guide="btn-menu"]' || s.click === '[data-guide="orb-main"]' || s.click === '[data-guide="btn-timeline"]';
     const menuSteps = GUIDE.filter((s) => (s.target ?? "").startsWith('[data-guide="menu-'));
-    ok("guide.menu.steps-exist", menuSteps.length >= 10, "menu steps=" + menuSteps.length);
+    ok("guide.menu.steps-exist", menuSteps.length >= 6, "menu steps=" + menuSteps.length);
     eq("guide.menu.open-first", menuSteps.filter((s) => !acts(s).includes("openMenu") && !opensByTap(s)).length, 0);
     const importSteps = GUIDE.filter((s) => /^\[data-guide="menu-import-/.test(s.target ?? ""));
     ok("guide.menu.import-submenu", importSteps.length >= 3 && importSteps.every((s) => acts(s).includes("menuSubImport")));
-    const exportSteps = GUIDE.filter((s) => /^\[data-guide="menu-export-/.test(s.target ?? ""));
-    ok("guide.menu.export-submenu", exportSteps.length >= 2 && exportSteps.every((s) => acts(s).includes("menuSubExport")));
+    // export / save moved out of the menu into the canvas orb: those steps must
+    // open the canvas ring first
+    const canvSteps = GUIDE.filter((s) => /^\[data-guide="canv-/.test(s.target ?? ""));
+    ok("guide.canvas.ring-open-first", canvSteps.length >= 3 && canvSteps.every((s) => acts(s).includes("openCanvasRing")), "canvas steps=" + canvSteps.length);
     const toolSteps = GUIDE.filter((s) => /^\[data-guide="tool-/.test(s.target ?? ""));
     ok("guide.tools.ring-open-first", toolSteps.length >= 3 && toolSteps.every((s) => acts(s).includes("openToolRing") || opensByTap(s)));
     ok("guide.detail.total", GUIDE.length >= 30, "total=" + GUIDE.length);
@@ -130,7 +132,8 @@ export function testGuide(): void {
       "openTimeline", "closeTimeline", "closeOverlays", "undockOrbs", "redockOrbs",
       "demoSelection", "restoreSelection", "demoStroke",
       "openToolRing", "closeToolRing", "toolSubShape", "toolSubSelect", "toolSubBack",
-      "openMenu", "closeMenu", "menuSubImport", "menuSubExport", "menuSubBack",
+      "openMenu", "closeMenu", "menuSubImport", "menuSubBack",
+      "openCanvasRing", "closeCanvasRing", "canvasMore", "canvasBack",
       "demoZoom", "demoZoomIn", "demoToolSwitch", "demoShapeTool", "demoMarquee",
       "demoBrushSize", "demoSwapColors", "demoSymmetry", "demoPalMode", "demoFx",
       "demoOnionFrame", "demoFramePreview",

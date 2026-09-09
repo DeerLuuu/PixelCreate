@@ -195,6 +195,8 @@ export interface CanvasEntry {
   y: number;
   li: number;
   fi: number;
+  /** per-canvas undo stack: switching canvases never loses the other one */
+  history: History;
 }
 
 /** a floating preview window showing one canvas */
@@ -209,24 +211,43 @@ export interface PreviewEntry {
 }
 
 export class Session {
-  /** every canvas open in the infinite space; docs[docIdx] is the focused one */
+  /** every canvas open in the infinite space; docs[docIdx] is the focused one.
+   *  An empty array is a valid state: a fresh install starts with NO canvas and
+   *  the shell shows the empty-space screen until one is created or opened. */
   docs: CanvasEntry[] = [];
   docIdx = 0;
   /** floating preview windows (created from the canvas orb) */
   previews: PreviewEntry[] = [];
-  private ensureCanvas(): CanvasEntry {
-    if (!this.docs.length) this.docs.push({ doc: new Doc(64, 64, "untitled"), x: 0, y: 0, li: 0, fi: 0 });
+  /** stand-in document while no canvas is open (the UI is hidden then) */
+  private emptyDoc: Doc | null = null;
+  /** history of a stand-in document; real canvases own theirs */
+  private spareHistory = new History();
+
+  /** the focused canvas entry, or null when nothing is open */
+  private ensureEntry(): CanvasEntry | null {
+    if (!this.docs.length) return null;
     if (this.docIdx < 0 || this.docIdx >= this.docs.length) this.docIdx = 0;
     return this.docs[this.docIdx];
   }
   /** the focused document (every existing caller keeps working unchanged) */
   get doc(): Doc {
-    return this.ensureCanvas().doc;
+    const e = this.ensureEntry();
+    if (e) return e.doc;
+    if (!this.emptyDoc) this.emptyDoc = new Doc(1, 1, "untitled");
+    return this.emptyDoc;
   }
   set doc(d: Doc) {
-    this.ensureCanvas().doc = d;
+    const e = this.ensureEntry();
+    if (e) e.doc = d;
+    else this.docs.push({ doc: d, x: 0, y: 0, li: 0, fi: 0, history: new History() });
   }
-  history = new History();
+  /** undo stack of the focused canvas (each canvas keeps its own) */
+  get history(): History {
+    return this.ensureEntry()?.history ?? this.spareHistory;
+  }
+  private newEntry(doc: Doc, x: number, y: number): CanvasEntry {
+    return { doc, x, y, li: 0, fi: 0, history: new History() };
+  }
   /** foreground / background slots */
   fg: RGBA = [20, 20, 20, 255];
   bg: RGBA = [255, 255, 255, 255];
@@ -447,17 +468,19 @@ export class Session {
 
   /** enforce the configured recording mode on the history stack */
   applyHistoryLimit(): void {
-    if (this.prefs.histMode === "full") this.history.setCap(Infinity);
-    else {
-      this.history.setCap(this.prefs.histSteps);
-      this.history.trimToCap();
+    for (const h of [...this.docs.map((d) => d.history), this.spareHistory]) {
+      if (this.prefs.histMode === "full") h.setCap(Infinity);
+      else {
+        h.setCap(this.prefs.histSteps);
+        h.trimToCap();
+      }
     }
   }
   setHistMode(m: "steps" | "full"): void { this.setSetting("history.mode", m); }
   setHistSteps(n: number): void { this.setSetting("history.steps", n); }
 
 
-  attachView(v: View): void {
+  attachView(v: View | null): void {
     this.view_ = v;
   }
   get view(): View | null {
@@ -1526,39 +1549,45 @@ export class Session {
     this.repaintAll();
     this.changed();
   }
-  /** serialize every open canvas (plus the focused canvas' history) as .pxc */
+  /** serialize every open canvas (each with its own history) as .pxc */
   async serializeProject(): Promise<string> {
     this.syncEntry();
-    let hist: unknown = null;
-    if (this.prefs.recordHistory) {
-      const dump = this.history.dump();
-      hist = historyFile.encodeHistory(dump, this.doc.w, this.doc.h);
-    }
-    return project.serializeSpace(this.docs, this.docIdx, hist);
+    const wantHist = this.prefs.recordHistory;
+    const entries: project.SpaceEntry[] = this.docs.map((e) => ({
+      doc: e.doc, x: e.x, y: e.y, li: e.li, fi: e.fi,
+      hist: wantHist && e.history.list().labels.length
+        ? historyFile.encodeHistory(e.history.dump(), e.doc.w, e.doc.h)
+        : null,
+    }));
+    return project.serializeSpace(entries, this.docIdx);
   }
   /** load a .pxc: one canvas (v2) or a whole space (v3) */
   async loadProjectText(text: string, opts?: { ask?: boolean }): Promise<boolean> {
     const parsed = await project.parseSpace(text);
     if (!parsed) return false;
     if (opts?.ask !== false && !(await this.askOverwrite("open"))) return false;
-    this.docs = parsed.entries;
+    this.docs = parsed.entries.map((e) => ({ doc: e.doc, x: e.x, y: e.y, li: e.li, fi: e.fi, history: new History() }));
     this.docIdx = parsed.focus;
+    this.applyHistoryLimit();
+    // rebuild every canvas' own undo stack
+    parsed.entries.forEach((e, i) => {
+      const entry = this.docs[i];
+      const dump = e.hist ? historyFile.decodeHistory(e.hist) : null;
+      if (entry && dump) {
+        entry.history.loadDump(dump, {
+          doc: entry.doc,
+          scalarActions: (d: ScalarData) => scalarActions(d, { doc: entry.doc, showFrame: (fi) => this.applyFramePublic(fi) }),
+        });
+      }
+    });
     const e = this.docs[this.docIdx] ?? this.docs[0];
-    this.layerIdx = Math.max(0, Math.min(e.doc.layers.length - 1, e.li));
-    this.frameIdx = Math.max(0, Math.min(e.doc.frames.length - 1, e.fi));
+    this.layerIdx = e ? Math.max(0, Math.min(e.doc.layers.length - 1, e.li)) : 0;
+    this.frameIdx = e ? Math.max(0, Math.min(e.doc.frames.length - 1, e.fi)) : 0;
     this.clip = null;
     this.soloBackup = null;
     this.previews = [];
     this.applySymPreset(this.sym);
     this.stopPlayback();
-    this.history.clear();
-    const dump = parsed.history ? historyFile.decodeHistory(parsed.history) : null;
-    if (dump) {
-      this.history.loadDump(dump, {
-        doc: this.doc,
-        scalarActions: (d: ScalarData) => scalarActions(d, { doc: this.doc, showFrame: (fi) => this.applyFramePublic(fi) }),
-      });
-    }
     this.view_?.setDoc(this.doc);
     this.view_?.setFrame(this.frameIdx);
     this.view_?.fit();
@@ -1570,7 +1599,8 @@ export class Session {
   /** a free spot in the space: to the right of the focused canvas, shifting
    *  right / down until it does not overlap any open canvas */
   private placeSpot(): { x: number; y: number } {
-    const e = this.ensureCanvas();
+    const e = this.ensureEntry();
+    if (!e) return { x: 0, y: 0 };
     let x = e.x + e.doc.w + 24;
     let y = e.y;
     for (let guard = 0; guard < 64; guard++) {
@@ -1586,8 +1616,9 @@ export class Session {
   addCanvas(doc: Doc, opts?: { x?: number; y?: number; focus?: boolean }): number {
     this.syncEntry();
     const spot = this.placeSpot();
-    this.docs.push({ doc, x: Math.round(opts?.x ?? spot.x), y: Math.round(opts?.y ?? spot.y), li: 0, fi: 0 });
+    this.docs.push(this.newEntry(doc, Math.round(opts?.x ?? spot.x), Math.round(opts?.y ?? spot.y)));
     const idx = this.docs.length - 1;
+    this.applyHistoryLimit();
     if (opts?.focus === false) this.changed();
     else this.focusCanvas(idx);
     return idx;
@@ -1602,7 +1633,6 @@ export class Session {
     const e = this.docs[i];
     this.layerIdx = Math.max(0, Math.min(e.doc.layers.length - 1, e.li));
     this.frameIdx = Math.max(0, Math.min(e.doc.frames.length - 1, e.fi));
-    this.history.clear(); // the undo stack belongs to one canvas
     this.stopPlayback();
     // the view is anchored on the focused document: move the anchor so the
     // whole space stays where it was on screen
@@ -1631,25 +1661,41 @@ export class Session {
     this.changed();
     this.scheduleAutosave();
   }
+  /** ask for a file name and write bytes; false when the user cancels */
+  private async saveWithDialog(name: string, bytes: Uint8Array, mime = "application/json"): Promise<boolean> {
+    return await new Promise<boolean>((res) => {
+      let done = false;
+      const finish = (ok: boolean): void => { if (done) return; done = true; res(ok); };
+      const timer = window.setTimeout(() => finish(false), 20000);
+      bridge.saveBytes(name, mime, bytes, (ok) => { window.clearTimeout(timer); finish(ok); });
+    });
+  }
+  /** write ONE canvas to its own .pxc file (the canvas orb's 保存) */
+  async saveCanvas(i = this.docIdx): Promise<boolean> {
+    const e = this.docs[i];
+    if (!e) return false;
+    const txt = await project.serialize(e.doc, null);
+    const name = (e.doc.name || "art") + ".pxc";
+    const ok = await this.saveWithDialog(name, new TextEncoder().encode(txt));
+    const en = this.prefs.lang === "en";
+    toastFn(ok ? (en ? "Saved " : "已保存 ") + name : (en ? "Save cancelled" : "已取消保存"));
+    return ok;
+  }
+  /** smoothly zoom the view to fit the focused canvas */
+  fitCanvas(): void {
+    this.view_?.fitAnimated();
+    this.changed();
+  }
   /** close a canvas, optionally saving it to its own .pxc file first */
   async closeCanvas(i: number, save: boolean): Promise<boolean> {
     const e = this.docs[i];
     if (!e) return false;
-    if (this.docs.length <= 1) {
-      toastFn(this.prefs.lang === "en" ? "At least one canvas must stay open" : "至少保留一个画布");
-      return false;
-    }
     if (save) {
       const txt = await project.serialize(e.doc, null);
       const bytes = new TextEncoder().encode(txt);
       const name = (e.doc.name || "art") + ".pxc";
       // wait for the native save dialog; a cancelled save keeps the canvas open
-      const saved = await new Promise<boolean>((res) => {
-        let done = false;
-        const finish = (ok: boolean): void => { if (done) return; done = true; res(ok); };
-        const timer = window.setTimeout(() => finish(false), 20000);
-        bridge.saveBytes(name, "application/json", bytes, (ok) => { window.clearTimeout(timer); finish(ok); });
-      });
+      const saved = await this.saveWithDialog(name, bytes);
       if (!saved) {
         toastFn(this.prefs.lang === "en" ? "Save cancelled, the canvas stays open" : "已取消保存，画布未关闭");
         return false;
@@ -1662,15 +1708,19 @@ export class Session {
       .map((p) => (p.canvas > i ? { ...p, canvas: p.canvas - 1 } : p));
     if (this.docIdx > i) this.docIdx--;
     if (this.docIdx >= this.docs.length) this.docIdx = this.docs.length - 1;
-    if (wasFocus) {
+    if (wasFocus && this.docs.length) {
       const n = this.docs[this.docIdx];
       this.layerIdx = Math.max(0, Math.min(n.doc.layers.length - 1, n.li));
       this.frameIdx = Math.max(0, Math.min(n.doc.frames.length - 1, n.fi));
-      this.history.clear();
       if (n !== e) this.view_?.shiftFocus(n.x - e.x, n.y - e.y);
       this.view_?.setDoc(n.doc);
       this.view_?.setFrame(this.frameIdx);
       this.view_?.fit();
+    } else if (wasFocus) {
+      // the last canvas is gone: the shell shows the empty-space screen
+      this.layerIdx = 0;
+      this.frameIdx = 0;
+      this.view_?.setDoc(this.doc);
     }
     this.repaintAll();
     this.changed();
@@ -1722,8 +1772,9 @@ export class Session {
   async replaceDoc(doc: Doc, opts?: { add?: boolean; ask?: boolean }): Promise<boolean> {
     if (opts?.add) { this.addCanvas(doc); return true; }
     if (opts?.ask !== false && !(await this.askOverwrite("open"))) return false;
-    this.docs = [{ doc, x: 0, y: 0, li: 0, fi: 0 }];
+    this.docs = [this.newEntry(doc, 0, 0)];
     this.docIdx = 0;
+    this.applyHistoryLimit();
     this.layerIdx = 0;
     this.frameIdx = 0;
     this.history.clear();
