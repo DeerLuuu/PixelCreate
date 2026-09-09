@@ -5,7 +5,7 @@ import { makeT } from "./i18n";
 import type { Lang } from "./i18n";
 import { CORE_TOOLS, SHAPE_TOOLS, SELECT_TOOLS, isShapeTool, isSelectTool, isSymTool, type ToolId } from "../tools/registry";
 import { View } from "../render/view";
-import { rgbaToHex, chipCss } from "../engine/color";
+import { rgbaToHex, hexToRgba, chipCss } from "../engine/color";
 import { paintAt } from "../engine/paint";
 import * as selOps from "../tools/select";
 import * as fxE from "../engine/effects";
@@ -22,6 +22,7 @@ import { PreviewBox } from "./preview";
 import { RefImageBox } from "./refimg";
 import type { RefImg } from "./refimg";
 import { PalettePanel, MenuModal, SizeModal, SheetModal, NewDocModal, ExportModal, AdjustModal, SettingsModal, FrameModal, FramePreviewModal, HistoryModal, histName, saveProject } from "./modals";
+import { FxParamDialog, fxDefaults, type FxRun, type FxVals } from "./fxparam";
 import { ChangelogModal, changelogNeedsShow } from "./changelog";
 import { watchSafeArea } from "../io/safearea";
 import { GUIDE, guideStepsFor, type GuideAction, type GuideStep } from "../app/guide";
@@ -865,6 +866,70 @@ function FloatingTools({ t, snap }: { t: ReturnType<typeof makeT>; snap: Snapsho
     { icon: "i-fx-crop", label: t("sel.delete"), act: () => { SESSION.deleteSelection(); } },
   ];
 
+  // ---- parameterised FX: live preview on a snapshot, one history step on OK
+  const [fxDlg, setFxDlg] = useState<{ run: FxRun; vals: FxVals } | null>(null);
+  const fxOrig = useRef<{ li: number; fi: number; before: Uint8ClampedArray } | null>(null);
+  const celHasPixels = (cel: { data: Uint8ClampedArray }): boolean => {
+    for (let i = 3; i < cel.data.length; i += 4) if (cel.data[i] > 0) return true;
+    return false;
+  };
+  /** re-run the effect from the pristine snapshot so previews never stack up */
+  const fxPreview = (run: FxRun, vals: FxVals) => {
+    const o = fxOrig.current;
+    if (!o) return;
+    const cel = d.celAt(o.li, o.fi);
+    if (!cel) return;
+    cel.data.set(o.before);
+    run.apply(cel.data, d.w, d.h, vals);
+    SESSION.repaint();
+    SESSION.changed();
+  };
+  const openFx = (run: FxRun) => {
+    const cel = d.celAt(li, fi);
+    if (!cel || !celHasPixels(cel)) { bridge.toast(t("noContent")); return; }
+    fxOrig.current = { li, fi, before: new Uint8ClampedArray(cel.data) };
+    const vals = fxDefaults(run);
+    setFxDlg({ run, vals });
+    fxPreview(run, vals);
+  };
+  const fxChange = (key: string, v: number | string) => {
+    const g = fxDlg;
+    if (!g) return;
+    const vals = { ...g.vals, [key]: v };
+    setFxDlg({ ...g, vals });
+    fxPreview(g.run, vals);
+  };
+  const fxCance = () => {
+    const o = fxOrig.current;
+    fxOrig.current = null;
+    setFxDlg(null);
+    if (!o) return;
+    const cel = d.celAt(o.li, o.fi);
+    if (cel) cel.data.set(o.before);
+    SESSION.repaint();
+    SESSION.changed();
+  };
+  const fxApplyDlg = () => {
+    const g = fxDlg, o = fxOrig.current;
+    fxOrig.current = null;
+    setFxDlg(null);
+    if (!g || !o) return;
+    // effects that need their own commit path (new-layer shadow) handle it here
+    if (g.run.commit) {
+      g.run.commit(d, o.li, o.fi, o.before, g.vals);
+      return;
+    }
+    const cel = d.celAt(o.li, o.fi);
+    if (!cel) return;
+    let changed = false;
+    for (let i = 0; i < o.before.length; i++) if (o.before[i] !== cel.data[i]) { changed = true; break; }
+    if (!changed) { SESSION.repaint(); SESSION.changed(); return; }
+    SESSION.history.pushPixels(g.run.label, d, [{ li: o.li, fi: o.fi, before: o.before, after: new Uint8ClampedArray(cel.data) }]);
+    SESSION.repaint();
+    SESSION.changed();
+  };
+  const hexOf = (c: [number, number, number, number]): string => rgbaToHex(c).slice(0, 7);
+
   const fxZh = snap.lang === "zh";
   const fxDo = (label: string, fn: (data: Uint8ClampedArray, w: number, h: number) => void) => {
     const cel = d.celAt(li, fi);
@@ -884,8 +949,44 @@ function FloatingTools({ t, snap }: { t: ReturnType<typeof makeT>; snap: Snapsho
     icon, label: fxZh ? labelZh : labelEn, desc: fxZh ? descZh : descEn, act, ...(active ? { active: true } : {}),
   });
   const fxItems: Item[] = [
-    fxI("o1", "i-fx-o1", "描边", "Edge", "边缘描边 1px（用前景色）", "Edge outline 1px outward (FG colour)", () => fxDo("fx-outline1", (dd, w, h) => fxE.outlineCel(dd, w, h, 1, SESSION.color))), fxI("crop", "i-fx-crop", "智能裁剪", "Crop", "自动裁剪画布四周空白（全部图层/帧）", "Auto-crop empty canvas borders (all layers/frames)", () => SESSION.cropSmart()),
-    fxI("shadow", "i-fx-shadow", "投影", "Shadow", "一键投影：仅按当前图层生成（设置可选当前图层 / 新建shadow图层）", "Drop shadow from the current layer only (Settings: bake here or on a new shadow layer)", () => SESSION.applyShadow()),
+    fxI("o1", "i-fx-o1", "描边", "Edge", "描边样式：宽度 / 位置（内·外·居中）/ 颜色，弹窗实时预览", "Outline style: width / position (outside, inside, center) / colour, live preview", () => openFx({
+      label: "fx-outline", title: "fxOutlineTitle", desc: "fxOutlineDesc",
+      params: [
+        { key: "w", kind: "int", label: "fxOutlineWidth", min: 1, max: 16, unit: "px", def: 1 },
+        { key: "pos", kind: "enum", label: "fxOutlinePos", def: "outside", options: [
+          { value: "outside", label: "fxOutlineOutside" }, { value: "inside", label: "fxOutlineInside" }, { value: "center", label: "fxOutlineCenter" }] },
+        { key: "color", kind: "color", label: "fxOutlineColor", def: hexOf(SESSION.color) },
+      ],
+      apply: (dd, w, h, v) => fxE.outlineCel(dd, w, h, Number(v.w), hexToRgba(String(v.color)), v.pos as fxE.OutlinePos),
+    })),
+    fxI("blur", "i-fx-blur", "模糊", "Blur", "模糊滤镜：弹窗设置半径，可实时预览", "Blur filter: set the radius in a dialog, live preview", () => openFx({
+      label: "fx-blur", title: "fxBlurTitle", desc: "fxBlurDesc",
+      params: [{ key: "r", kind: "int", label: "fxBlurRadius", min: 1, max: 32, unit: "px", def: 2 }],
+      apply: (dd, w, h, v) => fxE.blurCel(dd, w, h, Number(v.r)),
+    })),
+    fxI("crop", "i-fx-crop", "智能裁剪", "Crop", "自动裁剪画布四周空白（全部图层/帧）", "Auto-crop empty canvas borders (all layers/frames)", () => SESSION.cropSmart()),
+    fxI("shadow", "i-fx-shadow", "投影", "Shadow", "投影参数：偏移 x/y、颜色与不透明度，弹窗实时预览", "Drop shadow: offset x/y, colour and opacity, live preview", () => openFx({
+      label: "fx-shadow", title: "fxShadowTitle", desc: "fxShadowDesc",
+      params: [
+        { key: "dx", kind: "int", label: "fxShadowX", min: -64, max: 64, unit: "px", def: 3 },
+        { key: "dy", kind: "int", label: "fxShadowY", min: -64, max: 64, unit: "px", def: 3 },
+        { key: "color", kind: "color", label: "fxShadowColor", def: "#000000" },
+        { key: "alpha", kind: "int", label: "fxShadowAlpha", min: 0, max: 100, unit: "%", def: 59 },
+      ],
+      apply: (dd, w, h, v) => {
+        const c = hexToRgba(String(v.color));
+        fxE.dropShadowCel(dd, w, h, Number(v.dx), Number(v.dy), [c[0], c[1], c[2], Math.round((Number(v.alpha) / 100) * 255)], true);
+      },
+      // the live preview always shows the baked version; "new shadow layer"
+      // (Settings > display) is applied for real when the user confirms
+      commit: (doc, li, fi, before, v) => {
+        const cel = doc.celAt(li, fi);
+        if (cel) cel.data.set(before); // undo the preview first
+        const c = hexToRgba(String(v.color));
+        return SESSION.applyShadowParams(Number(v.dx), Number(v.dy),
+          [c[0], c[1], c[2], Math.round((Number(v.alpha) / 100) * 255)], SESSION.prefs.shadowNewLayer);
+      },
+    })),
     fxI("clear", "i-fx-ctr", "清空画布", "Clear", "清空当前帧所有图层的画布内容", "Empty the current frame on all layers", () => SESSION.clearCanvas()),
     fxI("glow", "i-fx-glow", "外发光", "Glow", "一键外发光：用当前颜色向外发光 2px 并逐层淡出", "Outer glow: current colour fading outwards 2px", () => {
       const base = SESSION.color;
@@ -1186,6 +1287,7 @@ function FloatingTools({ t, snap }: { t: ReturnType<typeof makeT>; snap: Snapsho
       <Keep on={!!sel && sel.open} el={sel && sel.open ? ring({ x: sel.x, y: sel.y }, selItems) : null} />
       <Keep on={pal.open} el={pal.open ? <PalBalls x={pal.x} y={pal.y} onDone={() => setPal({ ...pal, open: false })} /> : null} />
       <Keep on={fx.open} el={fx.open ? ring({ x: fx.x, y: fx.y }, fxItems) : null} />
+      <Keep on={!!fxDlg} el={fxDlg ? <FxParamDialog run={fxDlg.run} vals={fxDlg.vals} onChange={fxChange} onApply={fxApplyDlg} onCancel={fxCance} /> : null} />
     </>
   );
 }

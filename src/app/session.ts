@@ -1296,34 +1296,33 @@ export class Session {
   /** background autosave on/off */
   setAutosave(on: boolean): void { this.setSetting("data.autosave", on); }
 
-  /** One-tap drop shadow based ONLY on the current layer's image. Depending on
-   *  the shadowNewLayer pref it is baked into the current layer (silhouette kept
-   *  on top) or written onto a new layer placed just below it. */
-  applyShadow(): void {
+  /** Drop shadow with explicit parameters (the FX dialog). Depending on
+   *  `newLayer` it is baked into the current layer (silhouette kept on top) or
+   *  written onto a new "shadow" layer placed just below it. */
+  applyShadowParams(dx: number, dy: number, color: RGBA, newLayer: boolean): boolean {
     const doc = this.doc;
     const li = this.curLayer();
     const fi = this.curFrame();
     const cel = doc.celAt(li, fi);
-    if (!cel) return;
+    if (!cel) return false;
     let has = false;
     for (let i = 3; i < cel.data.length; i += 4) if (cel.data[i] > 0) { has = true; break; }
-    if (!has) { toastFn(this.prefs.lang === "en" ? "Layer is empty" : "当前图层为空"); return; }
+    if (!has) { toastFn(this.prefs.lang === "en" ? "Layer is empty" : "当前图层为空"); return false; }
     const w = doc.w, h = doc.h;
-    const color: RGBA = [0, 0, 0, 150];
-    if (!this.prefs.shadowNewLayer) {
+    if (!newLayer) {
       const before = new Uint8ClampedArray(cel.data);
-      fxE.dropShadowCel(cel.data, w, h, 3, 3, color, true);
+      fxE.dropShadowCel(cel.data, w, h, dx, dy, color, true);
       let changed = false;
       for (let i = 0; i < before.length; i++) if (cel.data[i] !== before[i]) { changed = true; break; }
       if (changed) this.history.pushPixels("fx-shadow", doc, [{ li, fi, before, after: new Uint8ClampedArray(cel.data) }]);
       this.repaintAll();
       this.changed();
-      return;
+      return changed;
     }
     // new "shadow" layer below the current one, holding ONLY the offset copy.
     // The current layer's pixels are the silhouette source, so copy them in first.
     const shadow = new Uint8ClampedArray(cel.data);
-    fxE.dropShadowCel(shadow, w, h, 3, 3, color, false);
+    fxE.dropShadowCel(shadow, w, h, dx, dy, color, false);
     this.struct("fx-shadow", () => {
       const curLi = this.curLayer();
       ops.addLayer(doc, curLi, "shadow"); // shadow layer at curLi, artwork moves to curLi+1
@@ -1331,6 +1330,7 @@ export class Session {
       sc.data.set(shadow);
       this.layerIdx = curLi + 1; // keep the artwork layer active
     });
+    return true;
   }
 
   /** Clear the pixels inside the current selection to transparent (keeps the selection). */

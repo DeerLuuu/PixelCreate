@@ -82,6 +82,13 @@ input[type=range]{width:64px;height:22px;accent-color:var(--accent)}
 .cp-key:active{background:var(--accent);color:#fff}
 .cp-eq{background:var(--accent);color:#fff;width:34px}
 .cp-back{color:var(--dim)}
+/* fx parameter dialog: one row per parameter, live preview on the canvas */
+.fxdlg{width:min(94vw,420px)}
+.fxp-row{display:flex;align-items:center;gap:10px;margin:9px 0}
+.fxp-label{flex:0 0 84px;font-size:12px;color:var(--dim)}
+.fxp-ctl{flex:1;display:flex;align-items:center;gap:8px;min-width:0}
+.fxp-ctl input[type=color]{width:44px;height:32px;padding:0;border:1px solid var(--line);border-radius:8px;background:var(--bg3)}
+.fxp-unit{font-size:11px;color:var(--dim);font-family:monospace}
 .ce-row{display:flex;align-items:center;gap:6px;margin-bottom:6px}
 .ce-hex{color:var(--dim);font-family:monospace}
 .swatches{display:flex;flex-wrap:wrap;gap:5px;margin-top:8px}

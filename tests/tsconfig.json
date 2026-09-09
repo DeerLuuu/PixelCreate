@@ -32,6 +32,7 @@
     "../tests/export.test.ts",
     "../tests/back.test.ts",
     "../tests/expr.test.ts",
+    "../tests/effects.test.ts",
     "../tests/i18n.test.ts"
   ]
 }
