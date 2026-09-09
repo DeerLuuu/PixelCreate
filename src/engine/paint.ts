@@ -51,17 +51,25 @@ export function polygonCells(w: number, h: number, pts: Array<[number, number]>,
  *  mirror + optional selection mask. Returns the bounding box of the cells the
  *  paint actually touched (null = nothing was painted). */
 export function fillPolygon(cel: Cel, w: number, h: number, pts: Array<[number, number]>, color: RGBA,
-                            mask?: MaskFn | null, ax?: SymAxis): { x: number; y: number; w: number; h: number } | null {
+                            mask?: MaskFn | null, ax?: SymAxis,
+                            wrap?: { x: boolean; y: boolean }): { x: number; y: number; w: number; h: number } | null {
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  const put = (mx: number, my: number): void => {
+    if (mx < 0 || my < 0 || mx >= w || my >= h) return;
+    if (!paintAt(cel, mx, my, color, mask)) return;
+    if (mx < x0) x0 = mx;
+    if (my < y0) y0 = my;
+    if (mx > x1) x1 = mx;
+    if (my > y1) y1 = my;
+  };
   polygonCells(w, h, pts, (x, y) => {
     const targets = ax ? mirrorCells(x, y, w, h, ax) : [[x, y]] as Array<[number, number]>;
     for (const [mx, my] of targets) {
-      if (mx < 0 || my < 0 || mx >= w || my >= h) continue;
-      if (!paintAt(cel, mx, my, color, mask)) continue;
-      if (mx < x0) x0 = mx;
-      if (my < y0) y0 = my;
-      if (mx > x1) x1 = mx;
-      if (my > y1) y1 = my;
+      put(mx, my);
+      // tiled mode: the same cell also lands on the opposite edges
+      if (wrap?.x) { put(mx - w, my); put(mx + w, my); }
+      if (wrap?.y) { put(mx, my - h); put(mx, my + h); }
+      if (wrap?.x && wrap?.y) { put(mx - w, my - h); put(mx + w, my + h); put(mx - w, my + h); put(mx + w, my - h); }
     }
   });
   if (x1 < 0) return null;
@@ -112,6 +120,9 @@ export interface FillOpts {
   tolerance?: number;
   /** close boundary gaps up to this many px before filling (0 = off) */
   gaps?: number;
+  /** tiled mode: the fill wraps around the canvas edges (seamless tiles) */
+  wrapX?: boolean;
+  wrapY?: boolean;
 }
 
 /** true when the pixel at `i` is within `tol` of `base` on every channel */
@@ -189,12 +200,17 @@ export function buildBarrier(cel: Cel, sx: number, sy: number, opts?: FillOpts |
   return a;
 }
 
-/** 4-connected flood over the non-barrier cells (seed included) */
-export function floodCells(cel: Cel, sx: number, sy: number, barrier: Uint8Array): Array<[number, number]> {
+/** 4-connected flood over the non-barrier cells (seed included). With wrapX /
+ *  wrapY the canvas is treated as a torus, so a fill started in a seamless
+ *  tile spills over the edge and continues on the opposite side. */
+export function floodCells(cel: Cel, sx: number, sy: number, barrier: Uint8Array,
+                           wrapX = false, wrapY = false): Array<[number, number]> {
   const w = cel.w, h = cel.h;
   const out: Array<[number, number]> = [];
   const seen = new Uint8Array(w * h);
   const stack: Array<[number, number]> = [[sx, sy]];
+  const nx = (x: number, dx: number): number => (wrapX ? (x + dx + w) % w : x + dx);
+  const ny = (y: number, dy: number): number => (wrapY ? (y + dy + h) % h : y + dy);
   while (stack.length) {
     const [x, y] = stack.pop()!;
     if (x < 0 || y < 0 || x >= w || y >= h) continue;
@@ -203,7 +219,7 @@ export function floodCells(cel: Cel, sx: number, sy: number, barrier: Uint8Array
     seen[vi] = 1;
     if (barrier[vi]) continue;
     out.push([x, y]);
-    stack.push([x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]);
+    stack.push([nx(x, 1), y], [nx(x, -1), y], [x, ny(y, 1)], [x, ny(y, -1)]);
   }
   return out;
 }
@@ -214,7 +230,7 @@ export function floodErase(cel: Cel, sx: number, sy: number, mask?: MaskFn | nul
   if (cel.data[cel.idx(sx, sy) + 3] === 0) return;
   const b = buildBarrier(cel, sx, sy, opts, mask);
   if (!b || b[sy * cel.w + sx]) return;
-  for (const [x, y] of floodCells(cel, sx, sy, b)) {
+  for (const [x, y] of floodCells(cel, sx, sy, b, !!opts?.wrapX, !!opts?.wrapY)) {
     const i = (y * cel.w + x) * 4;
     cel.data[i] = 0; cel.data[i + 1] = 0; cel.data[i + 2] = 0; cel.data[i + 3] = 0;
   }
@@ -225,7 +241,7 @@ export function floodFill(cel: Cel, sx: number, sy: number, color: RGBA, mask?: 
   if (!cel.inBounds(sx, sy)) return;
   const b = buildBarrier(cel, sx, sy, opts, mask);
   if (!b || b[sy * cel.w + sx]) return;
-  for (const [x, y] of floodCells(cel, sx, sy, b)) paintAt(cel, x, y, color, null);
+  for (const [x, y] of floodCells(cel, sx, sy, b, !!opts?.wrapX, !!opts?.wrapY)) paintAt(cel, x, y, color, null);
 }
 
 /** Collect the cells a bucket fill would cover: the connected same-colour
@@ -241,7 +257,7 @@ export function floodRegion(cel: Cel, sx: number, sy: number, global: boolean, m
     return out;
   }
   if (b[sy * cel.w + sx]) return [];
-  return floodCells(cel, sx, sy, b);
+  return floodCells(cel, sx, sy, b, !!opts?.wrapX, !!opts?.wrapY);
 }
 
 /** gradient direction: from (x0,y0) along (dx,dy). A null axis = automatic

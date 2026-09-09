@@ -51,6 +51,10 @@ export class Stroke {
   /** bucket: per-channel colour tolerance and gap closing size (from prefs) */
   fillTolerance = 0;
   fillGaps = 0;
+  /** tiled preview is on: marks that leave the canvas reappear on the far side
+   *  (seamless tiles). Set by the view from prefs.tileMode. */
+  wrapX = false;
+  wrapY = false;
   /** bucket gradient: end colour (null = plain flat fill) and tile size in px */
   gradEnd: RGBA | null = null;
   gradBlock = 1;
@@ -99,8 +103,8 @@ export class Stroke {
   }
 
   /** bucket matching options (tolerance + gap closing) as one object */
-  private fillOpts(): { tolerance: number; gaps: number } {
-    return { tolerance: this.fillTolerance, gaps: this.fillGaps };
+  private fillOpts(): { tolerance: number; gaps: number; wrapX: boolean; wrapY: boolean } {
+    return { tolerance: this.fillTolerance, gaps: this.fillGaps, wrapX: this.wrapX, wrapY: this.wrapY };
   }
 
   /** the axis description handed to the shared symmetry helper */
@@ -149,21 +153,42 @@ export class Stroke {
     return { x: d.x0, y: d.y0, w: d.x1 - d.x0 + 1, h: d.y1 - d.y0 + 1 };
   }
 
-  /** paint/erase a single cell plus all its symmetric partners */
+  /** tiled mode: the wrapped copies of a cell (empty when tiling is off) */
+  private wrapPts(x: number, y: number): Array<[number, number]> {
+    const w = this.doc.w, h = this.doc.h;
+    if (!this.wrapX && !this.wrapY) return [[x, y]];
+    const out: Array<[number, number]> = [];
+    const xs = this.wrapX ? [x - w, x, x + w] : [x];
+    const ys = this.wrapY ? [y - h, y, y + h] : [y];
+    for (const X of xs) {
+      if (X < 0 || X >= w) continue;
+      for (const Y of ys) {
+        if (Y < 0 || Y >= h) continue;
+        out.push([X, Y]);
+      }
+    }
+    return out;
+  }
+
+  /** paint/erase a single cell plus all its symmetric and wrapped partners */
   private touch(x: number, y: number): boolean {
     let any = false;
-    for (const [X, Y] of this.mirrorPts(x, y)) {
-      this.markCell(X, Y);
-      if (this.color[3] === 0 ? eraseAt(this.cel, X, Y, this.mask) : paintAt(this.cel, X, Y, this.color, this.mask)) any = true;
+    for (const [mx, my] of this.mirrorPts(x, y)) {
+      for (const [X, Y] of this.wrapPts(mx, my)) {
+        this.markCell(X, Y);
+        if (this.color[3] === 0 ? eraseAt(this.cel, X, Y, this.mask) : paintAt(this.cel, X, Y, this.color, this.mask)) any = true;
+      }
     }
     return any;
   }
 
   private touchErase(x: number, y: number): boolean {
     let any = false;
-    for (const [X, Y] of this.mirrorPts(x, y)) {
-      this.markCell(X, Y);
-      if (eraseAt(this.cel, X, Y, this.mask)) any = true;
+    for (const [mx, my] of this.mirrorPts(x, y)) {
+      for (const [X, Y] of this.wrapPts(mx, my)) {
+        this.markCell(X, Y);
+        if (eraseAt(this.cel, X, Y, this.mask)) any = true;
+      }
     }
     return any;
   }
@@ -287,10 +312,11 @@ export class Stroke {
   private stampCells(x: number, y: number, size: number): Array<[number, number]> {
     const out: Array<[number, number]> = [];
     for (const [ox, oy] of brushStamp(size, this.brushShape).cells) {
-      for (const [X, Y] of this.mirrorPts(x + ox, y + oy)) {
-        if (X < 0 || Y < 0 || X >= this.doc.w || Y >= this.doc.h) continue;
-        if (this.mask && !this.mask(X, Y)) continue;
-        out.push([X, Y]);
+      for (const [mx, my] of this.mirrorPts(x + ox, y + oy)) {
+        for (const [X, Y] of this.wrapPts(mx, my)) {
+          if (this.mask && !this.mask(X, Y)) continue;
+          out.push([X, Y]);
+        }
       }
     }
     return out;
@@ -416,9 +442,11 @@ export class Stroke {
     this.markBox(this.shapeBox);
     this.shapeBox = box;
     const paint = (px: number, py: number) => {
-      for (const [X, Y] of this.mirrorPts(px, py)) {
-        this.markCell(X, Y);
-        if (erase ? eraseAt(this.cel, X, Y, this.mask) : paintAt(this.cel, X, Y, this.color, this.mask)) this.everPainted = true;
+      for (const [mx, my] of this.mirrorPts(px, py)) {
+        for (const [X, Y] of this.wrapPts(mx, my)) {
+          this.markCell(X, Y);
+          if (erase ? eraseAt(this.cel, X, Y, this.mask) : paintAt(this.cel, X, Y, this.color, this.mask)) this.everPainted = true;
+        }
       }
     };
     // stamp the brush over a cell (lines & hollow outlines use brushSize as

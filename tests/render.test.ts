@@ -320,4 +320,53 @@ export function testRender(): void {
     est.commit(new History(), "tools.eraser");
     eq("pp.eraser.corner", [at(ed, 0, 0), at(ed, 1, 0), at(ed, 1, 1)], [0, 255, 0]);
   }
+  // ------------------------------------------------- tiled wrap strokes
+  // With the tiled preview on, a mark that leaves the canvas reappears on the
+  // opposite side so seamless tiles can be painted in one stroke. Only cells
+  // OUTSIDE the canvas wrap: an in-bounds pixel already shows up in every
+  // neighbour copy of the preview.
+  {
+    const at = (doc: Doc, x: number, y: number): number => {
+      const cel = doc.celAt(0, 0);
+      return cel ? cel.data[cel.idx(x, y) + 3] : 0;
+    };
+    // dragging one cell past the left edge paints the right edge too
+    const h = new Doc(8, 8, "wrap");
+    const hs = strokeOn(h, "pencil", 1);
+    hs.wrapX = true;
+    hs.startAt(0, 2);
+    hs.moveTo(-1, 2, 1);
+    hs.commit(new History(), "tools.pencil");
+    eq("wrap.x.both-edges", [at(h, 0, 2), at(h, 7, 2), at(h, 1, 2)], [255, 255, 0]);
+    // vertical
+    const v = new Doc(8, 8, "wrap");
+    const vs = strokeOn(v, "pencil", 1);
+    vs.wrapY = true;
+    vs.startAt(2, 0);
+    vs.moveTo(2, -1, 1);
+    vs.commit(new History(), "tools.pencil");
+    eq("wrap.y.both-edges", [at(v, 2, 0), at(v, 2, 7), at(v, 2, 1)], [255, 255, 0]);
+    // both axes: leaving through the top-left corner paints the bottom-right
+    const g = new Doc(8, 8, "wrap");
+    const gs = strokeOn(g, "pencil", 1);
+    gs.wrapX = true; gs.wrapY = true;
+    gs.startAt(0, 0);
+    gs.moveTo(-1, -1, 1);
+    gs.commit(new History(), "tools.pencil");
+    eq("wrap.xy.corners", [at(g, 0, 0), at(g, 7, 0), at(g, 0, 7), at(g, 7, 7)], [255, 0, 0, 255]);
+    // a 3px brush hanging over the edge continues on the far side
+    const b = new Doc(8, 8, "wrap");
+    const bs = strokeOn(b, "pencil", 3);
+    bs.wrapX = true;
+    bs.startAt(0, 4);
+    bs.commit(new History(), "tools.pencil");
+    eq("wrap.brush.edge", [at(b, 0, 4), at(b, 7, 4), at(b, 6, 4)], [255, 255, 0]);
+    // tiling off -> nothing wraps
+    const off = new Doc(8, 8, "wrap");
+    const os = strokeOn(off, "pencil", 1);
+    os.startAt(0, 2);
+    os.moveTo(-1, 2, 1);
+    os.commit(new History(), "tools.pencil");
+    eq("wrap.off.no-copy", [at(off, 0, 2), at(off, 7, 2)], [255, 0]);
+  }
 }

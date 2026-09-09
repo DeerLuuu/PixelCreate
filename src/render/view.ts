@@ -1654,6 +1654,10 @@ export class View {
       // the bucket's colour tolerance / gap closing (similar-colour mode)
       this.stroke.fillTolerance = s.prefs.fillSimilar ? s.prefs.fillTolerance : 0;
       this.stroke.fillGaps = s.prefs.fillGaps;
+      // tiled preview: strokes wrap around the edges (seamless tiles)
+      const tm = s.prefs.tileMode;
+      this.stroke.wrapX = tm === "row" || tm === "grid";
+      this.stroke.wrapY = tm === "col" || tm === "grid";
     } catch {
       // the layer is locked (or a reference whose source layer is locked/gone)
       this.stroke = null;
@@ -2392,7 +2396,9 @@ export class View {
     const ax: SymAxis = { on: s.sym !== "off", four: s.symFour, ox: s.symOx, oy: s.symOy, angDeg: s.symAng };
     const mask = doc.selectionActive() ? (x: number, y: number) => doc.selAt(x, y) === 1 : null;
     const color = s.color;
-    fillPolygon(cel, doc.w, doc.h, o.pts, color, mask, ax);
+    const tm = s.prefs.tileMode;
+    const wrap = { x: tm === "row" || tm === "grid", y: tm === "col" || tm === "grid" };
+    fillPolygon(cel, doc.w, doc.h, o.pts, color, mask, ax, wrap);
     const after = new Uint8ClampedArray(cel.data);
     // a fresh cel counts as changed; otherwise compare pixel by pixel
     const changed = o.before === null || after.some((v, i) => v !== o.before![i]);

@@ -360,6 +360,19 @@ export function testFill(): void {
     floodFill(edge, 3, 3, [255, 0, 0, 255], null, { gaps: 2 });
     eq("fill.gap.edge-line", at(edge, 2, 0), [0, 0, 0, 255]);
     eq("fill.gap.edge-inside", at(edge, 3, 3), [255, 0, 0, 255]);
+
+    // tiled mode: a fill wraps around the canvas edges (torus). x=1,2 are a
+    // wall, so without wrap only x=0 is filled; with wrapX the right edge joins.
+    const tor = (wrap: boolean): Cel => {
+      const t = new Cel(4, 1);
+      for (const x of [1, 2]) set3(t, x, 0, 0, 0, 255);
+      floodFill(t, 0, 0, [255, 0, 0, 255], null, { wrapX: wrap });
+      return t;
+    };
+    const plain = tor(false);
+    eq("fill.wrap.off", [at(plain, 0, 0), at(plain, 3, 0)], [[255, 0, 0, 255], [0, 0, 0, 0]]);
+    const wrapped = tor(true);
+    eq("fill.wrap.on", [at(wrapped, 0, 0), at(wrapped, 3, 0)], [[255, 0, 0, 255], [255, 0, 0, 255]]);
   }
 }
 
