@@ -1973,9 +1973,19 @@ export class Session {
     const nx = Math.round(x), ny = Math.round(y);
     const dx = nx - e.x, dy = ny - e.y;
     if (!dx && !dy) return;
+    const focused = this.docs[this.docIdx];
+    let focusMoved = false;
     for (const o of this.docs) {
-      if (o === e || (e.group && o.group === e.group)) { o.x += dx; o.y += dy; }
+      if (o === e || (e.group && o.group === e.group)) {
+        if (o === focused) focusMoved = true;
+        o.x += dx;
+        o.y += dy;
+      }
     }
+    // the camera is anchored on the focused canvas: when THAT canvas moves in
+    // space the view must pan by the same amount, otherwise the canvas would
+    // stay glued to the screen while the whole space slides under the finger
+    if (focusMoved) this.view_?.shiftFocus(dx, dy);
     this.repaint();
     this.changed();
     this.scheduleAutosave();

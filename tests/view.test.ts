@@ -134,6 +134,24 @@ export function testView(): void {
     ok("view.shape.select-ref", s.tool === "select" && !!s.doc.sel && s.doc.sel.hasAny());
     const b = s.doc.sel!.bounds();
     ok("view.shape.select-ref-bounds", !!b && b.w > 1 && b.h > 1, JSON.stringify(b));
+
+    // dragging the FOCUSED canvas must pan the camera with it (the canvas has to
+    // follow the finger instead of the whole space sliding away)
+    const zoom0 = view.zoom;
+    const ox0 = view.ox;
+    s.focusCanvas(0);
+    dom.flush();
+    const ox1 = view.ox;
+    s.moveCanvas(0, s.docs[0].x + 10, s.docs[0].y);
+    dom.flush();
+    ok("view.drag.camera-follows-focus", Math.abs(view.ox - (ox1 + 10 * zoom0)) < 0.001, "ox " + ox1 + " -> " + view.ox);
+    // dragging a canvas that is NOT focused must not move the camera
+    const ox2 = view.ox;
+    s.moveCanvas(bi, s.docs[bi].x + 10, s.docs[bi].y);
+    dom.flush();
+    ok("view.drag.camera-stays", Math.abs(view.ox - ox2) < 0.001, "ox " + ox2 + " -> " + view.ox);
+    ok("view.drag.ox-restored", Math.abs(ox0 - view.ox) < 40, "ox0=" + ox0 + " now=" + view.ox);
+
     view.destroy();
   } finally {
     cmod.composeFrameWithOnion = origOnion;
