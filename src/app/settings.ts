@@ -184,7 +184,7 @@ const defs: SettingDef[] = [
   },
   {
     path: "canvas.timelineHeight", field: "tlH", kind: "int", group: "canvas",
-    label: "tlHeight", default: 116, min: 56, max: 400, unit: "px", reset: 116, refresh: "changed",
+    label: "tlHeight", desc: "tlHeightDesc", default: 200, min: 140, max: 520, unit: "px", reset: 200, refresh: "changed",
   },
 
   {

@@ -40,7 +40,7 @@ const zh: Dict = {
   refPickHint: "取色已开启：点按/拖动图片取色 · 再次点吸管退出", refPickTitle: "参考图取色（点按/拖动图片）",
   changelog: "更新日志", clgCurrent: "当前版本", clgAdd: "新增", clgImp: "改进", clgFix: "修复",
   blendTitle: "混合模式",
-  adjust: "色相/饱和度/明度", scopeDoc: "整幅画", scopeLayer: "当前图层(全部帧)", hueL: "色相", satL: "饱和度", lightL: "明度", recolor: "换色(整幅同步)", recolorApply: "应用到整幅画", layerShow: "显示图层", layerHide: "隐藏图层", tlHeight: "图层面板(时间轴)最大高度", timelineShow: "显示时间轴", timelineHide: "隐藏时间轴", fgActive: "使用前景色绘画", bgActive: "使用背景色绘画", useFg: "改用前景色", useBg: "改用背景色",
+  adjust: "色相/饱和度/明度", scopeDoc: "整幅画", scopeLayer: "当前图层(全部帧)", hueL: "色相", satL: "饱和度", lightL: "明度", recolor: "换色(整幅同步)", recolorApply: "应用到整幅画", layerShow: "显示图层", layerHide: "隐藏图层", tlHeight: "时间线面板高度", tlHeightDesc: "拖动时间线顶部那条线也可以调整，双击该线复位", timelineShow: "显示时间轴", timelineHide: "隐藏时间轴", fgActive: "使用前景色绘画", bgActive: "使用背景色绘画", useFg: "改用前景色", useBg: "改用背景色",
   newDoc: "新建画布", import: "导入", importImg: "导入图片", export: "导出", settings: "设置", exportLayers: "图层导出", layersNote: "每个图层单独导出一张图片；多帧时自动按帧编号命名",
 
   frames: "帧", framePrev: "上一帧", frameNext: "下一帧", frameAdd: "新建帧", frameDupe: "复制帧", frameDel: "删除帧",
@@ -245,7 +245,7 @@ const en: Dict = {
   refPickHint: "Picking on: tap/drag the image · tap the eyedropper to exit", refPickTitle: "Pick color from reference (tap/drag)",
   changelog: "What's New", clgCurrent: "Current", clgAdd: "New", clgImp: "Improved", clgFix: "Fixed",
   blendTitle: "Blend mode",
-  adjust: "Hue / Saturation / Lightness", scopeDoc: "Whole sprite", scopeLayer: "Current layer (all frames)", hueL: "Hue", satL: "Saturation", lightL: "Lightness", recolor: "Recolor (whole sprite)", recolorApply: "Apply to whole sprite", layerShow: "Show layer", layerHide: "Hide layer", tlHeight: "Timeline panel max height", timelineShow: "Show timeline", timelineHide: "Hide timeline", fgActive: "Painting with FG", bgActive: "Painting with BG", useFg: "Use FG", useBg: "Use BG",
+  adjust: "Hue / Saturation / Lightness", scopeDoc: "Whole sprite", scopeLayer: "Current layer (all frames)", hueL: "Hue", satL: "Saturation", lightL: "Lightness", recolor: "Recolor (whole sprite)", recolorApply: "Apply to whole sprite", layerShow: "Show layer", layerHide: "Hide layer", tlHeight: "Timeline panel height", tlHeightDesc: "Drag the line above the timeline to resize it, double-tap that line to reset", timelineShow: "Show timeline", timelineHide: "Hide timeline", fgActive: "Painting with FG", bgActive: "Painting with BG", useFg: "Use FG", useBg: "Use BG",
   newDoc: "New canvas", import: "Import", importImg: "Import image", export: "Export", settings: "Settings", exportLayers: "Layers", layersNote: "One image per layer; frames are numbered automatically",
 
   frames: "Frames", framePrev: "Previous frame", frameNext: "Next frame", frameAdd: "New frame", frameDupe: "Duplicate", frameDel: "Delete",

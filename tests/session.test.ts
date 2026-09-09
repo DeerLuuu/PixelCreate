@@ -197,14 +197,28 @@ export function testSession(): void {
     const raw = JSON.parse((globalThis as unknown as { localStorage: { getItem(k: string): string } }).localStorage.getItem("pc.prefs"));
     eq("screen.persist", [raw.safeArea, raw.safeExtra, raw.immersive], [false, 24, false]);
     s.setTlHeight(9999);
-    eq("timeline.drag.clamp-max", s.prefs.tlH, 400);
+    eq("timeline.drag.clamp-max", s.prefs.tlH, 520);
     s.setTlHeight(1);
-    eq("timeline.drag.clamp-min", s.prefs.tlH, 56);
-    s.setTlHeight(180);
-    eq("timeline.drag.set", s.prefs.tlH, 180);
-    s.setSetting("canvas.timelineHeight", 400);
-    eq("timeline.setting.max", s.prefs.tlH, 400);
-    s.setSetting("canvas.timelineHeight", 116);
+    eq("timeline.drag.clamp-min", s.prefs.tlH, 140);
+    s.setTlHeight(260);
+    eq("timeline.drag.set", s.prefs.tlH, 260);
+    s.setSetting("canvas.timelineHeight", 520);
+    eq("timeline.setting.max", s.prefs.tlH, 520);
+    s.setSetting("canvas.timelineHeight", 200);
+    eq("timeline.setting.default", s.prefs.tlH, 200);
+    // older builds stored the matrix max-height (no tlHv marker) -> migrate
+    (globalThis as unknown as { localStorage: { setItem(k: string, v: string): void } }).localStorage.setItem(
+      "pc.prefs", JSON.stringify({ tlH: 116 }));
+    eq("timeline.migrate.old-default", new Session().prefs.tlH, 200);
+    (globalThis as unknown as { localStorage: { setItem(k: string, v: string): void } }).localStorage.setItem(
+      "pc.prefs", JSON.stringify({ tlH: 56 }));
+    eq("timeline.migrate.old-min", new Session().prefs.tlH, 140);
+    (globalThis as unknown as { localStorage: { setItem(k: string, v: string): void } }).localStorage.setItem(
+      "pc.prefs", JSON.stringify({ tlH: 999, tlHv: 2 }));
+    eq("timeline.migrate.new-clamp", new Session().prefs.tlH, 520);
+    (globalThis as unknown as { localStorage: { setItem(k: string, v: string): void } }).localStorage.setItem(
+      "pc.prefs", JSON.stringify({ tlH: 260, tlHv: 2 }));
+    eq("timeline.migrate.kept", new Session().prefs.tlH, 260);
   }
 
   // --- haptics: the tick is gated by the switch and uses the chosen length ---

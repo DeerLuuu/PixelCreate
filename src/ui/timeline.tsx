@@ -242,10 +242,14 @@ export function TimelineBar({ t, snap, onFrameDlg }: { t: ReturnType<typeof make
     const grow = availH > required ? Math.floor((availH - required) / layers.length) : 0;
     rowPx = ROW + Math.min(64, Math.max(0, grow));
   }
-  const gtr = HEAD + "px" + Array.from({ length: layers.length }, () => " " + rowPx + "px").join("");
+  // trailing 1fr track + a full-width filler cell: when the panel is taller than
+  // the layer rows, the empty area below them is painted like the cells
+  const gtr = HEAD + "px" + Array.from({ length: layers.length }, () => " " + rowPx + "px").join("") + " 1fr";
 
   return (
-    <footer className="tline ase-tlbar">
+    // prefs.tlH is the WHOLE panel height (drag handle), so the matrix below
+    // flexes to fill it and dragging always changes the height in real time
+    <footer className="tline ase-tlbar" style={{ height: SESSION.prefs.tlH, maxHeight: SESSION.prefs.tlH }}>
       <div className="ase-main">
       <div className="tlctrl">
         <Btn icon="i-prev" onClick={() => SESSION.setFrame(snap.frameIdx - 1)} title={t("framePrev")} />
@@ -310,6 +314,7 @@ export function TimelineBar({ t, snap, onFrameDlg }: { t: ReturnType<typeof make
             </div>
           );
         })}
+        <div className="ase-cell ase-fill" style={{ gridColumn: "1 / -1", gridRow: layers.length + 2 }} />
         {/* cel cells */}
         {layers.map((L, li) =>
           frames.map((f, fi) => {

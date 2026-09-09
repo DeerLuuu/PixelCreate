@@ -247,7 +247,11 @@ input[type=range]{width:64px;height:22px;accent-color:var(--accent)}
 .tl-btns{display:inline-flex;gap:2px;flex:0 0 auto}
 .tl-edit .btn.mini{width:26px;height:26px;min-height:26px;border-radius:7px}
 /* timeline footer: main area + optional layer-edit side rail */
-.ase-main{display:flex;flex-direction:column;min-width:0}
+.ase-main{display:flex;flex-direction:column;min-width:0;flex:1 1 auto;min-height:0}
+/* portrait: the matrix takes whatever height the panel has left over, so the
+   drag handle resizes the panel 1:1 (blank space below the layers is fine) */
+.ase-tlbar .ase-scroll{flex:1 1 auto;min-height:56px;max-height:none}
+.ase-fill{background:var(--bg2)}
 @media (orientation: landscape){
   .tline.ase-tlbar{flex-direction:row;align-items:stretch;gap:6px;max-height:min(250px,56vh)}
   .ase-tlbar .ase-main{flex:1 1 auto;min-width:0;min-height:0}

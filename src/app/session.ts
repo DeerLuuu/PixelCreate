@@ -107,8 +107,10 @@ export interface Prefs {
   /** extra safe-area padding in px for ROMs that report nothing (0 = off) */
   safeExtra: number;
   previewBg: "white" | "black" | "checker";
-  /** timeline matrix max height in px (landscape friendly) */
+  /** height of the whole timeline panel in px (the drag handle resizes this) */
   tlH: number;
+  /** tlH semantics marker: 2 = whole-panel height (1.x older = matrix max) */
+  tlHv: number;
   
   /** history recording: "steps" keeps the latest histSteps entries, "full" records everything */
   histMode: "steps" | "full";
@@ -592,7 +594,7 @@ export class Session {
     const p: Prefs = {
       lang: "zh", gridMode: "off", gridSize: 1, magZoom: 12, loupe: true,
       onionOn: false, onionBefore: 1, onionAfter: 0, onionAlpha: 55, onionTint: true, onionWrap: true,
-      autosave: true, recordHistory: true, newFrameCopy: false, railSwap: true, previewBg: "white", tlH: 116,
+      autosave: true, recordHistory: true, newFrameCopy: false, railSwap: true, previewBg: "white", tlH: 200, tlHv: 2,
       immersive: true, safeArea: true, safeExtra: 0,
       histMode: "steps", histSteps: 120, shadowNewLayer: false, autoPan: true,
       bucketGlobal: false, loopMode: "loop", recentColorsMax: 16, selectionTolerance: 8,
@@ -632,7 +634,12 @@ export class Session {
       if (typeof saved.immersive === "boolean") p.immersive = saved.immersive;
       if (typeof saved.safeArea === "boolean") p.safeArea = saved.safeArea;
       if (typeof saved.safeExtra === "number") p.safeExtra = Math.max(0, Math.min(40, Math.round(saved.safeExtra)));
-      if (typeof saved.tlH === "number") p.tlH = Math.max(56, Math.min(340, Math.round(saved.tlH)));
+      if (typeof saved.tlH === "number") {
+        // older builds stored the matrix max-height (56–340); this build stores
+        // the whole panel height (140–520) — migrate by adding the chrome
+        const raw = saved.tlHv === 2 ? saved.tlH : saved.tlH + 84;
+        p.tlH = Math.max(140, Math.min(520, Math.round(raw)));
+      }
       if (saved.histMode === "full" || saved.histMode === "steps") p.histMode = saved.histMode;
       if (typeof saved.histSteps === "number") p.histSteps = Math.max(10, Math.min(500, Math.round(saved.histSteps)));
       if (typeof saved.shadowNewLayer === "boolean") p.shadowNewLayer = saved.shadowNewLayer;
@@ -1654,7 +1661,7 @@ export class Session {
   setRailSwap(v: boolean): void { this.setSetting("general.swapRails", v); }
   /** live timeline height (drag handle): clamped, debounced to disk */
   setTlHeight(v: number): void {
-    const n = Math.max(56, Math.min(400, Math.round(v)));
+    const n = Math.max(140, Math.min(520, Math.round(v)));
     if (n === this.prefs.tlH) return;
     this.prefs.tlH = n;
     this.scheduleSavePrefs();

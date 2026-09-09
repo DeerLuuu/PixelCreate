@@ -379,7 +379,7 @@ export function App() {
   // --- draggable divider between the control bar and the timeline ----------
   // portrait: the line above the frame strip; landscape: the top edge of the
   // bottom timeline row. Dragging it resizes prefs.tlH live.
-  const tlMaxH = (): number => Math.max(56, Math.min(400, Math.round(window.innerHeight * 0.62)));
+  const tlMaxH = (): number => Math.max(140, Math.min(520, Math.round(window.innerHeight * 0.62)));
   const gripDown = (e: React.PointerEvent<HTMLDivElement>) => {
     e.preventDefault();
     const el = e.currentTarget;
@@ -392,7 +392,7 @@ export function App() {
     const g = tlGripRef.current;
     if (!g || e.pointerId !== g.id) return;
     // dragging up (dy < 0) makes the panel taller
-    const h = Math.max(56, Math.min(tlMaxH(), Math.round(g.h0 - (e.clientY - g.y0))));
+    const h = Math.max(140, Math.min(tlMaxH(), Math.round(g.h0 - (e.clientY - g.y0))));
     SESSION.setTlHeight(h);
     setTlDrag({ h, top: e.currentTarget.getBoundingClientRect().top });
   };
@@ -428,7 +428,7 @@ export function App() {
       <div className={"tline-wrap" + (tlClosing ? " closing" : "")}>
         <div className="tl-grip" data-guide="tl-grip" title={t("tlGripHint")}
           onPointerDown={gripDown} onPointerMove={gripMove} onPointerUp={gripUp} onPointerCancel={gripUp}
-          onDoubleClick={() => SESSION.setTlHeight(116)} />
+          onDoubleClick={() => SESSION.setTlHeight(200)} />
         <TimelineBar t={t} snap={snap} onFrameDlg={setFrameDlgIdx} />
       </div>
       )}

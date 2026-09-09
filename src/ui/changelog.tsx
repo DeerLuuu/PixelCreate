@@ -8,7 +8,7 @@ import { Icon } from "./base";
 import { TabBar } from "./tabs";
 
 /** keep in sync with android/AndroidManifest.xml versionName on every release */
-export const APP_VERSION = "1.0.7.9";
+export const APP_VERSION = "1.0.7.10";
 
 export type ClgKind = "add" | "imp" | "fix";
 export interface ClgItem { kind: ClgKind; zh: string; en: string }
@@ -17,6 +17,14 @@ export interface ClgVersion { v: string; date: string; items: ClgItem[] }
 const it = (kind: ClgKind, zh: string, en: string): ClgItem => ({ kind, zh, en });
 
 export const CHANGELOG: ClgVersion[] = [
+  {
+    v: "1.0.7.10",
+    date: "2026-09-08",
+    items: [
+      it("fix", "拖动时间线顶部那条线现在会实时改变整个面板的高度（以前只改矩阵上限，图层少时拖动看不出变化）——图层行下方多出来的空间用单元格底色补满，横竖屏都跟随手指", "Dragging the line above the timeline now resizes the whole panel in real time (it used to change only the matrix cap, so with few layers nothing moved). The space below the layer rows is filled with the cell colour, and it follows the finger in both orientations"),
+      it("imp", "设置里的「时间线面板高度」改为整块面板高度：默认 200px、范围 140–520px（旧版本存的矩阵高度会自动换算），双击分割线复位 200px", "The Timeline panel height setting now means the whole panel: default 200px, range 140-520px (values saved by older builds are converted automatically), and double-tapping the divider resets it to 200px"),
+    ],
+  },
   {
     v: "1.0.7.9",
     date: "2026-09-08",

@@ -464,7 +464,7 @@ setCurrentShape(id) / setCurrentSelect(id)      // 形状 / 选区子环记忆
 rememberSym(): void                              // 对称轴状态写盘（角度/轴心/四向/锁定）
 rememberPalette(): void                          // 当前色板写盘（新文档沿用它）
 scheduleSavePrefs(): void                        // 热路径防抖写盘（600ms）
-setTlHeight(n): void                             // 时间线高度（拖动分割线用）：56–400 夹取 + 防抖写盘
+setTlHeight(n): void                             // 时间线面板总高度（拖动分割线用）：140–520 夹取 + 防抖写盘
 mirrorSelectionMask(): boolean                   // 对称开启时把选区按轴镜像
 ```
 
@@ -743,7 +743,7 @@ writeClipboardPng(canvas): Promise<boolean>
 | `HsvWheel` / `HoldAdjust` / `PreviewBox` / `RefImageBox` / `ReplayOverlay` | 各自文件 | 色轮、长按拖动数值、预览浮窗、参考图、历史回放 |
 | `TabBar` / `DropMenu` | `ui/tabs.tsx` | 共用选项卡与可展开下拉（色板 / 导出 / 更新日志） |
 | `useBlankTap` | `ui/base.tsx` | 点容器空白处执行动作（调色板面板点击关闭） |
-| 时间线分割线 | `ui/App.tsx`（`.tl-grip`） | 时间线面板顶部的拖动条：上下拖动 = `setTlHeight()`（56–400px），拖动时显示 px 浮标，双击复位 116 |
+| 时间线分割线 | `ui/App.tsx`（`.tl-grip`） | 时间线面板顶部的拖动条：上下拖动 = `setTlHeight()`（面板总高度 140–520px，默认 200），拖动时显示 px 浮标，双击复位 200；`prefs.tlH` 是整块面板高度，矩阵 `flex:1` 填充，图层行不足时用 `.ase-fill` 单元格补底 |
 | 安全区 | `io/safearea.ts` | 把原生 insets 写成 CSS 变量 `--sat/--sab/--sal/--sar`，贴边控件统一用它们留白 |
 
 ### 17.2 自定义事件
