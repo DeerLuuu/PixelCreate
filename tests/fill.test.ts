@@ -1,5 +1,5 @@
 import { Cel } from "../src/engine/cel";
-import { floodFill, globalFill, globalErase, polygonCells, fillPolygon, sprayDots } from "../src/engine/paint";
+import { floodFill, globalFill, globalErase, polygonCells, fillPolygon, sprayDots, floodRegion, gradientFillRegion } from "../src/engine/paint";
 import { Doc } from "../src/engine/doc";
 import { Stroke } from "../src/tools/stroke";
 import { eq, ok } from "./common";
@@ -204,4 +204,58 @@ export function testFill(): void {
 function lcg(seed: number): () => number {
   let s = seed >>> 0;
   return () => { s = (Math.imul(s, 1664525) + 1013904223) >>> 0; return s / 4294967296; };
+
+  // ---- bucket gradient mode ----
+  {
+    // a connected 1x8 row: radial ramp from the seed (red) to the far end (blue)
+    const row: Array<[number, number]> = [];
+    for (let x = 0; x < 8; x++) row.push([x, 0]);
+    const c = mk(8, 1, row);
+    const cells = floodRegion(c, 0, 0, false);
+    eq("grad.region.count", cells.length, 8);
+    gradientFillRegion(c, cells, 0, 0, RED, BLUE, 1);
+    eq("grad.start", at(c, 0, 0), RED);
+    eq("grad.end", at(c, 7, 0), BLUE);
+    const mid = at(c, 3, 0);
+    ok("grad.mid-between", mid[0] > 0 && mid[0] < 255 && mid[2] > 0 && mid[2] < 255, JSON.stringify(mid));
+    // the ramp is monotonic in both channels
+    let mono = true;
+    for (let x = 1; x < 8; x++) {
+      const a = at(c, x - 1, 0), b = at(c, x, 0);
+      if (b[0] > a[0] || b[2] < a[2]) mono = false;
+    }
+    ok("grad.monotonic", mono);
+
+    // block = 2: every 2x2 tile gets ONE colour (hard-edged pixel-art ramp)
+    const box: Array<[number, number]> = [];
+    for (let y = 0; y < 2; y++) for (let x = 0; x < 4; x++) box.push([x, y]);
+    const c2 = mk(4, 2, box);
+    const cs2 = floodRegion(c2, 0, 0, false);
+    eq("grad.block.region", cs2.length, 8);
+    gradientFillRegion(c2, cs2, 0, 0, RED, BLUE, 2);
+    eq("grad.block2.near", [at(c2, 0, 0), at(c2, 1, 0), at(c2, 0, 1), at(c2, 1, 1)], [RED, RED, RED, RED]);
+    eq("grad.block2.far", [at(c2, 2, 0), at(c2, 3, 0), at(c2, 2, 1), at(c2, 3, 1)], [BLUE, BLUE, BLUE, BLUE]);
+
+    // a single cell keeps the start colour (no division by a zero distance)
+    const one = mk(3, 3, [[1, 1]]);
+    const oc = floodRegion(one, 1, 1, false);
+    eq("grad.single.region", oc.length, 1);
+    gradientFillRegion(one, oc, 1, 1, RED, BLUE, 4);
+    eq("grad.single.colour", at(one, 1, 1), RED);
+
+    // an empty region paints nothing
+    eq("grad.empty", gradientFillRegion(one, [], 1, 1, RED, BLUE, 1), null);
+
+    // the selection mask is honoured
+    const m = mk(4, 1, [[0, 0], [1, 0], [2, 0], [3, 0]]);
+    const mc = floodRegion(m, 0, 0, false, (x) => x < 2);
+    eq("grad.mask.region", mc.length, 2);
+    gradientFillRegion(m, mc, 0, 0, RED, BLUE, 1, (x) => x < 2);
+    eq("grad.mask.untouched", [at(m, 2, 0), at(m, 3, 0)], [RED, RED]);
+
+    // global mode grabs disconnected matches as well
+    const g = mk(5, 1, [[0, 0], [1, 0], [3, 0], [4, 0]]);
+    eq("grad.global.region", floodRegion(g, 0, 0, true).length, 4);
+    eq("grad.connected.region", floodRegion(g, 0, 0, false).length, 2);
+  }
 }

@@ -158,6 +158,78 @@ export function floodFill(cel: Cel, sx: number, sy: number, color: RGBA, mask?: 
   }
 }
 
+/** Collect the cells a bucket fill would cover: the connected same-colour
+ *  region (global = false) or every matching cell in the layer (global = true),
+ *  honouring an optional selection mask. Pure: nothing is painted. */
+export function floodRegion(cel: Cel, sx: number, sy: number, global: boolean, mask?: MaskFn | null): Array<[number, number]> {
+  const w = cel.w, h = cel.h, d = cel.data;
+  const out: Array<[number, number]> = [];
+  if (!cel.inBounds(sx, sy)) return out;
+  const bi = cel.idx(sx, sy);
+  const b0 = d[bi], b1 = d[bi + 1], b2 = d[bi + 2], b3 = d[bi + 3];
+  const match = (x: number, y: number): boolean => {
+    const i = cel.idx(x, y);
+    return d[i] === b0 && d[i + 1] === b1 && d[i + 2] === b2 && d[i + 3] === b3;
+  };
+  if (global) {
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        if (!match(x, y)) continue;
+        if (mask && !mask(x, y)) continue;
+        out.push([x, y]);
+      }
+    }
+    return out;
+  }
+  const seen = new Uint8Array(w * h);
+  const stack: Array<[number, number]> = [[sx, sy]];
+  while (stack.length) {
+    const [x, y] = stack.pop()!;
+    if (!cel.inBounds(x, y)) continue;
+    const vi = y * w + x;
+    if (seen[vi]) continue;
+    seen[vi] = 1;
+    if (!match(x, y)) continue;
+    if (mask && !mask(x, y)) continue;
+    out.push([x, y]);
+    stack.push([x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]);
+  }
+  return out;
+}
+
+/** Paint a region with a radial RGB ramp: `c0` at the seed, `c1` at the farthest
+ *  cell. `block` snaps the ramp to block x block tiles (1 = smooth per-pixel),
+ *  so 2/4/8 give the chunky pixel-art gradients. Returns the bbox touched. */
+export function gradientFillRegion(cel: Cel, cells: Array<[number, number]>, sx: number, sy: number,
+                                   c0: RGBA, c1: RGBA, block: number, mask?: MaskFn | null): { x: number; y: number; w: number; h: number } | null {
+  if (!cells.length) return null;
+  const b = Math.max(1, Math.round(block));
+  // each tile shares one colour, sampled at the tile centre
+  const anchor = (v: number): number => Math.floor(v / b) * b + (b - 1) / 2;
+  let maxD = 0;
+  for (const [x, y] of cells) {
+    const dd = Math.hypot(anchor(x) - sx, anchor(y) - sy);
+    if (dd > maxD) maxD = dd;
+  }
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const [x, y] of cells) {
+    const t = maxD > 0 ? Math.min(1, Math.hypot(anchor(x) - sx, anchor(y) - sy) / maxD) : 0;
+    const c: RGBA = [
+      Math.round(c0[0] + (c1[0] - c0[0]) * t),
+      Math.round(c0[1] + (c1[1] - c0[1]) * t),
+      Math.round(c0[2] + (c1[2] - c0[2]) * t),
+      Math.round(c0[3] + (c1[3] - c0[3]) * t),
+    ];
+    if (!paintAt(cel, x, y, c, mask)) continue;
+    if (x < x0) x0 = x;
+    if (y < y0) y0 = y;
+    if (x > x1) x1 = x;
+    if (y > y1) y1 = y;
+  }
+  if (x1 < 0) return null;
+  return { x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 + 1 };
+}
+
 /** Non-contiguous fill: replace EVERY pixel of the cel matching the seed
  *  colour (tolerance 0), honouring an optional selection mask. Unlike
  *  floodFill this ignores connectivity, so all identical pixels anywhere in

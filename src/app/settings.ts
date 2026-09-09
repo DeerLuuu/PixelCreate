@@ -287,6 +287,22 @@ const defs: SettingDef[] = [
     label: "bucketGlobalLabel", desc: "bucketGlobalDesc", default: false, refresh: "changed",
   },
   {
+    path: "tools.bucketGrad", field: "bucketGrad", kind: "bool", group: "tools",
+    label: "bucketGradLabel", desc: "bucketGradDesc", default: false, refresh: "changed",
+    visible: (s) => s.tool === "bucket",
+  },
+  {
+    path: "tools.bucketGradMode", field: "bucketGradMode", kind: "enum", group: "tools",
+    label: "bucketGradModeLabel", desc: "bucketGradModeDesc", default: "rgb", refresh: "changed",
+    visible: (s) => s.tool === "bucket" && s.prefs.bucketGrad,
+    options: [
+      { value: "rgb", label: "bucketGradRgb" },
+      { value: "2", label: "bucketGrad2" },
+      { value: "4", label: "bucketGrad4" },
+      { value: "8", label: "bucketGrad8" },
+    ],
+  },
+  {
     path: "tools.airbrushMin", kind: "int", group: "tools",
     label: "airbrushMinLabel", desc: "airbrushMinDesc", default: 1, min: 1, max: 16, unit: "px", reset: 1, refresh: "changed",
     visible: (s) => s.tool === "airbrush",

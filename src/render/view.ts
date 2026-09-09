@@ -1220,6 +1220,10 @@ export class View {
       this.stroke = null;
       return;
     }
+    if (tool === "bucket" && s.prefs.bucketGrad) {
+      this.stroke.gradEnd = [s.bg[0], s.bg[1], s.bg[2], s.bg[3]];
+      this.stroke.gradBlock = s.prefs.bucketGradMode === "2" ? 2 : s.prefs.bucketGradMode === "4" ? 4 : s.prefs.bucketGradMode === "8" ? 8 : 1;
+    }
     if (tool === "airbrush") {
       this.stroke.sprayMin = s.prefs.airbrushMin;
       this.stroke.sprayMax = s.prefs.airbrushMax;

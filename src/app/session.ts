@@ -132,6 +132,10 @@ export interface Prefs {
   /** paint bucket: fill every matching pixel in the layer (true) or only the
    *  connected region (false) */
   bucketGlobal: boolean;
+  /** paint bucket gradient mode: ramp the filled region FG -> BG */
+  bucketGrad: boolean;
+  /** gradient quantisation: "rgb" = per-pixel ramp, "2"/"4"/"8" = block size */
+  bucketGradMode: "rgb" | "2" | "4" | "8";
   /** airbrush: smallest / largest random speck in px (1..16) */
   airbrushMin: number;
   airbrushMax: number;
@@ -625,6 +629,7 @@ export class Session {
       immersive: true, safeArea: true, safeExtra: 0,
       histMode: "steps", histSteps: 120, shadowNewLayer: false, autoPan: true,
       bucketGlobal: false, loopMode: "loop", recentColorsMax: 16, selectionTolerance: 8,
+      bucketGrad: false, bucketGradMode: "rgb",
       airbrushMin: 1, airbrushMax: 3, airbrushRate: 20,
       brushSize: 1, brushAlpha: 255, fgColor: "#141414", bgColor: "#ffffff",
       tool: "pencil", currentShape: "line", currentSelect: "select",
@@ -676,6 +681,8 @@ export class Session {
       if (typeof saved.shadowNewLayer === "boolean") p.shadowNewLayer = saved.shadowNewLayer;
       if (typeof saved.autoPan === "boolean") p.autoPan = saved.autoPan;
       if (typeof saved.bucketGlobal === "boolean") p.bucketGlobal = saved.bucketGlobal;
+      if (typeof saved.bucketGrad === "boolean") p.bucketGrad = saved.bucketGrad;
+      if (saved.bucketGradMode === "rgb" || saved.bucketGradMode === "2" || saved.bucketGradMode === "4" || saved.bucketGradMode === "8") p.bucketGradMode = saved.bucketGradMode;
       if (typeof saved.airbrushMin === "number") p.airbrushMin = Math.max(1, Math.min(16, Math.round(saved.airbrushMin)));
       if (typeof saved.airbrushMax === "number") p.airbrushMax = Math.max(1, Math.min(16, Math.round(saved.airbrushMax)));
       if (typeof saved.airbrushRate === "number") p.airbrushRate = Math.max(5, Math.min(60, Math.round(saved.airbrushRate)));
@@ -884,6 +891,16 @@ export class Session {
   }
   /** paint bucket: fill only the connected region (false) or every matching pixel */
   setBucketGlobal(on: boolean): void { this.setSetting("tools.bucketGlobal", on); }
+  /** paint bucket: flat fill vs FG→BG gradient ramp */
+  setBucketGrad(on: boolean): void { this.setSetting("tools.bucketGrad", on); }
+  setBucketGradMode(m: "rgb" | "2" | "4" | "8"): void { this.setSetting("tools.bucketGradMode", m); }
+  /** bottom-bar chip: cycle rgb → 2×2 → 4×4 → 8×8 */
+  cycleBucketGradMode(): "rgb" | "2" | "4" | "8" {
+    const order: Array<"rgb" | "2" | "4" | "8"> = ["rgb", "2", "4", "8"];
+    const next = order[(order.indexOf(this.prefs.bucketGradMode) + 1) % order.length];
+    this.setBucketGradMode(next);
+    return next;
+  }
   /** airbrush speck range / rate (the min<=max clamp lives in settings.ts) */
   setAirbrushMin(n: number): void { this.setSetting("tools.airbrushMin", n); }
   setAirbrushMax(n: number): void { this.setSetting("tools.airbrushMax", n); }

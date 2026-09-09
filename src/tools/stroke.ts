@@ -2,7 +2,7 @@
 import type { Doc } from "../engine/doc";
 import { Cel } from "../engine/cel";
 import type { RGBA, Rect } from "../engine/types";
-import { brushStamp, lineCells, floodFill, floodErase, globalFill, globalErase, paintAt, eraseAt, sprayDots, type BrushShape, type MaskFn } from "../engine/paint";
+import { brushStamp, lineCells, floodFill, floodErase, globalFill, globalErase, paintAt, eraseAt, sprayDots, floodRegion, gradientFillRegion, type BrushShape, type MaskFn } from "../engine/paint";
 import { mirrorCells, type SymAxis } from "../engine/symmetry";
 import { ellipseFill, ellipseOutline } from "../engine/shape";
 import type { History } from "../engine/history";
@@ -38,6 +38,9 @@ export class Stroke {
   /** airbrush: random speck size range in px (set by the view from prefs) */
   sprayMin = 1;
   sprayMax = 3;
+  /** bucket gradient: end colour (null = plain flat fill) and tile size in px */
+  gradEnd: RGBA | null = null;
+  gradBlock = 1;
   color: RGBA;
   size: number;
   last: [number, number] | null = null;
@@ -157,6 +160,15 @@ export class Stroke {
         this.sprayBurst(1); // one speck right away, so a tap leaves a mark
         break;
       case "bucket":
+        // gradient mode: ramp the filled region from the current colour to the
+        // background colour instead of painting it flat
+        if (this.gradEnd) {
+          const cells = floodRegion(this.cel, x, y, this.bucketGlobal, this.mask);
+          gradientFillRegion(this.cel, cells, x, y, this.color, this.gradEnd, this.gradBlock, this.mask);
+          this.everPainted = true;
+          this.dtyAll = true; // the ramp can cover the whole layer
+          break;
+        }
         // contiguous (default) or global: every matching pixel in the layer
         if (this.color[3] === 0) {
           if (this.bucketGlobal) globalErase(this.cel, x, y, this.mask);
