@@ -2,7 +2,7 @@
 import type { Doc } from "../engine/doc";
 import { Cel } from "../engine/cel";
 import type { RGBA, Rect } from "../engine/types";
-import { brushStamp, lineCells, floodFill, floodErase, globalFill, globalErase, paintAt, eraseAt, sprayDots, floodRegion, gradientFillRegion, type BrushShape, type MaskFn } from "../engine/paint";
+import { brushStamp, lineCells, floodFill, floodErase, globalFill, globalErase, paintAt, eraseAt, sprayDots, floodRegion, gradientFillRegion, type BrushShape, type GradAxis, type MaskFn } from "../engine/paint";
 import { mirrorCells, type SymAxis } from "../engine/symmetry";
 import { ellipseFill, ellipseOutline } from "../engine/shape";
 import type { History } from "../engine/history";
@@ -41,6 +41,10 @@ export class Stroke {
   /** bucket gradient: end colour (null = plain flat fill) and tile size in px */
   gradEnd: RGBA | null = null;
   gradBlock = 1;
+  /** the filled region is computed once (the drag only changes the ramp) */
+  private gradCells: Array<[number, number]> | null = null;
+  /** current drag vector (start = first touch, end = pointer) */
+  private gradAxis: GradAxis | null = null;
   color: RGBA;
   size: number;
   last: [number, number] | null = null;
@@ -160,13 +164,13 @@ export class Stroke {
         this.sprayBurst(1); // one speck right away, so a tap leaves a mark
         break;
       case "bucket":
-        // gradient mode: ramp the filled region from the current colour to the
-        // background colour instead of painting it flat
+        // gradient mode: the region is fixed by the seed, the drag only changes
+        // the direction/length of the ramp (Aseprite-style), so it repaints
+        // from the pristine snapshot on every move like a shape tool
         if (this.gradEnd) {
-          const cells = floodRegion(this.cel, x, y, this.bucketGlobal, this.mask);
-          gradientFillRegion(this.cel, cells, x, y, this.color, this.gradEnd, this.gradBlock, this.mask);
-          this.everPainted = true;
-          this.dtyAll = true; // the ramp can cover the whole layer
+          this.gradCells = floodRegion(this.cel, x, y, this.bucketGlobal, this.mask);
+          this.gradAxis = null;
+          this.redrawGradient();
           break;
         }
         // contiguous (default) or global: every matching pixel in the layer
@@ -214,6 +218,14 @@ export class Stroke {
         // the spray is time-driven (see View's interval): moving only retargets it
         break;
       case "bucket":
+        if (this.gradEnd && this.gradCells) {
+          const s0 = this.start!;
+          this.gradAxis = { x0: s0[0], y0: s0[1], dx: x - s0[0], dy: y - s0[1] };
+          this.resetToBefore();
+          this.redrawGradient();
+        }
+        break;
+      case "bucket":
         break;
     }
     this.last = [x, y];
@@ -239,6 +251,25 @@ export class Stroke {
     for (const [ox, oy] of brushStamp(size, this.brushShape).cells) {
       if (this.touchErase(x + ox, y + oy)) this.everPainted = true;
     }
+  }
+
+  /** (re)paint the gradient region with the current drag axis */
+  private redrawGradient(): void {
+    if (!this.gradCells || !this.gradEnd) return;
+    const b = gradientFillRegion(this.cel, this.gradCells, this.color, this.gradEnd, this.gradBlock, this.gradAxis, this.mask);
+    if (b) {
+      this.everPainted = true;
+      const box = { x0: b.x, y0: b.y, x1: b.x + b.w - 1, y1: b.y + b.h - 1 };
+      this.shapeBox = box; // resetToBefore() repaints this box on the next move
+      this.markBox(box);
+    }
+  }
+  /** the on-canvas direction indicator while the gradient is being dragged */
+  gradLine(): { x0: number; y0: number; x1: number; y1: number } | null {
+    if (!this.gradEnd || !this.start) return null;
+    const a = this.gradAxis;
+    if (!a) return { x0: this.start[0], y0: this.start[1], x1: this.start[0], y1: this.start[1] };
+    return { x0: a.x0, y0: a.y0, x1: a.x0 + a.dx, y1: a.y0 + a.dy };
   }
 
   private resetToBefore(): void {

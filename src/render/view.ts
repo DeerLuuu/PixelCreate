@@ -659,6 +659,7 @@ export class View {
     this.drawSelTransform();
     this.drawFlash(ctx);
     this.drawOutlinePreview(ctx);
+    this.drawGradPreview(ctx);
     // floating selection content: pixels held above the layer during a drag
     const fg = this.selDrag;
     if (fg && fg.kind === "move" && fg.mv && fg.cut && fg.moved) {
@@ -962,6 +963,42 @@ export class View {
   }
   /** freehand outline preview: the same trail as the lasso selection, plus a
    *  light preview of the region that will be filled (auto-closed to the start) */
+  /** gradient drag indicator: a line from the anchor to the finger plus the
+   *  two end ticks, so the direction/length of the ramp is obvious */
+  private drawGradPreview(ctx: CanvasRenderingContext2D): void {
+    const st = this.stroke;
+    if (!st || st.kind !== "bucket") return;
+    const line = st.gradLine();
+    if (!line) return;
+    const z = this.zoom;
+    const x0 = this.ox + line.x0 * z, y0 = this.oy + line.y0 * z;
+    const x1 = this.ox + line.x1 * z, y1 = this.oy + line.y1 * z;
+    if (Math.hypot(x1 - x0, y1 - y0) < 2) return;
+    const a = Math.atan2(y1 - y0, x1 - x0);
+    const tick = 9;
+    const nx = Math.cos(a + Math.PI / 2) * tick;
+    const ny = Math.sin(a + Math.PI / 2) * tick;
+    ctx.save();
+    ctx.lineCap = "round";
+    ctx.strokeStyle = "#ffd166";
+    ctx.lineWidth = 2;
+    ctx.shadowColor = "rgba(0,0,0,.5)";
+    ctx.shadowBlur = 3;
+    ctx.beginPath();
+    ctx.moveTo(x0, y0);
+    ctx.lineTo(x1, y1);
+    ctx.moveTo(x0 - nx, y0 - ny);
+    ctx.lineTo(x0 + nx, y0 + ny);
+    ctx.moveTo(x1 - nx, y1 - ny);
+    ctx.lineTo(x1 + nx, y1 + ny);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(x0, y0, 4, 0, Math.PI * 2);
+    ctx.fillStyle = "#ffd166";
+    ctx.fill();
+    ctx.restore();
+  }
+
   private drawOutlinePreview(ctx: CanvasRenderingContext2D): void {
     const o = this.outline;
     if (!o || o.pts.length < 2) return;

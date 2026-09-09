@@ -198,27 +198,19 @@ export function testFill(): void {
     eq("spray.sym.source", at(cel2, 4, 6), RED);
     eq("spray.sym.mirror", at(cel2, 11, 6), RED); // 16-wide doc, vertical axis at x=8
   }
-}
 
-/** tiny deterministic PRNG so the spray tests can assert exact specks */
-function lcg(seed: number): () => number {
-  let s = seed >>> 0;
-  return () => { s = (Math.imul(s, 1664525) + 1013904223) >>> 0; return s / 4294967296; };
-
-  // ---- bucket gradient mode ----
+  // ---- bucket gradient mode (linear along the drag) ----
   {
-    // a connected 1x8 row: radial ramp from the seed (red) to the far end (blue)
     const row: Array<[number, number]> = [];
     for (let x = 0; x < 8; x++) row.push([x, 0]);
     const c = mk(8, 1, row);
     const cells = floodRegion(c, 0, 0, false);
     eq("grad.region.count", cells.length, 8);
-    gradientFillRegion(c, cells, 0, 0, RED, BLUE, 1);
+    gradientFillRegion(c, cells, RED, BLUE, 1, { x0: 0, y0: 0, dx: 7, dy: 0 });
     eq("grad.start", at(c, 0, 0), RED);
     eq("grad.end", at(c, 7, 0), BLUE);
     const mid = at(c, 3, 0);
     ok("grad.mid-between", mid[0] > 0 && mid[0] < 255 && mid[2] > 0 && mid[2] < 255, JSON.stringify(mid));
-    // the ramp is monotonic in both channels
     let mono = true;
     for (let x = 1; x < 8; x++) {
       const a = at(c, x - 1, 0), b = at(c, x, 0);
@@ -226,31 +218,52 @@ function lcg(seed: number): () => number {
     }
     ok("grad.monotonic", mono);
 
+    // a vertical drag over the same row: every cell projects to t=0 -> all c0
+    const c2 = mk(8, 1, row);
+    gradientFillRegion(c2, cells, RED, BLUE, 1, { x0: 0, y0: 0, dx: 0, dy: 8 });
+    eq("grad.direction.matters", [at(c2, 0, 0), at(c2, 7, 0)], [RED, RED]);
+
+    // no drag -> automatic vertical ramp over the region bbox
+    const c3 = mk(4, 2, [[0, 0], [1, 0], [2, 0], [3, 0], [0, 1], [1, 1], [2, 1], [3, 1]]);
+    const cs3 = floodRegion(c3, 0, 0, false);
+    gradientFillRegion(c3, cs3, RED, BLUE, 1, null);
+    eq("grad.auto.top", at(c3, 0, 0), RED);
+    eq("grad.auto.bottom", at(c3, 0, 1), BLUE);
+
+    // cells past either end clamp instead of wrapping
+    const c4 = mk(6, 1, [[0, 0], [1, 0], [2, 0], [3, 0], [4, 0], [5, 0]]);
+    const cs4 = floodRegion(c4, 0, 0, false);
+    gradientFillRegion(c4, cs4, RED, BLUE, 1, { x0: 2, y0: 0, dx: 2, dy: 0 });
+    eq("grad.clamp.before", [at(c4, 0, 0), at(c4, 1, 0)], [RED, RED]);
+    eq("grad.clamp.after", [at(c4, 4, 0), at(c4, 5, 0)], [BLUE, BLUE]);
+
     // block = 2: every 2x2 tile gets ONE colour (hard-edged pixel-art ramp)
     const box: Array<[number, number]> = [];
     for (let y = 0; y < 2; y++) for (let x = 0; x < 4; x++) box.push([x, y]);
-    const c2 = mk(4, 2, box);
-    const cs2 = floodRegion(c2, 0, 0, false);
-    eq("grad.block.region", cs2.length, 8);
-    gradientFillRegion(c2, cs2, 0, 0, RED, BLUE, 2);
-    eq("grad.block2.near", [at(c2, 0, 0), at(c2, 1, 0), at(c2, 0, 1), at(c2, 1, 1)], [RED, RED, RED, RED]);
-    eq("grad.block2.far", [at(c2, 2, 0), at(c2, 3, 0), at(c2, 2, 1), at(c2, 3, 1)], [BLUE, BLUE, BLUE, BLUE]);
+    const c5 = mk(4, 2, box);
+    const cs5 = floodRegion(c5, 0, 0, false);
+    gradientFillRegion(c5, cs5, RED, BLUE, 2, { x0: 0, y0: 0, dx: 4, dy: 0 });
+    const near = at(c5, 0, 0), far = at(c5, 2, 0);
+    ok("grad.block2.tile-uniform", [at(c5, 1, 0), at(c5, 0, 1), at(c5, 1, 1)].every((p) => p.join() === near.join()));
+    ok("grad.block2.tile2-uniform", [at(c5, 3, 0), at(c5, 2, 1), at(c5, 3, 1)].every((p) => p.join() === far.join()));
+    ok("grad.block2.ramps", near[0] > far[0] && near[2] < far[2], JSON.stringify([near, far]));
+    // a drag that ends exactly on the far tile centre reaches the end colour
+    const c6 = mk(4, 2, box);
+    gradientFillRegion(c6, cs5, RED, BLUE, 2, { x0: 0.5, y0: 0.5, dx: 2, dy: 0 });
+    eq("grad.block2.end-reached", at(c6, 2, 0), BLUE);
 
-    // a single cell keeps the start colour (no division by a zero distance)
+    // a single cell / an empty region
     const one = mk(3, 3, [[1, 1]]);
     const oc = floodRegion(one, 1, 1, false);
-    eq("grad.single.region", oc.length, 1);
-    gradientFillRegion(one, oc, 1, 1, RED, BLUE, 4);
+    gradientFillRegion(one, oc, RED, BLUE, 4, null);
     eq("grad.single.colour", at(one, 1, 1), RED);
-
-    // an empty region paints nothing
-    eq("grad.empty", gradientFillRegion(one, [], 1, 1, RED, BLUE, 1), null);
+    eq("grad.empty", gradientFillRegion(one, [], RED, BLUE, 1, null), null);
 
     // the selection mask is honoured
     const m = mk(4, 1, [[0, 0], [1, 0], [2, 0], [3, 0]]);
     const mc = floodRegion(m, 0, 0, false, (x) => x < 2);
     eq("grad.mask.region", mc.length, 2);
-    gradientFillRegion(m, mc, 0, 0, RED, BLUE, 1, (x) => x < 2);
+    gradientFillRegion(m, mc, RED, BLUE, 1, { x0: 0, y0: 0, dx: 3, dy: 0 }, (x) => x < 2);
     eq("grad.mask.untouched", [at(m, 2, 0), at(m, 3, 0)], [RED, RED]);
 
     // global mode grabs disconnected matches as well
@@ -258,4 +271,26 @@ function lcg(seed: number): () => number {
     eq("grad.global.region", floodRegion(g, 0, 0, true).length, 4);
     eq("grad.connected.region", floodRegion(g, 0, 0, false).length, 2);
   }
+
+  // ---- gradient through the stroke engine: the drag sets the direction ----
+  {
+    const doc = new Doc(8, 2, "grad");
+    const brush = { color: RED, size: 1, alpha: 255, pressure: 1 };
+    const st = new Stroke(doc, 0, 0, "bucket", brush, false, "off");
+    st.gradEnd = BLUE;
+    st.gradBlock = 1;
+    st.startAt(0, 0);      // seeds the region, paints the automatic ramp
+    st.moveTo(7, 0, 1);    // drag to the right -> horizontal ramp
+    const cel = doc.celAt(0, 0)!;
+    eq("gradstroke.left", at(cel, 0, 0), RED);
+    eq("gradstroke.right", at(cel, 7, 0), BLUE);
+    const line = st.gradLine();
+    eq("gradstroke.line", line && [line.x0, line.y0, line.x1, line.y1], [0, 0, 7, 0]);
+  }
+}
+
+/** tiny deterministic PRNG so the spray tests can assert exact specks */
+function lcg(seed: number): () => number {
+  let s = seed >>> 0;
+  return () => { s = (Math.imul(s, 1664525) + 1013904223) >>> 0; return s / 4294967296; };
 }

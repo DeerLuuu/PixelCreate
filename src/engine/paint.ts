@@ -197,23 +197,39 @@ export function floodRegion(cel: Cel, sx: number, sy: number, global: boolean, m
   return out;
 }
 
-/** Paint a region with a radial RGB ramp: `c0` at the seed, `c1` at the farthest
- *  cell. `block` snaps the ramp to block x block tiles (1 = smooth per-pixel),
- *  so 2/4/8 give the chunky pixel-art gradients. Returns the bbox touched. */
-export function gradientFillRegion(cel: Cel, cells: Array<[number, number]>, sx: number, sy: number,
-                                   c0: RGBA, c1: RGBA, block: number, mask?: MaskFn | null): { x: number; y: number; w: number; h: number } | null {
+/** gradient direction: from (x0,y0) along (dx,dy). A null axis = automatic
+ *  top-to-bottom ramp over the region's bounding box. */
+export interface GradAxis { x0: number; y0: number; dx: number; dy: number }
+
+/** Paint a region with a linear RGB ramp: `c0` at the start of the axis, `c1`
+ *  at its end (Aseprite-style: the drag defines direction AND length; cells
+ *  beyond either end clamp to c0 / c1). `block` snaps the ramp to block x block
+ *  tiles (1 = smooth per-pixel), so 2/4/8 give chunky pixel-art gradients.
+ *  Returns the bbox touched. */
+export function gradientFillRegion(cel: Cel, cells: Array<[number, number]>,
+                                   c0: RGBA, c1: RGBA, block: number, axis: GradAxis | null,
+                                   mask?: MaskFn | null): { x: number; y: number; w: number; h: number } | null {
   if (!cells.length) return null;
   const b = Math.max(1, Math.round(block));
   // each tile shares one colour, sampled at the tile centre
   const anchor = (v: number): number => Math.floor(v / b) * b + (b - 1) / 2;
-  let maxD = 0;
-  for (const [x, y] of cells) {
-    const dd = Math.hypot(anchor(x) - sx, anchor(y) - sy);
-    if (dd > maxD) maxD = dd;
+  let ax = axis;
+  if (!ax) {
+    // no drag: a vertical ramp over the region's bounding box
+    let ymin = Infinity, ymax = -Infinity;
+    for (const [, y] of cells) {
+      const a = anchor(y);
+      if (a < ymin) ymin = a;
+      if (a > ymax) ymax = a;
+    }
+    ax = { x0: 0, y0: ymin, dx: 0, dy: ymax - ymin };
   }
+  const len2 = ax.dx * ax.dx + ax.dy * ax.dy;
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
   for (const [x, y] of cells) {
-    const t = maxD > 0 ? Math.min(1, Math.hypot(anchor(x) - sx, anchor(y) - sy) / maxD) : 0;
+    const t = len2 > 0
+      ? Math.max(0, Math.min(1, ((anchor(x) - ax.x0) * ax.dx + (anchor(y) - ax.y0) * ax.dy) / len2))
+      : 0;
     const c: RGBA = [
       Math.round(c0[0] + (c1[0] - c0[0]) * t),
       Math.round(c0[1] + (c1[1] - c0[1]) * t),
