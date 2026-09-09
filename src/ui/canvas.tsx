@@ -89,8 +89,10 @@ export function CanvasTitles({ view, tick }: { view: View | null; tick: number }
                 SESSION.hapticTick("吸附", 0.9);
               } else if (snap.hit === null) pulsed.current = null;
               d.hit = snap.hit;
-              SESSION.setSnapPreview(snap.hit === null ? null : i, snap.hit);
               SESSION.moveCanvas(i, snap.x, snap.y);
+              // light up EVERY zone that is satisfied at the position the
+              // canvas actually took (several can be active at once)
+              SESSION.setSnapZones(SESSION.snapPosition(i, snap.x, snap.y, snapTol).zones);
             }}
             onPointerUp={(ev) => {
               const d = drag.current;
@@ -110,10 +112,10 @@ export function CanvasTitles({ view, tick }: { view: View | null; tick: number }
                 }
                 return;
               }
-              SESSION.setSnapPreview(null, null, false); // the group takes over
+              SESSION.setSnapZones([], false); // the grouped highlight takes over
               SESSION.finishCanvasDrag(i, d.hit);
             }}
-            onPointerCancel={() => { drag.current = null; stopTip(); SESSION.setSnapPreview(null, null); }}
+            onPointerCancel={() => { drag.current = null; stopTip(); SESSION.setSnapZones([]); }}
           >
             {narrow ? null : (
             <button className={"cv-btn" + (SESSION.hasPreview(i) ? " on" : "")}

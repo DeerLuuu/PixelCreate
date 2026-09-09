@@ -12,7 +12,7 @@ import { selOps, lassoFill, beginMove, xformFloating, type MoveState } from "../
 import type { Session } from "../app/session";
 import type { GestureActionId } from "../app/gesture-ids";
 import { clamp } from "../engine/types";
-import { SNAP_GAP } from "../app/canvas-snap";
+import { SNAP_GAP, snapGapRect, type GapRect } from "../app/canvas-snap";
 
 /** Is the composite canvas stale? `compRect === null` means "the whole canvas
  *  changed" (FX ops, selection edits, paste …) — the caller MUST rebuild it
@@ -88,10 +88,11 @@ export class View {
   private antTimer: number | null = null;
   /** cached selection tint layer (rebuilt only when the doc changes) */
   private selTint: HTMLCanvasElement | null = null;
-  /** the snap zone currently held while dragging (steady green), and the
-   *  one-shot flash that plays when it appears / disappears */
-  private snapLive: { a: number; b: number } | null = null;
-  private snapFlash: { a: number; b: number; t0: number; kind: "in" | "out" } | null = null;
+  /** every snap zone satisfied right now (steady green), keyed by "a:b" */
+  private snapZones = new Map<string, { a: number; b: number; rect: GapRect }>();
+  /** one-shot flashes when a zone appears ("in") or is left ("out"); the rect is
+   *  SNAPSHOTTED, because a left zone no longer exists to measure */
+  private snapFlashes: Array<{ rect: GapRect; t0: number; kind: "in" | "out" }> = [];
   private snapRaf = 0;
   /** red dissolving links of just-released snaps (pairs of canvas indices) */
   private unsnapPulse: { pairs: Array<[number, number]>; t0: number } | null = null;
@@ -1019,25 +1020,27 @@ export class View {
    * `animate = false` clears it silently (used on release, where the permanent
    * grouped highlight takes over).
    */
-  setSnapPreview(a: number | null, b: number | null, animate = true): void {
-    const cur = this.snapLive;
-    const same = !!cur && a !== null && b !== null && cur.a === a && cur.b === b;
-    if (same) return;
-    if (cur && animate) this.snapFlash = { a: cur.a, b: cur.b, t0: performance.now(), kind: "out" };
-    if (a === null || b === null) {
-      this.snapLive = null;
-    } else {
-      this.snapLive = { a, b };
-      this.snapFlash = { a, b, t0: performance.now(), kind: "in" };
+  setSnapZones(zones: Array<{ a: number; b: number } & GapRect>, animate = true): void {
+    const next = new Map<string, { a: number; b: number; rect: GapRect }>();
+    for (const z of zones) {
+      next.set(z.a + ":" + z.b, { a: z.a, b: z.b, rect: { x0: z.x0, y0: z.y0, x1: z.x1, y1: z.y1 } });
     }
+    const now = performance.now();
+    if (animate) {
+      for (const [k, z] of next) if (!this.snapZones.has(k)) this.snapFlashes.push({ rect: z.rect, t0: now, kind: "in" });
+      for (const [k, z] of this.snapZones) if (!next.has(k)) this.snapFlashes.push({ rect: z.rect, t0: now, kind: "out" });
+    }
+    this.snapZones = next;
+    this.startSnapAnim();
+  }
+  private startSnapAnim(): void {
     if (this.snapRaf) return;
     const step = (): void => {
       this.snapRaf = 0;
       this.drawOverlay();
-      const f = this.snapFlash;
-      if (f && performance.now() - f.t0 < 420) { this.snapRaf = window.requestAnimationFrame(step); return; }
-      this.snapFlash = null;
-      this.drawOverlay();
+      this.snapFlashes = this.snapFlashes.filter((f) => performance.now() - f.t0 < 420);
+      if (this.snapFlashes.length) this.snapRaf = window.requestAnimationFrame(step);
+      else this.drawOverlay();
     };
     this.snapRaf = window.requestAnimationFrame(step);
   }
@@ -1092,49 +1095,40 @@ export class View {
         ctx.fillRect(sx(x0), sy(y0), (x1 - x0) * z, (y1 - y0) * z);
       }
     }
-    // the zone held during the drag stays lit while the finger keeps it in range
-    const live = this.snapLive;
-    if (live) {
-      const a = this.docsAt(live.a), b = this.docsAt(live.b);
-      const g = a && b ? this.gapBetween(a, b) : null;
-      if (g) {
-        ctx.fillStyle = "rgba(80, 220, 140, 0.45)";
-        ctx.fillRect(sx(g.x0), sy(g.y0), (g.x1 - g.x0) * z, (g.y1 - g.y0) * z);
-      }
+    // every satisfied zone stays lit while the finger keeps it in range
+    for (const zn of this.snapZones.values()) {
+      const g = zn.rect;
+      ctx.fillStyle = "rgba(80, 220, 140, 0.45)";
+      ctx.fillRect(sx(g.x0), sy(g.y0), (g.x1 - g.x0) * z, (g.y1 - g.y0) * z);
     }
-    // one-shot flash: green when the zone is entered, red when it is left
-    const f = this.snapFlash;
-    if (f) {
+    // one-shot flashes: green when a zone is entered, red when it is left
+    for (const f of this.snapFlashes) {
       const k = Math.min(1, (performance.now() - f.t0) / 420);
       const fade = 1 - k;
-      const a = this.docsAt(f.a), b = this.docsAt(f.b);
-      const g = a && b ? this.gapBetween(a, b) : null;
-      if (g) {
-        const x = sx(g.x0), y = sy(g.y0);
-        const w = (g.x1 - g.x0) * z, h = (g.y1 - g.y0) * z;
-        const green = f.kind === "in";
-        ctx.fillStyle = green
-          ? "rgba(120, 255, 180, " + (0.55 * fade).toFixed(3) + ")"
-          : "rgba(255, 80, 80, " + (0.45 * fade).toFixed(3) + ")";
-        ctx.fillRect(x, y, w, h);
-        ctx.strokeStyle = green
-          ? "rgba(150, 255, 200, " + (0.95 * fade).toFixed(3) + ")"
-          : "rgba(255, 100, 100, " + (0.95 * fade).toFixed(3) + ")";
-        ctx.lineWidth = green ? 2 + 3 * fade : 2 + 9 * k;
-        ctx.beginPath();
-        if (w >= h) {
-          const cy = y + h / 2;
-          const grow = green ? 0 : 8 * k;
-          ctx.moveTo(x - grow, cy);
-          ctx.lineTo(x + w + grow, cy);
-        } else {
-          const cx = x + w / 2;
-          const grow = green ? 0 : 8 * k;
-          ctx.moveTo(cx, y - grow);
-          ctx.lineTo(cx, y + h + grow);
-        }
-        ctx.stroke();
+      const g = f.rect;
+      const x = sx(g.x0), y = sy(g.y0);
+      const w = (g.x1 - g.x0) * z, h = (g.y1 - g.y0) * z;
+      const green = f.kind === "in";
+      ctx.fillStyle = green
+        ? "rgba(120, 255, 180, " + (0.55 * fade).toFixed(3) + ")"
+        : "rgba(255, 80, 80, " + (0.45 * fade).toFixed(3) + ")";
+      ctx.fillRect(x, y, w, h);
+      ctx.strokeStyle = green
+        ? "rgba(150, 255, 200, " + (0.95 * fade).toFixed(3) + ")"
+        : "rgba(255, 100, 100, " + (0.95 * fade).toFixed(3) + ")";
+      ctx.lineWidth = green ? 2 + 3 * fade : 2 + 9 * k;
+      const grow = green ? 0 : 8 * k;
+      ctx.beginPath();
+      if (w >= h) {
+        const cy = y + h / 2;
+        ctx.moveTo(x - grow, cy);
+        ctx.lineTo(x + w + grow, cy);
+      } else {
+        const cx = x + w / 2;
+        ctx.moveTo(cx, y - grow);
+        ctx.lineTo(cx, y + h + grow);
       }
+      ctx.stroke();
     }
     // a released snap: red translucent link that spreads and fades away
     const u = this.unsnapPulse;
@@ -1143,7 +1137,7 @@ export class View {
       const fade = 1 - k;
       for (const [ia, ib] of u.pairs) {
         const a = this.docsAt(ia), b = this.docsAt(ib);
-        const g = a && b ? this.gapBetween(a, b) : null;
+        const g = a && b ? snapGapRect({ x: a.x, y: a.y, w: a.doc.w, h: a.doc.h }, { x: b.x, y: b.y, w: b.doc.w, h: b.doc.h }) : null;
         if (!g) continue;
         const x = sx(g.x0), y = sy(g.y0);
         const w = (g.x1 - g.x0) * z, h = (g.y1 - g.y0) * z;
@@ -1171,16 +1165,6 @@ export class View {
   private docsAt(i: number): { x: number; y: number; doc: { w: number; h: number } } | null {
     const e = this.session.docs[i];
     return e ? { x: e.x, y: e.y, doc: e.doc } : null;
-  }
-  /** the snap gap rect between two adjacent canvases (null = not adjacent) */
-  private gapBetween(a: { x: number; y: number; doc: { w: number; h: number } }, b: { x: number; y: number; doc: { w: number; h: number } }): { x0: number; y0: number; x1: number; y1: number } | null {
-    const ax1 = a.x + a.doc.w, ay1 = a.y + a.doc.h;
-    const bx1 = b.x + b.doc.w, by1 = b.y + b.doc.h;
-    if (ax1 + SNAP_GAP === b.x && a.y < by1 && b.y < ay1) return { x0: ax1, y0: Math.max(a.y, b.y), x1: b.x, y1: Math.min(ay1, by1) };
-    if (bx1 + SNAP_GAP === a.x && a.y < by1 && b.y < ay1) return { x0: bx1, y0: Math.max(a.y, b.y), x1: a.x, y1: Math.min(ay1, by1) };
-    if (ay1 + SNAP_GAP === b.y && a.x < bx1 && b.x < ax1) return { x0: Math.max(a.x, b.x), y0: ay1, x1: Math.min(ax1, bx1), y1: b.y };
-    if (by1 + SNAP_GAP === a.y && a.x < bx1 && b.x < ax1) return { x0: Math.max(a.x, b.x), y0: by1, x1: Math.min(ax1, bx1), y1: a.y };
-    return null;
   }
 
   /**

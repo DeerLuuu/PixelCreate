@@ -25,7 +25,7 @@ import { mirrorMaskInPlace } from "../engine/symmetry";
 import { adjustPixel, type HslAdj } from "../engine/adjust";
 import { type LoopMode, nextLoopMode, nextPlayFrame, startPlayDir, startPlayFrame } from "./playback";
 import { SETTINGS_BY_PATH, normalizeSetting, type SettingValue } from "./settings";
-import { snapToTargets, SNAP_GAP, type SnapTarget } from "./canvas-snap";
+import { snapToTargets, snapCandidates, snapGapRect, SNAP_GAP, type GapRect, type SnapTarget } from "./canvas-snap";
 
 export interface Prefs {
   lang: "zh" | "en";
@@ -1998,9 +1998,9 @@ export class Session {
     this.changed();
     this.scheduleAutosave();
   }
-  /** live snap feedback while dragging: `b` = the canvas snapped to (null = none) */
-  setSnapPreview(a: number | null, b: number | null, animate = true): void {
-    this.view_?.setSnapPreview(a, b, animate);
+  /** live snap feedback while dragging: the full set of satisfied zones */
+  setSnapZones(zones: Array<{ a: number; b: number } & GapRect>, animate = true): void {
+    this.view_?.setSnapZones(zones, animate);
   }
   /** true when the canvas position is locked */
   isCanvasLocked(i = this.docIdx): boolean {
@@ -2008,17 +2008,33 @@ export class Session {
   }
   /** proposed position for a drag: magnetically aligned with the other canvases
    *  (canvases already in the same group are ignored) */
-  snapPosition(i: number, x: number, y: number, tol: number): { x: number; y: number; hit: number | null } {
+  snapPosition(i: number, x: number, y: number, tol: number): {
+    x: number;
+    y: number;
+    hit: number | null;
+    /** every satisfied zone (all of them are highlighted while dragging) */
+    zones: Array<{ a: number; b: number } & GapRect>;
+  } {
     const e = this.docs[i];
-    if (!e) return { x, y, hit: null };
+    if (!e) return { x, y, hit: null, zones: [] };
     const targets: Array<SnapTarget<number>> = [];
     for (let k = 0; k < this.docs.length; k++) {
       const o = this.docs[k];
       if (o === e || (e.group && o.group === e.group)) continue;
       targets.push({ id: k, x: o.x, y: o.y, w: o.doc.w, h: o.doc.h });
     }
-    const r = snapToTargets({ x, y, w: e.doc.w, h: e.doc.h }, targets, tol, SNAP_GAP);
-    return { x: r.x, y: r.y, hit: r.hit };
+    const moving = { x, y, w: e.doc.w, h: e.doc.h };
+    const r = snapToTargets(moving, targets, tol, SNAP_GAP);
+    // every target that would snap, with the gap it would leave: all of those
+    // zones are shown at once, not only the one the position ends up using
+    const zones: Array<{ a: number; b: number } & GapRect> = [];
+    for (const c of snapCandidates(moving, targets, tol, SNAP_GAP)) {
+      const o = this.docs[c.id];
+      if (!o) continue;
+      const g = snapGapRect({ x: c.x, y: c.y, w: e.doc.w, h: e.doc.h }, { x: o.x, y: o.y, w: o.doc.w, h: o.doc.h });
+      if (g) zones.push({ a: i, b: c.id, ...g });
+    }
+    return { x: r.x, y: r.y, hit: r.hit, zones };
   }
   /** true when two canvases are neighbours with exactly the snap gap between */
   private canvasesTouch(a: CanvasEntry, b: CanvasEntry): boolean {

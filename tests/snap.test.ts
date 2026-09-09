@@ -1,5 +1,5 @@
 import { eq, ok } from "./common";
-import { snapToTargets, SNAP_GAP, type SnapTarget } from "../src/app/canvas-snap";
+import { snapToTargets, snapCandidates, snapGapRect, SNAP_GAP, type SnapTarget } from "../src/app/canvas-snap";
 
 const target = (id: string, x: number, y: number, w: number, h: number): SnapTarget<string> => ({ id, x, y, w, h });
 
@@ -42,4 +42,31 @@ export function testSnap(): void {
   eq("snap.custom-gap", snapToTargets({ x: 30, y: 0, w: 64, h: 64 }, [t], 12, 0), { x: 36, y: 0, hit: "B" });
 
   ok("snap.returns-new-object", snapToTargets({ x: 0, y: 0, w: 8, h: 8 }, [t], 4) !== null);
+
+  // ---- several satisfied zones are reported at once ----
+  {
+    const a = target("A", 100, 0, 64, 64);
+    const c = target("C", 100, 72, 64, 64); // directly below A (snapped to it)
+    const moving = { x: 36, y: 0, w: 64, h: 64 };
+    const cands = snapCandidates(moving, [a, c], 12);
+    eq("snap.candidates.count", cands.length, 2);
+    eq("snap.candidates.ids", cands.map((x) => x.id).sort(), ["A", "C"]);
+    eq("snap.candidates.same-x", cands[0].x, cands[1].x);
+    // a lone target still reports exactly one candidate
+    eq("snap.candidates.one", snapCandidates(moving, [a], 12).length, 1);
+    // nothing in range -> none
+    eq("snap.candidates.none", snapCandidates({ x: 900, y: 900, w: 64, h: 64 }, [a, c], 12).length, 0);
+  }
+
+  // ---- the gap rect between adjacent canvases ----
+  {
+    const right = snapGapRect({ x: 0, y: 0, w: 64, h: 64 }, { x: 72, y: 10, w: 64, h: 64 });
+    eq("snap.gaprect.right", right, { x0: 64, y0: 10, x1: 72, y1: 64 });
+    const left = snapGapRect({ x: 72, y: 10, w: 64, h: 64 }, { x: 0, y: 0, w: 64, h: 64 });
+    eq("snap.gaprect.left", left, { x0: 64, y0: 10, x1: 72, y1: 64 });
+    const below = snapGapRect({ x: 0, y: 0, w: 64, h: 64 }, { x: 10, y: 72, w: 64, h: 64 });
+    eq("snap.gaprect.below", below, { x0: 10, y0: 64, x1: 64, y1: 72 });
+    eq("snap.gaprect.not-adjacent", snapGapRect({ x: 0, y: 0, w: 64, h: 64 }, { x: 200, y: 0, w: 64, h: 64 }), null);
+    eq("snap.gaprect.overlap", snapGapRect({ x: 0, y: 0, w: 64, h: 64 }, { x: 60, y: 0, w: 64, h: 64 }), null);
+  }
 }

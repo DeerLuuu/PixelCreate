@@ -152,25 +152,36 @@ export function testView(): void {
     ok("view.drag.camera-stays", Math.abs(view.ox - ox2) < 0.001, "ox " + ox2 + " -> " + view.ox);
     ok("view.drag.ox-restored", Math.abs(ox0 - view.ox) < 40, "ox0=" + ox0 + " now=" + view.ox);
 
-    // live snap preview: entering a zone, holding it, then leaving it
-    const sv = view as unknown as { setSnapPreview(a: number | null, b: number | null, animate?: boolean): void; snapLive: unknown; snapFlash: unknown };
-    sv.setSnapPreview(0, bi);
+    // live snap zones: several can be lit at once, each with its own in/out flash
+    const sv = view as unknown as {
+      setSnapZones(z: Array<{ a: number; b: number; x0: number; y0: number; x1: number; y1: number }>, animate?: boolean): void;
+      snapZones: Map<string, unknown>;
+      snapFlashes: Array<{ kind: string }>;
+    };
+    const zone = (a: number, b: number, x0: number, y0: number): { a: number; b: number; x0: number; y0: number; x1: number; y1: number } =>
+      ({ a, b, x0, y0, x1: x0 + 8, y1: y0 + 40 });
+    sv.setSnapZones([zone(0, bi, 100, 0)]);
     dom.flush();
-    ok("view.snapzone.live", !!sv.snapLive);
-    ok("view.snapzone.flash-in", !!sv.snapFlash && (sv.snapFlash as { kind: string }).kind === "in");
-    // the same pair again must NOT restart the flash (single drag, one flash)
-    const flash0 = sv.snapFlash;
-    sv.setSnapPreview(0, bi);
-    ok("view.snapzone.steady", sv.snapFlash === flash0);
-    // leaving the zone: one flash, then the zone is gone
-    sv.setSnapPreview(null, null);
+    ok("view.snapzone.live", sv.snapZones.size === 1);
+    ok("view.snapzone.flash-in", sv.snapFlashes.some((f) => f.kind === "in"));
+    // adding a SECOND zone keeps the first one lit and only flashes the new one
+    const flashes0 = sv.snapFlashes.length;
+    sv.setSnapZones([zone(0, bi, 100, 0), zone(0, 2, 100, 200)]);
     dom.flush();
-    ok("view.snapzone.cleared", !sv.snapLive);
-    ok("view.snapzone.flash-out", !!sv.snapFlash && (sv.snapFlash as { kind: string }).kind === "out");
+    ok("view.snapzone.multiple", sv.snapZones.size === 2);
+    ok("view.snapzone.one-flash-per-new", sv.snapFlashes.length === flashes0 + 1);
+    // the same set again: no new flash at all
+    const flashes1 = sv.snapFlashes.length;
+    sv.setSnapZones([zone(0, bi, 100, 0), zone(0, 2, 100, 200)]);
+    ok("view.snapzone.steady", sv.snapFlashes.length === flashes1);
+    // dropping one zone flashes THAT one out (red) and keeps the other
+    sv.setSnapZones([zone(0, bi, 100, 0)]);
+    dom.flush();
+    ok("view.snapzone.partial-leave", sv.snapZones.size === 1);
+    ok("view.snapzone.flash-out", sv.snapFlashes.some((f) => f.kind === "out"));
     // silent clear (release: the permanent group highlight takes over)
-    sv.setSnapPreview(0, bi);
-    sv.setSnapPreview(null, null, false);
-    ok("view.snapzone.silent-clear", !sv.snapLive);
+    sv.setSnapZones([], false);
+    ok("view.snapzone.silent-clear", sv.snapZones.size === 0);
 
     // the un-snap dissolve animation must run without throwing
     (view as unknown as { pulseUnsnap(p: Array<[number, number]>): void }).pulseUnsnap([[0, bi]]);
