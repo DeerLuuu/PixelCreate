@@ -3,7 +3,7 @@
 import { Doc, Sel } from "../src/engine/doc";
 import { Stroke } from "../src/tools/stroke";
 import type { BrushState, SymMode } from "../src/tools/registry";
-import { clampRect, coversAll, screenRectOf, unionRect, tileRect, TILE_OFFSETS } from "../src/render/rect";
+import { clampRect, coversAll, screenRectOf, unionRect, tileRect, tileOffsets } from "../src/render/rect";
 import { growSelection, selOps, shrinkSelection } from "../src/tools/select";
 import { onionGhosts } from "../src/render/onion";
 import { compositeIsStale } from "../src/render/view";
@@ -59,16 +59,14 @@ export function testRender(): void {
   ok("composite.fresh.partial", !compositeIsStale(true, true, { x: 2, y: 3, w: 4, h: 5 }));
 
   // ------------------------------------------------- tiled preview rects
-  eq("tile.offsets", TILE_OFFSETS.length, 9);
-  // plain repeat: a rect at the right edge maps to the left edge of the right copy
-  eq("tile.repeat.right", tileRect({ x: 14, y: 2, w: 2, h: 3 }, 16, 16, 1, 0, false), { x: 30, y: 2, w: 2, h: 3 });
-  eq("tile.repeat.diag", tileRect({ x: 0, y: 0, w: 1, h: 1 }, 16, 16, -1, -1, false), { x: -16, y: -16, w: 1, h: 1 });
-  // mirror: the same rect lands on the mirrored side of the neighbour
-  eq("tile.mirror.right", tileRect({ x: 14, y: 2, w: 2, h: 3 }, 16, 16, 1, 0, true), { x: 16, y: 2, w: 2, h: 3 });
-  eq("tile.mirror.left", tileRect({ x: 0, y: 2, w: 2, h: 3 }, 16, 16, -1, 0, true), { x: -2, y: 2, w: 2, h: 3 });
-  eq("tile.mirror.diag", tileRect({ x: 1, y: 4, w: 2, h: 2 }, 16, 16, 1, 1, true), { x: 29, y: 26, w: 2, h: 2 });
-  // mirror leaves the untouched axis alone
-  eq("tile.mirror.axis-kept", tileRect({ x: 3, y: 1, w: 2, h: 2 }, 16, 16, 0, -1, true), { x: 3, y: -3, w: 2, h: 2 });
+  eq("tile.offsets.off", tileOffsets("off"), [[0, 0]]);
+  eq("tile.offsets.row", tileOffsets("row"), [[0, 0], [-1, 0], [1, 0]]);
+  eq("tile.offsets.col", tileOffsets("col"), [[0, 0], [0, -1], [0, 1]]);
+  eq("tile.offsets.grid", tileOffsets("grid").length, 9);
+  eq("tile.offsets.grid.centre-first", tileOffsets("grid")[0], [0, 0]);
+  eq("tile.repeat.right", tileRect({ x: 14, y: 2, w: 2, h: 3 }, 16, 16, 1, 0), { x: 30, y: 2, w: 2, h: 3 });
+  eq("tile.repeat.diag", tileRect({ x: 0, y: 0, w: 1, h: 1 }, 16, 16, -1, -1), { x: -16, y: -16, w: 1, h: 1 });
+  eq("tile.repeat.up", tileRect({ x: 3, y: 1, w: 2, h: 2 }, 16, 16, 0, -1), { x: 3, y: -15, w: 2, h: 2 });
 
   // ------------------------------------------------- stroke dirty region
   {

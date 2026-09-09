@@ -114,9 +114,9 @@ export interface Prefs {
   previewBg: "white" | "black" | "checker";
   /** preview box: draw the artwork in greyscale (value/contrast check) */
   previewGray: boolean;
-  /** tiled preview around the canvas: off / plain repeat / mirrored repeat
-   *  (only the centre canvas is editable — for seamless tiles) */
-  tileMode: "off" | "repeat" | "mirror";
+  /** tiled preview around the canvas: off / horizontal row / vertical column /
+   *  3x3 grid (only the centre canvas is editable — for seamless tiles) */
+  tileMode: "off" | "row" | "col" | "grid";
   /** height of the whole timeline panel in px (the drag handle resizes this) */
   tlH: number;
   /** tlH semantics marker: 2 = whole-panel height (1.x older = matrix max) */
@@ -732,7 +732,9 @@ export class Session {
       if (typeof saved.onionWrap === "boolean") p.onionWrap = saved.onionWrap;
       if (saved.previewBg === "black" || saved.previewBg === "checker" || saved.previewBg === "white") p.previewBg = saved.previewBg;
       if (typeof saved.previewGray === "boolean") p.previewGray = saved.previewGray;
-      if (saved.tileMode === "repeat" || saved.tileMode === "mirror") p.tileMode = saved.tileMode;
+      if (saved.tileMode === "row" || saved.tileMode === "col" || saved.tileMode === "grid") p.tileMode = saved.tileMode;
+      // migrate the old modes: plain repeat was a 3x3 grid, mirror is gone
+      else if (saved.tileMode === "repeat" || saved.tileMode === "mirror") p.tileMode = "grid";
       if (typeof saved.autosave === "boolean") p.autosave = saved.autosave;
       if (typeof saved.recordHistory === "boolean") p.recordHistory = saved.recordHistory;
       if (typeof saved.newFrameCopy === "boolean") p.newFrameCopy = saved.newFrameCopy;
@@ -1367,7 +1369,7 @@ export class Session {
   setOnionWrap(on: boolean): void { this.setSetting("onion.wrap", on); }
   setPreviewBg(b: "white" | "black" | "checker"): void { this.setSetting("display.previewBg", b); }
   setPreviewGray(on: boolean): void { this.setSetting("display.previewGray", on); }
-  setTileMode(m: "off" | "repeat" | "mirror"): void { this.setSetting("canvas.tileMode", m); }
+  setTileMode(m: "off" | "row" | "col" | "grid"): void { this.setSetting("canvas.tileMode", m); }
   /** helper grid mode: off | pixel | iso */
   setGridMode(m: "off" | "pixel" | "iso"): void { this.setSetting("canvas.grid", m); }
   /** helper grid cell size / iso spacing (sprite px) */

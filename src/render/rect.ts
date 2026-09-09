@@ -42,20 +42,20 @@ export function coversAll(r: Rect, w: number, h: number): boolean {
   return !!c && c.x === 0 && c.y === 0 && c.w === w && c.h === h;
 }
 
-/** 3x3 tiled-preview offsets (dx, dy) in canvas units, centre first */
-export const TILE_OFFSETS: ReadonlyArray<readonly [number, number]> = [
-  [0, 0], [-1, 0], [1, 0], [0, -1], [0, 1], [-1, -1], [1, -1], [-1, 1], [1, 1],
-];
+/** how the canvas repeats around the editable centre copy */
+export type TileMode = "off" | "row" | "col" | "grid";
 
-/** Map a document rect into the tiled neighbour at offset (dx, dy).
- *  `mirror` flips the copy across the shared edge, so a rect at the right edge
- *  of the canvas maps to the *right* side of the mirrored neighbour. */
-export function tileRect(r: Rect, w: number, h: number, dx: number, dy: number, mirror: boolean): Rect {
-  if (!mirror) return { x: r.x + dx * w, y: r.y + dy * h, w: r.w, h: r.h };
-  return {
-    x: dx === 0 ? r.x : dx * w + (w - r.x - r.w),
-    y: dy === 0 ? r.y : dy * h + (h - r.y - r.h),
-    w: r.w,
-    h: r.h,
-  };
+/** neighbour offsets (dx, dy) in canvas units, centre first */
+export function tileOffsets(mode: TileMode): ReadonlyArray<readonly [number, number]> {
+  if (mode === "row") return [[0, 0], [-1, 0], [1, 0]];
+  if (mode === "col") return [[0, 0], [0, -1], [0, 1]];
+  if (mode === "grid") return [
+    [0, 0], [-1, 0], [1, 0], [0, -1], [0, 1], [-1, -1], [1, -1], [-1, 1], [1, 1],
+  ];
+  return [[0, 0]];
+}
+
+/** Map a document rect into the tiled neighbour at offset (dx, dy). */
+export function tileRect(r: Rect, w: number, h: number, dx: number, dy: number): Rect {
+  return { x: r.x + dx * w, y: r.y + dy * h, w: r.w, h: r.h };
 }

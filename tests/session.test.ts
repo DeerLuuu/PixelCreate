@@ -226,14 +226,24 @@ export function testSession(): void {
   // --- tiled canvas preview (seamless tiles) ---
   {
     eq("tile.default", s.prefs.tileMode, "off");
-    s.setTileMode("mirror");
-    eq("tile.set", s.prefs.tileMode, "mirror");
+    s.setTileMode("grid");
+    eq("tile.set", s.prefs.tileMode, "grid");
     s.savePrefs();
     const raw = JSON.parse((globalThis as unknown as { localStorage: { getItem(k: string): string } }).localStorage.getItem("pc.prefs"));
-    eq("tile.persist", raw.tileMode, "mirror");
+    eq("tile.persist", raw.tileMode, "grid");
     (globalThis as unknown as { localStorage: { setItem(k: string, v: string): void } }).localStorage.setItem(
       "pc.prefs", JSON.stringify({ tileMode: "nonsense" }));
     eq("tile.invalid-ignored", new Session().prefs.tileMode, "off");
+    // the old modes migrate: repeat was a 3x3 grid, mirror no longer exists
+    (globalThis as unknown as { localStorage: { setItem(k: string, v: string): void } }).localStorage.setItem(
+      "pc.prefs", JSON.stringify({ tileMode: "repeat" }));
+    eq("tile.migrate.repeat", new Session().prefs.tileMode, "grid");
+    (globalThis as unknown as { localStorage: { setItem(k: string, v: string): void } }).localStorage.setItem(
+      "pc.prefs", JSON.stringify({ tileMode: "mirror" }));
+    eq("tile.migrate.mirror", new Session().prefs.tileMode, "grid");
+    (globalThis as unknown as { localStorage: { setItem(k: string, v: string): void } }).localStorage.setItem(
+      "pc.prefs", JSON.stringify({ tileMode: "row" }));
+    eq("tile.load.row", new Session().prefs.tileMode, "row");
     s.setTileMode("off");
   }
 

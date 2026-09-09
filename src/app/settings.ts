@@ -178,8 +178,9 @@ const defs: SettingDef[] = [
     label: "tileMode", desc: "tileModeDesc", default: "off", refresh: "repaintAll",
     options: [
       { value: "off", label: "tileOff" },
-      { value: "repeat", label: "tileRepeat" },
-      { value: "mirror", label: "tileMirror" },
+      { value: "row", label: "tileRow" },
+      { value: "col", label: "tileCol" },
+      { value: "grid", label: "tileGrid" },
     ],
   },
   {

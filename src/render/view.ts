@@ -1,7 +1,7 @@
 // Interactive viewport: composite drawing, pan/zoom gestures, tool strokes.
 import type { Doc } from "../engine/doc";
 import type { Rect } from "../engine/types";
-import { clampRect, screenRectOf, unionRect, TILE_OFFSETS, tileRect } from "./rect";
+import { clampRect, screenRectOf, unionRect, tileOffsets, tileRect, type TileMode } from "./rect";
 import { Sel } from "../engine/doc";
 import * as comp from "./compositor";
 import { Stroke } from "../tools/stroke";
@@ -341,8 +341,8 @@ export class View {
       this.drawOverlay(false);
       return;
     }
-    const tile = s.prefs.tileMode !== "off";
-    const mirror = s.prefs.tileMode === "mirror";
+    const tileMode = s.prefs.tileMode as TileMode;
+    const tile = tileMode !== "off";
     let region: Rect | null = null;
     if (need) {
       const full = this.buildComposite(force);
@@ -351,9 +351,9 @@ export class View {
         if (tile) {
           // the same pixels show up in the 8 neighbour copies: their screen
           // rects have to be repainted as well
-          for (const [dx, dy] of TILE_OFFSETS) {
+          for (const [dx, dy] of tileOffsets(tileMode)) {
             if (dx === 0 && dy === 0) continue;
-            u = unionRect(u, screenRectOf(tileRect(this.compRect, doc.w, doc.h, dx, dy, mirror), this.ox, this.oy, this.zoom))!;
+            u = unionRect(u, screenRectOf(tileRect(this.compRect, doc.w, doc.h, dx, dy), this.ox, this.oy, this.zoom))!;
           }
         }
         region = clampRect(u, vw, vh);
@@ -411,15 +411,11 @@ export class View {
         ctx.drawImage(this.composite, tx, ty, wpx, hpx);
         return;
       }
-      // neighbour copy: mirror it across the shared edge when in mirror mode
-      ctx.save();
-      ctx.translate(dx !== 0 && mirror ? tx + wpx : tx, dy !== 0 && mirror ? ty + hpx : ty);
-      if (mirror) ctx.scale(dx !== 0 ? -1 : 1, dy !== 0 ? -1 : 1);
-      ctx.drawImage(this.composite, 0, 0, wpx, hpx);
-      ctx.restore();
+      // neighbour copy: a plain translation (no mirroring)
+      ctx.drawImage(this.composite, tx, ty, wpx, hpx);
     };
     if (tile) {
-      for (const [dx, dy] of TILE_OFFSETS) drawTile(dx, dy);
+      for (const [dx, dy] of tileOffsets(tileMode)) drawTile(dx, dy);
       // mark the editable tile so it is obvious which copy you paint on
       ctx.save();
       ctx.lineWidth = 1;
