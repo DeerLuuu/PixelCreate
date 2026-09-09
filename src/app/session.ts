@@ -150,6 +150,8 @@ export interface Prefs {
   fillTolerance: number;
   /** bucket: seal gaps up to N px in the region boundary before filling */
   fillGaps: number;
+  /** indexed-colour mode: painting only ever uses palette colours */
+  indexed: boolean;
   /** paint bucket gradient mode: ramp the filled region FG -> BG */
   bucketGrad: boolean;
   /** gradient quantisation: "rgb" = per-pixel ramp, "2"/"4"/"8" = block size */
@@ -1200,7 +1202,7 @@ export class Session {
       immersive: true, safeArea: true, safeExtra: 0,
       histMode: "steps", histSteps: 120, shadowNewLayer: false, autoPan: true,
       snapOn: true, snapRange: 14, snapGap: 8, snapInColor: "#78ffb4", snapOutColor: "#ff6464",
-      bucketGlobal: false, fillSimilar: false, fillTolerance: 32, fillGaps: 0,
+      bucketGlobal: false, fillSimilar: false, fillTolerance: 32, fillGaps: 0, indexed: false,
       loopMode: "loop", recentColorsMax: 16, selectionTolerance: 8,
       bucketGrad: false, bucketGradMode: "rgb",
       airbrushMin: 1, airbrushMax: 3, airbrushRate: 20,
@@ -1260,6 +1262,7 @@ export class Session {
       if (typeof saved.fillSimilar === "boolean") p.fillSimilar = saved.fillSimilar;
       if (typeof saved.fillTolerance === "number") p.fillTolerance = Math.max(0, Math.min(255, Math.round(saved.fillTolerance)));
       if (typeof saved.fillGaps === "number") p.fillGaps = Math.max(0, Math.min(16, Math.round(saved.fillGaps)));
+      if (typeof saved.indexed === "boolean") p.indexed = saved.indexed;
       if (typeof saved.snapRange === "number") p.snapRange = Math.max(4, Math.min(48, Math.round(saved.snapRange)));
       if (typeof saved.snapGap === "number") p.snapGap = Math.max(0, Math.min(48, Math.round(saved.snapGap)));
       if (typeof saved.snapInColor === "string" && /^#[0-9a-fA-F]{6}$/.test(saved.snapInColor)) p.snapInColor = saved.snapInColor.toLowerCase();
@@ -1506,17 +1509,84 @@ export class Session {
   setFillSimilar(on: boolean): void {
     this.prefs.fillSimilar = on;
     this.savePrefs();
-    this.changed();
+    this.changedUI();
   }
   setFillTolerance(n: number): void {
     this.prefs.fillTolerance = Math.max(0, Math.min(255, Math.round(n)));
     this.savePrefs();
-    this.changed();
+    this.changedUI();
   }
   setFillGaps(n: number): void {
     this.prefs.fillGaps = Math.max(0, Math.min(16, Math.round(n)));
     this.savePrefs();
-    this.changed();
+    this.changedUI();
+  }
+  /** indexed-colour mode: every painted pixel snaps to a palette colour */
+  setIndexed(on: boolean): void {
+    this.prefs.indexed = on;
+    this.savePrefs();
+    this.changedUI();
+  }
+  /** nearest palette colour (RGB distance); the alpha of `c` is kept. An empty
+   *  palette (or indexed mode off) leaves the colour untouched. */
+  paletteSnap(c: RGBA): RGBA {
+    const pal = this.doc.palette;
+    if (!this.prefs.indexed || !pal.length) return c;
+    let best = pal[0];
+    let bd = Infinity;
+    for (const p of pal) {
+      const dr = p[0] - c[0], dg = p[1] - c[1], db = p[2] - c[2];
+      const d = dr * dr + dg * dg + db * db;
+      if (d < bd) { bd = d; best = p; }
+    }
+    return [best[0], best[1], best[2], c[3]];
+  }
+  /** rewrite every pixel of the focused canvas (or one layer) to its nearest
+   *  palette colour — the one-time conversion into indexed mode */
+  remapToPalette(scope: "layer" | "canvas" = "canvas"): number {
+    const doc = this.doc;
+    const pal = doc.palette;
+    if (!pal.length) {
+      toastFn(this.prefs.lang === "en" ? "The palette is empty" : "调色板是空的");
+      return 0;
+    }
+    const nearest = (r: number, g: number, b: number): RGBA => {
+      let best = pal[0], bd = Infinity;
+      for (const p of pal) {
+        const dr = p[0] - r, dg = p[1] - g, db = p[2] - b;
+        const d = dr * dr + dg * dg + db * db;
+        if (d < bd) { bd = d; best = p; }
+      }
+      return best;
+    };
+    const cache = new Map<number, RGBA>();
+    const lis = scope === "layer" ? [this.curLayer()] : doc.layers.map((_, i) => i);
+    let touched = 0;
+    this.struct("palette-index", () => {
+      const d = this.doc;
+      for (const li of lis) {
+        for (let fi = 0; fi < d.frames.length; fi++) {
+          const cel = d.celAt(li, fi);
+          if (!cel) continue;
+          let any = false;
+          const data = cel.data;
+          for (let i = 0; i < data.length; i += 4) {
+            if (!data[i + 3]) continue;
+            const key = (data[i] << 16) | (data[i + 1] << 8) | data[i + 2];
+            let c = cache.get(key);
+            if (!c) { c = nearest(data[i], data[i + 1], data[i + 2]); cache.set(key, c); }
+            if (c[0] === data[i] && c[1] === data[i + 1] && c[2] === data[i + 2]) continue;
+            data[i] = c[0]; data[i + 1] = c[1]; data[i + 2] = c[2];
+            any = true;
+          }
+          if (any) touched++;
+        }
+      }
+    });
+    toastFn(this.prefs.lang === "en"
+      ? (touched ? "Mapped " + touched + " cel(s) to the palette" : "Already palette colours")
+      : (touched ? "已把 " + touched + " 个图层帧映射到调色板" : "画面已经全部是调色板颜色"));
+    return touched;
   }
   /** airbrush speck range / rate (the min<=max clamp lives in settings.ts) */
   setAirbrushMin(n: number): void { this.setSetting("tools.airbrushMin", n); }

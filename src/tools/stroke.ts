@@ -55,6 +55,9 @@ export class Stroke {
    *  (seamless tiles). Set by the view from prefs.tileMode. */
   wrapX = false;
   wrapY = false;
+  /** indexed mode: snap the paint colour (and a gradient's end colour) to the
+   *  nearest palette entry. The view sets these from Session.paletteSnap. */
+  snapColor: ((c: RGBA) => RGBA) | null = null;
   /** bucket gradient: end colour (null = plain flat fill) and tile size in px */
   gradEnd: RGBA | null = null;
   gradBlock = 1;
@@ -197,6 +200,15 @@ export class Stroke {
   startAt(x: number, y: number): void {
     this.start = [x, y];
     this.last = [x, y];
+    // indexed mode: the paint colour follows the palette (alpha untouched)
+    if (this.snapColor) {
+      const s = this.snapColor(this.color);
+      this.color = [s[0], s[1], s[2], s[3]];
+      if (this.gradEnd) {
+        const g = this.snapColor(this.gradEnd);
+        this.gradEnd = [g[0], g[1], g[2], g[3]];
+      }
+    }
     switch (this.kind) {
       case "pencil":
         if (this.pixelPerfect) this.ppStart(x, y, this.size, this.color[3] === 0);

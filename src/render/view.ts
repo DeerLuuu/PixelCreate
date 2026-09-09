@@ -1708,6 +1708,8 @@ export class View {
       // the bucket's colour tolerance / gap closing (similar-colour mode)
       this.stroke.fillTolerance = s.prefs.fillSimilar ? s.prefs.fillTolerance : 0;
       this.stroke.fillGaps = s.prefs.fillGaps;
+      // indexed colour mode: paint colours snap to the palette
+      this.stroke.snapColor = (c) => s.paletteSnap(c);
       // tiled preview: strokes wrap around the edges (seamless tiles)
       const tm = s.prefs.tileMode;
       this.stroke.wrapX = tm === "row" || tm === "grid";
@@ -2449,7 +2451,7 @@ export class View {
     // shape the user left open is closed automatically here
     const ax: SymAxis = { on: s.sym !== "off", four: s.symFour, ox: s.symOx, oy: s.symOy, angDeg: s.symAng };
     const mask = doc.selectionActive() ? (x: number, y: number) => doc.selAt(x, y) === 1 : null;
-    const color = s.color;
+    const color = s.paletteSnap(s.color); // indexed mode: palette colour
     const tm = s.prefs.tileMode;
     const wrap = { x: tm === "row" || tm === "grid", y: tm === "col" || tm === "grid" };
     fillPolygon(cel, doc.w, doc.h, o.pts, color, mask, ax, wrap);

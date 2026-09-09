@@ -101,6 +101,15 @@ export function PalettePanel({ t, onClose }: { t: ReturnType<typeof makeT>; onCl
             bridge.toast(name ? t("palPresetSaved") + name : t("palDedupeNone"));
           }} />
         </div>
+        <div className="row-actions">
+          <Btn icon="i-palette" label={t("indexedMode")} active={SESSION.prefs.indexed}
+            title={t(SESSION.prefs.indexed ? "indexedOn" : "indexedOff")}
+            onClick={() => SESSION.setIndexed(!SESSION.prefs.indexed)} guide="pal-indexed" />
+          {SESSION.prefs.indexed && (
+            <Btn icon="i-dedupe" label={t("indexedRemap")} title={t("indexedRemapHint")}
+              onClick={() => SESSION.remapToPalette("canvas")} guide="pal-remap" />
+          )}
+        </div>
         <div data-guide="pal-ops">
           <TabBar<"palette" | "doc" | "recent">
             items={[

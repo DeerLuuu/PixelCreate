@@ -1269,6 +1269,42 @@ export async function testSession(): Promise<void> {
     eq("canvas.empty.add-again", [m.docs.length, m.docIdx, back], [1, 0, 0]);
     eq("canvas.empty.origin", [m.docs[0].x, m.docs[0].y], [0, 0]);
   }
+  // --- indexed colour mode: painting snaps to the palette ---
+  {
+    (globalThis as unknown as { localStorage: { clear(): void } }).localStorage.clear();
+    const s = new Session();
+    s.doc.palette = [[255, 0, 0, 255], [0, 0, 255, 255], [0, 255, 0, 255]];
+    s.setIndexed(false);
+    eq("indexed.off-keeps", s.paletteSnap([250, 10, 10, 128]), [250, 10, 10, 128]);
+    s.setIndexed(true);
+    eq("indexed.snap-red", s.paletteSnap([250, 10, 10, 128]), [255, 0, 0, 128]);
+    eq("indexed.snap-blue", s.paletteSnap([10, 10, 240, 255]), [0, 0, 255, 255]);
+    // an empty palette leaves colours alone
+    s.doc.palette = [];
+    eq("indexed.empty-palette", s.paletteSnap([250, 10, 10, 128]), [250, 10, 10, 128]);
+    // remap the pixels already on the canvas (one history step)
+    s.doc.palette = [[255, 0, 0, 255], [0, 0, 255, 255]];
+    const cel0 = s.doc.ensureCel(0, 0);
+    cel0.data[0] = 200; cel0.data[1] = 20; cel0.data[2] = 30; cel0.data[3] = 255;
+    cel0.data[4] = 20; cel0.data[5] = 30; cel0.data[6] = 200; cel0.data[7] = 255;
+    const raw = cel0.data.join();
+    eq("indexed.remap-count", s.remapToPalette("canvas"), 1);
+    const cel1 = s.doc.celAt(0, 0)!;
+    eq("indexed.remap-px", [cel1.data[0], cel1.data[1], cel1.data[2], cel1.data[4], cel1.data[5], cel1.data[6]], [255, 0, 0, 0, 0, 255]);
+    ok("indexed.remap-undo", !!s.history.undo());
+    eq("indexed.remap-undo-px", s.doc.celAt(0, 0)!.data.join(), raw);
+    ok("indexed.remap-redo", !!s.history.redo());
+    // a stroke with the snap hook paints a palette colour
+    s.setIndexed(true);
+    const st = new Stroke(s.doc, 0, 0, "pencil", { color: [250, 10, 10, 255], size: 1, alpha: 255, pressure: 1 }, false, "off");
+    st.snapColor = (c) => s.paletteSnap(c);
+    st.startAt(2, 2);
+    st.commit(s.history, "tools.pencil");
+    const cel2 = s.doc.celAt(0, 0)!;
+    const k = cel2.idx(2, 2);
+    eq("indexed.stroke-snaps", [cel2.data[k], cel2.data[k + 1], cel2.data[k + 2], cel2.data[k + 3]], [255, 0, 0, 255]);
+  }
+
   // --- UI state changes must not invalidate pixel caches (rev vs pixelRev) ---
   {
     (globalThis as unknown as { localStorage: { clear(): void } }).localStorage.clear();
