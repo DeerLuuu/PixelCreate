@@ -125,13 +125,18 @@ eraseAt(cel, x, y, mask?): boolean;                   // 擦一点
 
 lineCells(x0, y0, x1, y1, fn): void;                  // Bresenham，逐点回调
 polygonCells(w, h, pts, fn): void;                    // 闭合多边形扫描线填充（even-odd，自动闭合）
-fillPolygon(cel, w, h, pts, color, mask?, ax?): Rect | null
+fillPolygon(cel, w, h, pts, color, mask?, ax?, wrap?): Rect | null
                                                       // 扫描线 + 对称镜像 + 选区遮罩，返回改动 bbox（null = 没画到）
 
-floodFill(cel, sx, sy, color, mask?): void;           // 连续区域填充
-floodErase(cel, sx, sy, mask?): void;
-globalFill(cel, sx, sy, color, mask?): void;          // 整层同色替换
-globalErase(cel, sx, sy, mask?): void;
+interface FillOpts { tolerance?: number; gaps?: number; wrapX?: boolean; wrapY?: boolean }
+                                                     // 逐通道容差 / 缝隙闭合 / 平铺环绕
+buildBarrier(cel, sx, sy, opts?, mask?): Uint8Array | null   // 填充不能跨越的屏障（含闭运算封缝）
+floodCells(cel, sx, sy, barrier, wrapX?, wrapY?): [number,number][]  // 4 连通区域
+floodFill(cel, sx, sy, color, mask?, opts?): void;    // 连续区域填充（支持容差/缝隙/环绕）
+floodErase(cel, sx, sy, mask?, opts?): void;
+globalFill(cel, sx, sy, color, mask?, opts?): void;   // 整层同色替换
+globalErase(cel, sx, sy, mask?, opts?): void;
+splinePoints(pts, samples?): [number,number][]        // Catmull-Rom 采样（曲线工具）
 
 interface BrushStamp { size: number; cells: [number,number][]; outline: [number,number][] }
 brushStamp(size: number, shape?: BrushShape): BrushStamp;  // 圆笔尖/方笔尖（带缓存）
@@ -318,8 +323,15 @@ class Stroke {
               brushShape: BrushShape = "circle", shapeFromCenter = false);
   // 图层锁定时构造抛错 "layer-locked"
 
+  // 可选开关（由 View 从 prefs 设置）
+  pixelPerfect = false;                      // 去掉 L 形拐角像素（Aseprite 规则）
+  fillTolerance = 0; fillGaps = 0;           // 油漆桶：逐通道容差 / 缝隙闭合
+  wrapX = false; wrapY = false;              // 平铺模式：笔迹跨边界环绕补画
+  snapColor: ((c: RGBA) => RGBA) | null;     // 索引色：落笔颜色吸附调色板
+
   startAt(x, y): void;                       // 落笔
   moveTo(x, y, pressure: number): void;      // 移动（形状工具会从头重绘）
+  drawPath(pts, smooth): void;               // 折线/曲线：从落笔快照重画整条路径
   takeDirty(): Rect | null;                  // 自上次调用以来改动的区域（增量渲染用）
   commit(history, label): boolean;           // 写入撤销栈，返回是否有实际改动
   cancel(): void;                            // 回滚到落笔前
@@ -633,14 +645,18 @@ onionGhosts(fi, frameCount, before, after, wrap): OnionGhost[]   // 由远及近
 
 ```ts
 class View {
-  zoom: number; ox: number; oy: number;         // 视图变换（文档像素 → 屏幕）
+  zoom: number; ox: number; oy: number;         // 视图变换（文档像素 → 屏幕，逻辑坐标）
+  rot: 0 | 90 | 180 | 270;                      // 视图旋转（内容不变）
 
   constructor(host: HTMLElement, session: Session);
   resize(): void; destroy(): void;
   setDoc(doc): void; setFrame(fi): void;
   fit(): void;
   zoomAt(z, cx?, cy?): void;
-  screenToPixel(sx, sy): { x; y };
+  screenToPixel(sx, sy): { x; y };              // 逻辑坐标 → 像素
+  setRotation(deg): void;                       // 旋转视图（0/90/180/270 循环）
+  toLogical(x, y) / toSurface(x, y)             // 真实画布坐标 ↔ 逻辑坐标（DOM 覆盖层用）
+  surfaceDelta(dx, dy): { x; y }                // 屏幕位移 → 空间位移（旋转后拖拽方向仍正确）
 
   markDirty(rect?: Rect | null): void;   // 标记脏区（无参 = 全帧 + 全量重绘）
   invalidate(rect?: Rect | null): void;  // 标记 + rAF 合并重绘（Session.repaint 用）
@@ -844,6 +860,10 @@ referenceCanvas(i, {mode}?): boolean  // 引用第 i 张画布（拒绝自引用
                                        // mode="flat" 只引用整张合成画面（编辑落在源画布当前图层）
 isRefLayer(li): boolean                // 该图层是否为引用层
 strokeTarget(li)                       // 引用层的笔迹落点 {doc, li, fi}（按 refLayer 精确命中）；普通图层返回 null
+changedUI()                            // 只推进 UI 版本（rev）；像素没变时用它，别用 changed()
+rotateView(step?) / viewRotation       // 视图旋转（0/90/180/270，内容不变）
+setIndexed(on) / paletteSnap(c)        // 索引色模式：就近取调色板颜色（保留 alpha）
+remapToPalette(scope?)                 // 把已有像素映射到调色板（一条历史）
 refSourceLayerOf(li)                   // 引用层镜像的源图层 {name, li}（整张引用时返回 null）
 refPaintBlock(li)                      // 为什么画不上：源图层已锁定 "locked" / 已不存在 "gone" / 可画 null
 unrefLayer(li?)                        // 解除引用：把画面烘焙进图层（居中、1:1）后断链
@@ -877,7 +897,8 @@ askConfirm(q) / askText(q)            // UI 注册的确认框 / 单行输入框
 
 ```ts
 interface SpaceEntry { id?: string; doc: Doc; x: number; y: number; li: number; fi: number; hist?: unknown }
-serializeSpace(entries, focus): Promise<string>  // v3：整个工程（每张画布含 id/位置/帧/历史）
+serializeSpace(entries, focus, history?, fmt?): Promise<string>  // v3 整个工程；fmt="png"|"rle"（自动保存用 rle）
+rleEncodeCel(data) / rleDecodeCel(str, w, h)         // 纯 JSON 像素载荷（自动保存不存图片）
 parseSpace(text): Promise<ParsedSpace | null>    // v2 单文档 / v3 多画布都能读
 ```
 

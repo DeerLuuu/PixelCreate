@@ -221,6 +221,12 @@ export class Stroke {
       case "airbrush":
         this.sprayBurst(1); // one speck right away, so a tap leaves a mark
         break;
+      case "polyline":
+      case "curve":
+        // multi-point tools: the view owns the point list and calls drawPath()
+        this.resetToBefore();
+        this.stampBrush(x, y);
+        break;
       case "bucket":
         // gradient mode: the region is fixed by the seed, the drag only changes
         // the direction/length of the ramp (Aseprite-style), so it repaints
@@ -273,12 +279,6 @@ export class Stroke {
         // shapes redraw from pristine start
         this.resetToBefore();
         this.redrawShape(x, y);
-        break;
-      case "polyline":
-      case "curve":
-        // multi-point tools: the view owns the point list and calls drawPath()
-        this.resetToBefore();
-        this.stampBrush(x, y);
         break;
       case "airbrush":
         // the spray is time-driven (see View's interval): moving only retargets it
