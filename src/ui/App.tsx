@@ -832,17 +832,20 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
     SHAPE_TOOLS.find((x) => x.id === id) ||
     SELECT_TOOLS.find((x) => x.id === id);
 
-  // selection appeared -> spawn the selection action ball near the top-left corner
+  // the selection ball is available while a selection tool is active OR while
+  // something is actually selected (a select tool with nothing selected still
+  // offers select-all / paste), and it spawns near the top-left corner
+  const wantSel = snap.selActive || isSelectTool(snap.tool);
   useEffect(() => {
-    if (snap.selActive && !prevSelA.current) {
+    if (wantSel && !prevSelA.current) {
       setSel({ ...separate(clampXY({ x: 12, y: 96 }), pos), open: false });
       setOpen(false);
       setSub(null);
-    } else if (!snap.selActive) {
+    } else if (!wantSel) {
       setSel(null);
     }
-    prevSelA.current = snap.selActive;
-  }, [snap.selActive]);
+    prevSelA.current = wantSel;
+  }, [wantSel]);
 
   const pickTool = (family: "core" | "shape" | "select", id: string) => {
     SESSION.setTool(id as never);
