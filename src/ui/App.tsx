@@ -1610,6 +1610,14 @@ function ControlBar({ t, snap, onPanel, onAdjust, onFramePrev }: { t: ReturnType
               onClick={() => { const m = SESSION.cycleBucketGradMode(); bridge.toast(t("bucketGradModeLabel") + " · " + gradLabel(m)); }} />
           )}
           <Btn label={SESSION.prefs.bucketGlobal ? "∞" : "◎"} active={SESSION.prefs.bucketGlobal} onClick={() => SESSION.setBucketGlobal(!SESSION.prefs.bucketGlobal)} title={SESSION.prefs.bucketGlobal ? t("bucketGlobalOn") : t("bucketGlobalOff")} />
+          <Btn label="≈" active={SESSION.prefs.fillSimilar} onClick={() => SESSION.setFillSimilar(!SESSION.prefs.fillSimilar)}
+            title={t(SESSION.prefs.fillSimilar ? "fillSimilarOn" : "fillSimilarOff")} guide="btn-fill-similar" />
+          {SESSION.prefs.fillSimilar && (
+            <HoldAdjust dir={dir} value={SESSION.prefs.fillTolerance} min={0} max={255} title={t("fillToleranceLabel")}
+              hint={t("fillToleranceDesc")} format={(v) => "≈" + v} reset={32} onChange={(v) => SESSION.setFillTolerance(v)} />
+          )}
+          <HoldAdjust dir={dir} value={SESSION.prefs.fillGaps} min={0} max={16} title={t("fillGapsLabel")}
+            hint={t("fillGapsDesc")} format={(v) => "▫" + v} reset={0} onChange={(v) => SESSION.setFillGaps(v)} />
         </>)}
         {snap.tool === "airbrush" && (<>
           <HoldAdjust dir={dir} value={SESSION.prefs.airbrushMin} min={1} max={16} title={t("airbrushMinLabel")} hint={t("airbrushMinDesc")} format={(v) => "·" + v} reset={1} onChange={(v) => SESSION.setAirbrushMin(v)} />

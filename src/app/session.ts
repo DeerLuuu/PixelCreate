@@ -143,6 +143,11 @@ export interface Prefs {
   /** paint bucket: fill every matching pixel in the layer (true) or only the
    *  connected region (false) */
   bucketGlobal: boolean;
+  /** bucket: match colours within a per-channel tolerance ("similar colour") */
+  fillSimilar: boolean;
+  fillTolerance: number;
+  /** bucket: seal gaps up to N px in the region boundary before filling */
+  fillGaps: number;
   /** paint bucket gradient mode: ramp the filled region FG -> BG */
   bucketGrad: boolean;
   /** gradient quantisation: "rgb" = per-pixel ramp, "2"/"4"/"8" = block size */
@@ -1168,7 +1173,8 @@ export class Session {
       immersive: true, safeArea: true, safeExtra: 0,
       histMode: "steps", histSteps: 120, shadowNewLayer: false, autoPan: true,
       snapOn: true, snapRange: 14, snapGap: 8, snapInColor: "#78ffb4", snapOutColor: "#ff6464",
-      bucketGlobal: false, loopMode: "loop", recentColorsMax: 16, selectionTolerance: 8,
+      bucketGlobal: false, fillSimilar: false, fillTolerance: 32, fillGaps: 0,
+      loopMode: "loop", recentColorsMax: 16, selectionTolerance: 8,
       bucketGrad: false, bucketGradMode: "rgb",
       airbrushMin: 1, airbrushMax: 3, airbrushRate: 20,
       brushSize: 1, brushAlpha: 255, fgColor: "#141414", bgColor: "#ffffff",
@@ -1223,6 +1229,9 @@ export class Session {
       if (typeof saved.shadowNewLayer === "boolean") p.shadowNewLayer = saved.shadowNewLayer;
       if (typeof saved.autoPan === "boolean") p.autoPan = saved.autoPan;
       if (typeof saved.snapOn === "boolean") p.snapOn = saved.snapOn;
+      if (typeof saved.fillSimilar === "boolean") p.fillSimilar = saved.fillSimilar;
+      if (typeof saved.fillTolerance === "number") p.fillTolerance = Math.max(0, Math.min(255, Math.round(saved.fillTolerance)));
+      if (typeof saved.fillGaps === "number") p.fillGaps = Math.max(0, Math.min(16, Math.round(saved.fillGaps)));
       if (typeof saved.snapRange === "number") p.snapRange = Math.max(4, Math.min(48, Math.round(saved.snapRange)));
       if (typeof saved.snapGap === "number") p.snapGap = Math.max(0, Math.min(48, Math.round(saved.snapGap)));
       if (typeof saved.snapInColor === "string" && /^#[0-9a-fA-F]{6}$/.test(saved.snapInColor)) p.snapInColor = saved.snapInColor.toLowerCase();
@@ -1463,6 +1472,23 @@ export class Session {
     const next = order[(order.indexOf(this.prefs.bucketGradMode) + 1) % order.length];
     this.setBucketGradMode(next);
     return next;
+  }
+
+  /** bucket "similar colour" master switch + tolerance + gap closing */
+  setFillSimilar(on: boolean): void {
+    this.prefs.fillSimilar = on;
+    this.savePrefs();
+    this.changed();
+  }
+  setFillTolerance(n: number): void {
+    this.prefs.fillTolerance = Math.max(0, Math.min(255, Math.round(n)));
+    this.savePrefs();
+    this.changed();
+  }
+  setFillGaps(n: number): void {
+    this.prefs.fillGaps = Math.max(0, Math.min(16, Math.round(n)));
+    this.savePrefs();
+    this.changed();
   }
   /** airbrush speck range / rate (the min<=max clamp lives in settings.ts) */
   setAirbrushMin(n: number): void { this.setSetting("tools.airbrushMin", n); }

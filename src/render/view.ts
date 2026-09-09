@@ -1651,6 +1651,9 @@ export class View {
         tool as never, s.brush(), s.layerLocked(), s.sym, s.shapeSides, s.shapeFill,
         s.symOx, s.symOy, s.symAng, s.symFour, s.prefs.bucketGlobal, s.brushShape, s.shapeFromCenter);
       this.stroke.pixelPerfect = s.pixelPerfect;
+      // the bucket's colour tolerance / gap closing (similar-colour mode)
+      this.stroke.fillTolerance = s.prefs.fillSimilar ? s.prefs.fillTolerance : 0;
+      this.stroke.fillGaps = s.prefs.fillGaps;
     } catch {
       // the layer is locked (or a reference whose source layer is locked/gone)
       this.stroke = null;

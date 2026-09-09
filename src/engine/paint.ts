@@ -105,96 +105,143 @@ export function lineCells(x0: number, y0: number, x1: number, y1: number, fn: (x
   }
 }
 
-/** Erase-flood: clear the connected region matching the seed color. */
-export function floodErase(cel: Cel, sx: number, sy: number, mask?: MaskFn | null): void {
-  const w = cel.w, h = cel.h, d = cel.data;
-  if (!cel.inBounds(sx, sy)) return;
-  const bi = cel.idx(sx, sy);
-  const baseR = d[bi], baseG = d[bi + 1], baseB = d[bi + 2], baseA = d[bi + 3];
-  if (baseA === 0) return;
-  const match = (x: number, y: number): boolean => {
-    const i = cel.idx(x, y);
-    return d[i] === baseR && d[i + 1] === baseG && d[i + 2] === baseB && d[i + 3] === baseA;
-  };
-  const visited = new Uint8Array(w * h);
-  const stack: [number, number][] = [[sx, sy]];
-  while (stack.length) {
-    const [x, y] = stack.pop()!;
-    if (!cel.inBounds(x, y)) continue;
-    const vi = y * w + x;
-    if (visited[vi]) continue;
-    visited[vi] = 1;
-    if (!match(x, y)) continue;
-    if (mask && !mask(x, y)) continue;
-    const i = vi * 4;
-    d[i] = 0; d[i + 1] = 0; d[i + 2] = 0; d[i + 3] = 0;
-    stack.push([x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]);
-  }
+/** Bucket fill options: per-channel tolerance and gap closing (see
+ *  buildBarrier). Both default to 0 = the classic exact-match, no-gap fill. */
+export interface FillOpts {
+  /** per-channel tolerance 0..255 (Aseprite compares every channel with <=) */
+  tolerance?: number;
+  /** close boundary gaps up to this many px before filling (0 = off) */
+  gaps?: number;
 }
 
-/** Flood fill with tolerance=0, optional selection mask. */
-export function floodFill(cel: Cel, sx: number, sy: number, color: RGBA, mask?: MaskFn | null): void {
-  const w = cel.w, h = cel.h, d = cel.data;
-  if (!cel.inBounds(sx, sy)) return;
-  const bi = cel.idx(sx, sy);
-  const baseR = d[bi], baseG = d[bi + 1], baseB = d[bi + 2], baseA = d[bi + 3];
-  const match = (x: number, y: number): boolean => {
-    const i = cel.idx(x, y);
-    return d[i] === baseR && d[i + 1] === baseG && d[i + 2] === baseB && d[i + 3] === baseA;
-  };
-  if (!match(sx, sy)) return;
-  const visited = new Uint8Array(w * h);
-  const stack: [number, number][] = [[sx, sy]];
-  while (stack.length) {
-    const [x, y] = stack.pop()!;
-    if (!cel.inBounds(x, y)) continue;
-    const vi = y * w + x;
-    if (visited[vi]) continue;
-    visited[vi] = 1;
-    if (!match(x, y)) continue;
-    if (mask && !mask(x, y)) continue;
-    paintAt(cel, x, y, color, null);
-    stack.push([x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]);
-  }
+/** true when the pixel at `i` is within `tol` of `base` on every channel */
+function nearPixel(d: Uint8ClampedArray, i: number, base: number[], tol: number): boolean {
+  return Math.abs(d[i] - base[0]) <= tol && Math.abs(d[i + 1] - base[1]) <= tol &&
+    Math.abs(d[i + 2] - base[2]) <= tol && Math.abs(d[i + 3] - base[3]) <= tol;
 }
 
-/** Collect the cells a bucket fill would cover: the connected same-colour
- *  region (global = false) or every matching cell in the layer (global = true),
- *  honouring an optional selection mask. Pure: nothing is painted. */
-export function floodRegion(cel: Cel, sx: number, sy: number, global: boolean, mask?: MaskFn | null): Array<[number, number]> {
-  const w = cel.w, h = cel.h, d = cel.data;
-  const out: Array<[number, number]> = [];
-  if (!cel.inBounds(sx, sy)) return out;
-  const bi = cel.idx(sx, sy);
-  const b0 = d[bi], b1 = d[bi + 1], b2 = d[bi + 2], b3 = d[bi + 3];
-  const match = (x: number, y: number): boolean => {
-    const i = cel.idx(x, y);
-    return d[i] === b0 && d[i + 1] === b1 && d[i + 2] === b2 && d[i + 3] === b3;
-  };
-  if (global) {
-    for (let y = 0; y < h; y++) {
-      for (let x = 0; x < w; x++) {
-        if (!match(x, y)) continue;
-        if (mask && !mask(x, y)) continue;
-        out.push([x, y]);
+/** 3x3 (8-neighbour) dilation; out-of-bounds counts as empty */
+function dilate8(src: Uint8Array, w: number, h: number, out: Uint8Array): void {
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      let v = 0;
+      for (let dy = -1; dy <= 1 && !v; dy++) {
+        const yy = y + dy;
+        if (yy < 0 || yy >= h) continue;
+        for (let dx = -1; dx <= 1; dx++) {
+          const xx = x + dx;
+          if (xx < 0 || xx >= w) continue;
+          if (src[yy * w + xx]) { v = 1; break; }
+        }
       }
+      out[y * w + x] = v;
     }
-    return out;
   }
+}
+/** 3x3 erosion; out-of-bounds counts as WALL so an outline that runs along the
+ *  canvas edge survives the closing and keeps the fill inside */
+function erode8(src: Uint8Array, w: number, h: number, out: Uint8Array): void {
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      let v = 1;
+      for (let dy = -1; dy <= 1 && v; dy++) {
+        const yy = y + dy;
+        if (yy < 0 || yy >= h) continue;
+        for (let dx = -1; dx <= 1; dx++) {
+          const xx = x + dx;
+          if (xx < 0 || xx >= w) continue;
+          if (!src[yy * w + xx]) { v = 0; break; }
+        }
+      }
+      out[y * w + x] = v;
+    }
+  }
+}
+
+/**
+ * The barrier a bucket fill must not cross: every pixel that is NOT within
+ * `tolerance` of the seed colour (or excluded by the selection mask). With
+ * `gaps > 0` the barrier is morphologically CLOSED first (dilate then erode by
+ * ceil(gap/2)): small holes in an outline get sealed, while the outline itself
+ * comes back to its original thickness so the fill still reaches the line.
+ * Returns null when the seed is outside the cel.
+ */
+export function buildBarrier(cel: Cel, sx: number, sy: number, opts?: FillOpts | null, mask?: MaskFn | null): Uint8Array | null {
+  const w = cel.w, h = cel.h, d = cel.data;
+  if (!cel.inBounds(sx, sy)) return null;
+  const tol = Math.max(0, Math.min(255, Math.round(opts?.tolerance ?? 0)));
+  const bi = cel.idx(sx, sy);
+  const base = [d[bi], d[bi + 1], d[bi + 2], d[bi + 3]];
+  const b = new Uint8Array(w * h);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = cel.idx(x, y);
+      if (!nearPixel(d, i, base, tol) || (mask && !mask(x, y))) b[y * w + x] = 1;
+    }
+  }
+  const gap = Math.max(0, Math.min(16, Math.round(opts?.gaps ?? 0)));
+  if (!gap) return b;
+  const k = Math.max(1, Math.ceil(gap / 2));
+  let a = b;
+  let tmp = new Uint8Array(w * h);
+  for (let n = 0; n < k; n++) { dilate8(a, w, h, tmp); const s = a; a = tmp; tmp = s; }
+  for (let n = 0; n < k; n++) { erode8(a, w, h, tmp); const s = a; a = tmp; tmp = s; }
+  return a;
+}
+
+/** 4-connected flood over the non-barrier cells (seed included) */
+export function floodCells(cel: Cel, sx: number, sy: number, barrier: Uint8Array): Array<[number, number]> {
+  const w = cel.w, h = cel.h;
+  const out: Array<[number, number]> = [];
   const seen = new Uint8Array(w * h);
   const stack: Array<[number, number]> = [[sx, sy]];
   while (stack.length) {
     const [x, y] = stack.pop()!;
-    if (!cel.inBounds(x, y)) continue;
+    if (x < 0 || y < 0 || x >= w || y >= h) continue;
     const vi = y * w + x;
     if (seen[vi]) continue;
     seen[vi] = 1;
-    if (!match(x, y)) continue;
-    if (mask && !mask(x, y)) continue;
+    if (barrier[vi]) continue;
     out.push([x, y]);
     stack.push([x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]);
   }
   return out;
+}
+
+
+export function floodErase(cel: Cel, sx: number, sy: number, mask?: MaskFn | null, opts?: FillOpts): void {
+  if (!cel.inBounds(sx, sy)) return;
+  if (cel.data[cel.idx(sx, sy) + 3] === 0) return;
+  const b = buildBarrier(cel, sx, sy, opts, mask);
+  if (!b || b[sy * cel.w + sx]) return;
+  for (const [x, y] of floodCells(cel, sx, sy, b)) {
+    const i = (y * cel.w + x) * 4;
+    cel.data[i] = 0; cel.data[i + 1] = 0; cel.data[i + 2] = 0; cel.data[i + 3] = 0;
+  }
+}
+
+/** Flood fill with optional tolerance and gap closing, optional selection mask. */
+export function floodFill(cel: Cel, sx: number, sy: number, color: RGBA, mask?: MaskFn | null, opts?: FillOpts): void {
+  if (!cel.inBounds(sx, sy)) return;
+  const b = buildBarrier(cel, sx, sy, opts, mask);
+  if (!b || b[sy * cel.w + sx]) return;
+  for (const [x, y] of floodCells(cel, sx, sy, b)) paintAt(cel, x, y, color, null);
+}
+
+/** Collect the cells a bucket fill would cover: the connected same-colour
+ *  region (global = false) or every matching cell in the layer (global = true),
+ *  honouring an optional selection mask, tolerance and gap closing. Pure. */
+export function floodRegion(cel: Cel, sx: number, sy: number, global: boolean, mask?: MaskFn | null, opts?: FillOpts): Array<[number, number]> {
+  if (!cel.inBounds(sx, sy)) return [];
+  const b = buildBarrier(cel, sx, sy, opts, mask);
+  if (!b) return [];
+  if (global) {
+    const out: Array<[number, number]> = [];
+    for (let y = 0; y < cel.h; y++) for (let x = 0; x < cel.w; x++) if (!b[y * cel.w + x]) out.push([x, y]);
+    return out;
+  }
+  if (b[sy * cel.w + sx]) return [];
+  return floodCells(cel, sx, sy, b);
 }
 
 /** gradient direction: from (x0,y0) along (dx,dy). A null axis = automatic
@@ -246,38 +293,40 @@ export function gradientFillRegion(cel: Cel, cells: Array<[number, number]>,
   return { x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 + 1 };
 }
 
-/** Non-contiguous fill: replace EVERY pixel of the cel matching the seed
- *  colour (tolerance 0), honouring an optional selection mask. Unlike
- *  floodFill this ignores connectivity, so all identical pixels anywhere in
- *  the layer are filled in one go. */
-export function globalFill(cel: Cel, sx: number, sy: number, color: RGBA, mask?: MaskFn | null): void {
+/** Non-contiguous fill: replace EVERY pixel of the cel within `tolerance` of
+ *  the seed colour, honouring an optional selection mask. Unlike floodFill this
+ *  ignores connectivity, so all matching pixels anywhere in the layer are
+ *  filled in one go. */
+export function globalFill(cel: Cel, sx: number, sy: number, color: RGBA, mask?: MaskFn | null, opts?: FillOpts): void {
   const w = cel.w, h = cel.h, d = cel.data;
   if (!cel.inBounds(sx, sy)) return;
   const bi = cel.idx(sx, sy);
-  const baseR = d[bi], baseG = d[bi + 1], baseB = d[bi + 2], baseA = d[bi + 3];
+  const base = [d[bi], d[bi + 1], d[bi + 2], d[bi + 3]];
   // filling with the colour that is already there would be a no-op
-  if (color[0] === baseR && color[1] === baseG && color[2] === baseB && color[3] === baseA) return;
+  if (color[0] === base[0] && color[1] === base[1] && color[2] === base[2] && color[3] === base[3]) return;
+  const tol = Math.max(0, Math.min(255, Math.round(opts?.tolerance ?? 0)));
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
       const i = cel.idx(x, y);
-      if (d[i] !== baseR || d[i + 1] !== baseG || d[i + 2] !== baseB || d[i + 3] !== baseA) continue;
+      if (!nearPixel(d, i, base, tol)) continue;
       if (mask && !mask(x, y)) continue;
       paintAt(cel, x, y, color, null);
     }
   }
 }
 
-/** Non-contiguous erase: clear every pixel matching the seed colour. */
-export function globalErase(cel: Cel, sx: number, sy: number, mask?: MaskFn | null): void {
+/** Non-contiguous erase: clear every pixel within `tolerance` of the seed. */
+export function globalErase(cel: Cel, sx: number, sy: number, mask?: MaskFn | null, opts?: FillOpts): void {
   const w = cel.w, h = cel.h, d = cel.data;
   if (!cel.inBounds(sx, sy)) return;
   const bi = cel.idx(sx, sy);
-  const baseR = d[bi], baseG = d[bi + 1], baseB = d[bi + 2], baseA = d[bi + 3];
-  if (baseA === 0) return;
+  const base = [d[bi], d[bi + 1], d[bi + 2], d[bi + 3]];
+  if (base[3] === 0) return;
+  const tol = Math.max(0, Math.min(255, Math.round(opts?.tolerance ?? 0)));
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
       const i = cel.idx(x, y);
-      if (d[i] !== baseR || d[i + 1] !== baseG || d[i + 2] !== baseB || d[i + 3] !== baseA) continue;
+      if (!nearPixel(d, i, base, tol)) continue;
       if (mask && !mask(x, y)) continue;
       d[i] = 0; d[i + 1] = 0; d[i + 2] = 0; d[i + 3] = 0;
     }

@@ -48,6 +48,9 @@ export class Stroke {
   /** airbrush: random speck size range in px (set by the view from prefs) */
   sprayMin = 1;
   sprayMax = 3;
+  /** bucket: per-channel colour tolerance and gap closing size (from prefs) */
+  fillTolerance = 0;
+  fillGaps = 0;
   /** bucket gradient: end colour (null = plain flat fill) and tile size in px */
   gradEnd: RGBA | null = null;
   gradBlock = 1;
@@ -93,6 +96,11 @@ export class Stroke {
     this.color = rgba(brush.color[0], brush.color[1], brush.color[2], a);
     this.size = Math.max(1, Math.round(brush.size));
     this.mask = doc.selectionActive() ? (x: number, y: number) => doc.selAt(x, y) === 1 : null;
+  }
+
+  /** bucket matching options (tolerance + gap closing) as one object */
+  private fillOpts(): { tolerance: number; gaps: number } {
+    return { tolerance: this.fillTolerance, gaps: this.fillGaps };
   }
 
   /** the axis description handed to the shared symmetry helper */
@@ -181,18 +189,18 @@ export class Stroke {
         // the direction/length of the ramp (Aseprite-style), so it repaints
         // from the pristine snapshot on every move like a shape tool
         if (this.gradEnd) {
-          this.gradCells = floodRegion(this.cel, x, y, this.bucketGlobal, this.mask);
+          this.gradCells = floodRegion(this.cel, x, y, this.bucketGlobal, this.mask, this.fillOpts());
           this.gradAxis = null;
           this.redrawGradient();
           break;
         }
         // contiguous (default) or global: every matching pixel in the layer
         if (this.color[3] === 0) {
-          if (this.bucketGlobal) globalErase(this.cel, x, y, this.mask);
-          else floodErase(this.cel, x, y, this.mask);
+          if (this.bucketGlobal) globalErase(this.cel, x, y, this.mask, this.fillOpts());
+          else floodErase(this.cel, x, y, this.mask, this.fillOpts());
         } else {
-          if (this.bucketGlobal) globalFill(this.cel, x, y, this.color, this.mask);
-          else floodFill(this.cel, x, y, this.color, this.mask);
+          if (this.bucketGlobal) globalFill(this.cel, x, y, this.color, this.mask, this.fillOpts());
+          else floodFill(this.cel, x, y, this.color, this.mask, this.fillOpts());
         }
         this.everPainted = true; // flood fill writes pixels directly
         this.dtyAll = true; // the filled region can be the whole layer

@@ -319,6 +319,23 @@ const defs: SettingDef[] = [
     label: "bucketGlobalLabel", desc: "bucketGlobalDesc", default: false, refresh: "changed",
   },
   {
+    path: "tools.fillSimilar", field: "fillSimilar", kind: "bool", group: "tools",
+    label: "fillSimilarLabel", desc: "fillSimilarDesc", default: false, refresh: "changed",
+    visible: (s) => s.tool === "bucket",
+  },
+  {
+    path: "tools.fillTolerance", field: "fillTolerance", kind: "int", group: "tools",
+    label: "fillToleranceLabel", desc: "fillToleranceDesc", default: 32, min: 0, max: 255,
+    reset: 32, refresh: "changed",
+    visible: (s) => s.tool === "bucket" && s.prefs.fillSimilar,
+  },
+  {
+    path: "tools.fillGaps", field: "fillGaps", kind: "int", group: "tools",
+    label: "fillGapsLabel", desc: "fillGapsDesc", default: 0, min: 0, max: 16, unit: "px",
+    reset: 0, refresh: "changed",
+    visible: (s) => s.tool === "bucket",
+  },
+  {
     path: "tools.bucketGrad", field: "bucketGrad", kind: "bool", group: "tools",
     label: "bucketGradLabel", desc: "bucketGradDesc", default: false, refresh: "changed",
     visible: (s) => s.tool === "bucket",

@@ -26,6 +26,10 @@ const countRed = (c: Cel): number => {
   }
   return n;
 };
+const set3 = (c: Cel, x: number, r: number, g: number, b: number, a: number): void => {
+  const i = c.idx(x, 0);
+  c.data[i] = r; c.data[i + 1] = g; c.data[i + 2] = b; c.data[i + 3] = a;
+};
 const countBlue = (c: Cel): number => {
   let n = 0;
   for (let i = 0; i < c.data.length; i += 4) {
@@ -286,6 +290,76 @@ export function testFill(): void {
     eq("gradstroke.right", at(cel, 7, 0), BLUE);
     const line = st.gradLine();
     eq("gradstroke.line", line && [line.x0, line.y0, line.x1, line.y1], [0, 0, 7, 0]);
+  }
+
+  // ------------------------------------------- tolerance + fill gaps
+  {
+    // a 8x1 strip: three slightly different reds then a solid blue wall
+    const c = new Cel(8, 1);
+    const set = (x: number, r: number, g: number, b: number, a: number): void => {
+      const i = c.idx(x, 0);
+      c.data[i] = r; c.data[i + 1] = g; c.data[i + 2] = b; c.data[i + 3] = a;
+    };
+    set(0, 200, 0, 0, 255); set(1, 210, 4, 0, 255); set(2, 220, 8, 0, 255);
+    set(3, 0, 0, 255, 255); set(4, 200, 0, 0, 255);
+    // tolerance 0: only the exact seed colour is replaced
+    floodFill(c, 0, 0, [0, 255, 0, 255]);
+    eq("fill.tol0.exact", [at(c, 0, 0), at(c, 1, 0), at(c, 2, 0)], [[0, 255, 0, 255], [210, 4, 0, 255], [220, 8, 0, 255]]);
+    eq("fill.tol0.wall", at(c, 3, 0), [0, 0, 255, 255]);
+    eq("fill.tol0.beyond", at(c, 4, 0), [200, 0, 0, 255]);
+    // tolerance 24: the near-reds join the region, the wall still stops it
+    const c2 = new Cel(8, 1);
+    const set2 = (x: number, r: number, g: number, b: number, a: number): void => {
+      const i = c2.idx(x, 0);
+      c2.data[i] = r; c2.data[i + 1] = g; c2.data[i + 2] = b; c2.data[i + 3] = a;
+    };
+    set2(0, 200, 0, 0, 255); set2(1, 210, 4, 0, 255); set2(2, 220, 8, 0, 255);
+    set2(3, 0, 0, 255, 255); set2(4, 200, 0, 0, 255);
+    floodFill(c2, 0, 0, [0, 255, 0, 255], null, { tolerance: 24 });
+    eq("fill.tol24.region", [at(c2, 0, 0), at(c2, 1, 0), at(c2, 2, 0)], [[0, 255, 0, 255], [0, 255, 0, 255], [0, 255, 0, 255]]);
+    eq("fill.tol24.stops", [at(c2, 3, 0), at(c2, 4, 0)], [[0, 0, 255, 255], [200, 0, 0, 255]]);
+    // global (non-contiguous) fill honours the tolerance too
+    const c3 = new Cel(8, 1);
+    for (let x = 0; x < 8; x++) set3(c3, x, x < 4 ? 200 + x : 100, 0, 0, 255);
+    globalFill(c3, 0, 0, [0, 255, 0, 255], null, { tolerance: 8 });
+    eq("fill.global-tol", [at(c3, 0, 0), at(c3, 3, 0), at(c3, 4, 0)], [[0, 255, 0, 255], [0, 255, 0, 255], [100, 0, 0, 255]]);
+
+    // a 5x5 box drawn with a 1px gap: without gap closing the fill leaks out
+    const box = (gap: boolean): Cel => {
+      const b = new Cel(7, 7);
+      for (let i = 1; i <= 5; i++) {
+        for (const [x, y] of [[i, 1], [i, 5], [1, i], [5, i]] as Array<[number, number]>) {
+          const p = b.idx(x, y);
+          b.data[p] = 0; b.data[p + 1] = 0; b.data[p + 2] = 0; b.data[p + 3] = 255;
+        }
+      }
+      // the gap sits in the top edge
+      if (gap) {
+        const p = b.idx(3, 1);
+        b.data[p + 3] = 0;
+      }
+      return b;
+    };
+    const leak = box(true);
+    floodFill(leak, 3, 3, [255, 0, 0, 255]);
+    ok("fill.gap.leaks-without", at(leak, 0, 0)[3] === 255, "outside filled: " + JSON.stringify(at(leak, 0, 0)));
+    const sealed = box(true);
+    floodFill(sealed, 3, 3, [255, 0, 0, 255], null, { gaps: 1 });
+    eq("fill.gap.inside-filled", at(sealed, 3, 3), [255, 0, 0, 255]);
+    eq("fill.gap.outside-clean", at(sealed, 0, 0), [0, 0, 0, 0]);
+    eq("fill.gap.line-kept", at(sealed, 1, 1), [0, 0, 0, 255]);
+    // no gap -> identical result with or without gap closing
+    const solidA = box(false); floodFill(solidA, 3, 3, [255, 0, 0, 255]);
+    const solidB = box(false); floodFill(solidB, 3, 3, [255, 0, 0, 255], null, { gaps: 2 });
+    eq("fill.gap.solid-same", [at(solidA, 3, 3), at(solidA, 0, 0), at(solidB, 3, 3), at(solidB, 0, 0)],
+      [[255, 0, 0, 255], [0, 0, 0, 0], [255, 0, 0, 255], [0, 0, 0, 0]]);
+    // an outline that runs along the canvas edge still holds the fill inside
+    const edge = new Cel(5, 5);
+    for (let x = 0; x < 5; x++) { const p = edge.idx(x, 0); edge.data[p + 3] = 255; edge.data[p] = 0; edge.data[p + 1] = 0; edge.data[p + 2] = 0; }
+    for (let y = 0; y < 5; y++) { const p = edge.idx(0, y); edge.data[p + 3] = 255; edge.data[p] = 0; edge.data[p + 1] = 0; edge.data[p + 2] = 0; }
+    floodFill(edge, 3, 3, [255, 0, 0, 255], null, { gaps: 2 });
+    eq("fill.gap.edge-line", at(edge, 2, 0), [0, 0, 0, 255]);
+    eq("fill.gap.edge-inside", at(edge, 3, 3), [255, 0, 0, 255]);
   }
 }
 
