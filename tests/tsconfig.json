@@ -30,6 +30,8 @@
     "../tests/guide-anchors.test.ts",
     "../tests/render.test.ts",
     "../tests/export.test.ts",
-    "../tests/back.test.ts"
+    "../tests/back.test.ts",
+    "../tests/expr.test.ts",
+    "../tests/i18n.test.ts"
   ]
 }

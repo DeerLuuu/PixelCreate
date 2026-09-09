@@ -73,6 +73,15 @@ input[type=range]{width:64px;height:22px;accent-color:var(--accent)}
   background:var(--bg3);border:1px solid var(--line);border-radius:8px;padding:7px 9px;color:var(--text);
   width:100%;outline:none;min-height:34px}
 .rowlabel{font-size:11px;color:var(--dim);margin:8px 0 2px;display:block}
+/* formula pad: pops up under a focused numeric field (numeric keypads have no
+   + − × ÷ keys). Portalled to <body> so dialog transforms cannot offset it. */
+.calcpad{position:fixed;z-index:70;display:flex;gap:4px;padding:4px;background:var(--bg2);
+  border:1px solid var(--line);border-radius:10px;box-shadow:0 8px 26px rgba(0,0,0,.5)}
+.cp-key{width:30px;height:30px;border-radius:7px;background:var(--bg3);color:var(--text);
+  font-size:14px;font-weight:700;line-height:1}
+.cp-key:active{background:var(--accent);color:#fff}
+.cp-eq{background:var(--accent);color:#fff;width:34px}
+.cp-back{color:var(--dim)}
 .ce-row{display:flex;align-items:center;gap:6px;margin-bottom:6px}
 .ce-hex{color:var(--dim);font-family:monospace}
 .swatches{display:flex;flex-wrap:wrap;gap:5px;margin-top:8px}
