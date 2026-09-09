@@ -712,4 +712,23 @@ export function testSession(): void {
     f.setFrameSelMode(false);
     eq("fsel.mode-off-clears", f.frameSelList(), []);
   }
+
+  // --- airbrush speck range stays ordered; the rate is clamped ---
+  {
+    (globalThis as unknown as { localStorage: { clear(): void } }).localStorage.clear();
+    const ab = new Session();
+    ab.setAirbrushMax(8);
+    ab.setAirbrushMin(6);
+    eq("airbrush.range.valid", [ab.prefs.airbrushMin, ab.prefs.airbrushMax], [6, 8]);
+    ab.setAirbrushMin(9); // raising the floor lifts the ceiling too
+    eq("airbrush.range.raise-min", [ab.prefs.airbrushMin, ab.prefs.airbrushMax], [9, 9]);
+    ab.setAirbrushMax(4); // lowering the ceiling lowers the floor
+    eq("airbrush.range.lower-max", [ab.prefs.airbrushMin, ab.prefs.airbrushMax], [4, 4]);
+    ab.setAirbrushMin(0);
+    eq("airbrush.range.clamp-low", ab.prefs.airbrushMin, 1);
+    ab.setAirbrushRate(999);
+    eq("airbrush.rate.clamp-high", ab.prefs.airbrushRate, 60);
+    ab.setAirbrushRate(1);
+    eq("airbrush.rate.clamp-low", ab.prefs.airbrushRate, 5);
+  }
 }

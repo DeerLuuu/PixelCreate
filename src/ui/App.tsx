@@ -841,8 +841,8 @@ function FloatingTools({ t, snap }: { t: ReturnType<typeof makeT>; snap: Snapsho
     if (o && (Math.abs(e.clientX - o.x) > 10 || Math.abs(e.clientY - o.y) > 14)) stopTip();
   };
   const td = (id: string): string => {
-    const z: Record<string, string> = { pencil: "铅笔：逐像素绘制", eraser: "橡皮：清除像素", bucket: "油漆桶：向同色连通区域填充当前色", picker: "取色器：吸取画布上的颜色", line: "直线", rect: "矩形描边", rectfill: "实心矩形", ellipse: "椭圆描边", ellipsefill: "实心椭圆", circle: "圆形：拖动绘制正圆", polygon: "多边形：可调边数（3–12）", select: "矩形选区：拖拽框选区域", wand: "魔棒：按容差选中同色连通区域", lasso: "套索：自由手绘选区", outline: "轮廓填充：手绘闭合形状，松手后自动填充内部" };
-    const en: Record<string, string> = { pencil: "Pencil: draw pixels", eraser: "Eraser: clear pixels", bucket: "Fill bucket: fill same-colour region", picker: "Eyedropper: pick a colour", line: "Line", rect: "Rect outline", rectfill: "Filled rect", ellipse: "Ellipse outline", ellipsefill: "Filled ellipse", circle: "Circle: drag to draw a perfect circle", polygon: "Polygon: adjustable sides (3–12)", select: "Rect selection: drag to select", wand: "Magic wand: select same-colour area", lasso: "Lasso: freehand selection", outline: "Outline fill: draw a closed shape, it fills itself on release" };
+    const z: Record<string, string> = { pencil: "铅笔：逐像素绘制", eraser: "橡皮：清除像素", bucket: "油漆桶：向同色连通区域填充当前色", picker: "取色器：吸取画布上的颜色", line: "直线", rect: "矩形描边", rectfill: "实心矩形", ellipse: "椭圆描边", ellipsefill: "实心椭圆", circle: "圆形：拖动绘制正圆", polygon: "多边形：可调边数（3–12）", select: "矩形选区：拖拽框选区域", wand: "魔棒：按容差选中同色连通区域", lasso: "套索：自由手绘选区", outline: "轮廓填充：手绘闭合形状，松手后自动填充内部", airbrush: "喷枪：按住持续喷出随机大小像素点（底部栏可调点大小区间与密度）" };
+    const en: Record<string, string> = { pencil: "Pencil: draw pixels", eraser: "Eraser: clear pixels", bucket: "Fill bucket: fill same-colour region", picker: "Eyedropper: pick a colour", line: "Line", rect: "Rect outline", rectfill: "Filled rect", ellipse: "Ellipse outline", ellipsefill: "Filled ellipse", circle: "Circle: drag to draw a perfect circle", polygon: "Polygon: adjustable sides (3–12)", select: "Rect selection: drag to select", wand: "Magic wand: select same-colour area", lasso: "Lasso: freehand selection", outline: "Outline fill: draw a closed shape, it fills itself on release", airbrush: "Airbrush: hold to spray random-size specks (dot-size range & rate in the bottom bar)" };
     return (snap.lang === "zh" ? z : en)[id] ?? "";
   };
 
@@ -1302,6 +1302,11 @@ function ControlBar({ t, snap, onPanel, onAdjust, onFramePrev }: { t: ReturnType
             title={t(SESSION.shapeFromCenter ? "shapeFromCenterOn" : "shapeFromCenterOff")} />
         )}
         {snap.tool === "bucket" && <Btn label={SESSION.prefs.bucketGlobal ? "∞" : "◎"} active={SESSION.prefs.bucketGlobal} onClick={() => SESSION.setBucketGlobal(!SESSION.prefs.bucketGlobal)} title={SESSION.prefs.bucketGlobal ? t("bucketGlobalOn") : t("bucketGlobalOff")} />}
+        {snap.tool === "airbrush" && (<>
+          <HoldAdjust dir={dir} value={SESSION.prefs.airbrushMin} min={1} max={16} title={t("airbrushMinLabel")} hint={t("airbrushMinDesc")} format={(v) => "·" + v} reset={1} onChange={(v) => SESSION.setAirbrushMin(v)} />
+          <HoldAdjust dir={dir} value={SESSION.prefs.airbrushMax} min={1} max={16} title={t("airbrushMaxLabel")} hint={t("airbrushMaxDesc")} format={(v) => "◦" + v} reset={3} onChange={(v) => SESSION.setAirbrushMax(v)} />
+          <HoldAdjust dir={dir} value={SESSION.prefs.airbrushRate} min={5} max={60} title={t("airbrushRateLabel")} hint={t("airbrushRateDesc")} format={(v) => "~" + v} reset={20} onChange={(v) => SESSION.setAirbrushRate(v)} />
+        </>)}
         {isShapeTool(snap.tool) && snap.tool !== "line" && <Btn icon={SESSION.shapeFill ? "i-rect" : "i-rectfill"} onClick={() => SESSION.setShapeFill(!SESSION.shapeFill)} title={SESSION.shapeFill ? t("shapeHollow") : t("shapeSolid")} />}
       </div>
     </section>

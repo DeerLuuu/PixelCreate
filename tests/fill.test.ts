@@ -1,5 +1,7 @@
 import { Cel } from "../src/engine/cel";
-import { floodFill, globalFill, globalErase, polygonCells, fillPolygon } from "../src/engine/paint";
+import { floodFill, globalFill, globalErase, polygonCells, fillPolygon, sprayDots } from "../src/engine/paint";
+import { Doc } from "../src/engine/doc";
+import { Stroke } from "../src/tools/stroke";
 import { eq, ok } from "./common";
 
 const RED: [number, number, number, number] = [255, 0, 0, 255];
@@ -147,4 +149,59 @@ export function testFill(): void {
     globalFill(b, 1, 1, BLUE);
     ok("fill.blob.same-result", a.data.join() === b.data.join());
   }
+
+  // ---- airbrush spray (deterministic with a seeded RNG) ----
+  {
+    // 1px specks: one cell each, sampled inside the disc
+    const cells: Array<[number, number]> = [];
+    sprayDots(20, 20, 5, 1, 1, 40, lcg(7), (x, y) => cells.push([x, y]));
+    eq("spray.count", cells.length, 40);
+    ok("spray.inside-disc", cells.every(([x, y]) => Math.hypot(x - 20, y - 20) <= 5.5), "out of disc");
+    // same seed -> same specks (no hidden state)
+    const again: Array<[number, number]> = [];
+    sprayDots(20, 20, 5, 1, 1, 40, lcg(7), (x, y) => again.push([x, y]));
+    eq("spray.deterministic", again, cells);
+    // every speck is a square whose side is in [2,4]: cells stay within +-2
+    const big: Array<[number, number]> = [];
+    sprayDots(0, 0, 0, 2, 4, 50, lcg(11), (x, y) => big.push([x, y]));
+    ok("spray.size-range", big.length >= 200 && big.length <= 800, "cells=" + big.length);
+    ok("spray.size-extent", big.every(([x, y]) => x >= -2 && x <= 2 && y >= -2 && y <= 2), "speck too big");
+    // a degenerate range is normalised instead of producing nothing
+    const one: Array<[number, number]> = [];
+    sprayDots(0, 0, 0, 3, 1, 1, lcg(3), (x, y) => one.push([x, y]));
+    eq("spray.range-normalised", one.length, 9);
+    // zero specks / zero radius paint nothing at all
+    let none = 0;
+    sprayDots(0, 0, 4, 1, 2, 0, lcg(1), () => { none++; });
+    eq("spray.zero-count", none, 0);
+  }
+
+  // ---- airbrush through the stroke engine (mask / symmetry aware) ----
+  {
+    const doc = new Doc(16, 16, "spray");
+    const brush = { color: RED, size: 1, alpha: 255, pressure: 1 };
+    const st = new Stroke(doc, 0, 0, "airbrush", brush, false, "off");
+    st.sprayMin = 1;
+    st.sprayMax = 1;
+    st.startAt(8, 8);
+    const cel = doc.celAt(0, 0)!;
+    ok("spray.stroke.paints", cel.hasAnyOpaque());
+    // the first speck is centred on the touch point (size 1 -> exactly there)
+    eq("spray.stroke.centre", at(cel, 8, 8), RED);
+    // symmetric airbrush: the mirrored speck lands on the other side of the axis
+    const doc2 = new Doc(16, 16, "spray-sym");
+    const st2 = new Stroke(doc2, 0, 0, "airbrush", brush, false, "on", 6, true, 0, 0, 90);
+    st2.sprayMin = 1;
+    st2.sprayMax = 1;
+    st2.startAt(4, 6);
+    const cel2 = doc2.celAt(0, 0)!;
+    eq("spray.sym.source", at(cel2, 4, 6), RED);
+    eq("spray.sym.mirror", at(cel2, 11, 6), RED); // 16-wide doc, vertical axis at x=8
+  }
+}
+
+/** tiny deterministic PRNG so the spray tests can assert exact specks */
+function lcg(seed: number): () => number {
+  let s = seed >>> 0;
+  return () => { s = (Math.imul(s, 1664525) + 1013904223) >>> 0; return s / 4294967296; };
 }

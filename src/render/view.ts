@@ -111,6 +111,10 @@ export class View {
   private hold: { n: number; mid: { x: number; y: number }; starts: Map<number, { x: number; y: number }>; t: number } | null = null;
   /** set when a hold fired, so the following lifts cannot count as taps */
   private holdFired = false;
+  /** airbrush: interval that keeps spraying while the finger is held down */
+  private sprayT: number | null = null;
+  /** fractional specks owed to the next spray tick */
+  private sprayAcc = 0;
   /** layer-switch flash: layer index + start time, drawn in the overlay */
   private flash: { li: number; t0: number } | null = null;
   private flashRaf = 0;
@@ -176,6 +180,7 @@ export class View {
   destroy(): void {
     this.ro?.disconnect();
     this.stopAnts();
+    this.stopSpray();
     if (this.raf) window.cancelAnimationFrame(this.raf);
     this.raf = 0;
     this.host.replaceChildren();
@@ -283,6 +288,7 @@ export class View {
   /** commit a still-open gesture (e.g. bucket fill whose pointerup was lost) as its own history step */
   flushStroke(): boolean {
     if (!this.stroke) return false;
+    this.stopSpray();
     const rec = this.stroke.commit(this.session.history, this.labelFor(this.stroke.kind));
     this.stroke = null;
     this.session.repaint();
@@ -1052,6 +1058,7 @@ export class View {
       this.twoTapMid = null;
       this.panLast = null;
       if (this.outline) this.endOutline(false);
+      this.stopSpray();
       if (this.stroke) { this.stroke.cancel(); this.stroke = null; }
       if (this.selDrag) {
         if (this.selDrag.kind === "move" && this.selDrag.cut) this.endSelDrag(false);
@@ -1075,6 +1082,7 @@ export class View {
     // fingers started is dropped and the gesture waits quietly for the 4th
     if (this.pointers.size >= 3) {
       if (this.outline) this.endOutline(false);
+      this.stopSpray();
       if (this.stroke) { this.stroke.cancel(); this.stroke = null; }
       if (this.selDrag) {
         if (this.selDrag.kind === "move" && this.selDrag.cut) this.endSelDrag(false);
@@ -1095,6 +1103,7 @@ export class View {
     }
     if (this.pointers.size >= 2) {
       if (this.outline) this.endOutline(false); // 2nd finger = navigation, not a fill
+      this.stopSpray();
       if (this.stroke) {
         // a second contact means navigation (pinch / multi-finger gesture),
         // never drawing: roll the half-drawn stroke back entirely instead of
@@ -1210,6 +1219,11 @@ export class View {
     } catch {
       this.stroke = null;
       return;
+    }
+    if (tool === "airbrush") {
+      this.stroke.sprayMin = s.prefs.airbrushMin;
+      this.stroke.sprayMax = s.prefs.airbrushMax;
+      this.startSpray();
     }
     this.stroke.startAt(pp.x, pp.y);
     s.repaintRect(this.stroke.takeDirty());
@@ -1365,6 +1379,7 @@ export class View {
 
   private onUp(e: PointerEvent): void {
     this.pointers.delete(e.pointerId);
+    if (this.pointers.size === 0) this.stopSpray();
     if (this.symTarget) {
       this.symTarget = null;
       this.session.changed(); // refresh the angle readout in the UI chips
@@ -1583,6 +1598,7 @@ export class View {
         "The system's screen recognition grabbed the two-finger long press. Search for 'screen recognition' in the system settings and turn it off, or use the three-finger long press.");
     }
     this.cancelHold();
+    this.stopSpray();
     this.holdFired = false;
     this.gestureHadTwo = false;
     this.pinchZoomed = false;
@@ -1816,9 +1832,31 @@ export class View {
   }
 
 
+  /** airbrush: keep spraying every 50 ms while the pointer stays down */
+  private startSpray(): void {
+    this.stopSpray();
+    const rate = Math.max(5, Math.min(60, this.session.prefs.airbrushRate));
+    const period = 50;
+    this.sprayT = window.setInterval(() => {
+      const st = this.stroke;
+      if (!st) { this.stopSpray(); return; }
+      this.sprayAcc += (rate * period) / 1000;
+      const n = Math.floor(this.sprayAcc);
+      if (n < 1) return;
+      this.sprayAcc -= n;
+      st.sprayBurst(n);
+      const d = st.takeDirty();
+      if (d) this.session.repaintRect(d);
+    }, period);
+  }
+  private stopSpray(): void {
+    if (this.sprayT !== null) { window.clearInterval(this.sprayT); this.sprayT = null; }
+    this.sprayAcc = 0;
+  }
+
   private labelFor(kind: string): string {
     const map: Record<string, string> = {
-      pencil: "tools.pencil", eraser: "tools.eraser", bucket: "tools.bucket",
+      pencil: "tools.pencil", eraser: "tools.eraser", bucket: "tools.bucket", airbrush: "tools.airbrush",
       line: "tools.line", rect: "tools.rect", rectfill: "tools.rectfill",
       ellipse: "tools.ellipse", ellipsefill: "tools.ellipsefill",
       circle: "tools.circle", polygon: "tools.polygon",

@@ -273,6 +273,7 @@ const defs: SettingDef[] = [
     options: [
       { value: "pencil", label: "tools.pencil" }, { value: "eraser", label: "tools.eraser" },
       { value: "bucket", label: "tools.bucket" }, { value: "picker", label: "tools.picker" },
+      { value: "airbrush", label: "tools.airbrush" },
       { value: "line", label: "tools.line" }, { value: "rect", label: "tools.rect" },
       { value: "ellipse", label: "tools.ellipse" }, { value: "circle", label: "tools.circle" },
       { value: "polygon", label: "tools.polygon" }, { value: "select", label: "tools.select" },
@@ -284,6 +285,26 @@ const defs: SettingDef[] = [
   {
     path: "tools.bucketGlobal", field: "bucketGlobal", kind: "bool", group: "tools",
     label: "bucketGlobalLabel", desc: "bucketGlobalDesc", default: false, refresh: "changed",
+  },
+  {
+    path: "tools.airbrushMin", kind: "int", group: "tools",
+    label: "airbrushMinLabel", desc: "airbrushMinDesc", default: 1, min: 1, max: 16, unit: "px", reset: 1, refresh: "changed",
+    visible: (s) => s.tool === "airbrush",
+    get: (s) => s.prefs.airbrushMin,
+    // the two bounds stay ordered: raising the floor lifts the ceiling too
+    set: (s, v) => { s.prefs.airbrushMin = Number(v); if (s.prefs.airbrushMax < Number(v)) s.prefs.airbrushMax = Number(v); },
+  },
+  {
+    path: "tools.airbrushMax", kind: "int", group: "tools",
+    label: "airbrushMaxLabel", desc: "airbrushMaxDesc", default: 3, min: 1, max: 16, unit: "px", reset: 3, refresh: "changed",
+    visible: (s) => s.tool === "airbrush",
+    get: (s) => s.prefs.airbrushMax,
+    set: (s, v) => { s.prefs.airbrushMax = Number(v); if (s.prefs.airbrushMin > Number(v)) s.prefs.airbrushMin = Number(v); },
+  },
+  {
+    path: "tools.airbrushRate", field: "airbrushRate", kind: "int", group: "tools",
+    label: "airbrushRateLabel", desc: "airbrushRateDesc", default: 20, min: 5, max: 60, unit: "/s", reset: 20, refresh: "none",
+    visible: (s) => s.tool === "airbrush",
   },
   {
     path: "tools.wandTolerance", field: "selectionTolerance", kind: "int", group: "tools",

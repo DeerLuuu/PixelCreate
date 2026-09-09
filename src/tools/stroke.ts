@@ -2,14 +2,14 @@
 import type { Doc } from "../engine/doc";
 import { Cel } from "../engine/cel";
 import type { RGBA, Rect } from "../engine/types";
-import { brushStamp, lineCells, floodFill, floodErase, globalFill, globalErase, paintAt, eraseAt, type BrushShape, type MaskFn } from "../engine/paint";
+import { brushStamp, lineCells, floodFill, floodErase, globalFill, globalErase, paintAt, eraseAt, sprayDots, type BrushShape, type MaskFn } from "../engine/paint";
 import { mirrorCells, type SymAxis } from "../engine/symmetry";
 import { ellipseFill, ellipseOutline } from "../engine/shape";
 import type { History } from "../engine/history";
 import type { BrushState, SymMode } from "./registry";
 import { rgba } from "../engine/color";
 
-export type ToolKind = "pencil" | "eraser" | "bucket" | "line" | "rect" | "ellipse" | "circle" | "polygon";
+export type ToolKind = "pencil" | "eraser" | "bucket" | "airbrush" | "line" | "rect" | "ellipse" | "circle" | "polygon";
 
 export class Stroke {
   readonly doc: Doc;
@@ -35,6 +35,9 @@ export class Stroke {
   readonly brushShape: BrushShape;
   /** shapes grow outwards from the touch point instead of the corner */
   readonly shapeFromCenter: boolean;
+  /** airbrush: random speck size range in px (set by the view from prefs) */
+  sprayMin = 1;
+  sprayMax = 3;
   color: RGBA;
   size: number;
   last: [number, number] | null = null;
@@ -150,6 +153,9 @@ export class Stroke {
       case "eraser":
         this.eraseDot(x, y, this.size);
         break;
+      case "airbrush":
+        this.sprayBurst(1); // one speck right away, so a tap leaves a mark
+        break;
       case "bucket":
         // contiguous (default) or global: every matching pixel in the layer
         if (this.color[3] === 0) {
@@ -192,10 +198,24 @@ export class Stroke {
         this.resetToBefore();
         this.redrawShape(x, y);
         break;
+      case "airbrush":
+        // the spray is time-driven (see View's interval): moving only retargets it
+        break;
       case "bucket":
         break;
     }
     this.last = [x, y];
+  }
+
+  /** Airbrush burst at the last pointer position: `count` random specks whose
+   *  size is drawn from [sprayMin, sprayMax] inside the brush-size disc. */
+  sprayBurst(count: number): void {
+    const p = this.last;
+    if (!p) return;
+    const self = this;
+    // brush size is a diameter: a 1px brush sprays exactly under the finger
+    sprayDots(p[0], p[1], Math.max(0, (this.size - 1) / 2), this.sprayMin, this.sprayMax, count, Math.random,
+      (x, y) => { if (self.touch(x, y)) self.everPainted = true; });
   }
 
   private paintDot(x: number, y: number, size: number): void {

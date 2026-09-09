@@ -14,7 +14,7 @@ const zh: Dict = {
   tools: {
     pencil: "铅笔", eraser: "橡皮", bucket: "油漆桶", picker: "取色器", line: "直线",
     rect: "矩形", rectfill: "矩形填充", ellipse: "椭圆", ellipsefill: "椭圆填充", circle: "圆形", polygon: "多边形",
-    select: "选区", wand: "魔棒", lasso: "套索", outline: "轮廓填充",
+    select: "选区", wand: "魔棒", lasso: "套索", outline: "轮廓填充", airbrush: "喷枪",
   },
   sides: "边数",
   shapeSolid: "实心",
@@ -82,6 +82,7 @@ const zh: Dict = {
   fsUnsupported: "浏览器不支持全屏",
   swapRails: "横屏左右栏对调",
   grid: "网格辅助线", gridNone: "关", gridPixel: "像素格", gridIso: "等距", gridSize: "网格尺寸", loupe: "取色放大镜", magZoom: "放大镜倍率", shadowMode: "生成阴影位置", shadowCur: "当前图层", shadowNew: "新建shadow图层", autoPan: "边缘自动平移", fitView: "适配画布", noContent: "当前图层为空",
+  airbrushMinLabel: "喷枪最小点", airbrushMinDesc: "喷出的最小随机像素点边长", airbrushMaxLabel: "喷枪最大点", airbrushMaxDesc: "喷出的最大随机像素点边长（会自动不小于最小点）", airbrushRateLabel: "喷枪密度", airbrushRateDesc: "每秒喷出的像素点数量",
   calcHint: "数字框可直接输入算式（+ − × ÷ ( ) 与 ^ 乘方、% 取余），边输边算，= 立即应用",
   lock: "锁定图层",
   unlock: "解锁图层",
@@ -222,7 +223,7 @@ const en: Dict = {
   tools: {
     pencil: "Pencil", eraser: "Eraser", bucket: "Fill", picker: "Picker", line: "Line",
     rect: "Rect", rectfill: "Rect fill", ellipse: "Ellipse", ellipsefill: "Ellipse fill", circle: "Circle", polygon: "Polygon",
-    select: "Select", wand: "Wand", lasso: "Lasso", outline: "Outline fill",
+    select: "Select", wand: "Wand", lasso: "Lasso", outline: "Outline fill", airbrush: "Airbrush",
   },
   sides: "Sides",
   shapeSolid: "Filled",
@@ -290,6 +291,7 @@ const en: Dict = {
   fsUnsupported: "Fullscreen not supported",
   swapRails: "Swap side rails (landscape)",
   grid: "Grid helper", gridNone: "Off", gridPixel: "Pixel", gridIso: "Isometric", gridSize: "Grid size", loupe: "Pick loupe", magZoom: "Loupe zoom", shadowMode: "Drop shadow target", shadowCur: "Current layer", shadowNew: "New shadow layer", autoPan: "Edge auto-pan", fitView: "Fit", noContent: "Layer is empty",
+  airbrushMinLabel: "Airbrush min dot", airbrushMinDesc: "Smallest random speck side in px", airbrushMaxLabel: "Airbrush max dot", airbrushMaxDesc: "Largest random speck side in px (never below the min)", airbrushRateLabel: "Airbrush density", airbrushRateDesc: "Specks sprayed per second",
   calcHint: "Number fields accept a formula (+ - * / ( ) ^ and %), evaluated as you type; = applies it",
   lock: "Lock layer",
   unlock: "Unlock layer",

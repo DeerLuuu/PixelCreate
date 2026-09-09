@@ -68,6 +68,29 @@ export function fillPolygon(cel: Cel, w: number, h: number, pts: Array<[number, 
   return { x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 + 1 };
 }
 
+/** Airbrush: sample `count` random specks uniformly inside a disc of `radius`
+ *  centred on (cx,cy). Every speck is an axis-aligned square whose side is a
+ *  random integer in [minSize, maxSize] px (the random dot-size range the
+ *  airbrush settings expose). `rnd` returns [0,1) so tests can seed it; fn is
+ *  called for every cell of every speck (overlaps are possible and harmless). */
+export function sprayDots(cx: number, cy: number, radius: number, minSize: number, maxSize: number,
+                          count: number, rnd: () => number, fn: (x: number, y: number) => void): void {
+  const r = Math.max(0, radius);
+  const lo = Math.max(1, Math.round(minSize));
+  const hi = Math.max(lo, Math.round(maxSize));
+  for (let i = 0; i < count; i++) {
+    const ang = rnd() * Math.PI * 2;
+    const rad = r * Math.sqrt(rnd()); // sqrt keeps the density uniform over the disc
+    const px = Math.round(cx + Math.cos(ang) * rad);
+    const py = Math.round(cy + Math.sin(ang) * rad);
+    const s = lo + Math.floor(rnd() * (hi - lo + 1));
+    const o = Math.floor(s / 2);
+    for (let dy = 0; dy < s; dy++) {
+      for (let dx = 0; dx < s; dx++) fn(px - o + dx, py - o + dy);
+    }
+  }
+}
+
 /** Bresenham line: calls fn for every cell. */
 export function lineCells(x0: number, y0: number, x1: number, y1: number, fn: (x: number, y: number) => void): void {
   let dx = Math.abs(x1 - x0), dy = -Math.abs(y1 - y0);

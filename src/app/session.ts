@@ -132,6 +132,11 @@ export interface Prefs {
   /** paint bucket: fill every matching pixel in the layer (true) or only the
    *  connected region (false) */
   bucketGlobal: boolean;
+  /** airbrush: smallest / largest random speck in px (1..16) */
+  airbrushMin: number;
+  airbrushMax: number;
+  /** airbrush: specks sprayed per second (5..60) */
+  airbrushRate: number;
   /** playback loop mode */
   loopMode: LoopMode;
   /** how many recently used colours the palette panel remembers (4..64) */
@@ -620,6 +625,7 @@ export class Session {
       immersive: true, safeArea: true, safeExtra: 0,
       histMode: "steps", histSteps: 120, shadowNewLayer: false, autoPan: true,
       bucketGlobal: false, loopMode: "loop", recentColorsMax: 16, selectionTolerance: 8,
+      airbrushMin: 1, airbrushMax: 3, airbrushRate: 20,
       brushSize: 1, brushAlpha: 255, fgColor: "#141414", bgColor: "#ffffff",
       tool: "pencil", currentShape: "line", currentSelect: "select",
       brushShape: "circle", shapeSides: 6, shapeFill: true, shapeFromCenter: false,
@@ -670,6 +676,9 @@ export class Session {
       if (typeof saved.shadowNewLayer === "boolean") p.shadowNewLayer = saved.shadowNewLayer;
       if (typeof saved.autoPan === "boolean") p.autoPan = saved.autoPan;
       if (typeof saved.bucketGlobal === "boolean") p.bucketGlobal = saved.bucketGlobal;
+      if (typeof saved.airbrushMin === "number") p.airbrushMin = Math.max(1, Math.min(16, Math.round(saved.airbrushMin)));
+      if (typeof saved.airbrushMax === "number") p.airbrushMax = Math.max(1, Math.min(16, Math.round(saved.airbrushMax)));
+      if (typeof saved.airbrushRate === "number") p.airbrushRate = Math.max(5, Math.min(60, Math.round(saved.airbrushRate)));
       if (saved.loopMode === "once" || saved.loopMode === "loop" || saved.loopMode === "pingpong" || saved.loopMode === "reverse") p.loopMode = saved.loopMode;
       if (typeof saved.recentColorsMax === "number") p.recentColorsMax = Math.max(4, Math.min(64, Math.round(saved.recentColorsMax)));
       if (typeof saved.selectionTolerance === "number") p.selectionTolerance = Math.max(0, Math.min(64, Math.round(saved.selectionTolerance)));
@@ -875,6 +884,10 @@ export class Session {
   }
   /** paint bucket: fill only the connected region (false) or every matching pixel */
   setBucketGlobal(on: boolean): void { this.setSetting("tools.bucketGlobal", on); }
+  /** airbrush speck range / rate (the min<=max clamp lives in settings.ts) */
+  setAirbrushMin(n: number): void { this.setSetting("tools.airbrushMin", n); }
+  setAirbrushMax(n: number): void { this.setSetting("tools.airbrushMax", n); }
+  setAirbrushRate(n: number): void { this.setSetting("tools.airbrushRate", n); }
   /** colour source shown by the palette floater fan (swatch / canvas / recent) */
   palOrbMode: "palette" | "doc" | "recent" = "palette";
   cyclePalOrbMode(): void {
