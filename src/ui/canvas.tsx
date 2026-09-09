@@ -16,6 +16,8 @@ export function CanvasTitles({ view, tick }: { view: View | null; tick: number }
   useSession(); // and whenever the canvases themselves change
   const t = makeT(SESSION.prefs.lang as Lang);
   const drag = useRef<{ i: number; x: number; y: number; x0: number; y0: number; moved: boolean } | null>(null);
+  /** last tap on a title bar, for the double-tap "zoom to this canvas" */
+  const lastTap = useRef<{ i: number; t: number } | null>(null);
   if (!view || SESSION.docs.length <= 1) return null;
   const focus = SESSION.docs[SESSION.docIdx];
   if (!focus) return null;
@@ -54,7 +56,16 @@ export function CanvasTitles({ view, tick }: { view: View | null; tick: number }
               const d = drag.current;
               drag.current = null;
               try { (ev.currentTarget as HTMLElement).releasePointerCapture(ev.pointerId); } catch { /* ignore */ }
-              if (d && !d.moved) SESSION.focusCanvas(i);
+              if (!d || d.moved) return;
+              const now = Date.now();
+              const prev = lastTap.current;
+              lastTap.current = { i, t: now };
+              SESSION.focusCanvas(i);
+              // double tap = smoothly zoom this canvas to fill the screen
+              if (prev && prev.i === i && now - prev.t < 340) {
+                lastTap.current = null;
+                SESSION.fitCanvas();
+              }
             }}
             onPointerCancel={() => { drag.current = null; }}
           >

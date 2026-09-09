@@ -1385,6 +1385,20 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
               if (cc < bd) { bd = cc; best = i; }
             }
             setDockHover(items.length ? best : -1);
+            // keep the focused ball visible: with 5 dockable balls the panel
+            // scrolls, so sliding towards a clipped one scrolls it into view
+            if (best >= 0 && items[best]) {
+              const it = items[best];
+              const r = it.getBoundingClientRect();
+              const cr = el.getBoundingClientRect();
+              if (landD) {
+                if (r.left < cr.left) el.scrollLeft -= (cr.left - r.left) + 8;
+                else if (r.right > cr.right) el.scrollLeft += (r.right - cr.right) + 8;
+              } else {
+                if (r.top < cr.top) el.scrollTop -= (cr.top - r.top) + 8;
+                else if (r.bottom > cr.bottom) el.scrollTop += (r.bottom - cr.bottom) + 8;
+              }
+            }
           }}
           onPointerUp={(e) => {
             try { (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId); } catch { /* ignore */ }
