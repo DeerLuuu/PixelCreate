@@ -152,6 +152,21 @@ export function testView(): void {
     ok("view.drag.camera-stays", Math.abs(view.ox - ox2) < 0.001, "ox " + ox2 + " -> " + view.ox);
     ok("view.drag.ox-restored", Math.abs(ox0 - view.ox) < 40, "ox0=" + ox0 + " now=" + view.ox);
 
+    // double-tap ON another canvas focuses it and zooms it to fit
+    s.focusCanvas(0);
+    dom.flush();
+    const other = s.docs[bi];
+    const base = s.docs[0];
+    const tx = view.ox + (other.x - base.x) * view.zoom + 10 * view.zoom;
+    const ty = view.oy + (other.y - base.y) * view.zoom + 10 * view.zoom;
+    (view as unknown as { onDown(e: PointerEvent): void }).onDown(ev(tx, ty));
+    (view as unknown as { onUp(e: PointerEvent): void }).onUp(ev(tx, ty));
+    (view as unknown as { onDown(e: PointerEvent): void }).onDown(ev(tx, ty));
+    (view as unknown as { onUp(e: PointerEvent): void }).onUp(ev(tx, ty));
+    dom.flush();
+    ok("view.doubletap-canvas-focus", s.docIdx === bi, "docIdx=" + s.docIdx);
+    ok("view.doubletap-canvas-fits", view.zoom > 0);
+
     view.destroy();
   } finally {
     cmod.composeFrameWithOnion = origOnion;

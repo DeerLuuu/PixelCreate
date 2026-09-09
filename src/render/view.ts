@@ -88,6 +88,9 @@ export class View {
   private antTimer: number | null = null;
   /** cached selection tint layer (rebuilt only when the doc changes) */
   private selTint: HTMLCanvasElement | null = null;
+  /** brief highlight of a fresh snap: the two canvas indices + start time */
+  private snapPulse: { a: number; b: number; t0: number } | null = null;
+  private snapRaf = 0;
   /** tints of the SELECTIONS of referenced canvases, keyed by layer id */
   private refSelTint = new Map<string, { sel: unknown; ver: number; cv: HTMLCanvasElement }>();
   private selTintBounds: { x: number; y: number; w: number; h: number } | null = null;
@@ -334,6 +337,21 @@ export class View {
 
   screenToPixel(sx: number, sy: number): { x: number; y: number } {
     return { x: Math.floor((sx - this.ox) / this.zoom), y: Math.floor((sy - this.oy) / this.zoom) };
+  }
+
+  /** index of the canvas under a screen point (-1 = empty space). The focused
+   *  document's coordinates are the view anchor, so its rect is 0,0..w,h. */
+  canvasAtScreen(sx: number, sy: number): number {
+    const s = this.session;
+    const focus = s.docs[s.docIdx];
+    if (!focus) return -1;
+    const px = (sx - this.ox) / this.zoom + focus.x;
+    const py = (sy - this.oy) / this.zoom + focus.y;
+    for (let i = s.docs.length - 1; i >= 0; i--) {
+      const e = s.docs[i];
+      if (px >= e.x && py >= e.y && px < e.x + e.doc.w && py < e.y + e.doc.h) return i;
+    }
+    return -1;
   }
 
   // ---------------------------------------------------------------- render
@@ -989,6 +1007,22 @@ export class View {
   }
   /** freehand outline preview: the same trail as the lasso selection, plus a
    *  light preview of the region that will be filled (auto-closed to the start) */
+  /** flash the gap that just snapped, so the magnet is visible */
+  pulseSnap(a: number, b: number): void {
+    this.snapPulse = { a, b, t0: performance.now() };
+    if (this.snapRaf) return;
+    const step = (): void => {
+      this.snapRaf = 0;
+      const p = this.snapPulse;
+      if (!p) { this.drawOverlay(); return; }
+      const k = (performance.now() - p.t0) / 420;
+      this.drawOverlay();
+      if (k < 1) this.snapRaf = window.requestAnimationFrame(step);
+      else { this.snapPulse = null; this.drawOverlay(); }
+    };
+    this.snapRaf = window.requestAnimationFrame(step);
+  }
+
   /** the empty space between two snapped canvases is tinted green */
   private drawSnapGaps(ctx: CanvasRenderingContext2D, z: number): void {
     const s = this.session;
@@ -1022,7 +1056,36 @@ export class View {
         ctx.fillRect(sx(x0), sy(y0), (x1 - x0) * z, (y1 - y0) * z);
       }
     }
+    // the pair that just snapped flashes brighter, then fades out
+    const p = this.snapPulse;
+    if (p) {
+      const k = Math.min(1, (performance.now() - p.t0) / 420);
+      const a = this.docsAt(p.a), b = this.docsAt(p.b);
+      const g = a && b ? this.gapBetween(a, b) : null;
+      if (g) {
+        ctx.fillStyle = "rgba(120, 255, 180, " + (0.55 * (1 - k)).toFixed(3) + ")";
+        ctx.fillRect(sx(g.x0), sy(g.y0), (g.x1 - g.x0) * z, (g.y1 - g.y0) * z);
+        ctx.strokeStyle = "rgba(150, 255, 200, " + (0.95 * (1 - k)).toFixed(3) + ")";
+        ctx.lineWidth = 2 + 3 * (1 - k);
+        ctx.strokeRect(sx(g.x0) - 1, sy(g.y0) - 1, (g.x1 - g.x0) * z + 2, (g.y1 - g.y0) * z + 2);
+      }
+    }
     ctx.restore();
+  }
+
+  private docsAt(i: number): { x: number; y: number; doc: { w: number; h: number } } | null {
+    const e = this.session.docs[i];
+    return e ? { x: e.x, y: e.y, doc: e.doc } : null;
+  }
+  /** the snap gap rect between two adjacent canvases (null = not adjacent) */
+  private gapBetween(a: { x: number; y: number; doc: { w: number; h: number } }, b: { x: number; y: number; doc: { w: number; h: number } }): { x0: number; y0: number; x1: number; y1: number } | null {
+    const ax1 = a.x + a.doc.w, ay1 = a.y + a.doc.h;
+    const bx1 = b.x + b.doc.w, by1 = b.y + b.doc.h;
+    if (ax1 + SNAP_GAP === b.x && a.y < by1 && b.y < ay1) return { x0: ax1, y0: Math.max(a.y, b.y), x1: b.x, y1: Math.min(ay1, by1) };
+    if (bx1 + SNAP_GAP === a.x && a.y < by1 && b.y < ay1) return { x0: bx1, y0: Math.max(a.y, b.y), x1: a.x, y1: Math.min(ay1, by1) };
+    if (ay1 + SNAP_GAP === b.y && a.x < bx1 && b.x < ax1) return { x0: Math.max(a.x, b.x), y0: ay1, x1: Math.min(ax1, bx1), y1: b.y };
+    if (by1 + SNAP_GAP === a.y && a.x < bx1 && b.x < ax1) return { x0: Math.max(a.x, b.x), y0: by1, x1: Math.min(ax1, bx1), y1: a.y };
+    return null;
   }
 
   /**
@@ -1780,6 +1843,23 @@ export class View {
         this.tapPt = pt;
         const ppc = this.screenToPixel(pt.x, pt.y);
         const overDoc = ppc.x >= 0 && ppc.y >= 0 && ppc.x < this.session.doc.w && ppc.y < this.session.doc.h;
+        // double-tap ON a canvas: focus it (when it is not the focused one) and
+        // smoothly zoom it to fit. On the focused canvas this only fits, and
+        // only while the canvas double-tap is unmapped, so a user mapping of
+        // "double tap on canvas" keeps working.
+        const hitCanvas = this.canvasAtScreen(pt.x, pt.y);
+        const focusTap = this.tapN === 2 && hitCanvas >= 0 &&
+          (hitCanvas !== this.session.docIdx || this.session.prefs.gDoubleTapCanvas === "none");
+        if (focusTap) {
+          this.tapN = 0;
+          if (this.stroke) { this.stroke.cancel(); this.stroke = null; }
+          if (this.selDrag) this.endSelDrag();
+          this.panLast = null; this.gestureMoved = false;
+          this.session.hapticTick("双击画布", 0.8);
+          if (hitCanvas !== this.session.docIdx) this.session.focusCanvas(hitCanvas);
+          this.session.fitCanvas();
+          return;
+        }
         if (this.tapN === 2 && !overDoc) {
           // double-tap on the canvas margin -> whatever the user mapped
           this.tapN = 0;

@@ -20,6 +20,8 @@ export function CanvasTitles({ view, tick }: { view: View | null; tick: number }
   useSession(); // and whenever the canvases themselves change
   const t = makeT(SESSION.prefs.lang as Lang);
   const drag = useRef<{ i: number; x: number; y: number; x0: number; y0: number; moved: boolean; hit: number | null; locked: boolean; warned: boolean } | null>(null);
+  /** the snap target we already flashed for this drag (feedback once per engage) */
+  const pulsed = useRef<number | null>(null);
   /** last tap on a title bar, for the double-tap "zoom to this canvas" */
   const lastTap = useRef<{ i: number; t: number } | null>(null);
   const tipT = useRef<number | null>(null);
@@ -35,9 +37,12 @@ export function CanvasTitles({ view, tick }: { view: View | null; tick: number }
   return (
     <>
       {SESSION.docs.map((e, i) => {
-        const left = view.ox + (e.x - focus.x) * z;
+        const cw = e.doc.w * z;                 // canvas width on screen
+        const narrow = cw < 118;                // canvas narrower than the bar
+        const width = narrow ? 118 : cw;
+        // when the bar is wider than the canvas it stays centred on it
+        const left = view.ox + (e.x - focus.x) * z - (width - cw) / 2;
         const top = view.oy + (e.y - focus.y) * z - 30;
-        const width = Math.max(118, e.doc.w * z);
         const on = i === SESSION.docIdx;
         return (
           <div
@@ -77,6 +82,12 @@ export function CanvasTitles({ view, tick }: { view: View | null; tick: number }
               // magnetically align with the other canvases (and their groups)
               const want = { x: d.x0 + dx / z, y: d.y0 + dy / z };
               const snap = SESSION.snapPosition(i, want.x, want.y, snapTol);
+              // feedback the moment the magnet engages: tick + a bright flash
+              if (snap.hit !== null && pulsed.current !== snap.hit) {
+                pulsed.current = snap.hit;
+                SESSION.hapticTick("吸附", 0.9);
+                SESSION.pulseSnap(i, snap.hit);
+              } else if (snap.hit === null) pulsed.current = null;
               d.hit = snap.hit;
               SESSION.moveCanvas(i, snap.x, snap.y);
             }}
@@ -102,16 +113,18 @@ export function CanvasTitles({ view, tick }: { view: View | null; tick: number }
             }}
             onPointerCancel={() => { drag.current = null; stopTip(); }}
           >
+            {narrow ? null : (
             <button className={"cv-btn" + (SESSION.hasPreview(i) ? " on" : "")}
               title={SESSION.hasPreview(i) ? t("canvasPreviewOff") : t("canvasPreview")}
               onPointerDown={(ev) => ev.stopPropagation()}
               onClick={(ev) => { ev.stopPropagation(); SESSION.togglePreview(i); }}>
               <Icon id={SESSION.hasPreview(i) ? "i-eye" : "i-eyeoff"} size={13} />
             </button>
-            <span className="cv-dot" />
+            )}
+            {narrow ? null : <span className="cv-dot" />}
             <span className="cv-name">{e.doc.name || "untitled"}</span>
-            {e.locked && <span className="cv-lock" title={t("canvasLocked")}><Icon id="i-lock" size={11} /></span>}
-            {e.group && (
+            {!narrow && e.locked && <span className="cv-lock" title={t("canvasLocked")}><Icon id="i-lock" size={11} /></span>}
+            {!narrow && e.group && (
               <button className="cv-btn cv-unlink" title={t("canvasUnlink")}
                 onPointerDown={(ev) => ev.stopPropagation()}
                 onClick={(ev) => { ev.stopPropagation(); SESSION.unlinkCanvas(i); }}>
