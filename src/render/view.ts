@@ -1739,7 +1739,7 @@ export class View {
         // shapes become an immediate selection of EXACTLY the pixels this stroke
         // painted (a pixel mask, not a rectangle) so only the shape moves;
         // neighbouring artwork that falls under the marquee stays untouched
-        if (doneMoved && !this.strokeRedirected && doneStroke.start && doneStroke.last && this.isShapeKind(doneStroke.kind)) {
+        if (doneMoved && doneStroke.start && doneStroke.last && this.isShapeKind(doneStroke.kind)) {
           this.selectStrokePixels(doneStroke);
           this.session.setTool("select");
         }
@@ -1766,20 +1766,27 @@ export class View {
    * happens to sit inside the marquee bounds is never grabbed or moved. */
   private selectStrokePixels(st: Stroke): void {
     const doc = this.session.doc;
-    const cel = doc.celAt(st.li, st.fi);
     const w = doc.w, h = doc.h;
+    // the stroke may have been redirected into a referenced canvas: read the
+    // cel it really painted into and map its pixels back into this canvas
+    // (reference layers are mirrored 1:1, centred when the sizes differ)
+    const cel = st.doc.celAt(st.li, st.fi);
     if (!cel) return;
-    const before = st.before ? st.before : new Uint8ClampedArray(w * h * 4);
+    const sw = st.doc.w;
+    const ox = st.doc === doc ? 0 : Math.round((w - sw) / 2);
+    const oy = st.doc === doc ? 0 : Math.round((h - st.doc.h) / 2);
+    const before = st.before ? st.before : new Uint8ClampedArray(cel.data.length);
     const d = cel.data;
     if (!doc.sel) doc.sel = new Sel(w, h);
     const sel = doc.sel;
     sel.clear();
     const n = Math.min(before.length, d.length);
     for (let i = 0; i < n; i += 4) {
-      if (before[i] !== d[i] || before[i + 1] !== d[i + 1] || before[i + 2] !== d[i + 2] || before[i + 3] !== d[i + 3]) {
-        const p = i >> 2;
-        sel.set(p % w, Math.floor(p / w), 1);
-      }
+      if (before[i] === d[i] && before[i + 1] === d[i + 1] && before[i + 2] === d[i + 2] && before[i + 3] === d[i + 3]) continue;
+      const p = i >> 2;
+      const x = (p % sw) + ox, y = Math.floor(p / sw) + oy;
+      if (x < 0 || y < 0 || x >= w || y >= h) continue;
+      sel.set(x, y, 1);
     }
     this.session.repaint();
     this.session.changed();

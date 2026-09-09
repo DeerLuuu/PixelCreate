@@ -30,7 +30,7 @@ export function stubEnv(): void {
   // minimal canvas stubs: reference-layer mirroring composes other canvases
   const ctx: unknown = new Proxy({}, {
     get: (_t, k: string) => {
-      if (k === "getImageData") return (_x: number, _y: number, w: number, h: number) => ({ data: new Uint8ClampedArray(Math.max(4, (w | 0) * (h | 0) * 4)) });
+      if (k === "getImageData" || k === "createImageData") return (_x: number, _y: number, w?: number, h?: number) => ({ data: new Uint8ClampedArray(Math.max(4, ((w ?? 1) | 0) * ((h ?? 1) | 0) * 4)) });
       if (k === "createPattern") return () => ({});
       if (k === "measureText") return () => ({ width: 1 });
       return () => undefined;

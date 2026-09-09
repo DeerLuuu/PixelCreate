@@ -95,6 +95,28 @@ export function testView(): void {
     const src = s.docs[bi];
     ok("view.ref.painted-into-source", !!src.doc.celAt(src.li, src.fi)?.hasAnyOpaque());
     ok("view.ref.mirror-cel-exists", !!s.doc.celAt(li, 0));
+
+    // ---- shape -> selection still works (normal layer AND reference layer) ----
+    // normal layer of the holder
+    s.setLayer(0);
+    s.setTool("line");
+    (view as unknown as { onDown(e: PointerEvent): void }).onDown(ev(60, 30));
+    (view as unknown as { onMove(e: PointerEvent): void }).onMove(ev(110, 80));
+    (view as unknown as { onUp(e: PointerEvent): void }).onUp(ev(110, 80));
+    dom.flush();
+    ok("view.shape.select-normal", s.tool === "select" && !!s.doc.sel && s.doc.sel.hasAny());
+
+    // reference layer: the shape is painted into the source, and the selection
+    // is mapped back onto this canvas so the user still sees it
+    s.setLayer(li);
+    s.setTool("rect");
+    (view as unknown as { onDown(e: PointerEvent): void }).onDown(ev(60, 30));
+    (view as unknown as { onMove(e: PointerEvent): void }).onMove(ev(110, 80));
+    (view as unknown as { onUp(e: PointerEvent): void }).onUp(ev(110, 80));
+    dom.flush();
+    ok("view.shape.select-ref", s.tool === "select" && !!s.doc.sel && s.doc.sel.hasAny());
+    const b = s.doc.sel!.bounds();
+    ok("view.shape.select-ref-bounds", !!b && b.w > 1 && b.h > 1, JSON.stringify(b));
     view.destroy();
   } finally {
     cmod.composeFrameWithOnion = origOnion;
