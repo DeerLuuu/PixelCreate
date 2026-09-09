@@ -346,6 +346,21 @@ export function testSession(): void {
     ok("gesture.clamp.zoomRange", c.prefs.zoomMax > c.prefs.zoomMin, c.prefs.zoomMin + "/" + c.prefs.zoomMax);
   }
 
+  // --- one-time OS-conflict hint ---
+  {
+    const w = globalThis.window as unknown as Record<string, unknown>;
+    const pb = w.PixelBridge as { toast: (m: string) => void };
+    const orig = pb.toast;
+    let n = 0;
+    pb.toast = () => { n++; };
+    (globalThis as unknown as { localStorage: { clear(): void } }).localStorage.clear();
+    s.hintOnce("unit-test", "中文提示", "english hint");
+    s.hintOnce("unit-test", "中文提示", "english hint");
+    eq("hint.once-only", n, 1);
+    pb.toast = orig;
+    (globalThis as unknown as { localStorage: { clear(): void } }).localStorage.clear();
+  }
+
   // --- freehand outline tool ---
   {
     const def = CORE_TOOLS.find((x) => x.id === "outline");

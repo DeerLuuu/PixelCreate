@@ -87,6 +87,14 @@ export const GESTURES: GestureDef[] = [
     field: "gTwoFingerLongPress",
   },
   {
+    id: "threeFingerLongPress",
+    label: "gestureThreeFingerLongPress",
+    desc: "gestureThreeFingerLongPressDesc",
+    defaultAction: "nextLayer",
+    actions: ALL,
+    field: "gThreeFingerLongPress",
+  },
+  {
     id: "tripleTap",
     label: "gestureTripleTap",
     desc: "gestureTripleTapDesc",

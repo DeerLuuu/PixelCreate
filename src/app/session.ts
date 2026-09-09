@@ -97,6 +97,9 @@ export interface Prefs {
   gTwoFingerDoubleTap: GestureActionId;
   /** two fingers held still → default: cycle to the next layer */
   gTwoFingerLongPress: GestureActionId;
+  /** three fingers held still → same default; avoids the system's two-finger
+   *  screen-recognition gesture on some phones (vivo / OPPO) */
+  gThreeFingerLongPress: GestureActionId;
   gTripleTap: GestureActionId;
   gFourFinger: GestureActionId;
   gLongPress: GestureActionId;
@@ -624,7 +627,7 @@ export class Session {
       autoPanMargin: 34, autoPanSpeed: 3, zoomMin: 0.05, zoomMax: 32,
       haptic: true, hapticLen: 60,
       gDoubleTapMargin: "undo", gDoubleTapCanvas: "none", gTwoFingerDoubleTap: "redo",
-      gTwoFingerLongPress: "nextLayer",
+      gTwoFingerLongPress: "nextLayer", gThreeFingerLongPress: "nextLayer",
       gTripleTap: "zoomIn", gFourFinger: "framePreview", gLongPress: "pickColor",
     };
     try {
@@ -1384,6 +1387,17 @@ export class Session {
   struct(label: string, fn: () => void): void {
     this.history.pushStruct(label, this.doc, fn);
     this.syncAfterDocChange();
+  }
+
+  /** one-time user hint (persisted in localStorage) — used when the OS steals
+   *  a gesture, so the user learns how to fix it without being nagged */
+  hintOnce(key: string, zh: string, en: string): void {
+    try {
+      const k = "pc.hint." + key;
+      if (localStorage.getItem(k) === "1") return;
+      localStorage.setItem(k, "1");
+    } catch { /* ignore */ }
+    toastFn(this.prefs.lang === "en" ? en : zh);
   }
 
   /** cheap scalar command: fn applied now; undo restores via back(). */

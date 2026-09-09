@@ -2,7 +2,7 @@
  *  the session can import them without a cycle. */
 export type GestureId =
   | "doubleTapMargin" | "doubleTapCanvas" | "twoFingerDoubleTap"
-  | "twoFingerLongPress" | "tripleTap" | "fourFinger" | "longPress";
+  | "twoFingerLongPress" | "threeFingerLongPress" | "tripleTap" | "fourFinger" | "longPress";
 
 export type GestureActionId =
   | "none" | "undo" | "redo" | "zoomIn" | "zoomOut" | "fitView"

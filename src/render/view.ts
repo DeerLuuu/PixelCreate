@@ -10,6 +10,7 @@ import type { SymAxis } from "../engine/symmetry";
 import { lineCells, brushStamp, fillPolygon } from "../engine/paint";
 import { selOps, lassoFill, beginMove, xformFloating, type MoveState } from "../tools/select";
 import type { Session } from "../app/session";
+import type { GestureActionId } from "../app/gesture-ids";
 import { clamp } from "../engine/types";
 
 /** Is the composite canvas stale? `compRect === null` means "the whole canvas
@@ -106,10 +107,10 @@ export class View {
   private longT: number | null = null;
   /** freehand outline tool: collected path, filled with the current colour on release */
   private outline: { pts: Array<[number, number]>; li: number; fi: number; before: Uint8ClampedArray | null } | null = null;
-  /** two-finger long press: fires when both fingers stay still long enough */
-  private twoLongT: number | null = null;
-  private twoLongMid: { x: number; y: number } | null = null;
-  private twoLongFired = false;
+  /** multi-finger long press (2 or 3 fingers held still): pending timer */
+  private hold: { n: number; mid: { x: number; y: number }; starts: Map<number, { x: number; y: number }>; t: number } | null = null;
+  /** set when a hold fired, so the following lifts cannot count as taps */
+  private holdFired = false;
   /** layer-switch flash: layer index + start time, drawn in the overlay */
   private flash: { li: number; t0: number } | null = null;
   private flashRaf = 0;
@@ -954,30 +955,48 @@ export class View {
     }
     this.pickAnchor = null;
   }
-  private cancelTwoLong(): void {
-    if (this.twoLongT !== null) {
-      window.clearTimeout(this.twoLongT);
-      this.twoLongT = null;
+  private cancelHold(): void {
+    if (this.hold) {
+      window.clearTimeout(this.hold.t);
+      this.hold = null;
     }
-    this.twoLongMid = null;
   }
-  /** start the two-finger long-press timer from the current mid point */
-  private armTwoLong(): void {
-    this.cancelTwoLong();
-    const [a, b] = [...this.pointers.values()];
-    if (!a || !b) return;
-    const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
-    this.twoLongMid = mid;
-    this.twoLongFired = false;
-    this.twoLongT = window.setTimeout(() => {
-      this.twoLongT = null;
-      // still two fingers down, no pinch/pan in the meantime
-      if (this.pointers.size !== 2 || this.pinchZoomed || !this.twoLongMid) return;
-      this.twoLongFired = true;
-      this.session.hapticTick("双指长按");
-      this.session.runGestureAction(this.session.prefs.gTwoFingerLongPress, { x: mid.x, y: mid.y });
+  /** true when any finger of the pending hold moved past the jitter threshold */
+  private holdMoved(): boolean {
+    const h = this.hold;
+    if (!h) return false;
+    const tol = Math.max(8, this.session.prefs.fourFingerPx || FOUR_MOVE_PX_DEFAULT);
+    for (const [pid, p] of this.pointers) {
+      const st = h.starts.get(pid);
+      if (st && Math.hypot(p.x - st.x, p.y - st.y) > tol) return true;
+    }
+    return false;
+  }
+  /** arm the n-finger long press (the action is read when it fires) */
+  private armHold(n: number, action: GestureActionId, tag: string): void {
+    this.cancelHold();
+    if (this.pointers.size !== n) return;
+    const pts = [...this.pointers.entries()];
+    let mx = 0, my = 0;
+    const starts = new Map<number, { x: number; y: number }>();
+    for (const [pid, p] of pts) {
+      mx += p.x; my += p.y;
+      starts.set(pid, { x: p.x, y: p.y });
+    }
+    this.holdFired = false;
+    const t = window.setTimeout(() => {
+      const h = this.hold;
+      if (!h) return;
+      this.hold = null;
+      // every finger still down, and nobody slid in the meantime
+      if (this.pointers.size !== h.n || this.pinchZoomed) return;
+      this.holdFired = true;
+      this.session.hapticTick(tag);
+      this.session.runGestureAction(action, { x: h.mid.x, y: h.mid.y });
     }, this.session.prefs.longPressMs);
+    this.hold = { n, mid: { x: mx / n, y: my / n }, starts, t };
   }
+
   private samplePickCell(x: number, y: number, strong: boolean): void {
     const c = this.session.sampleComposite(x, y);
     if (c) {
@@ -1024,7 +1043,7 @@ export class View {
       // must never latch pinchZoomed (it would silently block the preview).
       this.fourSeen = true;
       this.fourArmed = false;
-      this.cancelTwoLong();
+      this.cancelHold();
       this.pinchBase = null;
       this.pinchZoomed = false;
       this.gestureHadTwo = false;
@@ -1063,13 +1082,15 @@ export class View {
       }
       this.panLast = null;
       this.gestureMoved = false;
-      this.cancelTwoLong();
+      this.cancelHold();
       this.pinchBase = null;
       this.pinchZoomed = false;
       this.gestureHadTwo = false;
       this.twoTap = 0;
       this.twoTapPt = null;
       this.twoTapMid = null;
+      // three fingers held still = three-finger long press (no system conflict)
+      this.armHold(3, this.session.prefs.gThreeFingerLongPress, "三指长按");
       return;
     }
     if (this.pointers.size >= 2) {
@@ -1094,7 +1115,9 @@ export class View {
       this.gestureHadTwo = true;
       this.pinchZoomed = false;
       this.twoTapMid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
-      this.armTwoLong(); // two fingers held still = two-finger long press
+      // two fingers held still = two-finger long press (some phones map this
+      // to the system screen-recognition gesture — 三指长按 is the alternative)
+      this.armHold(2, this.session.prefs.gTwoFingerLongPress, "双指长按");
       return;
     }
     // flush an unfinished gesture left by a lost pointerup (e.g. rapid bucket taps)
@@ -1196,6 +1219,8 @@ export class View {
     const pt = this.evPt(e);
     const wasDown = this.pointers.has(e.pointerId);
     if (wasDown) this.pointers.set(e.pointerId, pt);
+    // a pending multi-finger long press dies the moment a finger slides
+    if (this.hold && this.holdMoved()) this.cancelHold();
     // auto-pan the viewport while a draw/transform/selection drag nears the edge.
     // Speed scales with how deep into the edge zone the pointer is, but is capped
     // per event so the scroll stays slow, smooth and controllable.
@@ -1245,13 +1270,8 @@ export class View {
       const [a, b] = [...this.pointers.values()];
       const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
       const dist = Math.max(1, Math.hypot(b.x - a.x, b.y - a.y));
-      // a pending two-finger long press dies as soon as the pair really moves
-      // (pan or pinch) — otherwise it would fire in the middle of a pan
-      if (this.twoLongT !== null && this.twoLongMid) {
-        const tol = Math.max(8, this.session.prefs.fourFingerPx || FOUR_MOVE_PX_DEFAULT);
-        if (Math.hypot(mx - this.twoLongMid.x, my - this.twoLongMid.y) > tol ||
-          Math.abs(dist - this.pinchBase.dist) > tol) this.cancelTwoLong();
-      }
+      // (a pending multi-finger long press was already cancelled in onMove)
+
       const k = dist / this.pinchBase.dist;
       const z = clamp(this.pinchBase.zoom * k, this.session.prefs.zoomMin, this.session.prefs.zoomMax);
       const sc = z / this.pinchBase.zoom;
@@ -1351,7 +1371,7 @@ export class View {
       this.drawOverlay();
     }
     if (this.pointers.size < 2) this.pinchBase = null;
-    if (this.pointers.size < 2) this.cancelTwoLong();
+    if (this.hold && this.pointers.size < this.hold.n) this.cancelHold();
     if (this.pointers.size === 0 && this.outline) {
       this.endOutline(true);
       return;
@@ -1371,10 +1391,10 @@ export class View {
       const now = Date.now();
       // two-finger tap (no zoom): a double two-finger tap = redo
       const hadTwo = this.gestureHadTwo, pinchZoomed = this.pinchZoomed;
-      const firedTwoLong = this.twoLongFired;
+      const firedTwoLong = this.holdFired;
       this.gestureHadTwo = false;
       this.pinchZoomed = false;
-      this.twoLongFired = false;
+      this.holdFired = false;
       if (this.fourSeen) {
         // four-finger gesture: it opened the all-frames preview as soon as
         // four fingers were down with >=2 of them sliding; the preview opens
@@ -1412,7 +1432,7 @@ export class View {
         this.twoTapMid = null;
         this.panLast = null;
         this.gestureMoved = false;
-        this.cancelTwoLong();
+        this.cancelHold();
         return;
       }
       if (hadTwo && !pinchZoomed && !this.stroke && !this.selDrag && !this.xf && this.twoTapMid) {
@@ -1555,8 +1575,15 @@ export class View {
   private onCancel(e: PointerEvent): void {
     this.pointers.delete(e.pointerId);
     if (this.outline) this.endOutline(false);
-    this.cancelTwoLong();
-    this.twoLongFired = false;
+    // a stationary two-finger hold cancelled by the OS usually means the phone
+    // claimed the gesture for its own screen recognition: tell the user once
+    if (this.hold && this.hold.n === 2 && this.pointers.size < 2) {
+      this.session.hintOnce("twoFingerLongPress",
+        "双指长按被系统的「识屏」抢走了：在系统设置里搜索「识屏」并关闭它，或改用三指长按",
+        "The system's screen recognition grabbed the two-finger long press. Search for 'screen recognition' in the system settings and turn it off, or use the three-finger long press.");
+    }
+    this.cancelHold();
+    this.holdFired = false;
     this.gestureHadTwo = false;
     this.pinchZoomed = false;
     this.twoTapMid = null;
