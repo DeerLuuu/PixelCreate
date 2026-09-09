@@ -2421,7 +2421,20 @@ export class Session {
     this.scheduleAutosave();
     toastFn(this.prefs.lang === "en" ? "Un-snapped" : "已解除吸附");
   }
-  /** rotate the view 90° clockwise (the artwork itself is unchanged) */
+  /** rotate THIS canvas' pixels 90° clockwise (width/height swap, undoable) */
+  rotateCanvasContent(dir: 1 | -1 = 1): void {
+    const d = this.doc;
+    if (!d.layers.length) return;
+    this.struct("canvas-rotate", () => ops.rotateDocContent(this.doc, dir));
+    // the symmetry axis is measured from the canvas centre: recentre it
+    this.applySymPreset(this.sym);
+    this.view_?.fit();
+    this.changedUI(); // struct() already synced + repainted
+    toastFn(this.prefs.lang === "en"
+      ? "Canvas rotated 90°"
+      : "画布已旋转 90°");
+  }
+  /** rotate the VIEW 90° clockwise (the artwork itself is unchanged) */
   rotateView(step = 90): void {
     const v = this.view_;
     if (!v) return;

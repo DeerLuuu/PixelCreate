@@ -1,6 +1,6 @@
 // Raw structural operations on a Doc. The caller wraps these in history.
 import { Cel } from "./cel";
-import { Doc, type LayerMeta, type FrameMeta } from "./doc";
+import { Doc, Sel, type LayerMeta, type FrameMeta } from "./doc";
 import { uid } from "./types";
 import type { BlendMode } from "./types";
 
@@ -252,4 +252,48 @@ export function contentBounds(doc: Doc): { x: number; y: number; w: number; h: n
   }
   if (x1 < 0) return null;
   return { x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 + 1 };
+}
+
+/**
+ * Rotate the whole canvas 90 degrees: every cel and the selection mask are
+ * rotated and width/height are swapped. dir = 1 clockwise, -1 counter-clockwise.
+ * A pixel at (x, y) of a WxH canvas lands at (H-1-y, x) when rotating clockwise.
+ */
+export function rotateDocContent(doc: Doc, dir: 1 | -1 = 1): void {
+  const W = doc.w, H = doc.h;
+  const nW = H, nH = W;
+  const entries = Array.from(doc.cels.entries());
+  doc.cels.clear();
+  for (const [k, cel] of entries) {
+    const next = new Cel(nW, nH);
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        const si = (y * W + x) * 4;
+        if (!cel.data[si + 3]) continue; // transparent pixels stay transparent
+        const nx = dir === 1 ? H - 1 - y : y;
+        const ny = dir === 1 ? x : W - 1 - x;
+        const di = (ny * nW + nx) * 4;
+        next.data[di] = cel.data[si];
+        next.data[di + 1] = cel.data[si + 1];
+        next.data[di + 2] = cel.data[si + 2];
+        next.data[di + 3] = cel.data[si + 3];
+      }
+    }
+    doc.cels.set(k, next);
+  }
+  doc.w = nW;
+  doc.h = nH;
+  if (doc.sel) {
+    const ns = new Sel(nW, nH);
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        if (!doc.sel.mask[y * W + x]) continue;
+        const nx = dir === 1 ? H - 1 - y : y;
+        const ny = dir === 1 ? x : W - 1 - x;
+        ns.mask[ny * nW + nx] = 1;
+      }
+    }
+    ns.bump();
+    doc.sel = ns;
+  }
 }

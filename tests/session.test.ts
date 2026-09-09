@@ -1269,6 +1269,40 @@ export async function testSession(): Promise<void> {
     eq("canvas.empty.add-again", [m.docs.length, m.docIdx, back], [1, 0, 0]);
     eq("canvas.empty.origin", [m.docs[0].x, m.docs[0].y], [0, 0]);
   }
+  // --- rotate the canvas content 90° (width/height swap, undoable) ---
+  {
+    (globalThis as unknown as { localStorage: { clear(): void } }).localStorage.clear();
+    const s = new Session();
+    await s.replaceDoc(new Doc(4, 2, "rot"), { ask: false });
+    const cel = s.doc.ensureCel(0, 0);
+    cel.data[0] = 255; cel.data[3] = 255;            // (0,0) red
+    const bi = (1 * 4 + 3) * 4;                      // (3,1) blue
+    cel.data[bi] = 0; cel.data[bi + 1] = 0; cel.data[bi + 2] = 255; cel.data[bi + 3] = 255;
+    s.doc.sel = new Sel(4, 2);
+    s.doc.sel.set(0, 0, 1);
+    s.rotateCanvasContent(1);
+    eq("rot.size", [s.doc.w, s.doc.h], [2, 4]);
+    const rc = s.doc.celAt(0, 0)!;
+    const at = (x: number, y: number): number[] => {
+      const i = rc.idx(x, y);
+      return [rc.data[i], rc.data[i + 1], rc.data[i + 2], rc.data[i + 3]];
+    };
+    eq("rot.red-moved", at(1, 0), [255, 0, 0, 255]);
+    eq("rot.blue-moved", at(0, 3), [0, 0, 255, 255]);
+    eq("rot.old-spot-empty", at(0, 0), [0, 0, 0, 0]);
+    eq("rot.sel-size", [s.doc.sel!.w, s.doc.sel!.h], [2, 4]);
+    eq("rot.sel-moved", s.doc.sel!.get(1, 0), 1);
+    ok("rot.undo", !!s.history.undo());
+    eq("rot.undo-size", [s.doc.w, s.doc.h], [4, 2]);
+    eq("rot.undo-px", [s.doc.celAt(0, 0)!.data[0], s.doc.celAt(0, 0)!.data[bi + 2]], [255, 255]);
+    ok("rot.redo", !!s.history.redo());
+    eq("rot.redo-size", [s.doc.w, s.doc.h], [2, 4]);
+    // counter-clockwise turns it back
+    s.rotateCanvasContent(-1);
+    eq("rot.ccw-size", [s.doc.w, s.doc.h], [4, 2]);
+    eq("rot.ccw-red", [s.doc.celAt(0, 0)!.data[0], s.doc.celAt(0, 0)!.data[3]], [255, 255]);
+  }
+
   // --- new project: replaces every canvas and clears the history ---
   {
     (globalThis as unknown as { localStorage: { clear(): void } }).localStorage.clear();

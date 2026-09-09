@@ -1132,7 +1132,7 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
     { icon: "i-adjust", label: t("adjust"), desc: t("canvasAdjustDesc"), act: () => { closeCanv(); onCanvasAdjust(); } },
     { icon: "i-export", label: t("export"), desc: t("canvasExportDesc"), act: () => { closeCanv(); onCanvasExport(); }, guide: "canv-export" },
     { icon: "i-grid", label: t("canvasTile"), desc: t("canvasTileDesc"), act: () => { setCanv({ ...canv, open: false }); setCanvSub(null); setTileDlg(true); }, guide: "canv-tile" },
-    { icon: "i-rotate", label: t("viewRotate"), desc: t("viewRotateDesc"), act: () => { closeCanv(); SESSION.rotateView(); }, guide: "canv-rotate" },
+    { icon: "i-rotate", label: t("canvasRotate"), desc: t("canvasRotateDesc"), act: () => { closeCanv(); SESSION.rotateCanvasContent(1); }, guide: "canv-rotate" },
     { icon: "i-ref", label: t("canvasRef"), desc: t("canvasRefDesc"), act: () => { closeCanv(); onCanvasRef(); }, guide: "canv-ref" },
     ...(SESSION.doc.layers.some((l) => !!l.ref)
       ? [{ icon: "i-unlink", label: t("refAllRelease"), desc: t("refAllReleaseDesc"), act: () => { closeCanv(); SESSION.unrefAll(); } }]
