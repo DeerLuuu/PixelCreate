@@ -812,6 +812,40 @@ export async function testSession(): Promise<void> {
     ok("extract.source-empty", !x.doc.celAt(0, 0) && !x.doc.celAt(0, 1));
   }
 
+  // --- canvas position lock + snapping into groups ---
+  {
+    (globalThis as unknown as { localStorage: { clear(): void } }).localStorage.clear();
+    const c = new Session();
+    c.doc.name = "A";
+    const b = c.addCanvas(new Doc(64, 64, "B"));
+    eq("canvas.snap.initial-gap", c.docs[b].x, c.docs[0].x + 64 + 24);
+    // dragging B towards A snaps it flush against A's right edge
+    const near = c.snapPosition(b, c.docs[0].x + 64 + 5, c.docs[0].y, 12);
+    eq("canvas.snap.touch", [near.x, near.y, near.hit], [c.docs[0].x + 64, c.docs[0].y, 0]);
+    c.moveCanvas(b, near.x, near.y);
+    eq("canvas.snap.moved", c.docs[b].x, c.docs[0].x + 64);
+    // releasing while flush groups them
+    c.finishCanvasDrag(b, near.hit);
+    ok("canvas.snap.grouped", !!c.docs[b].group && c.docs[b].group === c.docs[0].group);
+    // dragging either one moves the whole group
+    c.moveCanvas(b, c.docs[b].x + 40, c.docs[b].y + 10);
+    eq("canvas.snap.move-together", [c.docs[0].x, c.docs[0].y], [40, 10]);
+    // a canvas that is NOT touching does not group, even when aligned
+    c.unlinkCanvas(b);
+    ok("canvas.snap.unlinked", !c.docs[b].group && !c.docs[0].group);
+    c.moveCanvas(b, c.docs[0].x + 300, c.docs[0].y);
+    c.finishCanvasDrag(b, 0);
+    ok("canvas.snap.no-touch-no-group", !c.docs[b].group);
+    // lock blocks dragging but not focusing
+    c.toggleCanvasLock(0);
+    ok("canvas.lock.on", c.isCanvasLocked(0));
+    const ax = c.docs[0].x;
+    c.moveCanvas(0, ax + 100, c.docs[0].y);
+    eq("canvas.lock.blocks-move", c.docs[0].x, ax);
+    c.toggleCanvasLock(0);
+    ok("canvas.lock.off", !c.isCanvasLocked(0));
+  }
+
   // --- reference layers are MIRRORED into their own cel (live preview) ---
   {
     const cmod = require("../src/render/compositor") as Record<string, unknown>;

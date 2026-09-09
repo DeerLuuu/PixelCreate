@@ -1125,10 +1125,8 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
   // fit / tiling, so the ring never gets crowded.
   const canvItems: Item[] = canvSub === "more" ? [
     { icon: "", label: "\u2039", act: () => setCanvSub(null), guide: "canv-back" },
-    { icon: "i-eye", label: t("canvasPreview"), desc: t("canvasPreviewDesc"), act: () => { closeCanv(); SESSION.addPreview(); } },
     { icon: "i-adjust", label: t("adjust"), desc: t("canvasAdjustDesc"), act: () => { closeCanv(); onCanvasAdjust(); } },
     { icon: "i-export", label: t("export"), desc: t("canvasExportDesc"), act: () => { closeCanv(); onCanvasExport(); }, guide: "canv-export" },
-    { icon: "i-fit", label: t("fitView"), desc: t("canvasFitDesc"), act: () => { closeCanv(); SESSION.fitCanvas(); } },
     { icon: "i-grid", label: t("canvasTile"), desc: t("canvasTileDesc"), act: () => { setCanv({ ...canv, open: false }); setCanvSub(null); setTileDlg(true); }, guide: "canv-tile" },
     { icon: "i-import", label: t("canvasRef"), desc: t("canvasRefDesc"), act: () => { closeCanv(); onCanvasRef(); }, guide: "canv-ref" },
     { icon: "i-dupe", label: t("layerExtract"), desc: t("layerExtractDesc"), act: () => { closeCanv(); void SESSION.extractLayerToCanvas(); }, guide: "canv-extract" },
@@ -1143,6 +1141,7 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
       })();
     } },
     { icon: "i-size", label: t("resizeTitle"), desc: t("canvasResizeDesc"), act: () => { closeCanv(); onCanvasSize(); } },
+    { icon: SESSION.isCanvasLocked() ? "i-lock" : "i-unlock", label: t(SESSION.isCanvasLocked() ? "canvasUnlock" : "canvasLock"), desc: t("canvasLockDesc"), act: () => { closeCanv(); SESSION.toggleCanvasLock(); }, guide: "canv-lock" },
     { icon: "i-x", label: t("canvasClose"), desc: t("canvasCloseDesc"), act: () => {
       closeCanv();
       void (async () => {

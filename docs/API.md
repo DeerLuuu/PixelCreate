@@ -851,6 +851,10 @@ renameCanvas(i, name): void
 moveCanvas(i, x, y): void             // 拖动标题栏时调用（空间坐标，单位=像素）
 closeCanvas(i): boolean               // 从工程里移除一张画布（允许关到 0 张 = 空工程）
 fitCanvas(): void                     // 缓动缩放视图到聚焦画布的适配大小
+toggleCanvasLock(i?) / isCanvasLocked(i?)   // 锁定 / 解锁画布位置（锁定后不可拖动）
+snapPosition(i, x, y, tol)            // 拖动时的吸附位置 {x, y, hit}
+finishCanvasDrag(i, hit)              // 松手时若与目标贴合则成组
+linkCanvas(a, b) / unlinkCanvas(i)    // 手动成组 / 解除吸附
 addPreview(canvas?): string           // 每个画布最多一个预览框
 closePreview(id) / movePreview(id, x, y) / resizePreview(id, size)
 askConfirm(q) / askText(q)            // UI 注册的确认框 / 单行输入框

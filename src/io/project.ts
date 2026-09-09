@@ -131,6 +131,10 @@ export interface SpaceEntry {
   fi: number;
   /** already-encoded operation history of THIS canvas (optional) */
   hist?: unknown;
+  /** position locked (the title bar cannot drag it) */
+  locked?: boolean;
+  /** id shared by canvases snapped together (they move as one) */
+  group?: string | null;
 }
 
 /** serialize the whole multi-canvas space (v3); the focused canvas also fills
@@ -138,7 +142,11 @@ export interface SpaceEntry {
 export async function serializeSpace(entries: SpaceEntry[], focus: number): Promise<string> {
   const canvases: unknown[] = [];
   for (const e of entries) {
-    canvases.push({ id: e.id, x: e.x, y: e.y, li: e.li, fi: e.fi, hist: e.hist ?? undefined, ...(await docPayload(e.doc)) });
+    canvases.push({
+      id: e.id, x: e.x, y: e.y, li: e.li, fi: e.fi,
+      hist: e.hist ?? undefined, locked: e.locked === true, group: e.group ?? null,
+      ...(await docPayload(e.doc)),
+    });
   }
   // an empty space is a valid project: "everything closed" survives a restart
   if (!entries.length) return JSON.stringify({ app: "PixelCraft", v: 3, focus: 0, canvases });
@@ -174,6 +182,8 @@ export async function parseSpace(text: string): Promise<ParsedSpace | null> {
         li: Math.max(0, Math.round(Number(c.li) || 0)),
         fi: Math.max(0, Math.round(Number(c.fi) || 0)),
         hist: (c as { hist?: unknown }).hist ?? null,
+        locked: c.locked === true,
+        group: typeof c.group === "string" ? c.group : null,
       });
     }
     // "canvases": [] is an explicitly empty project (all canvases closed)

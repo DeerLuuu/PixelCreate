@@ -25,6 +25,7 @@ import { mirrorMaskInPlace } from "../engine/symmetry";
 import { adjustPixel, type HslAdj } from "../engine/adjust";
 import { type LoopMode, nextLoopMode, nextPlayFrame, startPlayDir, startPlayFrame } from "./playback";
 import { SETTINGS_BY_PATH, normalizeSetting, type SettingValue } from "./settings";
+import { snapToTargets, type SnapTarget } from "./canvas-snap";
 
 export interface Prefs {
   lang: "zh" | "en";
@@ -200,6 +201,10 @@ export interface CanvasEntry {
   fi: number;
   /** per-canvas undo stack: switching canvases never loses the other one */
   history: History;
+  /** position locked: the title bar can no longer drag this canvas */
+  locked?: boolean;
+  /** canvases snapped together share a group id and move as one */
+  group?: string | null;
 }
 
 /** a floating preview window showing one canvas */
@@ -249,7 +254,7 @@ export class Session {
     return this.ensureEntry()?.history ?? this.spareHistory;
   }
   private newEntry(doc: Doc, x: number, y: number): CanvasEntry {
-    return { id: uid(), doc, x, y, li: 0, fi: 0, history: new History() };
+    return { id: uid(), doc, x, y, li: 0, fi: 0, history: new History(), locked: false, group: null };
   }
   /** the canvas a reference layer points at (null when it is gone) */
   private entryOf(id: string | null | undefined): CanvasEntry | null {
@@ -1860,6 +1865,7 @@ export class Session {
     const wantHist = this.prefs.recordHistory;
     const entries: project.SpaceEntry[] = this.docs.map((e) => ({
       id: e.id, doc: e.doc, x: e.x, y: e.y, li: e.li, fi: e.fi,
+      locked: e.locked === true, group: e.group ?? null,
       hist: wantHist && e.history.list().labels.length
         ? historyFile.encodeHistory(e.history.dump(), e.doc.w, e.doc.h)
         : null,
@@ -1873,6 +1879,7 @@ export class Session {
     if (opts?.ask !== false && !(await this.askOverwrite("open"))) return false;
     this.docs = parsed.entries.map((e) => ({
       id: e.id || uid(), doc: e.doc, x: e.x, y: e.y, li: e.li, fi: e.fi, history: new History(),
+      locked: e.locked === true, group: e.group ?? null,
     }));
     this.docIdx = parsed.focus;
     this.applyHistoryLimit();
@@ -1958,15 +1965,91 @@ export class Session {
     this.changed();
     this.scheduleAutosave();
   }
-  /** move a canvas inside the space (drag its title bar) */
+  /** move a canvas inside the space (drag its title bar); canvases snapped
+   *  into the same group move together */
   moveCanvas(i: number, x: number, y: number): void {
     const e = this.docs[i];
-    if (!e) return;
-    e.x = Math.round(x);
-    e.y = Math.round(y);
+    if (!e || e.locked) return;
+    const nx = Math.round(x), ny = Math.round(y);
+    const dx = nx - e.x, dy = ny - e.y;
+    if (!dx && !dy) return;
+    for (const o of this.docs) {
+      if (o === e || (e.group && o.group === e.group)) { o.x += dx; o.y += dy; }
+    }
     this.repaint();
     this.changed();
     this.scheduleAutosave();
+  }
+  /** lock / unlock a canvas position (locked canvases cannot be dragged) */
+  toggleCanvasLock(i = this.docIdx): void {
+    const e = this.docs[i];
+    if (!e) return;
+    e.locked = !e.locked;
+    this.changed();
+    this.scheduleAutosave();
+  }
+  /** true when the canvas position is locked */
+  isCanvasLocked(i = this.docIdx): boolean {
+    return this.docs[i]?.locked === true;
+  }
+  /** proposed position for a drag: magnetically aligned with the other canvases
+   *  (canvases already in the same group are ignored) */
+  snapPosition(i: number, x: number, y: number, tol: number): { x: number; y: number; hit: number | null } {
+    const e = this.docs[i];
+    if (!e) return { x, y, hit: null };
+    const targets: Array<SnapTarget<number>> = [];
+    for (let k = 0; k < this.docs.length; k++) {
+      const o = this.docs[k];
+      if (o === e || (e.group && o.group === e.group)) continue;
+      targets.push({ id: k, x: o.x, y: o.y, w: o.doc.w, h: o.doc.h });
+    }
+    const r = snapToTargets({ x, y, w: e.doc.w, h: e.doc.h }, targets, tol);
+    return { x: r.x, y: r.y, hit: r.hit };
+  }
+  /** true when two canvases share an edge (they are adjacent) */
+  private canvasesTouch(a: CanvasEntry, b: CanvasEntry): boolean {
+    const ax1 = a.x + a.doc.w, ay1 = a.y + a.doc.h;
+    const bx1 = b.x + b.doc.w, by1 = b.y + b.doc.h;
+    const sideBySide = (ax1 === b.x || bx1 === a.x) && a.y < by1 && b.y < ay1;
+    const stacked = (ay1 === b.y || by1 === a.y) && a.x < bx1 && b.x < ax1;
+    return sideBySide || stacked;
+  }
+  /** a drag ended on canvas `hit`: snap them together when they really touch */
+  finishCanvasDrag(i: number, hit: number | null): void {
+    if (hit === null || hit === i) return;
+    const a = this.docs[i], b = this.docs[hit];
+    if (!a || !b) return;
+    if (a.group && b.group && a.group === b.group) return;
+    if (!this.canvasesTouch(a, b)) return;
+    this.linkCanvas(i, hit);
+    this.hapticTick("吸附", 0.8);
+    toastFn(this.prefs.lang === "en"
+      ? "Snapped to " + (b.doc.name || "canvas") + " — they now move together"
+      : "已吸附到「" + (b.doc.name || "画布") + "」——拖动会一起移动");
+  }
+  /** put two canvases into one group (merged with any existing groups) */
+  linkCanvas(a: number, b: number): void {
+    const A = this.docs[a], B = this.docs[b];
+    if (!A || !B || A === B) return;
+    const merged = B.group && A.group && A.group !== B.group ? B.group : null;
+    const g = A.group ?? B.group ?? uid();
+    A.group = g;
+    B.group = g;
+    if (merged) for (const o of this.docs) if (o.group === merged) o.group = g;
+    this.changed();
+    this.scheduleAutosave();
+  }
+  /** release one canvas from its group (the rest stay snapped together) */
+  unlinkCanvas(i: number): void {
+    const e = this.docs[i];
+    if (!e?.group) return;
+    const g = e.group;
+    e.group = null;
+    const rest = this.docs.filter((o) => o.group === g);
+    if (rest.length === 1) rest[0].group = null; // a group of one is no group
+    this.changed();
+    this.scheduleAutosave();
+    toastFn(this.prefs.lang === "en" ? "Un-snapped" : "已解除吸附");
   }
   /** smoothly zoom the view to fit the focused canvas */
   fitCanvas(): void {

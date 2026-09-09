@@ -18,6 +18,7 @@ import { testI18n } from "./i18n.test";
 import { testExpr } from "./expr.test";
 import { testEffects } from "./effects.test";
 import { testView } from "./view.test";
+import { testSnap } from "./snap.test";
 
 async function main(): Promise<void> {
   console.log("--- history ---");
@@ -50,6 +51,8 @@ async function main(): Promise<void> {
   testExport();
   console.log("--- back ---");
   testBack();
+  console.log("--- snap ---");
+  testSnap();
   console.log("--- view ---");
   testView();
   console.log("--- effects ---");
