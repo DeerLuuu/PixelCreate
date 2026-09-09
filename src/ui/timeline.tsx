@@ -254,8 +254,8 @@ export function TimelineBar({ t, snap, onFrameDlg }: { t: ReturnType<typeof make
       <div className="tlctrl">
         <Btn icon="i-prev" onClick={() => SESSION.setFrame(snap.frameIdx - 1)} title={t("framePrev")} />
         <Btn icon={snap.playing ? "i-pause" : "i-play"} onClick={() => SESSION.togglePlay()} title={t(snap.playing ? "pause" : "play")} />
-        <Btn icon="i-loop" onClick={() => { const m = SESSION.cycleLoopMode(); bridge.toast(t("loop." + m)); }}
-          active={snap.loopMode !== "once"} title={t("loop") + " · " + t("loop." + snap.loopMode)} />
+        <Btn icon="i-loop" onClick={() => { const m = SESSION.cycleLoopMode(); bridge.toast(t("loopModes." + m)); }}
+          active={snap.loopMode !== "once"} title={t("loop") + " · " + t("loopModes." + snap.loopMode)} />
         <Btn icon="i-next" onClick={() => SESSION.setFrame(snap.frameIdx + 1)} title={t("frameNext")} />
         <Btn icon="i-plus" onClick={() => SESSION.frameAdd()} title={t("frameAdd")} />
         <Btn icon="i-dupe" onClick={() => SESSION.frameDuplicate()} title={t("frameDupe")} />
@@ -304,7 +304,7 @@ export function TimelineBar({ t, snap, onFrameDlg }: { t: ReturnType<typeof make
               className={"ase-cell ase-lcell" + (li === snap.layerIdx ? " on" : "") + (isDrag ? " dragging" : "") + (isDrop ? " drop" : "")}
               style={{ gridColumn: 1, gridRow: li + 2, transform: isDrag && ldl ? "translateY(" + ldl.dy + "px)" : undefined }}
               onPointerDown={layDown(li)} onPointerMove={layMove(li)} onPointerUp={layUp(li)} onPointerCancel={resetL}>
-              <button className="mini eye" title={L.visible ? t("layerHide") : t("layerShow")} onClick={(e) => { e.stopPropagation(); SESSION.toggleLayerVisible(li); }}>
+              <button className="mini" title={L.visible ? t("layerHide") : t("layerShow")} onClick={(e) => { e.stopPropagation(); SESSION.toggleLayerVisible(li); }}>
                 <Icon id={L.visible ? "i-eye" : "i-eyeoff"} size={12} />
               </button>
               <button className="mini lock" title={L.locked ? t("lock") : t("unlock")} onClick={(e) => { e.stopPropagation(); SESSION.toggleLayerLock(li); }}>

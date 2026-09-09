@@ -1285,7 +1285,7 @@ function ControlBar({ t, snap, onPanel, onAdjust, onFramePrev }: { t: ReturnType
         </div>
         <Btn label="⇄" className="swap-color" title={t("swapColors")} onClick={() => SESSION.swapColors()} guide="btn-swap" />
         <Btn icon="i-adjust" onClick={onAdjust} title={t("adjust")} guide="btn-adjust" />
-        <Btn label={SYM_GLYPH[sym]} className="sym-toggle" active={sym !== "off"} title={t(symKey[sym])} desc={bd(snap.lang, "sym")} onClick={() => { const m = SESSION.cycleSym(); bridge.toast(t(symKey[m])); }} />
+        <Btn label={SYM_GLYPH[sym]} active={sym !== "off"} title={t(symKey[sym])} desc={bd(snap.lang, "sym")} onClick={() => { const m = SESSION.cycleSym(); bridge.toast(t(symKey[m])); }} />
       </div>
       <div className="cb-sliders">
         <HoldAdjust dir={dir} value={snap.brushSize} min={1} max={64} title={t("brushSize")} hint={bd(snap.lang, "brush")} format={(v) => "◉" + v} reset={1} onChange={(v) => SESSION.setBrushSize(v)} />

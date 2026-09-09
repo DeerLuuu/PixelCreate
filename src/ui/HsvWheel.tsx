@@ -1,7 +1,6 @@
 // Circular HSV color wheel: hue = angle, saturation = radius, value slider.
 import React, { useEffect, useRef } from "react";
 import type { RGBA } from "../engine/types";
-import { rgbaToHex } from "../engine/color";
 
 function hsvToRgb(h: number, s: number, v: number): [number, number, number] {
   h = ((h % 360) + 360) % 360;
@@ -159,8 +158,4 @@ export function HsvWheel({ color, onChange }: Props) {
       />
     </div>
   );
-}
-
-export function colorToHex6(c: RGBA): string {
-  return rgbaToHex([c[0], c[1], c[2], 255]);
 }

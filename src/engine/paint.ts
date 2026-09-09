@@ -22,15 +22,6 @@ export function eraseAt(cel: Cel, x: number, y: number, mask?: MaskFn | null): b
   return true;
 }
 
-/** Exact `size` x `size` square of cells (brush size = pixel diameter). */
-export function squareCells(x: number, y: number, size: number): [number, number][] {
-  const s = Math.max(1, Math.round(size));
-  const out: [number, number][] = [];
-  const h = Math.floor(s / 2);
-  for (let dy = -h; dy < s - h; dy++) for (let dx = -h; dx < s - h; dx++) out.push([x + dx, y + dy]);
-  return out;
-}
-
 /** Bresenham line: calls fn for every cell. */
 export function lineCells(x0: number, y0: number, x1: number, y1: number, fn: (x: number, y: number) => void): void {
   let dx = Math.abs(x1 - x0), dy = -Math.abs(y1 - y0);

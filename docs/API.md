@@ -120,7 +120,6 @@ type MaskFn = (x: number, y: number) => boolean;      // 选区遮罩
 paintAt(cel, x, y, c: RGBA, mask?): boolean;          // 画一点（受遮罩限制）
 eraseAt(cel, x, y, mask?): boolean;                   // 擦一点
 
-squareCells(x, y, size): Array<[number, number]>;     // size×size 方块单元
 lineCells(x0, y0, x1, y1, fn): void;                  // Bresenham，逐点回调
 
 floodFill(cel, sx, sy, color, mask?): void;           // 连续区域填充

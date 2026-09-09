@@ -14,7 +14,7 @@ const zh: Dict = {
   tools: {
     pencil: "铅笔", eraser: "橡皮", bucket: "油漆桶", picker: "取色器", line: "直线",
     rect: "矩形", rectfill: "矩形填充", ellipse: "椭圆", ellipsefill: "椭圆填充", circle: "圆形", polygon: "多边形",
-    select: "选区", wand: "魔棒",
+    select: "选区", wand: "魔棒", lasso: "套索",
   },
   sides: "边数",
   shapeSolid: "实心",
@@ -47,7 +47,7 @@ const zh: Dict = {
   frameSelMode: "多选帧", frameSelTitle: "已选", frameSelHint: "点帧号或该帧的任意图层格子即可勾选，可批量复制 / 删除 / 设置时长",
   frameSelAll: "全选 / 清空", frameSelDupe: "复制所选帧", frameSelDur: "所选帧时长", frameSelDel: "删除所选帧", frameSelExit: "退出多选",
   frameSelDuped: "已复制 ", frameSelDeleted: "已删除 ", frameSelKeepOne: "至少保留 1 帧", frameSelNone: "先选中帧",
-  frameDur: "帧时长(毫秒)", play: "播放", pause: "暂停", loop: "循环播放", onion: "洋葱皮",
+  layerDupe: "复制图层", frameDur: "帧时长(毫秒)", play: "播放", pause: "暂停", loop: "循环播放", onion: "洋葱皮",
   brushSize: "笔刷大小", opacity: "不透明度", blend: "混合",
   blends: {
     normal: "正常", multiply: "正片叠底", screen: "滤色", overlay: "叠加", darken: "变暗",
@@ -146,7 +146,6 @@ const zh: Dict = {
   hapticLabel: "震动反馈", hapticDesc: "手势、取色、时间轴长按等操作时轻微震动", hapticUnsupported: "当前设备 / 环境未检测到可用的振动马达，此设置不会有实际效果",
   hapticLenLabel: "震动时长", hapticLenDesc: "单次震动长度；部分机型对 30ms 以下的短震动无感，可调长", hapticLenShort: "短 30ms", hapticLenMid: "中 60ms", hapticLenLong: "长 100ms",
   hapticTest: "测试震动", hapticTestOk: "已按所选时长发一次，0.4 秒后再发一次 120ms 长震，可对比", hapticTestFail: "震动调用失败：系统禁止了振动或调用异常", hapticTestNoMotor: "设备未报告可用的振动马达",
-  marginUndoLabel: "边距双击撤销", marginUndoDesc: "关闭后画布外双击不再触发撤销",
   groupGeneral: "通用", groupCanvas: "画布与网格", groupScreen: "全面屏", groupTools: "工具", groupOnion: "洋葱皮",
   immersiveLabel: "沉浸式全屏", immersiveDesc: "隐藏系统状态栏与导航栏，绘图区更大（顶部下拉仍可唤出）",
   safeAreaLabel: "安全区适配", safeAreaDesc: "避开刘海 / 挖孔与底部手势条，控件不会被挡住",
@@ -219,7 +218,7 @@ const en: Dict = {
   tools: {
     pencil: "Pencil", eraser: "Eraser", bucket: "Fill", picker: "Picker", line: "Line",
     rect: "Rect", rectfill: "Rect fill", ellipse: "Ellipse", ellipsefill: "Ellipse fill", circle: "Circle", polygon: "Polygon",
-    select: "Select", wand: "Wand",
+    select: "Select", wand: "Wand", lasso: "Lasso",
   },
   sides: "Sides",
   shapeSolid: "Filled",
@@ -252,7 +251,7 @@ const en: Dict = {
   frameSelMode: "Pick frames", frameSelTitle: "Picked", frameSelHint: "Tap a frame number or any layer cell in that frame to pick it, then duplicate / delete / set duration in bulk",
   frameSelAll: "Select all / none", frameSelDupe: "Duplicate picked frames", frameSelDur: "Duration of picked frames", frameSelDel: "Delete picked frames", frameSelExit: "Leave pick mode",
   frameSelDuped: "Duplicated ", frameSelDeleted: "Deleted ", frameSelKeepOne: "At least 1 frame must remain", frameSelNone: "Pick frames first",
-  frameDur: "Frame duration (ms)", play: "Play", pause: "Pause", loop: "Loop playback", onion: "Onion skin",
+  layerDupe: "Duplicate layer", frameDur: "Frame duration (ms)", play: "Play", pause: "Pause", loop: "Loop playback", onion: "Onion skin",
   brushSize: "Brush size", opacity: "Opacity", blend: "Blend",
   blends: {
     normal: "Normal", multiply: "Multiply", screen: "Screen", overlay: "Overlay", darken: "Darken",
@@ -351,7 +350,6 @@ const en: Dict = {
   hapticLabel: "Haptic feedback", hapticDesc: "Short vibration on gestures, colour picks and timeline long press", hapticUnsupported: "No usable vibrator detected in this device / environment, so this setting has no effect",
   hapticLenLabel: "Haptic length", hapticLenDesc: "Length of one pulse; some phones cannot feel pulses under 30ms, so this can be raised", hapticLenShort: "Short 30ms", hapticLenMid: "Medium 60ms", hapticLenLong: "Long 100ms",
   hapticTest: "Test vibration", hapticTestOk: "Fired once at the chosen length, then a 120ms pulse 0.4s later — compare the two", hapticTestFail: "Vibration failed: the system blocked it or the call threw", hapticTestNoMotor: "The device reports no usable vibrator",
-  marginUndoLabel: "Double-tap margin to undo", marginUndoDesc: "Off = double-tapping outside the canvas no longer undoes",
   groupGeneral: "General", groupCanvas: "Canvas & Grid", groupScreen: "Full screen", groupTools: "Tools", groupOnion: "Onion Skin",
   immersiveLabel: "Immersive full screen", immersiveDesc: "Hide the system status and navigation bars for a bigger canvas (swipe down to bring them back)",
   safeAreaLabel: "Safe-area padding", safeAreaDesc: "Keep controls clear of the notch / punch hole and the bottom gesture bar",

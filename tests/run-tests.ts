@@ -14,6 +14,7 @@ import { testGuideAnchors } from "./guide-anchors.test";
 import { testRender } from "./render.test";
 import { testExport } from "./export.test";
 import { testBack } from "./back.test";
+import { testI18n } from "./i18n.test";
 
 console.log("--- history ---");
 testHistory();
@@ -45,4 +46,6 @@ console.log("--- export ---");
 testExport();
 console.log("--- back ---");
 testBack();
+console.log("--- i18n ---");
+testI18n();
 finish();
