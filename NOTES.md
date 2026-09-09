@@ -41,7 +41,8 @@
 - **文档同步**：新增/修改对外 API 或功能后，同步更新 `docs/API.md`（接口签名）与 `README.md`（功能表）；对比文档的“最新进展”表也一并刷新。
 - **出包流程**：改源码 → tsc → 引擎/逻辑测试 → `app2/www` 重建（esbuild，注意仓库中文路径需在 ASCII 目录构建后回拷）→ 打包 → apksigner 签名 → 解析包内 manifest 复核。
   - 只改了 Web 层（TS/TSX/CSS）：`/root/pk/rebuild.py`（换 assets + 改写 AXML 版本）即可。
-  - **改了 Java 层（android/java）**：本容器里 aapt2 是 Android/x86 二进制跑不起来，但 `javac` + `d8.jar` 可用，所以用 `/root/pk/rebuild2.py <版本号> <versionCode>`：它先用 javac+d8 编出新的 `classes.dex`，再从模板 APK 重打包（替换 assets/www + classes.dex + 改写 AXML 版本），最后 apksigner 签名。**只用 rebuild.py 的话 Java 改动不会进包**（模板里的 classes.dex 是旧的）。
+  - **改了 Java 层（android/java）**：本容器里 aapt2 是 Android/x86 二进制跑不起来，但 `javac` + `d8.jar` 可用，所以用 `sh /root/pk/make-apk.sh <版本号> <versionCode>`（如 `sh /root/pk/make-apk.sh 1.0.7.7 29`）：它先跑 `rebuild2.py`（javac+d8 编出 `classes.dex`，从模板 APK 重打包，替换 assets/www + classes.dex + 改写 AXML 版本），**再 apksigner 签名并 `verify` 复核**，最后拷到 `/sdcard/Download/PixelCraft-<版本号>.apk` 和仓库 `build/PixelCraft.apk`。**只用 rebuild.py 的话 Java 改动不会进包**（模板里的 classes.dex 是旧的）。
+  - ⚠️ `rebuild2.py` 的产物 `repack.apk` 是**未签名**的，直接发出去会提示「缺少开发者证书」而装不上——必须走 `make-apk.sh`（或手动补 apksigner 那一步），发包前用 `apksigner verify --print-certs` 确认 `Verifies` 且证书 SHA-256 为 `745beeceeda9f891c04e7aae584a0a8a3e27f0023075044d2f55adb6bb442f1f`。
   - 复核：解包 `classes.dex` 里 grep 关键字符串（如 `__pc_back()===true`）、解析 AXML 的 versionName/versionCode、检查 `assets/www/js/app.js` 是否含新代码。
 - **提交约定**：每完成一个功能就提交一次（不要攒着）。提交信息用中文 + `type(scope): 摘要`（type 取 feat/fix/imp/chore/docs/refactor），正文用 `-` 列出改动要点；产物不进版本库（`build/`、`app2/www/js/app.js`、`app2/www/css/style.css`、`tests/.ts-out/`、`toolchain/` 已在 `.gitignore`）。提交前至少跑一遍 `tsc --noEmit` 与 `tests` 全绿。
 - **引导的“真操作演示”约定**（`src/app/guide.ts` + `src/ui/App.tsx` 的 `guideActions`）：
