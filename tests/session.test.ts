@@ -1269,6 +1269,50 @@ export async function testSession(): Promise<void> {
     eq("canvas.empty.add-again", [m.docs.length, m.docIdx, back], [1, 0, 0]);
     eq("canvas.empty.origin", [m.docs[0].x, m.docs[0].y], [0, 0]);
   }
+  // --- UI state changes must not invalidate pixel caches (rev vs pixelRev) ---
+  {
+    (globalThis as unknown as { localStorage: { clear(): void } }).localStorage.clear();
+    const cmod = require("../src/render/compositor") as Record<string, unknown>;
+    const origFrame = cmod.composeFrame;
+    let composes = 0;
+    cmod.composeFrame = (...a: unknown[]) => {
+      composes++;
+      return (origFrame as (...x: unknown[]) => unknown)(...a);
+    };
+    try {
+      const s = new Session();
+      const cel = s.doc.ensureCel(0, 0);
+      cel.data[0] = 1; cel.data[3] = 255;
+      const bi = s.addCanvas(new Doc(8, 8, "B"));
+      s.focusCanvas(0);
+      s.referenceCanvas(bi, { mode: "flat" }); // one mirror of the whole canvas
+      const px0 = s.doc.pixelRev;
+      const ui0 = s.getVersion();
+      const comp0 = composes;
+      // tool / brush / colour / layer / settings: no pixel invalidation at all
+      s.setTool("eraser");
+      s.setBrushSize(12);
+      s.setBrushAlpha(200);
+      s.setColor([9, 8, 7, 255]);
+      s.setLayer(0);
+      s.setPixelPerfect(false);
+      s.setSetting("display.magZoom", 14);
+      s.setSetting("history.steps", 90);
+      eq("rev.ui-pixelRev-untouched", s.doc.pixelRev, px0);
+      eq("rev.ui-no-ref-remirror", composes, comp0);
+      ok("rev.ui-revision-bumped", s.getVersion() > ui0);
+      // a real pixel change still invalidates (repaint bumps the holder doc)
+      s.repaint();
+      ok("rev.pixels-bump", s.doc.pixelRev > px0);
+      // ... and a change in the SOURCE canvas re-mirrors the reference layer
+      s.docs[bi].doc.pixelRev++;
+      s.syncRefLayers();
+      ok("rev.pixels-remirror", composes > comp0);
+    } finally {
+      cmod.composeFrame = origFrame;
+    }
+  }
+
   // --- autosave: interval writes + pure JSON (RLE) payload, no PNG ---
   {
     (globalThis as unknown as { localStorage: { clear(): void } }).localStorage.clear();

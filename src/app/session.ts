@@ -679,6 +679,19 @@ export class Session {
   getVersion(): number {
     return this.rev;
   }
+  /**
+   * UI-only state changed (tool, colour, a setting, a preview window …): the
+   * pixels are untouched, so the content version is NOT bumped and the
+   * reference-layer mirror / other-canvas caches stay valid. Call changed()
+   * for anything that really alters pixels or the document structure.
+   */
+  changedUI(): void {
+    this.syncEntry(); // the focused canvas remembers its layer/frame
+    this.rev++;
+    this.snapCache = null;
+    for (const l of this.listeners) l();
+  }
+  /** content changed: bump the pixel version and refresh reference mirrors */
   changed(): void {
     this.syncEntry(); // the focused canvas remembers its layer/frame
     this.doc.pixelRev++; // structural changes count as a content change
@@ -1083,7 +1096,7 @@ export class Session {
     this.savePrefs();
     if (d.refresh === "repaintAll") this.repaintAll();
     else if (d.refresh === "repaint") this.repaint();
-    this.changed();
+    this.changedUI();
   }
 
   // ---------- canvas ----------
@@ -1345,7 +1358,7 @@ export class Session {
     this.lastColorAt = Date.now();
     this.pushRecentColor(arr);
     this.rememberColors();
-    this.changed();
+    this.changedUI();
   }
   /** pickers set the fg slot and make it active (paint follows) */
   setFgColor(c: RGBA): void {
@@ -1356,13 +1369,13 @@ export class Session {
     this.lastColorAt = Date.now();
     this.pushRecentColor(f);
     this.rememberColors();
-    this.changed();
+    this.changedUI();
   }
   setColorTarget(t: "fg" | "bg"): void {
     this.colorTarget = t;
     this.color = t === "bg" ? this.bg : this.fg;
     this.lastColorAt = Date.now();
-    this.changed();
+    this.changedUI();
   }
   swapColors(): void {
     const tmp: RGBA = [this.fg[0], this.fg[1], this.fg[2], this.fg[3]];
@@ -1373,7 +1386,7 @@ export class Session {
     this.lastColorAt = Date.now();
     this.pushRecentColor(this.color);
     this.rememberColors();
-    this.changed();
+    this.changedUI();
   }
 
   // ---------- user-saved palettes ----------
@@ -1578,7 +1591,7 @@ export class Session {
   }
   setColorPicking(on: boolean): void {
     this.colorPicking = on;
-    this.changed();
+    this.changedUI();
   }
   colorPickedRecently(now: number, windowMs: number): boolean {
     return this.colorPicking || now - this.lastColorAt <= windowMs;
@@ -1587,7 +1600,7 @@ export class Session {
     this.tool = t;
     this.prefs.tool = t;
     this.savePrefs();
-    this.changed();
+    this.changedUI();
   }
   cycleSym(): SymMode {
     const prev = this.sym;
@@ -1595,7 +1608,7 @@ export class Session {
     // enabling applies the default (centred) axis unless already customised
     if (this.sym !== "off" && !this.symTweaked) this.applySymPreset(this.sym);
     this.rememberSym();
-    this.changed();
+    this.changedUI();
     this.repaint(); // show/hide the adjustable symmetry guides
     return this.sym;
   }
@@ -1616,7 +1629,7 @@ export class Session {
     this.symFour = on;
     this.rememberSym();
     this.repaint();
-    this.changed();
+    this.changedUI();
   }
   /** lock / unlock the axis (locked = not movable, intersection hidden) */
   setSymLocked(on: boolean): void {
@@ -1624,7 +1637,7 @@ export class Session {
     this.symLocked = on;
     this.rememberSym();
     this.repaint();
-    this.changed();
+    this.changedUI();
   }
   /** step the mirror angle through 0/45/90/135 */
   cycleSymAngle(): number {
@@ -1635,7 +1648,7 @@ export class Session {
     this.rememberSym();
     this.symTweaked = true;
     this.repaint();
-    this.changed();
+    this.changedUI();
     return this.symAng;
   }
   /** mode-preset axis geometry: centred pivot at the default (vertical) angle */
@@ -1651,19 +1664,19 @@ export class Session {
   resetSymAxes(): void {
     this.applySymPreset(this.sym);
     this.repaint();
-    this.changed();
+    this.changedUI();
   }
   setShapeSides(n: number): void {
     this.shapeSides = Math.max(3, Math.min(32, Math.round(n)));
     this.prefs.shapeSides = this.shapeSides;
     this.scheduleSavePrefs();
-    this.changed();
+    this.changedUI();
   }
   setShapeFill(f: boolean): void {
     this.shapeFill = f;
     this.prefs.shapeFill = f;
     this.savePrefs();
-    this.changed();
+    this.changedUI();
   }
   setPalette(colors: Array<[number, number, number, number]>): void {
     if (!colors.length) return;
@@ -1779,38 +1792,38 @@ export class Session {
     this.brushSize = Math.max(1, Math.min(64, Math.round(n)));
     this.prefs.brushSize = this.brushSize;
     this.scheduleSavePrefs();
-    this.changed();
+    this.changedUI();
   }
   setBrushShape(s: "circle" | "square"): void {
     this.brushShape = s;
     this.prefs.brushShape = s;
     this.savePrefs();
-    this.changed();
+    this.changedUI();
   }
   /** pixel-perfect freehand strokes (corner pixels of an L are dropped) */
   setPixelPerfect(on: boolean): void {
     this.pixelPerfect = on;
     this.prefs.pixelPerfect = on;
     this.savePrefs();
-    this.changed();
+    this.changedUI();
   }
   setShapeFromCenter(on: boolean): void {
     this.shapeFromCenter = on;
     this.prefs.shapeFromCenter = on;
     this.savePrefs();
-    this.changed();
+    this.changedUI();
   }
   setCurrentShape(id: ToolId): void {
     this.currentShape = id;
     this.prefs.currentShape = id;
     this.savePrefs();
-    this.changed();
+    this.changedUI();
   }
   setCurrentSelect(id: ToolId): void {
     this.currentSelect = id;
     this.prefs.currentSelect = id;
     this.savePrefs();
-    this.changed();
+    this.changedUI();
   }
   setSelectionTolerance(n: number): void { this.setSetting("tools.wandTolerance", n); }
   maskOp(label: string, fn: () => void): void {
@@ -1838,7 +1851,7 @@ export class Session {
     this.color[3] = Math.max(0, Math.min(255, Math.round(n)));
     this.prefs.brushAlpha = this.color[3];
     this.rememberColors();
-    this.changed();
+    this.changedUI();
   }
   /** store both colour slots (they carry the current brush opacity too) */
   private rememberColors(): void {
@@ -1876,7 +1889,7 @@ export class Session {
     this.layerIdx = n;
     // visual confirmation on the canvas: the layer you switched to pulses
     if (moved) this.view_?.flashLayer(n);
-    this.changed();
+    this.changedUI(); // selecting a layer changes no pixels
   }
   /** cycle layers by ±1, skipping hidden ones when there is a choice */
   cycleLayer(delta: number): boolean {
@@ -1897,8 +1910,8 @@ export class Session {
   toggleOnion(): void {
     this.prefs.onionOn = !this.prefs.onionOn;
     this.savePrefs();
-    this.repaintAll();
-    this.changed();
+    this.repaintAll(); // the composite changes; repaintAll bumps the version
+    this.changedUI();
   }
   setOnionOn(on: boolean): void { this.setSetting("onion.enabled", on); }
   setOnionBefore(n: number): void { this.setSetting("onion.before", n); }
@@ -2168,7 +2181,7 @@ export class Session {
   /** focus another canvas: it brings back its own layer/frame selection */
   focusCanvas(i: number): void {
     if (i < 0 || i >= this.docs.length) return;
-    if (i === this.docIdx) { this.changed(); return; }
+    if (i === this.docIdx) { this.changedUI(); return; }
     this.syncEntry();
     const old = this.docs[this.docIdx];
     this.docIdx = i;
@@ -2190,7 +2203,7 @@ export class Session {
     const v = name.trim();
     if (!e || !v) return;
     e.doc.name = v;
-    this.changed();
+    this.changedUI();
     this.scheduleAutosave();
   }
   /** move a canvas inside the space (drag its title bar); canvases snapped
@@ -2416,12 +2429,12 @@ export class Session {
   /** open (or focus) the preview window of one canvas; returns its id */
   addPreview(canvas = this.docIdx): string {
     const found = this.previews.find((p) => p.canvas === canvas);
-    if (found) { this.changed(); return found.id; }
+    if (found) { this.changedUI(); return found.id; }
     let size = 148;
     try { const n = parseInt(localStorage.getItem("pc.prev.size") || "148", 10); if (n >= 90 && n <= 380) size = n; } catch { /* ignore */ }
     const id = uid();
     this.previews.push({ id, canvas, x: null, y: null, size });
-    this.changed();
+    this.changedUI();
     return id;
   }
   /** the eye on a canvas title: open this canvas' preview, or close it again */
@@ -2438,21 +2451,21 @@ export class Session {
   closePreview(id: string): void {
     const n = this.previews.length;
     this.previews = this.previews.filter((p) => p.id !== id);
-    if (this.previews.length !== n) this.changed();
+    if (this.previews.length !== n) this.changedUI();
   }
   movePreview(id: string, x: number, y: number): void {
     const p = this.previews.find((q) => q.id === id);
     if (!p) return;
     p.x = Math.round(x);
     p.y = Math.round(y);
-    this.changed();
+    this.changedUI();
   }
   resizePreview(id: string, size: number): void {
     const p = this.previews.find((q) => q.id === id);
     if (!p) return;
     p.size = Math.max(90, Math.min(380, Math.round(size)));
     try { localStorage.setItem("pc.prev.size", String(p.size)); } catch { /* ignore */ }
-    this.changed();
+    this.changedUI();
   }
 
   /** create a brand new canvas (the previous ones stay open) */

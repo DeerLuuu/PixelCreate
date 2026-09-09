@@ -467,7 +467,7 @@ export class View {
     const rec = this.stroke.commit(this.session.history, this.labelFor(this.stroke.kind));
     this.stroke = null;
     this.session.repaint();
-    if (rec) this.session.changed();
+    if (rec) this.session.changedUI();
     return rec;
   }
 
@@ -1616,7 +1616,7 @@ export class View {
       const rec = this.stroke.commit(this.session.history, this.labelFor(this.stroke.kind));
       this.stroke = null;
       this.session.repaint();
-      if (rec) this.session.changed();
+      if (rec) this.session.changedUI();
     }
     // symmetry axis (brush tools): the lock button is always tappable, and
     // while unlocked the dashed line/knob are directly draggable
@@ -1884,7 +1884,7 @@ export class View {
     if (this.pointers.size === 0) this.stopSpray();
     if (this.symTarget) {
       this.symTarget = null;
-      this.session.changed(); // refresh the angle readout in the UI chips
+      this.session.changedUI(); // refresh the angle readout in the UI chips
       this.drawOverlay();
     }
     if (this.pointers.size < 2) this.pinchBase = null;
@@ -2056,7 +2056,7 @@ export class View {
         const rec = this.stroke.commit(this.session.history, this.labelFor(this.stroke.kind));
         this.stroke = null;
         this.session.repaint();
-        if (rec) this.session.changed();
+        if (rec) this.session.changedUI();
         // shapes become an immediate selection of EXACTLY the pixels this stroke
         // painted (a pixel mask, not a rectangle) so only the shape moves;
         // neighbouring artwork that falls under the marquee stays untouched
@@ -2110,7 +2110,7 @@ export class View {
       sel.set(x, y, 1);
     }
     this.session.repaint();
-    this.session.changed();
+    this.session.changedUI();
   }
 
   private onCancel(e: PointerEvent): void {
@@ -2141,7 +2141,7 @@ export class View {
     if (this.stroke) {
       if (this.gestureMoved) {
         const rec = this.stroke.commit(this.session.history, this.labelFor(this.stroke.kind));
-        if (rec) this.session.changed();
+        if (rec) this.session.changedUI();
       } else {
         this.stroke.cancel();
       }
@@ -2463,7 +2463,7 @@ export class View {
     }
     s.history.pushPixels("outline-fill", doc, [{ li: o.li, fi: o.fi, before: o.before, after }]);
     s.repaint();
-    s.changed();
+    s.changedUI();
   }
 
   // ---- selection gestures ----
@@ -2578,7 +2578,7 @@ export class View {
       } else if (doc.sel) {
         doc.sel.clear();
         s.repaint();
-        s.changed();
+        s.changedUI();
       }
       this.stopAnts();
       return;
@@ -2594,7 +2594,7 @@ export class View {
         this.stopAnts();
       }
       this.session.repaint();
-      this.session.changed();
+      this.session.changedUI();
       return;
     }
     // floating move finish: drop pastes once; cancel puts everything back
@@ -2618,7 +2618,7 @@ export class View {
       }
     }
     this.session.repaint();
-    this.session.changed();
+    this.session.changedUI();
   }
 
 }

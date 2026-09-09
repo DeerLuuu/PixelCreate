@@ -131,7 +131,7 @@ export function App() {
     const y0 = Math.max(0, Math.round((d.h - h) / 2));
     selOps.selOps.setRect(d, x0, y0, x0 + w - 1, y0 + h - 1);
     SESSION.repaintAll();
-    SESSION.changed();
+    SESSION.changedUI();
   };
   const restoreSelection = () => {
     const bak = selBackup.current;
@@ -141,7 +141,7 @@ export function App() {
     if (bak.had && bak.mask && d.sel) d.sel.mask.set(bak.mask);
     else selOps.selOps.clear(d);
     SESSION.repaintAll();
-    SESSION.changed();
+    SESSION.changedUI();
   };
 
   /** host actions the guide can request (declared in src/app/guide.ts) */
@@ -173,7 +173,7 @@ export function App() {
       }
       SESSION.history.pushPixels("guide-demo", d, [{ li, fi, before, after: new Uint8ClampedArray(cel.data) }]);
       SESSION.repaint();
-      SESSION.changed();
+      SESSION.changedUI();
       window.setTimeout(() => {
         const l = SESSION.history.list();
         const last = l.labels[l.labels.length - 1];
@@ -305,7 +305,7 @@ export function App() {
         if (SESSION.fg[0] !== b0[0] || SESSION.fg[1] !== b0[1] || SESSION.fg[2] !== b0[2] || SESSION.fg[3] !== b0[3]) return;
         SESSION.fg[0] = f0[0]; SESSION.fg[1] = f0[1]; SESSION.fg[2] = f0[2]; SESSION.fg[3] = f0[3];
         SESSION.bg[0] = b0[0]; SESSION.bg[1] = b0[1]; SESSION.bg[2] = b0[2]; SESSION.bg[3] = b0[3];
-        SESSION.changed();
+        SESSION.changedUI();
       }, 1600);
     },
     // really turn a symmetry axis on (the guides appear on the canvas), then off
@@ -316,7 +316,7 @@ export function App() {
         if (SESSION.sym !== on) return; // the user changed it: keep their choice
         SESSION.sym = prev.sym; SESSION.symFour = prev.four; SESSION.symTweaked = prev.tweaked;
         SESSION.repaint();
-        SESSION.changed();
+        SESSION.changedUI();
       }, 1900);
     },
     // really tap the colour-source chip of the palette fan: the fan redraws
@@ -940,7 +940,7 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
 
   const li = snap.layerIdx, fi = snap.frameIdx;
   const d = SESSION.doc;
-  const repaintChanged = () => { SESSION.repaint(); SESSION.changed(); };
+  const repaintChanged = () => { SESSION.repaint(); SESSION.changedUI(); };
   const selItems: Item[] = [
     { icon: "i-sel-all", label: t("sel.all"), act: () => { selOps.selOps.selectAll(d); SESSION.repaint(); } },
     { icon: "i-sel-invert", label: t("sel.invert"), act: () => SESSION.maskOp("sel.invert", () => selOps.selOps.invert(d)) },
@@ -973,7 +973,7 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
     cel.data.set(o.before);
     run.apply(cel.data, d.w, d.h, vals);
     SESSION.repaint();
-    SESSION.changed();
+    SESSION.changedUI();
   };
   const openFx = (run: FxRun) => {
     const cel = d.celAt(li, fi);
@@ -999,7 +999,7 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
     const cel = d.celAt(o.li, o.fi);
     if (cel) cel.data.set(o.before);
     SESSION.repaint();
-    SESSION.changed();
+    SESSION.changedUI();
   };
   const fxApplyDlg = () => {
     SESSION.cancelColorPick();
@@ -1016,10 +1016,10 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
     if (!cel) return;
     let changed = false;
     for (let i = 0; i < o.before.length; i++) if (o.before[i] !== cel.data[i]) { changed = true; break; }
-    if (!changed) { SESSION.repaint(); SESSION.changed(); return; }
+    if (!changed) { SESSION.repaint(); SESSION.changedUI(); return; }
     SESSION.history.pushPixels(g.run.label, d, [{ li: o.li, fi: o.fi, before: o.before, after: new Uint8ClampedArray(cel.data) }]);
     SESSION.repaint();
-    SESSION.changed();
+    SESSION.changedUI();
   };
   const hexOf = (c: [number, number, number, number]): string => rgbaToHex(c).slice(0, 7);
 
