@@ -593,6 +593,20 @@ export function AdjustModal({ t, onClose }: { t: ReturnType<typeof makeT>; onClo
     </>
   );
 }
+/** live vibration diagnostics: the setting state plus the most recent haptic
+ *  calls, so it is visible whether a gesture reached the vibrator at all */
+function HapticReport({ t }: { t: ReturnType<typeof makeT> }) {
+  const [, tick] = useState(0);
+  useEffect(() => {
+    const id = window.setInterval(() => tick((n) => n + 1), 1000);
+    return () => window.clearInterval(id);
+  }, []);
+  return (
+    <div className="row-note" data-guide="haptic-report">
+      {t("hapticReport")}：{hapticReport({ on: SESSION.prefs.haptic, len: SESSION.prefs.hapticLen })}
+    </div>
+  );
+}
 /** one settings row, generated from its declaration in src/app/settings.ts */
 function SettingRow({ def, t }: { def: SettingDef; t: ReturnType<typeof makeT> }) {
   const v = SESSION.settingValue(def.path);
@@ -731,7 +745,7 @@ export function SettingsModal({ t, onClose }: { t: ReturnType<typeof makeT>; onC
                       <Btn label={t("autosaveClear")} className="danger" onClick={() => { void SESSION.clearAutosave().then(() => setAsInfo(null)); }} />
                     </div>
                     {/* vibration diagnostics: what the page can actually see */}
-                    <div className="row-note" data-guide="haptic-report">{t("hapticReport")}：{hapticReport()}</div>
+                    <HapticReport t={t} />
                   </>
                 )}
               </div>

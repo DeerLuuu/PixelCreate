@@ -307,15 +307,29 @@ const defs: SettingDef[] = [
     path: "gesture.haptic", field: "haptic", kind: "bool", group: "gesture",
     label: "hapticLabel", desc: "hapticDesc", default: true, refresh: "none",
     // a tick right when it is switched on, so the effect is obvious
-    after: (_s, v) => { if (v) bridge.vibrate(60); },
+    after: (s, v) => { if (v) bridge.vibrate(s.prefs.hapticLen, "开关"); },
     action: {
       label: "hapticTest",
-      run: () => {
+      run: (s) => {
         const cap = bridge.canVibrate();
-        const ok = bridge.vibrate(80);
+        const ms = s.prefs.hapticLen;
+        const ok = bridge.vibrate(ms, "测试");
+        // a second, clearly longer pulse 0.4s later so the two can be compared
+        window.setTimeout(() => bridge.vibrate(120, "测试长"), 400);
         bridge.toast(ok ? "hapticTestOk" : cap === false ? "hapticTestNoMotor" : "hapticTestFail");
       },
     },
+  },
+  {
+    path: "gesture.hapticLen", field: "hapticLen", kind: "enum", group: "gesture",
+    label: "hapticLenLabel", desc: "hapticLenDesc", default: "60", refresh: "none",
+    options: [
+      { value: "30", label: "hapticLenShort" },
+      { value: "60", label: "hapticLenMid" },
+      { value: "100", label: "hapticLenLong" },
+    ],
+    get: (s) => String(s.prefs.hapticLen),
+    set: (s, v) => { s.prefs.hapticLen = Math.max(20, Math.min(150, Number(v) || 60)); },
   },
   // one entry per gesture: which function it runs (see src/app/gestures.ts)
   ...GESTURES.map((g): SettingDef => ({

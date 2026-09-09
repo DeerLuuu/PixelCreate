@@ -49,7 +49,7 @@ export function RefImageBox({ img, onClose }: { img: RefImg; onClose: () => void
     if (li === lastSamp.current) return;
     lastSamp.current = li;
     SESSION.setFgColor([img.px[li], img.px[li + 1], img.px[li + 2], img.px[li + 3]]);
-    try { bridge.vibrate(8); } catch { /* ignore */ }
+    try { SESSION.hapticTick("参考图", 0.5); } catch { /* ignore */ }
   };
   const togglePick = () => {
     const nv = !pickingRef.current;

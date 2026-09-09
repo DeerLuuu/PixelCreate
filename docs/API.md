@@ -472,6 +472,7 @@ mirrorSelectionMask(): boolean                   // 对称开启时把选区按�
 ```ts
 settingValue(path): SettingValue
 setSetting(path, value): void          // 自动持久化 + 按声明刷新
+hapticTick(tag, scale = 1): boolean    // 受 gesture.haptic 开关控制，长度取 prefs.hapticLen
 savePrefs(): void
 scheduleAutosave() / flushAutosave(): Promise<void> / restoreAutosave(): Promise<Doc | null>
 autosaveInfo() / clearAutosave()
@@ -636,14 +637,20 @@ class View {
 
 ```ts
 toast(msg: string): void
-vibrate(ms: number): void
+vibrate(ms: number, tag = "调用"): boolean   // 先走原生桥，失败再退 navigator.vibrate；tag 进诊断环
+canVibrate(): boolean | null                // null = 无法判断
+hapticReport(pref?: { on: boolean; len: number }): string
+hapticLog: HapticEvent[]                    // { tag, ms, ok }，最多 12 条（诊断用）
 saveBytes(name, mime, bytes: Uint8Array, onDone?: (ok: boolean) => void): void
 openFile(mime = "*/*"): Promise<OpenedFile | null>       // { name, mime, bytes }
 b64FromBytes(bytes): string; bytesFromB64(b64): Uint8Array
 ```
 
-`window.PixelBridge`（Android 注入）：`saveFile(name, mime, base64, reqId)`、`openFile(mime)`、`toast(msg)`、`vibrate(ms)`、`keepAwake(on)`。
+`window.PixelBridge`（Android 注入）：`saveFile(name, mime, base64, reqId)`、`openFile(mime)`、`toast(msg)`、`vibrate(ms)`、`hasVibrator()`、`keepAwake(on)`。
 网页端自动降级：`saveBytes` → `<a download>`；`openFile` → `<input type="file">`。
+
+震动统一走 `Session.hapticTick(tag, scale = 1)`：受设置 `gesture.haptic` 开关控制，脉冲长度取 `prefs.hapticLen`（30 / 60 / 100ms，默认 60；部分机型 30ms 以下无感）。
+`Session.runGestureAction()` 会为除 `pickColor`（取色时逐像素自行震动）之外的每个手势先发一次脉冲。
 
 ### 16.2 导出 `src/io/exporters.ts`
 

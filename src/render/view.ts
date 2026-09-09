@@ -4,7 +4,6 @@ import type { Rect } from "../engine/types";
 import { clampRect, screenRectOf, unionRect } from "./rect";
 import { Sel } from "../engine/doc";
 import * as comp from "./compositor";
-import * as bridge from "../io/bridge";
 import { Stroke } from "../tools/stroke";
 import { isSymTool, SYM_ANGLES } from "../tools/registry";
 import { lineCells, brushStamp } from "../engine/paint";
@@ -790,7 +789,7 @@ export class View {
       const changed = this.pickLast == null || this.pickLast[0] !== x || this.pickLast[1] !== y;
       if (changed) {
         this.session.setFgColor(c);
-        if (this.session.prefs.haptic) { if (strong) bridge.vibrate(26); else bridge.vibrate(10); }
+        this.session.hapticTick("取色", strong ? 1.2 : 0.5);
         this.session.repaint();
       }
     }
@@ -1176,7 +1175,7 @@ export class View {
         this.session.repaint();
         if (armed) {
           const fourAct = this.session.prefs.gFourFinger;
-          if (this.session.prefs.haptic) bridge.vibrate(24); // tactile confirmation before it fires
+          this.session.hapticTick("四指"); // tactile confirmation before it fires
           if (fourAct === "framePreview" && this.onFramePreview) this.onFramePreview();
           else this.session.runGestureAction(fourAct, { x: pt.x, y: pt.y });
         }

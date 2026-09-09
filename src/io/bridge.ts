@@ -41,8 +41,10 @@ export function toast(msg: string): void {
 
 /** short haptic tick. Uses the native bridge first, then the WebView's own
  *  navigator.vibrate (both need android.permission.VIBRATE, which the app
- *  declares). Failures are silent: vibration is only a nicety. */
-export function vibrate(ms: number): boolean {
+ *  declares). Failures are silent: vibration is only a nicety.
+ *  `tag` names the call site so the diagnostics line can show which gesture
+ *  actually reached the vibrator (and with which duration). */
+export function vibrate(ms: number, tag = "调用"): boolean {
   const d = Math.max(10, Math.min(200, Math.round(ms)));
   let ok = false;
   try {
@@ -56,23 +58,37 @@ export function vibrate(ms: number): boolean {
     } catch { /* ignore */ }
   }
   lastVibrateResult = ok;
+  lastVibrateTag = tag;
+  hapticLog.push({ tag, ms: d, ok });
+  if (hapticLog.length > 12) hapticLog.shift();
   return ok;
 }
 
 /** result of the most recent vibrate() call (diagnostics) */
 export let lastVibrateResult: boolean | null = null;
+export let lastVibrateTag = "";
 
-/** one-line report of the vibration-related environment (diagnostics) */
-export function hapticReport(): string {
+export interface HapticEvent { tag: string; ms: number; ok: boolean }
+/** newest-last ring of the last haptic calls (diagnostics) */
+export const hapticLog: HapticEvent[] = [];
+
+/** the recent haptic calls as one short string, newest last */
+export function hapticLogText(): string {
+  if (!hapticLog.length) return "无";
+  return hapticLog.slice(-4).map((e) => e.tag + ":" + e.ms + (e.ok ? "" : "✗")).join(" / ");
+}
+
+/** one-line report of the vibration-related environment (diagnostics).
+ *  `pref` carries the live setting so the line also proves the switch state. */
+export function hapticReport(pref?: { on: boolean; len: number }): string {
   const hasBridge = !!window.PixelBridge;
   const hasVib = !!(window.PixelBridge && typeof window.PixelBridge.vibrate === "function");
-  const navVib = typeof (navigator as Navigator & { vibrate?: unknown }).vibrate === "function";
   const motor = canVibrate();
-  return "桥接=" + (hasBridge ? "有" : "无") +
+  return (pref ? "开关=" + (pref.on ? "ON" : "OFF") + " · 时长=" + pref.len + "ms · " : "") +
+    "桥接=" + (hasBridge ? "有" : "无") +
     " · 震动接口=" + (hasVib ? "有" : "无") +
-    " · navigator.vibrate=" + (navVib ? "有" : "无") +
     " · 马达=" + (motor === null ? "未知" : String(motor)) +
-    " · 上次调用=" + (lastVibrateResult === null ? "未测试" : String(lastVibrateResult));
+    " · 调用=" + hapticLog.length + " 次（最近 " + hapticLogText() + "）";
 }
 
 /** true when the device reports a usable vibrator (null = unknown) */

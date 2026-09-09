@@ -8,7 +8,7 @@ import { Icon } from "./base";
 import { TabBar } from "./tabs";
 
 /** keep in sync with android/AndroidManifest.xml versionName on every release */
-export const APP_VERSION = "1.0.7.6";
+export const APP_VERSION = "1.0.7.7";
 
 export type ClgKind = "add" | "imp" | "fix";
 export interface ClgItem { kind: ClgKind; zh: string; en: string }
@@ -17,6 +17,16 @@ export interface ClgVersion { v: string; date: string; items: ClgItem[] }
 const it = (kind: ClgKind, zh: string, en: string): ClgItem => ({ kind, zh, en });
 
 export const CHANGELOG: ClgVersion[] = [
+  {
+    v: "1.0.7.7",
+    date: "2026-09-08",
+    items: [
+      it("fix", "震动只有四指预览和长按取色会触发，其余手势（双击撤销、三连击缩放、双指双击重做、时间轴长按、工具栏展开）完全没有震动 —— 现在每个手势动作都会先震一下再执行", "Only the four-finger preview and the long-press eyedropper used to vibrate; every other gesture (double-tap undo, triple-tap zoom, two-finger double-tap redo, timeline long press, tool ring) fired nothing. Every gesture action now gives a tick before it runs"),
+      it("fix", "手势震动时长原来只有 10–26ms，部分机型对 30ms 以下的短震动基本无感，看起来就像“震动没生效”——默认改为 60ms，并新增「震动时长」设置（短 30 / 中 60 / 长 100ms）", "Gesture pulses were only 10-26ms long and some phones cannot feel pulses under about 30ms, which looks exactly like 'vibration does not work'. The default is now 60ms plus a new Haptic length setting (short 30 / medium 60 / long 100ms)"),
+      it("imp", "设置 → 数据 的「震动环境诊断」升级：显示开关状态、震动时长和最近 4 次震动调用（来源:时长），每秒刷新，可直接看出某个手势到底有没有调到马达；「测试震动」改为按所选时长发一次、0.4 秒后再发一次 120ms 长震，便于对比", "The vibration diagnostics line in Settings -> Data now shows the switch state, the pulse length and the last four haptic calls (source:length), refreshing every second, so it is directly visible whether a gesture reached the vibrator. Test vibration now fires once at the chosen length and again at 120ms 0.4s later for comparison"),
+      it("imp", "移除 1.0.7.6 的启动诊断震动", "Removed the diagnostic buzz on launch that 1.0.7.6 shipped"),
+    ],
+  },
   {
     v: "1.0.7.6",
     date: "2026-09-08",

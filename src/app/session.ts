@@ -14,6 +14,7 @@ import * as autosave from "../io/autosave";
 import * as refstore from "../io/refstore";
 import type { RefImg } from "../io/refstore";
 import { toast as toastFn } from "../io/bridge";
+import * as bridge from "../io/bridge";
 import type { ToolId, BrushState, SymMode } from "../tools/registry";
 import { GESTURES, isActionAllowed, type GestureActionId } from "./gestures";
 import { isShapeTool, nextSym, SYM_ANGLES } from "../tools/registry";
@@ -87,6 +88,9 @@ export interface Prefs {
   zoomMin: number;
   zoomMax: number;
   haptic: boolean;
+  /** length of one haptic pulse in ms (short pulses are imperceptible on some
+   *  ROMs, so this is user-tunable: 30 / 60 / 100) */
+  hapticLen: number;
   /** gesture → action mapping (see src/app/gestures.ts) */
   gDoubleTapMargin: GestureActionId;
   gDoubleTapCanvas: GestureActionId;
@@ -298,14 +302,24 @@ export class Session {
     this.scheduleSavePrefs();
   }
 
+  /** one haptic pulse, gated by the setting. `tag` shows up in the
+   *  diagnostics line so it is visible which gesture actually fired.
+   *  `scale` lengthens/shortens the pulse relative to prefs.hapticLen. */
+  hapticTick(tag: string, scale = 1): boolean {
+    if (!this.prefs.haptic) return false;
+    return bridge.vibrate(Math.round(this.prefs.hapticLen * scale), tag);
+  }
+
   /** Run the action a gesture is mapped to. Returns false when nothing ran.
    *  UI-level actions (timeline / preview / palette) are broadcast as a
    *  "pc-gesture" event so the React shell can open the right thing. */
   runGestureAction(action: GestureActionId, ctx?: { x?: number; y?: number }): boolean {
     const v = this.view_;
+    if (action === "none") return false;
+    // every gesture confirms itself with a short tick (except the eyedropper,
+    // which ticks per sampled pixel from the view)
+    if (action !== "pickColor") this.hapticTick("手势:" + action, 0.9);
     switch (action) {
-      case "none":
-        return false;
       case "undo":
         if (this.history.canUndo()) this.undo();
         return true;
@@ -582,7 +596,7 @@ export class Session {
       palette: [], newDocW: 64, newDocH: 64, newDocBg: "transparent",
       longPressMs: 300, doubleTapMs: 420, tripleTapZoom: 2, fourFingerPx: 15,
       autoPanMargin: 34, autoPanSpeed: 3, zoomMin: 0.05, zoomMax: 32,
-      haptic: true,
+      haptic: true, hapticLen: 60,
       gDoubleTapMargin: "undo", gDoubleTapCanvas: "none", gTwoFingerDoubleTap: "redo",
       gTripleTap: "zoomIn", gFourFinger: "framePreview", gLongPress: "pickColor",
     };
@@ -654,6 +668,7 @@ export class Session {
       if (typeof saved.zoomMax === "number") p.zoomMax = Math.max(2, Math.min(64, saved.zoomMax));
       if (p.zoomMax < p.zoomMin * 2) p.zoomMax = Math.min(64, p.zoomMin * 8);
       if (typeof saved.haptic === "boolean") p.haptic = saved.haptic;
+      if (typeof saved.hapticLen === "number") p.hapticLen = Math.max(20, Math.min(150, Math.round(saved.hapticLen)));
       // gesture mapping: only accept actions the gesture actually offers
       for (const g of GESTURES) {
         const v = (saved as Record<string, unknown>)[g.field];

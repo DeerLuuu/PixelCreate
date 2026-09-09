@@ -100,12 +100,6 @@ public class MainActivity extends Activity {
 
         setContentView(web);
         web.loadUrl("file:///android_asset/www/index.html");
-        // DIAGNOSTIC (temporary): one buzz straight from Java on every launch.
-        // If this is felt but the in-app Test vibration is not, the native
-        // vibrator path is fine and the JS bridge is the problem.
-        web.postDelayed(new Runnable() {
-            @Override public void run() { new Bridge().vibrate(90); }
-        }, 900);
     }
 
     private void hideSystemUi() {

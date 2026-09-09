@@ -6,6 +6,7 @@ import { GESTURES, GESTURE_ACTIONS, gesturePath, isActionAllowed } from "../src/
 import { History } from "../src/engine/history";
 import { scalarActions } from "../src/app/history-io";
 import * as historyFile from "../src/io/historyfile";
+import * as bridge from "../src/io/bridge";
 import { eq, ok } from "./common";
 
 /** minimal DOM-less environment for Session (no View attached) */
@@ -20,7 +21,7 @@ function stubEnv(): void {
   w.addEventListener = () => {};
   w.removeEventListener = () => {};
   w.dispatchEvent = () => {};
-  w.PixelBridge = { toast: () => {}, vibrate: () => {} };
+  w.PixelBridge = { toast: () => {}, vibrate: () => true };
   // stateful in-memory localStorage so persistence round trips can be tested
   const store = new Map<string, string>();
   g.localStorage = {
@@ -181,6 +182,24 @@ export function testSession(): void {
     if (v === undefined || v === null) unresolved++;
   }
   eq("settings.all-resolve", unresolved, 0);
+
+  // --- haptics: the tick is gated by the switch and uses the chosen length ---
+  {
+    s.setSetting("gesture.hapticLen", "100");
+    eq("settings.haptic.len", s.prefs.hapticLen, 100);
+    const before = bridge.hapticLog.length;
+    s.setSetting("gesture.haptic", false);
+    eq("settings.haptic.off-no-call", s.hapticTick("测试"), false);
+    eq("settings.haptic.off-log", bridge.hapticLog.length, before);
+    s.setSetting("gesture.haptic", true);
+    eq("settings.haptic.on-call", s.hapticTick("测试"), true);
+    const last = bridge.hapticLog[bridge.hapticLog.length - 1];
+    eq("settings.haptic.tag", last.tag, "测试");
+    eq("settings.haptic.ms", last.ms, 100);
+    s.savePrefs();
+    const raw = JSON.parse((globalThis as unknown as { localStorage: { getItem(k: string): string } }).localStorage.getItem("pc.prefs"));
+    eq("settings.haptic.persist", raw.hapticLen, 100);
+  }
 
   // --- remembered tool / colour / symmetry / document state ---
   {
