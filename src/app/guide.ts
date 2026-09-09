@@ -221,9 +221,8 @@ export const GUIDE: GuideStep[] = [
     title: "guide.undo.title", body: "guide.undo.body",
   },
   {
-    // per-canvas save: the canvas orb page 1 (the toolbar no longer has it)
-    id: "files.save", module: "files", since: "1.0.6.0", target: '[data-guide="canv-save"]', place: "auto",
-    before: ["openCanvasRing"], after: "closeCanvasRing",
+    // the project is the only file: save lives in the toolbar again
+    id: "files.save", module: "files", since: "1.0.6.0", target: '[data-guide="btn-save"]', place: "bottom",
     title: "guide.save.title", body: "guide.save.body",
   },
   {

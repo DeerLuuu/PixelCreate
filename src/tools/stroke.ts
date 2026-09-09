@@ -119,6 +119,7 @@ export class Stroke {
   /** Take the changed region since the previous call (null = nothing painted).
    *  The view uses it to recomposite and repaint only that part of the screen. */
   takeDirty(): Rect | null {
+    this.doc.pixelRev++; // reference layers / other-canvas caches key off this
     if (this.dtyAll) {
       this.dtyAll = false;
       this.dty = null;

@@ -849,8 +849,7 @@ addCanvas(doc, opts?): number         // 在空间里再开一张，返回下标
 focusCanvas(i): void                  // 切换聚焦，恢复该画布的图层/帧/撤销栈
 renameCanvas(i, name): void
 moveCanvas(i, x, y): void             // 拖动标题栏时调用（空间坐标，单位=像素）
-saveCanvas(i?): Promise<boolean>      // 把一张画布存成它自己的 .pxc
-closeCanvas(i, save): Promise<boolean> // 可先存成单独 .pxc；允许关到 0 张（空工程）
+closeCanvas(i): boolean               // 从工程里移除一张画布（允许关到 0 张 = 空工程）
 fitCanvas(): void                     // 缓动缩放视图到聚焦画布的适配大小
 addPreview(canvas?): string           // 每个画布最多一个预览框
 closePreview(id) / movePreview(id, x, y) / resizePreview(id, size)
@@ -865,11 +864,12 @@ askConfirm(q) / askText(q)            // UI 注册的确认框 / 单行输入框
 ### 18.5 工程文件 `io/project.ts`
 
 ```ts
-interface SpaceEntry { doc: Doc; x: number; y: number; li: number; fi: number }
-serializeSpace(entries, focus, history?): Promise<string>   // v3：canvases + 聚焦画布（同时写 v2 字段）
-parseSpace(text): Promise<ParsedSpace | null>               // v2 单文档 / v3 多画布都能读
-serialize(doc, history?) / parseProject(text) / parse(text) // 单文档兼容入口
+interface SpaceEntry { id?: string; doc: Doc; x: number; y: number; li: number; fi: number; hist?: unknown }
+serializeSpace(entries, focus): Promise<string>  // v3：整个工程（每张画布含 id/位置/帧/历史）
+parseSpace(text): Promise<ParsedSpace | null>    // v2 单文档 / v3 多画布都能读
 ```
+
+工程是唯一的文件单位：单文档的 `serialize/parse/parseProject` 已删除，v2 文件仍可读入为一个单画布工程。
 
 ### 18.6 视口 `render/view.ts`
 

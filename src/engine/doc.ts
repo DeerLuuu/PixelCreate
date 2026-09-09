@@ -100,6 +100,9 @@ export class Doc {
   bg: RGBA | null = null; // null = transparent
   palette: RGBA[] = [];
   sel: Sel | null = null;
+  /** bumped whenever the pixels (or frame/layer content) change: reference
+   *  layers and the other-canvas composite cache key off it */
+  pixelRev = 0;
 
   constructor(w: number, h: number, name: string) {
     this.w = Math.max(1, Math.min(1024, w | 0));

@@ -880,12 +880,12 @@ export async function testSession(): Promise<void> {
     eq("canvas.preview.closed", m.previews.length, 1);
     m.addPreview(1);
     // closing a canvas drops its preview and renumbers the later ones
-    void m.closeCanvas(0, false);
+    m.closeCanvas(0);
     eq("canvas.close.count", m.docs.length, 1);
     eq("canvas.close.focus-name", m.doc.name, "two");
     eq("canvas.close.preview-shift", m.previews.map((p) => p.canvas), [0]);
     // the last canvas CAN be closed: an empty project is a valid state
-    void m.closeCanvas(0, false);
+    m.closeCanvas(0);
     eq("canvas.close.last-empty", m.docs.length, 0);
     eq("canvas.close.last-previews", m.previews.length, 0);
     eq("canvas.empty.doc-stub", m.doc.w, 1);

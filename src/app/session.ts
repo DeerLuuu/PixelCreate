@@ -250,30 +250,25 @@ export class Session {
   private newEntry(doc: Doc, x: number, y: number): CanvasEntry {
     return { id: uid(), doc, x, y, li: 0, fi: 0, history: new History() };
   }
-  /** true when any canvas has a reference layer (cache invalidation guard) */
-  private hasRefLayers(): boolean {
-    for (const e of this.docs) for (const L of e.doc.layers) if (L.ref) return true;
-    return false;
-  }
   /** the canvas a reference layer points at (null when it is gone) */
   private entryOf(id: string | null | undefined): CanvasEntry | null {
     if (!id) return null;
     return this.docs.find((d) => d.id === id) ?? null;
   }
   /** cache of the live images reference layers resolve to (cleared on change) */
-  private refCache = new Map<string, HTMLCanvasElement>();
+  private refCache = new Map<string, { rev: number; cv: HTMLCanvasElement }>();
   private resolvingRefs = new Set<string>();
   /** compositor hook: image of the referenced canvas at its own current frame */
   private resolveRef = (refId: string, _fi: number): HTMLCanvasElement | null => {
     const e = this.entryOf(refId);
     if (!e || this.resolvingRefs.has(refId)) return null; // gone / cycle
     const got = this.refCache.get(refId);
-    if (got) return got;
+    if (got && got.rev === e.doc.pixelRev) return got.cv;
     this.resolvingRefs.add(refId);
     try {
       const fi = Math.max(0, Math.min(e.doc.frames.length - 1, e.fi));
       const cv = compositor.composeFrame(e.doc, fi);
-      this.refCache.set(refId, cv);
+      this.refCache.set(refId, { rev: e.doc.pixelRev, cv });
       return cv;
     } finally {
       this.resolvingRefs.delete(refId);
@@ -545,7 +540,6 @@ export class Session {
     this.syncEntry(); // the focused canvas remembers its layer/frame
     // reference layers must always show the newest pixels of their canvas
     this.refCache.clear();
-    if (this.hasRefLayers()) this.view_?.dropOtherComps();
     this.rev++;
     this.snapCache = null;
     for (const l of this.listeners) l();
@@ -816,6 +810,7 @@ export class Session {
 
   // ---------- canvas ----------
   repaint(): void {
+    this.doc.pixelRev++;
     this.view_?.invalidate();
     this.firePreviews();
     this.scheduleAutosave();
@@ -823,11 +818,13 @@ export class Session {
   /** Live-stroke repaint: only `rect` (doc space) changed, so the compositor
    *  and the canvas update just that region. null = full frame. */
   repaintRect(rect: Rect | null): void {
+    this.doc.pixelRev++;
     this.view_?.invalidate(rect);
     this.firePreviews();
     this.scheduleAutosave();
   }
   repaintAll(): void {
+    this.doc.pixelRev++;
     this.view_?.markDirty();
     this.view_?.refresh(true);
     this.firePreviews();
@@ -1855,46 +1852,15 @@ export class Session {
     this.changed();
     this.scheduleAutosave();
   }
-  /** ask for a file name and write bytes; false when the user cancels */
-  private async saveWithDialog(name: string, bytes: Uint8Array, mime = "application/json"): Promise<boolean> {
-    return await new Promise<boolean>((res) => {
-      let done = false;
-      const finish = (ok: boolean): void => { if (done) return; done = true; res(ok); };
-      const timer = window.setTimeout(() => finish(false), 20000);
-      bridge.saveBytes(name, mime, bytes, (ok) => { window.clearTimeout(timer); finish(ok); });
-    });
-  }
-  /** write ONE canvas to its own .pxc file (the canvas orb's 保存) */
-  async saveCanvas(i = this.docIdx): Promise<boolean> {
-    const e = this.docs[i];
-    if (!e) return false;
-    const txt = await project.serialize(e.doc, null);
-    const name = (e.doc.name || "art") + ".pxc";
-    const ok = await this.saveWithDialog(name, new TextEncoder().encode(txt));
-    const en = this.prefs.lang === "en";
-    toastFn(ok ? (en ? "Saved " : "已保存 ") + name : (en ? "Save cancelled" : "已取消保存"));
-    return ok;
-  }
   /** smoothly zoom the view to fit the focused canvas */
   fitCanvas(): void {
     this.view_?.fitAnimated();
     this.changed();
   }
-  /** close a canvas, optionally saving it to its own .pxc file first */
-  async closeCanvas(i: number, save: boolean): Promise<boolean> {
+  /** close a canvas: the project is the only file, so nothing is written here */
+  closeCanvas(i: number): boolean {
     const e = this.docs[i];
     if (!e) return false;
-    if (save) {
-      const txt = await project.serialize(e.doc, null);
-      const bytes = new TextEncoder().encode(txt);
-      const name = (e.doc.name || "art") + ".pxc";
-      // wait for the native save dialog; a cancelled save keeps the canvas open
-      const saved = await this.saveWithDialog(name, bytes);
-      if (!saved) {
-        toastFn(this.prefs.lang === "en" ? "Save cancelled, the canvas stays open" : "已取消保存，画布未关闭");
-        return false;
-      }
-    }
     const wasFocus = i === this.docIdx;
     this.docs.splice(i, 1);
     this.previews = this.previews

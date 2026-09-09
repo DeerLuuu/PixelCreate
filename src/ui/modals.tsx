@@ -836,11 +836,11 @@ export function CanvasRefModal({ t, onClose }: { t: ReturnType<typeof makeT>; on
   return (
     <>
       <div className="dlg-mask" onClick={onClose} />
-      <div className="dlg dlg-frame-preview" data-guide="dlg-canvasref">
+      <div className="dlg dlg-frame-preview dlg-canvasref" data-guide="dlg-canvasref">
         <div className="dlg-head"><span>{t("canvasRefPick")}</span><div className="grow" /><button className="btn small" onClick={onClose}><Icon id="i-x" size={16} /></button></div>
         <div className="dlg-body fp-grid">
           {list.length === 0 ? <div className="row-note">{t("canvasRefNone")}</div> : list.map(({ e, i }) => (
-            <button key={e.id} className="fp-cell col" style={{ width: 148, height: 168 }}
+            <button key={e.id} className="fp-cell col" style={{ width: 178, height: 190 }}
               title={e.doc.name + " · " + e.doc.w + "\u00d7" + e.doc.h}
               onClick={() => { if (SESSION.referenceCanvas(i)) onClose(); }}>
               <FrameThumb doc={e.doc} fi={e.fi} sz={124} />

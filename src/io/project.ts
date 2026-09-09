@@ -1,8 +1,8 @@
 // PixelCraft project file (.pxc): JSON with per-cel PNG data URLs.
 //
-// v2 = one document. v3 adds `canvases` (the whole infinite space: every open
-// canvas with its position and its own layer/frame selection) while keeping the
-// focused document in the v2 fields, so an older build still opens the file.
+// The PROJECT is the only file unit — one .pxc holds every open canvas (their
+// position, their own layer/frame selection and their own history). v2 files
+// (a single document) are still readable: they load as a one-canvas project.
 import { Doc } from "../engine/doc";
 import { Cel } from "../engine/cel";
 import type { RGBA } from "../engine/types";
@@ -120,12 +120,6 @@ async function docFromPayload(obj: {
   return doc;
 }
 
-/** `history` is the already-encoded history payload (see historyfile.ts) */
-export async function serialize(doc: Doc, history?: unknown): Promise<string> {
-  const p = await docPayload(doc);
-  return JSON.stringify({ app: "PixelCraft", v: 2, ...p, history: history ?? undefined });
-}
-
 /** one canvas of the infinite space */
 export interface SpaceEntry {
   /** stable canvas id (reference layers point at it) */
@@ -141,7 +135,7 @@ export interface SpaceEntry {
 
 /** serialize the whole multi-canvas space (v3); the focused canvas also fills
  *  the v2 fields so older builds can still open the file */
-export async function serializeSpace(entries: SpaceEntry[], focus: number, history?: unknown): Promise<string> {
+export async function serializeSpace(entries: SpaceEntry[], focus: number): Promise<string> {
   const canvases: unknown[] = [];
   for (const e of entries) {
     canvases.push({ id: e.id, x: e.x, y: e.y, li: e.li, fi: e.fi, hist: e.hist ?? undefined, ...(await docPayload(e.doc)) });
@@ -149,13 +143,12 @@ export async function serializeSpace(entries: SpaceEntry[], focus: number, histo
   // an empty space is a valid project: "everything closed" survives a restart
   if (!entries.length) return JSON.stringify({ app: "PixelCraft", v: 3, focus: 0, canvases });
   const head = await docPayload(entries[focus] ? entries[focus].doc : entries[0].doc);
-  return JSON.stringify({ app: "PixelCraft", v: 3, ...head, focus, canvases, history: history ?? undefined });
+  return JSON.stringify({ app: "PixelCraft", v: 3, ...head, focus, canvases });
 }
 
 export interface ParsedSpace {
   entries: SpaceEntry[];
   focus: number;
-  history: unknown | null;
 }
 
 /** parse a .pxc into the full space (v2 single document or v3 canvases) */
@@ -184,33 +177,14 @@ export async function parseSpace(text: string): Promise<ParsedSpace | null> {
       });
     }
     // "canvases": [] is an explicitly empty project (all canvases closed)
-    if (!entries.length) return { entries: [], focus: 0, history: null };
+    if (!entries.length) return { entries: [], focus: 0 };
     const focus = Math.max(0, Math.min(entries.length - 1, Math.round(Number(obj.focus) || 0)));
     // a v2 file carries one top-level history: attach it to the focused canvas
     if (obj.history && !entries[focus].hist) entries[focus].hist = obj.history;
-    return { entries, focus, history: obj.history ?? null };
+    return { entries, focus };
   }
   const doc = await docFromPayload(obj as Parameters<typeof docFromPayload>[0]);
   if (!doc) return null;
-  return { entries: [{ doc, x: 0, y: 0, li: 0, fi: 0, hist: obj.history ?? null }], focus: 0, history: obj.history ?? null };
+  return { entries: [{ doc, x: 0, y: 0, li: 0, fi: 0, hist: obj.history ?? null }], focus: 0 };
 }
 
-export interface ParsedProject {
-  doc: Doc;
-  history: unknown | null;
-}
-
-/** single-document view of a .pxc (focused canvas only) */
-export async function parseProject(text: string): Promise<ParsedProject | null> {
-  const sp = await parseSpace(text);
-  if (!sp) return null;
-  const e = sp.entries[sp.focus] ?? sp.entries[0];
-  return { doc: e.doc, history: sp.history };
-}
-
-/** single-document parse (kept for callers that only need one doc) */
-export async function parse(text: string): Promise<Doc | null> {
-  const sp = await parseSpace(text);
-  if (!sp) return null;
-  return (sp.entries[sp.focus] ?? sp.entries[0]).doc;
-}

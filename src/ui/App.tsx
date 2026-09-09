@@ -21,7 +21,7 @@ import { TimelineBar } from "./timeline";
 import { PreviewBox } from "./preview";
 import { RefImageBox } from "./refimg";
 import type { RefImg } from "./refimg";
-import { PalettePanel, MenuModal, SizeModal, SheetModal, NewDocModal, ExportModal, AdjustModal, SettingsModal, FrameModal, FramePreviewModal, CanvasRefModal, HistoryModal, histName, importFlow } from "./modals";
+import { PalettePanel, MenuModal, SizeModal, SheetModal, NewDocModal, ExportModal, AdjustModal, SettingsModal, FrameModal, FramePreviewModal, CanvasRefModal, HistoryModal, histName, importFlow, saveProject } from "./modals";
 import { FxParamDialog, fxDefaults, type FxRun, type FxVals } from "./fxparam";
 import { CanvasTitles } from "./canvas";
 import { ChangelogModal, changelogNeedsShow } from "./changelog";
@@ -443,7 +443,7 @@ export function App() {
         } else {
           setTlOn(true);
         }
-      }} onMenu={() => setModal("menu")} onHistory={() => setModal("history")} />
+      }} onMenu={() => setModal("menu")} onHistory={() => setModal("history")} onSave={() => void saveProject()} />
       <div className="workspace">
         {snap.canvasCount === 0
           ? <EmptyCanvas t={t} onNew={() => setModal("newdoc")} onOpen={() => void importFlow()} />
@@ -524,6 +524,7 @@ export function App() {
 const B_DESC = {
   menu: { zh: "打开主功能菜单（新建 / 打开 / 导入导出 / 设置）", en: "Open the main menu" },
   undo: { zh: "撤销上一步操作", en: "Undo the last action" },
+  save: { zh: "把整个工程（含所有画布）保存为 .pxc 文件", en: "Save the whole project (every canvas) as a .pxc file" },
   redo: { zh: "重做已撤销的操作", en: "Redo the undone action" },
 
   export: { zh: "导出 PNG / GIF 动画 / 精灵表（已移到画布球）", en: "Export PNG / GIF / spritesheet (moved to the canvas orb)" },
@@ -555,9 +556,9 @@ function bd(lang: string, key: keyof typeof B_DESC): string {
 }
 
 function TopBar({
-  t, snap, tlOn, noCanvas, onToggleTl, onMenu, onHistory,
+  t, snap, tlOn, noCanvas, onToggleTl, onMenu, onHistory, onSave,
 }: {
-  t: ReturnType<typeof makeT>; snap: Snapshot; tlOn: boolean; noCanvas: boolean; onToggleTl: () => void; onMenu: () => void; onHistory: () => void;
+  t: ReturnType<typeof makeT>; snap: Snapshot; tlOn: boolean; noCanvas: boolean; onToggleTl: () => void; onMenu: () => void; onHistory: () => void; onSave: () => void;
 }) {
   const off = (fn: () => void) => (noCanvas ? () => { /* no canvas open */ } : fn);
   return (
@@ -567,6 +568,7 @@ function TopBar({
       <Btn icon="i-history" onClick={off(onHistory)} title={t("historyTitle")} desc={bd(snap.lang, "hist")} className={noCanvas ? "off" : ""} guide="btn-history" />
       <Btn icon="i-undo" onClick={off(() => SESSION.undo())} title={t("undo")} desc={bd(snap.lang, "undo")} className={!noCanvas && snap.canUndo ? "" : "off"} guide="btn-undo" />
       <Btn icon="i-redo" onClick={off(() => SESSION.redo())} title={t("redo")} desc={bd(snap.lang, "redo")} className={!noCanvas && snap.canRedo ? "" : "off"} guide="btn-redo" />
+      <Btn icon="i-save" onClick={off(onSave)} title={t("save")} desc={bd(snap.lang, "save")} className={noCanvas ? "off" : ""} guide="btn-save" />
       <Btn icon="i-timeline" onClick={off(onToggleTl)} active={tlOn && !noCanvas} title={t(tlOn ? "timelineHide" : "timelineShow")} className={noCanvas ? "off" : ""} guide="btn-timeline" />
     </header>
   );
@@ -1138,14 +1140,13 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
       })();
     } },
     { icon: "i-size", label: t("resizeTitle"), desc: t("canvasResizeDesc"), act: () => { closeCanv(); onCanvasSize(); } },
-    { icon: "i-save", label: t("canvasSave"), desc: t("canvasSaveDesc"), act: () => { closeCanv(); void SESSION.saveCanvas(); }, guide: "canv-save" },
-    { icon: "i-check", label: t("canvasCloseSave"), desc: t("canvasCloseSaveDesc"), act: () => {
+    { icon: "i-x", label: t("canvasClose"), desc: t("canvasCloseDesc"), act: () => {
       closeCanv();
       void (async () => {
         const i = SESSION.docIdx;
         const name = SESSION.doc.name || "untitled";
-        const ok = await SESSION.askConfirm({ msg: t("canvasCloseAsk") + " " + name, yes: t("ok"), no: t("cancel") });
-        if (ok) await SESSION.closeCanvas(i, true);
+        const ok = await SESSION.askConfirm({ msg: t("canvasCloseAsk") + " " + name + t("canvasCloseAsk2"), yes: t("ok"), no: t("cancel") });
+        if (ok) SESSION.closeCanvas(i);
       })();
     } },
     { icon: "i-more", label: t("canvasMore"), desc: t("canvasMoreDesc"), act: () => setCanvSub("more"), guide: "canv-more" },

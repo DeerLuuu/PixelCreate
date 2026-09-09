@@ -118,7 +118,7 @@ export function testGuide(): void {
     // export / save moved out of the menu into the canvas orb: those steps must
     // open the canvas ring first
     const canvSteps = GUIDE.filter((s) => /^\[data-guide="canv-/.test(s.target ?? ""));
-    ok("guide.canvas.ring-open-first", canvSteps.length >= 3 && canvSteps.every((s) => acts(s).includes("openCanvasRing")), "canvas steps=" + canvSteps.length);
+    ok("guide.canvas.ring-open-first", canvSteps.length >= 2 && canvSteps.every((s) => acts(s).includes("openCanvasRing")), "canvas steps=" + canvSteps.length);
     const toolSteps = GUIDE.filter((s) => /^\[data-guide="tool-/.test(s.target ?? ""));
     ok("guide.tools.ring-open-first", toolSteps.length >= 3 && toolSteps.every((s) => acts(s).includes("openToolRing") || opensByTap(s)));
     ok("guide.detail.total", GUIDE.length >= 30, "total=" + GUIDE.length);

@@ -362,6 +362,18 @@ export class View {
     });
   }
 
+  /** repaint after a live stroke: a stroke redirected onto a referenced canvas
+   *  changes pixels in ANOTHER document, so the dirty rect cannot be mapped —
+   *  repaint everything instead (otherwise the preview only appears on release) */
+  private repaintStroke(): void {
+    const st = this.stroke;
+    if (!st) return;
+    const d = st.takeDirty();
+    if (!d) return;
+    if (this.strokeRedirected) this.session.repaint();
+    else this.session.repaintRect(d);
+  }
+
   /** commit a still-open gesture (e.g. bucket fill whose pointerup was lost) as its own history step */
   flushStroke(): boolean {
     if (!this.stroke) return false;
@@ -524,15 +536,11 @@ export class View {
       ctx.restore();
     }
   }
-  /** drop the cached composites of the other canvases (a reference layer's
-   *  source changed, so their pixels may be stale even though their own layer
-   *  configuration did not change) */
-  dropOtherComps(): void {
-    this.otherComps.clear();
-  }
   /** composite of a non-focused canvas, cached until its config changes */
   private otherComposite(i: number, doc: Doc, fi: number): HTMLCanvasElement | null {
-    const key = doc.w + "x" + doc.h + "|" + fi + "|" + doc.layers.map((l) => (l.visible ? 1 : 0) + ":" + l.opacity + ":" + l.blend + ":" + (l.ref ?? "") + (doc.bg ? "B" : "T")).join();
+    // pixelRev is part of the key: another canvas may have changed without its
+    // own layer configuration changing (a reference layer being painted, etc.)
+    const key = doc.w + "x" + doc.h + "|" + fi + "|" + doc.pixelRev + "|" + doc.layers.map((l) => (l.visible ? 1 : 0) + ":" + l.opacity + ":" + l.blend + ":" + (l.ref ?? "") + (doc.bg ? "B" : "T")).join();
     const got = this.otherComps.get(i);
     if (got && got.key === key && got.doc === doc) return got.cv;
     const cv = comp.composeFrame(doc, fi);
@@ -1413,7 +1421,7 @@ export class View {
       this.startSpray();
     }
     this.stroke.startAt(pp.x, pp.y);
-    s.repaintRect(this.stroke.takeDirty());
+    this.repaintStroke();
   }
 
   private onMove(e: PointerEvent): void {
@@ -1541,7 +1549,7 @@ export class View {
       this.cursor = inView ? { x: pp.x, y: pp.y, size: this.session.brushSize } : null;
       this.stroke.moveTo(pp.x, pp.y, e.pointerType === "pen" ? e.pressure : 1);
       // only the pixels this move touched need recompositing and repainting
-      this.session.repaintRect(this.stroke.takeDirty());
+      this.repaintStroke();
       return;
     }
     if (this.outline) {
@@ -2033,7 +2041,7 @@ export class View {
       this.sprayAcc -= n;
       st.sprayBurst(n);
       const d = st.takeDirty();
-      if (d) this.session.repaintRect(d);
+      if (d) { if (this.strokeRedirected) this.session.repaint(); else this.session.repaintRect(d); }
     }, period);
   }
   private stopSpray(): void {
