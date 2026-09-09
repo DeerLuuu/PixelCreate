@@ -126,12 +126,12 @@ export function CanvasTitles({ view, tick }: { view: View | null; tick: number }
               title={SESSION.hasPreview(i) ? t("canvasPreviewOff") : t("canvasPreview")}
               onPointerDown={(ev) => ev.stopPropagation()}
               onClick={(ev) => { ev.stopPropagation(); SESSION.togglePreview(i); }}>
-              <Icon id={SESSION.hasPreview(i) ? "i-eye" : "i-eyeoff"} size={13} />
+              <Icon id="i-preview" size={13} />
             </button>
             )}
             {narrow ? null : <span className="cv-dot" />}
             <span className="cv-name">{e.doc.name || "untitled"}</span>
-            {!narrow && e.locked && <span className="cv-lock" title={t("canvasLocked")}><Icon id="i-lock" size={11} /></span>}
+            {!narrow && e.locked && <span className="cv-lock" title={t("canvasLocked")}><Icon id="i-pin" size={11} /></span>}
             {!narrow && e.group && (
               <button className="cv-btn cv-unlink" title={t("canvasUnlink")}
                 onPointerDown={(ev) => ev.stopPropagation()}

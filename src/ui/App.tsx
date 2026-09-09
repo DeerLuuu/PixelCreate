@@ -563,7 +563,7 @@ function TopBar({
   const off = (fn: () => void) => (noCanvas ? () => { /* no canvas open */ } : fn);
   return (
     <header className="topbar">
-      <Btn icon="i-gear" onClick={onMenu} title={t("menu")} desc={bd(snap.lang, "menu")} guide="btn-menu" />
+      <Btn icon="i-menu" onClick={onMenu} title={t("menu")} desc={bd(snap.lang, "menu")} guide="btn-menu" />
       <div className="grow" />
       <Btn icon="i-history" onClick={off(onHistory)} title={t("historyTitle")} desc={bd(snap.lang, "hist")} className={noCanvas ? "off" : ""} guide="btn-history" />
       <Btn icon="i-undo" onClick={off(() => SESSION.undo())} title={t("undo")} desc={bd(snap.lang, "undo")} className={!noCanvas && snap.canUndo ? "" : "off"} guide="btn-undo" />
@@ -939,19 +939,19 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
   const d = SESSION.doc;
   const repaintChanged = () => { SESSION.repaint(); SESSION.changed(); };
   const selItems: Item[] = [
-    { icon: "i-check", label: t("sel.all"), act: () => { selOps.selOps.selectAll(d); SESSION.repaint(); } },
-    { icon: "i-fx-inv", label: t("sel.invert"), act: () => SESSION.maskOp("sel.invert", () => selOps.selOps.invert(d)) },
-    { icon: "i-x", label: t("sel.clear"), act: () => { selOps.selOps.clear(d); SESSION.repaint(); } },
+    { icon: "i-sel-all", label: t("sel.all"), act: () => { selOps.selOps.selectAll(d); SESSION.repaint(); } },
+    { icon: "i-sel-invert", label: t("sel.invert"), act: () => SESSION.maskOp("sel.invert", () => selOps.selOps.invert(d)) },
+    { icon: "i-sel-none", label: t("sel.clear"), act: () => { selOps.selOps.clear(d); SESSION.repaint(); } },
     { icon: "i-bucket", label: t("sel.fill"), act: () => { if (!(d.sel && d.sel.hasAny())) { bridge.toast(t("noSel")); return; } selOps.selOps.fill(d, SESSION.history, li, fi, SESSION.color); repaintChanged(); } },
     { icon: "i-dupe", label: t("sel.copy"), act: () => { const c = selOps.selOps.copy(d, li, fi); SESSION.clip = c; if (c) void writeClipboardPng(compositor.celToCanvas(c)).then((ok) => bridge.toast(ok ? t("sysCopy") : t("copied"))); } },
-    { icon: "i-pencil", label: t("sel.cut"), act: () => { const c = selOps.selOps.cut(d, SESSION.history, li, fi); SESSION.clip = c; if (c) { repaintChanged(); void writeClipboardPng(compositor.celToCanvas(c)).then((ok) => bridge.toast(ok ? t("sysCopy") : t("cut"))); } } },
-    { icon: "i-import", label: t("sel.paste"), act: () => { if (SESSION.clip) { selOps.selOps.paste(d, SESSION.history, li, fi, SESSION.clip); repaintChanged(); bridge.toast(t("pasted")); } else bridge.toast(t("noSel")); } },
+    { icon: "i-cut", label: t("sel.cut"), act: () => { const c = selOps.selOps.cut(d, SESSION.history, li, fi); SESSION.clip = c; if (c) { repaintChanged(); void writeClipboardPng(compositor.celToCanvas(c)).then((ok) => bridge.toast(ok ? t("sysCopy") : t("cut"))); } } },
+    { icon: "i-paste", label: t("sel.paste"), act: () => { if (SESSION.clip) { selOps.selOps.paste(d, SESSION.history, li, fi, SESSION.clip); repaintChanged(); bridge.toast(t("pasted")); } else bridge.toast(t("noSel")); } },
     { icon: "i-fliph", label: t("sel.fliph"), act: () => { selOps.selOps.flip(d, SESSION.history, li, fi, true); repaintChanged(); } },
     { icon: "i-flipv", label: t("sel.flipv"), act: () => { selOps.selOps.flip(d, SESSION.history, li, fi, false); repaintChanged(); } },
     { icon: "i-plus", label: t("sel.grow"), act: () => SESSION.maskOp("sel.grow", () => selOps.growSelection(d, 1)) },
     { icon: "i-minus", label: t("sel.shrink"), act: () => SESSION.maskOp("sel.shrink", () => selOps.shrinkSelection(d, 1)) },
-    { icon: "i-paint", label: t("sel.outline"), act: () => { selOps.outlineSelected(d, SESSION.history, li, fi, SESSION.color); repaintChanged(); } },
-    { icon: "i-fx-crop", label: t("sel.delete"), act: () => { SESSION.deleteSelection(); } },
+    { icon: "i-fx-o1", label: t("sel.outline"), act: () => { selOps.outlineSelected(d, SESSION.history, li, fi, SESSION.color); repaintChanged(); } },
+    { icon: "i-sel-del", label: t("sel.delete"), act: () => { SESSION.deleteSelection(); } },
   ];
 
   // ---- parameterised FX: live preview on a snapshot, one history step on OK
@@ -1077,7 +1077,7 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
           [c[0], c[1], c[2], Math.round((Number(v.alpha) / 100) * 255)], SESSION.prefs.shadowNewLayer);
       },
     })),
-    fxI("clear", "i-fx-ctr", "清空画布", "Clear", "清空当前帧所有图层的画布内容", "Empty the current frame on all layers", () => SESSION.clearCanvas()),
+    fxI("clear", "i-clear", "清空画布", "Clear", "清空当前帧所有图层的画布内容", "Empty the current frame on all layers", () => SESSION.clearCanvas()),
     fxI("glow", "i-fx-glow", "外发光", "Glow", "一键外发光：用当前颜色向外发光 2px 并逐层淡出", "Outer glow: current colour fading outwards 2px", () => {
       const base = SESSION.color;
       fxDo("fx-glow", (dd, w, h) => fxE.outerGlowCel(dd, w, h, 2, [base[0], base[1], base[2], 255]));
@@ -1128,11 +1128,11 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
     { icon: "i-adjust", label: t("adjust"), desc: t("canvasAdjustDesc"), act: () => { closeCanv(); onCanvasAdjust(); } },
     { icon: "i-export", label: t("export"), desc: t("canvasExportDesc"), act: () => { closeCanv(); onCanvasExport(); }, guide: "canv-export" },
     { icon: "i-grid", label: t("canvasTile"), desc: t("canvasTileDesc"), act: () => { setCanv({ ...canv, open: false }); setCanvSub(null); setTileDlg(true); }, guide: "canv-tile" },
-    { icon: "i-import", label: t("canvasRef"), desc: t("canvasRefDesc"), act: () => { closeCanv(); onCanvasRef(); }, guide: "canv-ref" },
-    { icon: "i-dupe", label: t("layerExtract"), desc: t("layerExtractDesc"), act: () => { closeCanv(); void SESSION.extractLayerToCanvas(); }, guide: "canv-extract" },
+    { icon: "i-ref", label: t("canvasRef"), desc: t("canvasRefDesc"), act: () => { closeCanv(); onCanvasRef(); }, guide: "canv-ref" },
+    { icon: "i-extract", label: t("layerExtract"), desc: t("layerExtractDesc"), act: () => { closeCanv(); void SESSION.extractLayerToCanvas(); }, guide: "canv-extract" },
   ] : [
     { icon: "i-plus", label: t("canvasNew"), desc: t("canvasNewDesc"), act: () => { closeCanv(); onCanvasNew(); } },
-    { icon: "i-pencil", label: t("canvasRename"), desc: t("canvasRenameDesc"), act: () => {
+    { icon: "i-rename", label: t("canvasRename"), desc: t("canvasRenameDesc"), act: () => {
       closeCanv();
       void (async () => {
         const i = SESSION.docIdx;
@@ -1141,7 +1141,7 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
       })();
     } },
     { icon: "i-size", label: t("resizeTitle"), desc: t("canvasResizeDesc"), act: () => { closeCanv(); onCanvasSize(); } },
-    { icon: SESSION.isCanvasLocked() ? "i-lock" : "i-unlock", label: t(SESSION.isCanvasLocked() ? "canvasUnlock" : "canvasLock"), desc: t("canvasLockDesc"), act: () => { closeCanv(); SESSION.toggleCanvasLock(); }, guide: "canv-lock" },
+    { icon: SESSION.isCanvasLocked() ? "i-pin" : "i-pin-off", label: t(SESSION.isCanvasLocked() ? "canvasUnlock" : "canvasLock"), desc: t("canvasLockDesc"), act: () => { closeCanv(); SESSION.toggleCanvasLock(); }, guide: "canv-lock" },
     { icon: "i-x", label: t("canvasClose"), desc: t("canvasCloseDesc"), act: () => {
       closeCanv();
       void (async () => {
@@ -1437,7 +1437,8 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
           {!dockOpen && <span className="bd-dots">{docked.length ? "•".repeat(Math.min(docked.length, 8)) : "·"}</span>}
           {dockOpen && docked.map((d, i) => (
             <span key={d.id} className={"bd-item" + (dockHover === i ? " on" : "")}>
-              <Icon id={iconOfBall(d.id)} size={15} />
+              {/* the docked main ball shows the ACTIVE tool, not always a pencil */}
+              <Icon id={d.id === "main" ? baseIcon : iconOfBall(d.id)} size={15} />
             </span>
           ))}
         </div>
@@ -1459,7 +1460,7 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
               {(["off", "row", "col", "grid"] as const).map((m) => (
                 <button key={m} type="button" className={"menuitem" + (SESSION.prefs.tileMode === m ? " on" : "")}
                   onClick={() => { SESSION.setTileMode(m); setTileDlg(false); }}>
-                  <Icon id={m === "off" ? "i-x" : m === "row" ? "i-fliph" : m === "col" ? "i-flipv" : "i-grid"} size={16} />
+                  <Icon id={m === "off" ? "i-x" : m === "row" ? "i-tile-row" : m === "col" ? "i-tile-col" : "i-grid"} size={16} />
                   <span>{t(m === "off" ? "tileOff" : m === "row" ? "tileRow" : m === "col" ? "tileCol" : "tileGrid")}</span>
                 </button>
               ))}

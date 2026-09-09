@@ -122,7 +122,7 @@ export function PalettePanel({ t, onClose }: { t: ReturnType<typeof makeT>; onCl
               <button type="button" className="iconbtn" title={t("palDedupeHint")} onClick={() => {
                 const n = SESSION.paletteDedupe();
                 bridge.toast(n ? t("palDedupeDone") + n : t("palDedupeNone"));
-              }}><Icon id="i-fx-inv" size={15} /></button>
+              }}><Icon id="i-dedupe" size={15} /></button>
             </>}
           />
         </div>
@@ -164,7 +164,7 @@ export function PalettePanel({ t, onClose }: { t: ReturnType<typeof makeT>; onCl
         {palMode === "palette" && (
         <div className="row-actions" data-guide="pal-export">
           <Btn icon="i-plus" label={t("paletteAdd")} onClick={() => SESSION.paletteAdd(active)} />
-          <Btn icon="i-open" label={t("importPalette")} onClick={() => void (async () => {
+          <Btn icon="i-palette" label={t("importPalette")} onClick={() => void (async () => {
             const f = await bridge.openFile("*/*");
             if (!f) return;
             const colors = parsePaletteBytes(f.bytes);
@@ -334,15 +334,15 @@ export function MenuModal({ t, snap, onClose, onOpen, onSheet, onRef, onGuide }:
             {act(t("open"), "i-open", () => void openFlow("new"), "menu-open")}
             <Btn label={t("import")} icon="i-import" className="menuitem" guide="menu-import" onClick={() => setSub("import")} />
             {go("settings")(t("settings"), "i-gear", "menu-settings")}
-            <Btn label={t("guideReplay")} icon="i-eye" className="menuitem" guide="menu-guide" onClick={onGuide} />
-            {go("changelog")(t("changelog"), "i-star", "menu-changelog")}
+            <Btn label={t("guideReplay")} icon="i-guide" className="menuitem" guide="menu-guide" onClick={onGuide} />
+            {go("changelog")(t("changelog"), "i-news", "menu-changelog")}
           </>) : (
             <>
               <Btn label={"\u2039 " + t("import")} icon="" className="menuitem sub-back" onClick={() => setSub(null)} />
               <Btn label={t("importImg")} icon="i-import" className="menuitem" guide="menu-import-img" onClick={() => { void importFlow(); setSub(null); onClose(); }} />
               <Btn label={t("importLayerM")} icon="i-layers" className="menuitem" guide="menu-import-layer" onClick={() => { void importLayerFlow(); setSub(null); onClose(); }} />
-              <Btn label={t("importSheet")} icon="i-open" className="menuitem" guide="menu-import-sheet" onClick={() => { void sheetPick(); setSub(null); }} />
-              <Btn label={t("refImg")} icon="i-eye" className="menuitem" guide="menu-import-ref" onClick={() => { void refPick(); setSub(null); }} />
+              <Btn label={t("importSheet")} icon="i-sheet" className="menuitem" guide="menu-import-sheet" onClick={() => { void sheetPick(); setSub(null); }} />
+              <Btn label={t("refImg")} icon="i-image" className="menuitem" guide="menu-import-ref" onClick={() => { void refPick(); setSub(null); }} />
               <Btn label={t("importPalette")} icon="i-palette" className="menuitem" guide="menu-import-palette" onClick={() => { void importPaletteFlow(); setSub(null); onClose(); }} />
             </>
           )}
@@ -670,7 +670,7 @@ function SettingRow({ def, t }: { def: SettingDef; t: ReturnType<typeof makeT> }
       ))}
       {def.action && (
         <div className="row-actions">
-          <Btn icon="i-star" label={t(def.action.label)} onClick={() => def.action!.run(SESSION)} />
+          <Btn icon="i-check" label={t(def.action.label)} onClick={() => def.action!.run(SESSION)} />
         </div>
       )}
       {def.desc && <p className="set-desc">{t(def.desc)}</p>}

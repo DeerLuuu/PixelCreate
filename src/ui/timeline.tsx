@@ -287,17 +287,17 @@ export function TimelineBar({ t, snap, onFrameDlg }: { t: ReturnType<typeof make
         <Btn icon="i-next" onClick={() => SESSION.setFrame(snap.frameIdx + 1)} title={t("frameNext")} />
         <Btn icon="i-plus" onClick={() => SESSION.frameAdd()} title={t("frameAdd")} />
         <Btn icon="i-dupe" onClick={() => SESSION.frameDuplicate()} title={t("frameDupe")} />
-        <Btn icon="i-minus" onClick={() => SESSION.frameDelete()} title={t("frameDel")} />
+        <Btn icon="i-trash" onClick={() => SESSION.frameDelete()} title={t("frameDel")} />
         <Btn icon="i-onion" onClick={() => SESSION.toggleOnion()} active={snap.onionOn} title={t("onion")} guide="btn-onion" />
-        <Btn icon="i-check" onClick={() => SESSION.setFrameSelMode(!snap.frameSelOn)} active={snap.frameSelOn} title={t("frameSelMode")} guide="btn-framesel" />
+        <Btn icon="i-framesel" onClick={() => SESSION.setFrameSelMode(!snap.frameSelOn)} active={snap.frameSelOn} title={t("frameSelMode")} guide="btn-framesel" />
         {snap.frameSelOn && (<>
           <span className="fsel-count" title={t("frameSelHint")}>{t("frameSelTitle")} · {snap.frameSel.length}</span>
-          <Btn icon="i-check" onClick={() => SESSION.framesSelectAll()} title={t("frameSelAll")} active={snap.frameSel.length >= snap.frameCount} />
+          <Btn icon="i-sel-all" onClick={() => SESSION.framesSelectAll()} title={t("frameSelAll")} active={snap.frameSel.length >= snap.frameCount} />
           <Btn icon="i-dupe" onClick={() => {
             const n = SESSION.framesDuplicateSelected();
             bridge.toast(n ? t("frameSelDuped") + n : t("frameSelNone"));
           }} title={t("frameSelDupe")} guide="btn-framesel-dupe" />
-          <Btn icon="i-history" onClick={() => onFrameDlg("batch")} title={t("frameSelDur")} guide="btn-framesel-dur" />
+          <Btn icon="i-clock" onClick={() => onFrameDlg("batch")} title={t("frameSelDur")} guide="btn-framesel-dur" />
           <Btn icon="i-trash" danger onClick={() => {
             const n = SESSION.framesDeleteSelected();
             bridge.toast(n ? t("frameSelDeleted") + n : t("frameSelKeepOne"));
@@ -382,13 +382,13 @@ export function TimelineBar({ t, snap, onFrameDlg }: { t: ReturnType<typeof make
             <span className="bname">{t("blends." + curL.blend)}</span><i className="bchev">▾</i>
           </button>
           <div className="tl-btns">
-            <Btn icon="i-pencil" className="mini" title={t("layerRename")} onClick={() => { setRenName(curL.name); setRen(true); }} />
+            <Btn icon="i-rename" className="mini" title={t("layerRename")} onClick={() => { setRenName(curL.name); setRen(true); }} />
             <Btn icon="i-plus" className="mini primary" title={t("layerAdd")} onClick={() => SESSION.layerAdd()} />
             <Btn icon="i-up" className="mini" title={t("layerUp")} onClick={() => SESSION.layerUp()} />
             <Btn icon="i-down" className="mini" title={t("layerDown")} onClick={() => SESSION.layerDown()} />
             <Btn icon="i-dupe" className="mini" title={t("layerDupe")} onClick={() => SESSION.layerDuplicate()} />
             <Btn icon="i-merge" className="mini" title={t("layerMerge")} onClick={() => SESSION.layerMergeDown()} />
-            {curL.ref && <Btn icon="i-unlock" className="mini" title={t("layerUnref")} onClick={() => SESSION.unrefLayer(curLi)} />}
+            {curL.ref && <Btn icon="i-unlink" className="mini" title={t("layerUnref")} onClick={() => SESSION.unrefLayer(curLi)} />}
             <Btn icon="i-dupe" className="mini" title={t("layerExtract")} onClick={() => void SESSION.extractLayerToCanvas(curLi)} />
             <Btn icon="i-trash" className="mini danger" title={t("layerDel")} onClick={() => SESSION.layerDelete()} />
           </div>
