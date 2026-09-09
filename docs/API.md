@@ -358,7 +358,7 @@ getVersion(): number
 snapshot(): Snapshot                      // 缓存过的不可变快照，供 React 渲染
 ```
 
-`Snapshot` 关键字段：`tool, shape, brushSize, brushAlpha, colorHex, layerIdx, frameIdx, layerCount, frameCount, canUndo, canRedo, onionOn, gridMode, gridSize, previewBg, previewGray, selActive, docName, w, h, playing, loopMode, frameSel, frameSelOn`。
+`Snapshot` 关键字段：`tool, shape, brushSize, brushAlpha, colorHex, layerIdx, frameIdx, layerCount, frameCount, canUndo, canRedo, onionOn, gridMode, gridSize, previewBg, previewGray, tileMode, selActive, docName, w, h, playing, loopMode, frameSel, frameSelOn`。
 
 ### 11.2 渲染
 
@@ -581,7 +581,13 @@ unionRect(a: Rect | null, b: Rect | null): Rect | null
 clampRect(r: Rect, w: number, h: number): Rect | null
 screenRectOf(r: Rect, ox: number, oy: number, zoom: number, pad = 2): Rect
 coversAll(r: Rect, w: number, h: number): boolean
+TILE_OFFSETS: ReadonlyArray<readonly [number, number]>          // 3×3 平铺偏移，中心在前
+tileRect(r, w, h, dx, dy, mirror): Rect                         // 文档矩形 → 邻格副本坐标（mirror 时按共享边翻转）
 ```
+
+平铺画布（`prefs.tileMode` = `off | repeat | mirror`）：`View.refresh()` 把合成结果在中心四周画 8 份只读副本
+（`repeat` 直接平移，`mirror` 按 `dx/dy` 翻转），脏矩形会同时并上 8 份副本的屏幕矩形，中心格加蓝色描边；
+输入坐标仍只在中心文档范围内生效，所以只有中心可编辑。
 
 ### 15.2 合成器 `src/render/compositor.ts`
 

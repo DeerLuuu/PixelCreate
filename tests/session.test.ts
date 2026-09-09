@@ -221,6 +221,20 @@ export function testSession(): void {
     eq("timeline.migrate.kept", new Session().prefs.tlH, 260);
   }
 
+  // --- tiled canvas preview (seamless tiles) ---
+  {
+    eq("tile.default", s.prefs.tileMode, "off");
+    s.setTileMode("mirror");
+    eq("tile.set", s.prefs.tileMode, "mirror");
+    s.savePrefs();
+    const raw = JSON.parse((globalThis as unknown as { localStorage: { getItem(k: string): string } }).localStorage.getItem("pc.prefs"));
+    eq("tile.persist", raw.tileMode, "mirror");
+    (globalThis as unknown as { localStorage: { setItem(k: string, v: string): void } }).localStorage.setItem(
+      "pc.prefs", JSON.stringify({ tileMode: "nonsense" }));
+    eq("tile.invalid-ignored", new Session().prefs.tileMode, "off");
+    s.setTileMode("off");
+  }
+
   // --- preview box: greyscale toggle lives next to the backdrop setting ---
   {
     s.setPreviewBg("checker");

@@ -174,6 +174,15 @@ const defs: SettingDef[] = [
     after: (s, v) => { if (v === "iso" && s.prefs.gridSize < 4) s.prefs.gridSize = 8; },
   },
   {
+    path: "canvas.tileMode", field: "tileMode", kind: "enum", group: "canvas",
+    label: "tileMode", desc: "tileModeDesc", default: "off", refresh: "repaintAll",
+    options: [
+      { value: "off", label: "tileOff" },
+      { value: "repeat", label: "tileRepeat" },
+      { value: "mirror", label: "tileMirror" },
+    ],
+  },
+  {
     path: "canvas.gridSize", field: "gridSize", kind: "int", group: "canvas",
     label: "gridSize", default: 1, min: 1, max: 32, unit: "px", reset: 1, refresh: "repaintAll",
     visible: (s) => s.prefs.gridMode !== "off",

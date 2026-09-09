@@ -1,7 +1,7 @@
 // Interactive viewport: composite drawing, pan/zoom gestures, tool strokes.
 import type { Doc } from "../engine/doc";
 import type { Rect } from "../engine/types";
-import { clampRect, screenRectOf, unionRect } from "./rect";
+import { clampRect, screenRectOf, unionRect, TILE_OFFSETS, tileRect } from "./rect";
 import { Sel } from "../engine/doc";
 import * as comp from "./compositor";
 import { Stroke } from "../tools/stroke";
@@ -285,11 +285,22 @@ export class View {
       this.drawOverlay(false);
       return;
     }
+    const tile = s.prefs.tileMode !== "off";
+    const mirror = s.prefs.tileMode === "mirror";
     let region: Rect | null = null;
     if (need) {
       const full = this.buildComposite(force);
       if (!full && !this.blitFull && this.compRect) {
-        region = clampRect(screenRectOf(this.compRect, this.ox, this.oy, this.zoom), vw, vh);
+        let u = screenRectOf(this.compRect, this.ox, this.oy, this.zoom);
+        if (tile) {
+          // the same pixels show up in the 8 neighbour copies: their screen
+          // rects have to be repainted as well
+          for (const [dx, dy] of TILE_OFFSETS) {
+            if (dx === 0 && dy === 0) continue;
+            u = unionRect(u, screenRectOf(tileRect(this.compRect, doc.w, doc.h, dx, dy, mirror), this.ox, this.oy, this.zoom))!;
+          }
+        }
+        region = clampRect(u, vw, vh);
       }
       this.compDirty = false;
       this.compRect = null;
@@ -308,6 +319,7 @@ export class View {
     }
     ctx.imageSmoothingEnabled = false;
     const z = this.zoom;
+    let chkPat: CanvasPattern | null = null;
     if (!doc.bg) {
       let chk = View.checker;
       if (!chk) {
@@ -320,16 +332,44 @@ export class View {
         cc.fillStyle = "#9aa0b0"; cc.fillRect(1, 1, 1, 1);
         View.checker = chk;
       }
-      const pat = ctx.createPattern(chk, "repeat")!;
-      ctx.fillStyle = pat;
-      ctx.save();
-      ctx.translate(this.ox, this.oy);
-      ctx.scale(z, z);
-      ctx.fillRect(0, 0, doc.w, doc.h);
-      ctx.restore();
+      chkPat = ctx.createPattern(chk, "repeat");
     }
-    if (this.composite) {
-      ctx.drawImage(this.composite, this.ox, this.oy, doc.w * z, doc.h * z);
+    const wpx = doc.w * z, hpx = doc.h * z;
+    // one tile = checker backdrop + the composite; the centre one is the only
+    // editable canvas, the 8 neighbours are read-only preview copies
+    const drawTile = (dx: number, dy: number): void => {
+      const tx = this.ox + dx * wpx;
+      const ty = this.oy + dy * hpx;
+      if (chkPat) {
+        ctx.save();
+        ctx.fillStyle = chkPat;
+        ctx.translate(tx, ty);
+        ctx.scale(z, z);
+        ctx.fillRect(0, 0, doc.w, doc.h);
+        ctx.restore();
+      }
+      if (!this.composite) return;
+      if (dx === 0 && dy === 0) {
+        ctx.drawImage(this.composite, tx, ty, wpx, hpx);
+        return;
+      }
+      // neighbour copy: mirror it across the shared edge when in mirror mode
+      ctx.save();
+      ctx.translate(dx !== 0 && mirror ? tx + wpx : tx, dy !== 0 && mirror ? ty + hpx : ty);
+      if (mirror) ctx.scale(dx !== 0 ? -1 : 1, dy !== 0 ? -1 : 1);
+      ctx.drawImage(this.composite, 0, 0, wpx, hpx);
+      ctx.restore();
+    };
+    if (tile) {
+      for (const [dx, dy] of TILE_OFFSETS) drawTile(dx, dy);
+      // mark the editable tile so it is obvious which copy you paint on
+      ctx.save();
+      ctx.lineWidth = 1;
+      ctx.strokeStyle = "rgba(90,162,240,.65)";
+      ctx.strokeRect(this.ox - 0.5, this.oy - 0.5, wpx + 1, hpx + 1);
+      ctx.restore();
+    } else {
+      drawTile(0, 0);
     }
     if (s.prefs.gridMode === "pixel" && z >= 6) {
       const step = Math.max(1, Math.round(s.prefs.gridSize));
