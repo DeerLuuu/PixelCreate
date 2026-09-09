@@ -8,7 +8,7 @@ import { Icon } from "./base";
 import { TabBar } from "./tabs";
 
 /** keep in sync with android/AndroidManifest.xml versionName on every release */
-export const APP_VERSION = "1.0.7.8";
+export const APP_VERSION = "1.0.7.9";
 
 export type ClgKind = "add" | "imp" | "fix";
 export interface ClgItem { kind: ClgKind; zh: string; en: string }
@@ -17,6 +17,16 @@ export interface ClgVersion { v: string; date: string; items: ClgItem[] }
 const it = (kind: ClgKind, zh: string, en: string): ClgItem => ({ kind, zh, en });
 
 export const CHANGELOG: ClgVersion[] = [
+  {
+    v: "1.0.7.9",
+    date: "2026-09-08",
+    items: [
+      it("add", "新增「全面屏」设置组：沉浸式全屏开关（隐藏系统状态栏 / 导航栏）、安全区适配（避开刘海、挖孔与底部手势条）、额外安全边距 0–40px（系统不上报时手动补），并有一行实时「安全区检测」显示系统上报的四边数值", "New Full screen settings group: an immersive switch (hides the system status and navigation bars), safe-area padding (keeps controls clear of the notch, punch hole and gesture bar), extra padding of 0-40px for ROMs that report nothing, and a live safe-area probe line showing the four detected insets"),
+      it("add", "全面屏适配：Android 侧改为允许内容画进挖孔区（cutout SHORT_EDGES），并通过桥接把系统栏安全边距（含隐藏系统栏后的手势条 / 刘海）折算成 CSS px 交给网页，顶部栏、控制条、时间线、弹窗都按它留白", "Full-screen support: the Android layer now draws into the cutout area (SHORT_EDGES) and reports the system-bar and cutout insets in CSS px to the page, which pads the top bar, control bar, timeline and dialogs accordingly"),
+      it("fix", "设置里展开的下拉选项会被分组卡片裁切（看不到完整选项）——分组框不再裁剪，且下拉在下方空间不足时自动向上展开", "Dropdown options in Settings were clipped by their group card; the group no longer clips, and a dropdown flips upwards when there is not enough room below"),
+      it("add", "时间线高度可以直接拖动：时间线面板顶部新增拖动条（横屏时就是时间线顶部那条线），上下拖动实时改变高度并显示 px 数值，双击复位为 116px", "The timeline height is now draggable: a grip on top of the timeline panel (in landscape that is the line above the bottom timeline) resizes it live with a px readout, and double-tapping it resets to 116px"),
+    ],
+  },
   {
     v: "1.0.7.8",
     date: "2026-09-08",

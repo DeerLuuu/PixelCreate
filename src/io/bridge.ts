@@ -8,8 +8,53 @@ declare global {
       toast: (msg: string) => void;
       vibrate: (ms: number) => boolean;
       keepAwake: (on: boolean) => void;
+      /** "top,bottom,left,right" in CSS px (0s when the ROM reports nothing) */
+      insets?: () => string;
+      /** hide (true) / show (false) the system status + navigation bars */
+      setImmersive?: (on: boolean) => void;
     };
   }
+}
+
+/** window insets in CSS px; falls back to the CSS env() safe-area values, so
+ *  the browser build and ROMs without the native probe still work. */
+export function insets(): { top: number; bottom: number; left: number; right: number } {
+  try {
+    const raw = window.PixelBridge?.insets?.();
+    if (typeof raw === "string") {
+      const n = raw.split(",").map((v) => Number(v) || 0);
+      if (n.length >= 4) return { top: n[0], bottom: n[1], left: n[2], right: n[3] };
+    }
+  } catch { /* fall through */ }
+  return envInsets();
+}
+
+/** read the CSS env(safe-area-inset-*) values through a probe element */
+export function envInsets(): { top: number; bottom: number; left: number; right: number } {
+  try {
+    const el = document.createElement("div");
+    el.style.cssText = "position:fixed;left:0;top:0;width:0;height:0;pointer-events:none;" +
+      "padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)";
+    document.body.appendChild(el);
+    const cs = getComputedStyle(el);
+    const out = {
+      top: parseFloat(cs.paddingTop) || 0,
+      right: parseFloat(cs.paddingRight) || 0,
+      bottom: parseFloat(cs.paddingBottom) || 0,
+      left: parseFloat(cs.paddingLeft) || 0,
+    };
+    el.remove();
+    return out;
+  } catch {
+    return { top: 0, bottom: 0, left: 0, right: 0 };
+  }
+}
+
+/** hide / show the Android system bars (no-op in the browser) */
+export function setImmersive(on: boolean): void {
+  try {
+    window.PixelBridge?.setImmersive?.(on);
+  } catch { /* ignore */ }
 }
 
 function b64FromBytes(bytes: Uint8Array): string {

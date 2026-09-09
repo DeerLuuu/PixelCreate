@@ -23,6 +23,7 @@ import { RefImageBox } from "./refimg";
 import type { RefImg } from "./refimg";
 import { PalettePanel, MenuModal, SizeModal, SheetModal, NewDocModal, ExportModal, AdjustModal, SettingsModal, FrameModal, FramePreviewModal, HistoryModal, histName, saveProject } from "./modals";
 import { ChangelogModal, changelogNeedsShow } from "./changelog";
+import { watchSafeArea } from "../io/safearea";
 import { GUIDE, guideStepsFor, type GuideAction, type GuideStep } from "../app/guide";
 import { GuideOverlay, simulateTap } from "./guide";
 import type { ModalId, SizeMode, SheetData } from "./modals";
@@ -67,11 +68,18 @@ export function App() {
   const [guide, setGuide] = useState<GuideStep[] | null>(null);
   /** app state before the tour started (the tour really taps buttons) */
   const guideState = useRef<{ tlOn: boolean; onionOn: boolean } | null>(null);
+  /** live readout while dragging the timeline divider */
+  const [tlDrag, setTlDrag] = useState<{ h: number; top: number } | null>(null);
+  const tlGripRef = useRef<{ id: number; y0: number; h0: number } | null>(null);
 
   useEffect(() => {
     SESSION.setConfirmAsk((q) => new Promise<boolean>((resolve) => setConfirmQ({ msg: q.msg, yes: q.yes, no: q.no, res: resolve })));
     return () => SESSION.setConfirmAsk(null);
   }, []);
+
+  // full screen / safe area: push the insets into CSS vars and keep them fresh
+  // across rotation (the settings registry re-applies them on change too)
+  useEffect(() => watchSafeArea(() => SESSION.prefs), []);
 
   // first launch after an update: auto-show the release notes
   useEffect(() => {
@@ -368,8 +376,36 @@ export function App() {
     setGuide(null);
   };
 
+  // --- draggable divider between the control bar and the timeline ----------
+  // portrait: the line above the frame strip; landscape: the top edge of the
+  // bottom timeline row. Dragging it resizes prefs.tlH live.
+  const tlMaxH = (): number => Math.max(56, Math.min(400, Math.round(window.innerHeight * 0.62)));
+  const gripDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    const el = e.currentTarget;
+    try { el.setPointerCapture(e.pointerId); } catch { /* ignore */ }
+    tlGripRef.current = { id: e.pointerId, y0: e.clientY, h0: SESSION.prefs.tlH };
+    el.classList.add("on");
+    setTlDrag({ h: SESSION.prefs.tlH, top: el.getBoundingClientRect().top });
+  };
+  const gripMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    const g = tlGripRef.current;
+    if (!g || e.pointerId !== g.id) return;
+    // dragging up (dy < 0) makes the panel taller
+    const h = Math.max(56, Math.min(tlMaxH(), Math.round(g.h0 - (e.clientY - g.y0))));
+    SESSION.setTlHeight(h);
+    setTlDrag({ h, top: e.currentTarget.getBoundingClientRect().top });
+  };
+  const gripUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    const g = tlGripRef.current;
+    if (!g || e.pointerId !== g.id) return;
+    tlGripRef.current = null;
+    e.currentTarget.classList.remove("on");
+    window.setTimeout(() => setTlDrag(null), 700);
+  };
+
   return (
-    <div className={"app-root" + (SESSION.prefs.railSwap ? " rails-swap" : "")} onContextMenu={(e) => e.preventDefault()} onDragStart={(e) => e.preventDefault()}>
+    <div className={"app-root" + (SESSION.prefs.railSwap ? " rails-swap" : "") + (tlOn ? " has-tl" : "")} onContextMenu={(e) => e.preventDefault()} onDragStart={(e) => e.preventDefault()}>
       <TopBar t={t} snap={snap} tlOn={tlOn} onToggleTl={() => {
         if (tlClosing) return;
         if (tlOn) {
@@ -390,9 +426,13 @@ export function App() {
       <ControlBar t={t} snap={snap} onPanel={setPanel} onAdjust={() => setModal("adjust")} onFramePrev={() => setModal("framePrev")} />
       {tlOn && (
       <div className={"tline-wrap" + (tlClosing ? " closing" : "")}>
+        <div className="tl-grip" data-guide="tl-grip" title={t("tlGripHint")}
+          onPointerDown={gripDown} onPointerMove={gripMove} onPointerUp={gripUp} onPointerCancel={gripUp}
+          onDoubleClick={() => SESSION.setTlHeight(116)} />
         <TimelineBar t={t} snap={snap} onFrameDlg={setFrameDlgIdx} />
       </div>
       )}
+      {tlDrag && <div className="tl-pill" style={{ top: Math.max(4, tlDrag.top - 30) }}>{tlDrag.h}px</div>}
       <FloatingTools t={t} snap={snap} />
       {replayOn && <ReplayOverlay t={t} snap={snap} nameFn={(lb) => histName(lb, t, snap.lang)} onClose={() => { setModal(null); setReplayOn(false); }} />}
       <Keep on={panel === "palette"} el={panel === "palette" ? (

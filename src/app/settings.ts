@@ -9,13 +9,14 @@
 import type { Prefs, Session } from "./session";
 import { GESTURES, GESTURE_ACTIONS, gesturePath } from "./gestures";
 import * as bridge from "../io/bridge";
+import { applySafeArea } from "../io/safearea";
 
 export type SettingValue = boolean | number | string;
 export type SettingKind = "bool" | "int" | "enum";
 /** how the app must react when a value changes */
 export type SettingRefresh = "none" | "changed" | "repaint" | "repaintAll";
 
-export type SettingGroupId = "general" | "canvas" | "tools" | "gesture" | "onion" | "history" | "display" | "data";
+export type SettingGroupId = "general" | "canvas" | "screen" | "tools" | "gesture" | "onion" | "history" | "display" | "data";
 
 export interface SettingOption {
   value: string;
@@ -139,6 +140,7 @@ const GESTURE_ACTION_LABELS: Record<string, string> = Object.fromEntries(
 export const SETTING_GROUPS: Array<{ id: SettingGroupId; label: string }> = [
   { id: "general", label: "groupGeneral" },
   { id: "canvas", label: "groupCanvas" },
+  { id: "screen", label: "groupScreen" },
   { id: "tools", label: "groupTools" },
   { id: "gesture", label: "groupGesture" },
   { id: "onion", label: "groupOnion" },
@@ -182,7 +184,24 @@ const defs: SettingDef[] = [
   },
   {
     path: "canvas.timelineHeight", field: "tlH", kind: "int", group: "canvas",
-    label: "tlHeight", default: 116, min: 56, max: 340, unit: "px", reset: 116, refresh: "changed",
+    label: "tlHeight", default: 116, min: 56, max: 400, unit: "px", reset: 116, refresh: "changed",
+  },
+
+  {
+    path: "screen.immersive", field: "immersive", kind: "bool", group: "screen",
+    label: "immersiveLabel", desc: "immersiveDesc", default: true, refresh: "none",
+    after: (s, v) => { bridge.setImmersive(v === true); applySafeArea(s.prefs); },
+  },
+  {
+    path: "screen.safeArea", field: "safeArea", kind: "bool", group: "screen",
+    label: "safeAreaLabel", desc: "safeAreaDesc", default: true, refresh: "none",
+    after: (s) => applySafeArea(s.prefs),
+  },
+  {
+    path: "screen.safeExtra", field: "safeExtra", kind: "int", group: "screen",
+    label: "safeExtraLabel", desc: "safeExtraDesc", default: 0, min: 0, max: 40, unit: "px", reset: 0,
+    refresh: "none",
+    after: (s) => applySafeArea(s.prefs),
   },
 
   {

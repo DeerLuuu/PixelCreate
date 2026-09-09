@@ -17,6 +17,7 @@ import * as autosave from "../io/autosave";
 import { Btn, Icon, useSession, ScrubNum, useBlankTap } from "./base";
 import { DropMenu, TabBar } from "./tabs";
 import { canVibrate, hapticReport } from "../io/bridge";
+import { detectInsets } from "../io/safearea";
 import type { RefImg } from "./refimg";
 
 export type ModalId = "menu" | "changelog" | "newdoc" | "export" | "adjust" | "settings" | "frame" | "framePrev" | "size" | "sheet" | "history" | null;
@@ -607,6 +608,25 @@ function HapticReport({ t }: { t: ReturnType<typeof makeT> }) {
     </div>
   );
 }
+/** live full-screen / safe-area readout: the detected window insets plus what
+ *  the settings actually apply, so a ROM that reports nothing is visible */
+function SafeAreaReport({ t }: { t: ReturnType<typeof makeT> }) {
+  const [, tick] = useState(0);
+  useEffect(() => {
+    const id = window.setInterval(() => tick((n) => n + 1), 1000);
+    return () => window.clearInterval(id);
+  }, []);
+  const d = detectInsets();
+  const p = SESSION.prefs;
+  const ex = p.safeArea ? Math.max(0, Math.min(40, p.safeExtra || 0)) : 0;
+  return (
+    <div className="row-note" data-guide="safe-report">
+      {t("safeReport")}：{t("safeAreaLabel")}={p.safeArea ? "ON" : "OFF"}
+      {" · "}{t("safeExtraLabel")}={ex}px
+      {" · 检测 上"}{d.top}{" 下"}{d.bottom}{" 左"}{d.left}{" 右"}{d.right}
+    </div>
+  );
+}
 /** one settings row, generated from its declaration in src/app/settings.ts.
  *  Every setting is its own card (label + control + description), so a
  *  description can never be read as the next setting's label. */
@@ -716,6 +736,7 @@ export function SettingsModal({ t, onClose }: { t: ReturnType<typeof makeT>; onC
                   <i className={"chev" + (open ? " open" : "")}>▾</i>
                 </button>
                 {open && items.map((d) => <SettingRow key={d.path} def={d} t={t} />)}
+                {open && g.id === "screen" && <SafeAreaReport t={t} />}
                 {open && g.id === "gesture" && canVibrate() === false && (
                   <div className="row-note">{t("hapticUnsupported")}</div>
                 )}

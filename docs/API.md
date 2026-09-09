@@ -464,6 +464,7 @@ setCurrentShape(id) / setCurrentSelect(id)      // 形状 / 选区子环记忆
 rememberSym(): void                              // 对称轴状态写盘（角度/轴心/四向/锁定）
 rememberPalette(): void                          // 当前色板写盘（新文档沿用它）
 scheduleSavePrefs(): void                        // 热路径防抖写盘（600ms）
+setTlHeight(n): void                             // 时间线高度（拖动分割线用）：56–400 夹取 + 防抖写盘
 mirrorSelectionMask(): boolean                   // 对称开启时把选区按轴镜像
 ```
 
@@ -506,7 +507,7 @@ interface SettingDef {
 }
 
 const SETTINGS: SettingDef[]; const SETTINGS_BY_PATH: Map<string, SettingDef>;
-const SETTING_GROUPS: Array<{ id; label }>;
+const SETTING_GROUPS: Array<{ id; label }>;   // general / canvas / screen / tools / gesture / onion / history / display / data
 settingsOfGroup(s, group): SettingDef[];      // 已按 visible 过滤
 normalizeSetting(def, raw): SettingValue | null;
 
@@ -646,11 +647,28 @@ openFile(mime = "*/*"): Promise<OpenedFile | null>       // { name, mime, bytes 
 b64FromBytes(bytes): string; bytesFromB64(b64): Uint8Array
 ```
 
-`window.PixelBridge`（Android 注入）：`saveFile(name, mime, base64, reqId)`、`openFile(mime)`、`toast(msg)`、`vibrate(ms)`、`hasVibrator()`、`keepAwake(on)`。
+`window.PixelBridge`（Android 注入）：`saveFile(name, mime, base64, reqId)`、`openFile(mime)`、`toast(msg)`、`vibrate(ms)`、`hasVibrator()`、`keepAwake(on)`、`insets()`、`setImmersive(on)`。
 网页端自动降级：`saveBytes` → `<a download>`；`openFile` → `<input type="file">`。
 
 震动统一走 `Session.hapticTick(tag, scale = 1)`：受设置 `gesture.haptic` 开关控制，脉冲长度取 `prefs.hapticLen`（30 / 60 / 100ms，默认 60；部分机型 30ms 以下无感）。
 `Session.runGestureAction()` 会为除 `pickColor`（取色时逐像素自行震动）之外的每个手势先发一次脉冲。
+
+### 16.1b 全面屏 / 安全区 `src/io/safearea.ts`
+
+```ts
+interface Insets { top: number; bottom: number; left: number; right: number }
+detectInsets(): Insets                     // 原生 insets() 优先，退回 env(safe-area-inset-*)
+applySafeArea(p: { safeArea; safeExtra; immersive }): void
+watchSafeArea(get: () => SafeAreaPrefs): () => void   // resize / 旋转时重新应用
+```
+
+`applySafeArea` 把结果写成 `<html>` 上的 CSS 变量 `--sat / --sab / --sal / --sar`（px），样式表里所有贴边控件都用这四个变量留白；
+`screen.safeArea` 关掉时全部置 0（并加 `.safe-off` 类），`screen.safeExtra` 在检测值上再加 0–40px。
+同时它把 `immersive` 同步给原生 `setImmersive()`。
+
+原生侧（`MainActivity`）：API ≥ 28 设 `layoutInDisplayCutoutMode = SHORT_EDGES` 让内容画进挖孔区；
+`insets()` 用 `getInsetsIgnoringVisibility(systemBars|displayCutout)`（API < 30 退回 `getStableInsets` + `DisplayCutout`），
+所以沉浸式隐藏系统栏后仍能拿到手势条与刘海的安全边距；数值按 density 折算成 CSS px。
 
 ### 16.2 导出 `src/io/exporters.ts`
 
@@ -725,6 +743,8 @@ writeClipboardPng(canvas): Promise<boolean>
 | `HsvWheel` / `HoldAdjust` / `PreviewBox` / `RefImageBox` / `ReplayOverlay` | 各自文件 | 色轮、长按拖动数值、预览浮窗、参考图、历史回放 |
 | `TabBar` / `DropMenu` | `ui/tabs.tsx` | 共用选项卡与可展开下拉（色板 / 导出 / 更新日志） |
 | `useBlankTap` | `ui/base.tsx` | 点容器空白处执行动作（调色板面板点击关闭） |
+| 时间线分割线 | `ui/App.tsx`（`.tl-grip`） | 时间线面板顶部的拖动条：上下拖动 = `setTlHeight()`（56–400px），拖动时显示 px 浮标，双击复位 116 |
+| 安全区 | `io/safearea.ts` | 把原生 insets 写成 CSS 变量 `--sat/--sab/--sal/--sar`，贴边控件统一用它们留白 |
 
 ### 17.2 自定义事件
 

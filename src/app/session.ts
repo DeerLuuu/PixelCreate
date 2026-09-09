@@ -100,6 +100,12 @@ export interface Prefs {
   gLongPress: GestureActionId;
   /** landscape: swap side rails (default on: control rail right, actions left) */
   railSwap: boolean;
+  /** hide the system status / navigation bars (immersive full screen) */
+  immersive: boolean;
+  /** keep UI clear of the notch / punch hole and the gesture bar */
+  safeArea: boolean;
+  /** extra safe-area padding in px for ROMs that report nothing (0 = off) */
+  safeExtra: number;
   previewBg: "white" | "black" | "checker";
   /** timeline matrix max height in px (landscape friendly) */
   tlH: number;
@@ -587,6 +593,7 @@ export class Session {
       lang: "zh", gridMode: "off", gridSize: 1, magZoom: 12, loupe: true,
       onionOn: false, onionBefore: 1, onionAfter: 0, onionAlpha: 55, onionTint: true, onionWrap: true,
       autosave: true, recordHistory: true, newFrameCopy: false, railSwap: true, previewBg: "white", tlH: 116,
+      immersive: true, safeArea: true, safeExtra: 0,
       histMode: "steps", histSteps: 120, shadowNewLayer: false, autoPan: true,
       bucketGlobal: false, loopMode: "loop", recentColorsMax: 16, selectionTolerance: 8,
       brushSize: 1, brushAlpha: 255, fgColor: "#141414", bgColor: "#ffffff",
@@ -622,6 +629,9 @@ export class Session {
       if (typeof saved.recordHistory === "boolean") p.recordHistory = saved.recordHistory;
       if (typeof saved.newFrameCopy === "boolean") p.newFrameCopy = saved.newFrameCopy;
       if (typeof saved.railSwap === "boolean") p.railSwap = saved.railSwap;
+      if (typeof saved.immersive === "boolean") p.immersive = saved.immersive;
+      if (typeof saved.safeArea === "boolean") p.safeArea = saved.safeArea;
+      if (typeof saved.safeExtra === "number") p.safeExtra = Math.max(0, Math.min(40, Math.round(saved.safeExtra)));
       if (typeof saved.tlH === "number") p.tlH = Math.max(56, Math.min(340, Math.round(saved.tlH)));
       if (saved.histMode === "full" || saved.histMode === "steps") p.histMode = saved.histMode;
       if (typeof saved.histSteps === "number") p.histSteps = Math.max(10, Math.min(500, Math.round(saved.histSteps)));
@@ -1642,7 +1652,14 @@ export class Session {
   }
   setNewFrameCopy(v: boolean): void { this.setSetting("general.newFrameCopy", v); }
   setRailSwap(v: boolean): void { this.setSetting("general.swapRails", v); }
-  setTlHeight(v: number): void { this.setSetting("canvas.timelineHeight", v); }
+  /** live timeline height (drag handle): clamped, debounced to disk */
+  setTlHeight(v: number): void {
+    const n = Math.max(56, Math.min(400, Math.round(v)));
+    if (n === this.prefs.tlH) return;
+    this.prefs.tlH = n;
+    this.scheduleSavePrefs();
+    this.changed();
+  }
   setFrameDuration(fi: number, ms: number): void {
     const f = this.doc.frames[fi];
     if (!f) return;

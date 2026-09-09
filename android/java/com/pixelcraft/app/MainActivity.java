@@ -13,6 +13,7 @@ import android.os.Vibrator;
 import android.util.Base64;
 import android.util.Log;
 import android.view.View;
+import android.view.WindowInsets;
 import android.view.Window;
 import android.view.WindowManager;
 import android.webkit.ConsoleMessage;
@@ -37,6 +38,8 @@ public class MainActivity extends Activity {
     private static final int REQ_OPEN = 1002;
 
     private WebView web;
+    /** true while the system bars are hidden (the immersive setting) */
+    private boolean immersive = true;
     private final Queue<PendingSave> pendingSaves = new LinkedList<>();
     private String pendingOpenMime = "*/*";
 
@@ -53,6 +56,14 @@ public class MainActivity extends Activity {
         super.onCreate(savedInstanceState);
         getWindow().setFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON,
                 WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        // draw into the notch / punch-hole area; the web layer keeps its own
+        // controls out of it via the safe-area insets reported to JS
+        if (android.os.Build.VERSION.SDK_INT >= 28) {
+            try {
+                getWindow().getAttributes().layoutInDisplayCutoutMode =
+                        WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
+            } catch (Throwable ignored) { /* older ROMs */ }
+        }
         hideSystemUi();
 
         web = new WebView(this);
@@ -103,6 +114,7 @@ public class MainActivity extends Activity {
     }
 
     private void hideSystemUi() {
+        immersive = true;
         getWindow().getDecorView().setSystemUiVisibility(
                 View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
                         | View.SYSTEM_UI_FLAG_FULLSCREEN
@@ -112,10 +124,16 @@ public class MainActivity extends Activity {
                         | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION);
     }
 
+    /** bring the status + navigation bars back (immersion off) */
+    private void showSystemUi() {
+        immersive = false;
+        getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LAYOUT_STABLE);
+    }
+
     @Override
     public void onWindowFocusChanged(boolean hasFocus) {
         super.onWindowFocusChanged(hasFocus);
-        if (hasFocus) hideSystemUi();
+        if (hasFocus && immersive) hideSystemUi();
     }
 
     @Override
@@ -237,6 +255,52 @@ public class MainActivity extends Activity {
             } catch (Throwable ignored) {
                 return false;
             }
+        }
+
+        /** Window insets in CSS px as "top,bottom,left,right". Uses the insets
+         *  *ignoring visibility* so they stay correct while the bars are hidden
+         *  in immersive mode (the gesture area and the notch do not go away). */
+        @JavascriptInterface
+        public String insets() {
+            int t = 0, b = 0, l = 0, r = 0;
+            try {
+                View decor = getWindow().getDecorView();
+                WindowInsets wi = decor.getRootWindowInsets();
+                if (wi != null) {
+                    if (android.os.Build.VERSION.SDK_INT >= 30) {
+                        android.graphics.Insets in = wi.getInsetsIgnoringVisibility(
+                                WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout());
+                        t = in.top; b = in.bottom; l = in.left; r = in.right;
+                    } else {
+                        t = wi.getStableInsetTop();
+                        b = wi.getStableInsetBottom();
+                        l = wi.getStableInsetLeft();
+                        r = wi.getStableInsetRight();
+                        android.view.DisplayCutout dc = wi.getDisplayCutout();
+                        if (dc != null) {
+                            t = Math.max(t, dc.getSafeInsetTop());
+                            b = Math.max(b, dc.getSafeInsetBottom());
+                            l = Math.max(l, dc.getSafeInsetLeft());
+                            r = Math.max(r, dc.getSafeInsetRight());
+                        }
+                    }
+                }
+            } catch (Throwable ignored) { /* no insets available */ }
+            float d = getResources().getDisplayMetrics().density;
+            if (d <= 0f) d = 1f;
+            return Math.round(t / d) + "," + Math.round(b / d) + ","
+                    + Math.round(l / d) + "," + Math.round(r / d);
+        }
+
+        /** hide (true) / show (false) the system bars (immersive setting) */
+        @JavascriptInterface
+        public void setImmersive(final boolean on) {
+            runOnUiThread(new Runnable() {
+                @Override public void run() {
+                    if (on) hideSystemUi();
+                    else showSystemUi();
+                }
+            });
         }
 
         @JavascriptInterface

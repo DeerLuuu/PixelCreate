@@ -1,6 +1,6 @@
 import { Session } from "../src/app/session";
 import {
-  SETTINGS, settingsOfGroup, coerceSetting, exportSettings, importSettings, isDefault, resetSetting,
+  SETTINGS, SETTING_GROUPS, settingsOfGroup, coerceSetting, exportSettings, importSettings, isDefault, resetSetting,
 } from "../src/app/settings";
 import { GESTURES, GESTURE_ACTIONS, gesturePath, isActionAllowed } from "../src/app/gestures";
 import { History } from "../src/engine/history";
@@ -182,6 +182,30 @@ export function testSession(): void {
     if (v === undefined || v === null) unresolved++;
   }
   eq("settings.all-resolve", unresolved, 0);
+
+  // --- full screen / safe area + live timeline height (drag handle) ---
+  {
+    ok("screen.group-present", SETTING_GROUPS.some((g) => g.id === "screen"));
+    eq("screen.group-settings", settingsOfGroup(s, "screen").length, 3);
+    s.setSetting("screen.safeArea", false);
+    eq("screen.safeArea.off", s.prefs.safeArea, false);
+    s.setSetting("screen.safeExtra", 24);
+    eq("screen.safeExtra.set", s.prefs.safeExtra, 24);
+    s.setSetting("screen.immersive", false);
+    eq("screen.immersive.off", s.prefs.immersive, false);
+    s.savePrefs();
+    const raw = JSON.parse((globalThis as unknown as { localStorage: { getItem(k: string): string } }).localStorage.getItem("pc.prefs"));
+    eq("screen.persist", [raw.safeArea, raw.safeExtra, raw.immersive], [false, 24, false]);
+    s.setTlHeight(9999);
+    eq("timeline.drag.clamp-max", s.prefs.tlH, 400);
+    s.setTlHeight(1);
+    eq("timeline.drag.clamp-min", s.prefs.tlH, 56);
+    s.setTlHeight(180);
+    eq("timeline.drag.set", s.prefs.tlH, 180);
+    s.setSetting("canvas.timelineHeight", 400);
+    eq("timeline.setting.max", s.prefs.tlH, 400);
+    s.setSetting("canvas.timelineHeight", 116);
+  }
 
   // --- haptics: the tick is gated by the switch and uses the chosen length ---
   {

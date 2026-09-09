@@ -1,6 +1,6 @@
 // Shared tab strip + dropdown, used by the palette panel, the export dialog
 // and the release-notes dialog so all three look and behave the same.
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 export interface TabItem<T extends string> {
   id: T;
@@ -56,14 +56,29 @@ export function DropMenu<T extends string>({ label, title, value, options, onPic
   guide?: string;
 }) {
   const [open, setOpen] = useState(false);
+  // flip the list upwards when there is not enough room below (it would be
+  // clipped by the dialog body / the bottom of the screen)
+  const [up, setUp] = useState(false);
+  const btnRef = useRef<HTMLButtonElement | null>(null);
+  const toggle = () => {
+    const next = !open;
+    if (next && btnRef.current) {
+      const r = btnRef.current.getBoundingClientRect();
+      const below = window.innerHeight - r.bottom;
+      const need = Math.min(240, options.length * 38 + 10);
+      setUp(below < need && r.top > below);
+    }
+    setOpen(next);
+  };
   return (
-    <div className="dropmenu">
+    <div className={"dropmenu" + (up ? " up" : "")}>
       <button
+        ref={btnRef}
         type="button"
         className={"dropmenu-btn" + (open ? " on" : "")}
         title={title}
         data-guide={guide}
-        onClick={() => setOpen(!open)}
+        onClick={toggle}
       >
         {label}
         <i className="dropmenu-chev">▾</i>
