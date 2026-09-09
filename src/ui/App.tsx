@@ -23,6 +23,7 @@ import { RefImageBox } from "./refimg";
 import type { RefImg } from "./refimg";
 import { PalettePanel, MenuModal, SizeModal, SheetModal, NewDocModal, ExportModal, AdjustModal, SettingsModal, FrameModal, FramePreviewModal, HistoryModal, histName, saveProject } from "./modals";
 import { FxParamDialog, fxDefaults, type FxRun, type FxVals } from "./fxparam";
+import { CanvasTitles } from "./canvas";
 import { ChangelogModal, changelogNeedsShow } from "./changelog";
 import { watchSafeArea } from "../io/safearea";
 import { GUIDE, guideStepsFor, type GuideAction, type GuideStep } from "../app/guide";
@@ -65,6 +66,7 @@ export function App() {
   // the reference image lives in the session so it survives a restart
   const refImg = SESSION.refImg;
   const [confirmQ, setConfirmQ] = useState<{ msg: string; yes: string; no: string; res: (ok: boolean) => void } | null>(null);
+  const [textQ, setTextQ] = useState<{ title: string; value: string; ok: string; cancel: string; res: (v: string | null) => void } | null>(null);
   /** onboarding tour: steps still unseen by this user (null = not running) */
   const [guide, setGuide] = useState<GuideStep[] | null>(null);
   /** app state before the tour started (the tour really taps buttons) */
@@ -75,7 +77,8 @@ export function App() {
 
   useEffect(() => {
     SESSION.setConfirmAsk((q) => new Promise<boolean>((resolve) => setConfirmQ({ msg: q.msg, yes: q.yes, no: q.no, res: resolve })));
-    return () => SESSION.setConfirmAsk(null);
+    SESSION.setTextAsk((q) => new Promise<string | null>((resolve) => setTextQ({ ...q, res: resolve })));
+    return () => { SESSION.setConfirmAsk(null); SESSION.setTextAsk(null); };
   }, []);
 
   // full screen / safe area: push the insets into CSS vars and keep them fresh
@@ -434,7 +437,9 @@ export function App() {
       </div>
       )}
       {tlDrag && <div className="tl-pill" style={{ top: Math.max(4, tlDrag.top - 30) }}>{tlDrag.h}px</div>}
-      <FloatingTools t={t} snap={snap} />
+      <FloatingTools t={t} snap={snap}
+        onCanvasNew={() => setModal("newdoc")}
+        onCanvasSize={() => { setSizeMode("canvas"); setModal("size"); }} />
       {replayOn && <ReplayOverlay t={t} snap={snap} nameFn={(lb) => histName(lb, t, snap.lang)} onClose={() => { setModal(null); setReplayOn(false); }} />}
       <Keep on={panel === "palette"} el={panel === "palette" ? (
         <Overlay onClose={() => setPanel(null)}>
@@ -453,6 +458,21 @@ export function App() {
       <Keep on={modal === "framePrev"} el={modal === "framePrev" ? <FramePreviewModal t={t} onClose={() => setModal(null)} /> : null} />
       <Keep on={modal === "changelog"} el={modal === "changelog" ? <ChangelogModal onClose={() => setModal(null)} /> : null} />
       {guide && <GuideOverlay steps={guide} actions={guideActions} onDone={finishGuide} />}
+      {textQ && (
+        <div className="cfm-layer">
+          <div className="dlg-mask" onClick={() => { textQ.res(null); setTextQ(null); }} />
+          <div className="dlg">
+            <div className="dlg-head"><span>{textQ.title}</span><div className="grow" /></div>
+            <div className="dlg-body">
+              <input className="textinput" autoFocus value={textQ.value} onChange={(e) => setTextQ({ ...textQ, value: e.target.value })} />
+            </div>
+            <div className="dlg-foot">
+              <Btn label={textQ.cancel} onClick={() => { textQ.res(null); setTextQ(null); }} />
+              <Btn label={textQ.ok} className="primary" onClick={() => { const v = textQ.value; textQ.res(v); setTextQ(null); }} />
+            </div>
+          </div>
+        </div>
+      )}
       {confirmQ && (
         <div className="cfm-layer">
           <div className="dlg-mask" onClick={() => { confirmQ.res(false); setConfirmQ(null); }} />
@@ -491,7 +511,8 @@ const B_DESC = {
   alpha: { zh: "不透明度：按住拖动调节（0 = 橡皮擦）", en: "Opacity: hold & drag (0 = eraser)" },
   orb: { zh: "快捷工具球：点按打开工具环，按住拖动可移动位置", en: "Tool orb: tap to open, drag to move" },
   selBall: { zh: "选区操作球：填充 / 复制 / 剪切 / 粘贴 / 翻转 / 扩展等", en: "Selection actions ball" },
-  fx: { zh: "魔法球：描边 / 反色 / 灰度 / 居中（作用于当前图层帧）", en: "Magic ball: outline / invert / grayscale / center (active layer/frame)" },
+  fx: { zh: "魔法球：描边 / 模糊 / 投影 / 反色 / 灰度 / 居中（作用于当前图层帧）", en: "Magic ball: outline / blur / shadow / invert / grayscale / center (active layer/frame)" },
+  canv: { zh: "画布球：对聚焦画布操作（新建 / 重命名 / 改尺寸 / 预览 / 关闭并保存）", en: "Canvas ball: act on the focused canvas (new / rename / resize / preview / close & save)" },
   hist: { zh: "操作记录：查看可撤销/重做的步骤，点任意旧记录可回到该状态", en: "History: view undo/redo steps, tap one to jump back" },
   loop: { zh: "循环播放：播到最后一帧后回到第 1 帧继续；关闭则播到末尾停止", en: "Loop: restart from frame 1 at the end; off stops at the last frame" },
   sides: { zh: "多边形边数：按住拖动调节（3–12 边）", en: "Polygon sides: hold & drag (3–12)" },
@@ -550,7 +571,9 @@ function TopBar({
 
 
 
-function FloatingTools({ t, snap }: { t: ReturnType<typeof makeT>; snap: Snapshot }) {
+function FloatingTools({ t, snap, onCanvasNew, onCanvasSize }: {
+  t: ReturnType<typeof makeT>; snap: Snapshot; onCanvasNew: () => void; onCanvasSize: () => void;
+}) {
   const orbKey = "pc.orb.pos";
   const loadPos = () => {
     try {
@@ -564,7 +587,7 @@ function FloatingTools({ t, snap }: { t: ReturnType<typeof makeT>; snap: Snapsho
   const [sub, setSub] = useState<"shape" | "select" | null>(null);
   const [sel, setSel] = useState<{ x: number; y: number; open: boolean } | null>(null);
   const prevSelA = useRef(false);
-  const drag = useRef<{ which: "main" | "sel" | "pal" | "fx"; dx: number; dy: number; moved: boolean } | null>(null);
+  const drag = useRef<{ which: OrbId; dx: number; dy: number; moved: boolean } | null>(null);
 
   const ORB = 52;
   const MINC = ORB + 16;
@@ -583,6 +606,12 @@ function FloatingTools({ t, snap }: { t: ReturnType<typeof makeT>; snap: Snapsho
     y: Math.max(8, Math.round(window.innerHeight * 0.62)),
     open: false,
   }));
+  /** canvas orb: actions on the focused canvas (rename / resize / close / preview) */
+  const [canv, setCanv] = useState<{ x: number; y: number; open: boolean }>(() => ({
+    x: Math.max(8, Math.round(window.innerWidth * 0.30)),
+    y: Math.max(8, Math.round(window.innerHeight * 0.72)),
+    open: false,
+  }));
 
   // the onboarding tour can open the tool ring and its sub-rings by itself
   useEffect(() => {
@@ -598,6 +627,7 @@ function FloatingTools({ t, snap }: { t: ReturnType<typeof makeT>; snap: Snapsho
         setSel((v) => (v ? { ...v, open: false } : v));
         setPal((v) => ({ ...v, open: false }));
         setFx((v) => ({ ...v, open: false }));
+        setCanv((v) => ({ ...v, open: false }));
       }
     };
     window.addEventListener("pc-guide-tools", onTools);
@@ -607,20 +637,21 @@ function FloatingTools({ t, snap }: { t: ReturnType<typeof makeT>; snap: Snapsho
   // Android back: close whatever floating layer is on top before leaving.
   // The handler reads the live state from a ref, because state updates inside
   // the event would only be applied after the native side already decided.
-  const backState = useRef({ open, sub, sel, pal, fx });
-  backState.current = { open, sub, sel, pal, fx };
+  const backState = useRef({ open, sub, sel, pal, fx, canv });
+  backState.current = { open, sub, sel, pal, fx, canv };
   useEffect(() => {
     const onBack = (e: Event) => {
       const d = (e as CustomEvent<{ handled: boolean }>).detail;
       if (!d || d.handled) return;
       const st = backState.current;
-      const any = st.open || st.sub !== null || st.sel.open || st.pal.open || st.fx.open;
+      const any = st.open || st.sub !== null || st.sel.open || st.pal.open || st.fx.open || st.canv.open;
       if (!any) return;
       setOpen(false);
       setSub(null);
       if (st.sel.open) setSel({ ...st.sel, open: false });
       if (st.pal.open) setPal({ ...st.pal, open: false });
       if (st.fx.open) setFx({ ...st.fx, open: false });
+      if (st.canv.open) setCanv({ ...st.canv, open: false });
       d.handled = true;
     };
     window.addEventListener("pc-back", onBack);
@@ -629,13 +660,15 @@ function FloatingTools({ t, snap }: { t: ReturnType<typeof makeT>; snap: Snapsho
 
   // ---------- floating-ball dock ----------
   const landD = useLandscape();
-  type BallId = "main" | "pal" | "fx";
+  /** every floating orb (sel is not dockable) */
+  type OrbId = "main" | "sel" | "pal" | "fx" | "canv";
+  type BallId = "main" | "pal" | "fx" | "canv";
   const dockKey = "pc.orb.dock";
   const loadDock = (): Array<{ id: BallId; x: number; y: number }> => {
     try {
       const d = JSON.parse(localStorage.getItem(dockKey) || "[]");
       if (Array.isArray(d)) {
-        return d.filter((e) => e && (e.id === "main" || e.id === "pal" || e.id === "fx") &&
+        return d.filter((e) => e && (e.id === "main" || e.id === "pal" || e.id === "fx" || e.id === "canv") &&
           typeof e.x === "number" && typeof e.y === "number");
       }
     } catch { /* ignore */ }
@@ -697,7 +730,7 @@ function FloatingTools({ t, snap }: { t: ReturnType<typeof makeT>; snap: Snapsho
   };
   const park = (id: BallId) => {
     if (dockedById(id)) return;
-    const cur = id === "main" ? pos : id === "pal" ? { x: pal.x, y: pal.y } : { x: fx.x, y: fx.y };
+    const cur = id === "main" ? pos : id === "pal" ? { x: pal.x, y: pal.y } : id === "canv" ? { x: canv.x, y: canv.y } : { x: fx.x, y: fx.y };
     if (id === "main") {
       try { localStorage.setItem(orbKey, JSON.stringify(cur)); } catch { /* ignore */ }
     }
@@ -706,6 +739,7 @@ function FloatingTools({ t, snap }: { t: ReturnType<typeof makeT>; snap: Snapsho
     if (sel) setSel({ ...sel, open: false });
     setPal((g) => (g ? { ...g, open: false } : g));
     setFx((g) => (g ? { ...g, open: false } : g));
+    setCanv((g) => (g ? { ...g, open: false } : g));
     setDocked((d) => [...d, { id, x: cur.x, y: cur.y }]);
     setDockOpen(true);
     dockCollapse(900);
@@ -723,11 +757,12 @@ function FloatingTools({ t, snap }: { t: ReturnType<typeof makeT>; snap: Snapsho
         : { x: Math.min(d.x, window.innerWidth - 140), y: d.y });
     if (d.id === "main") { setPos(np); try { localStorage.setItem(orbKey, JSON.stringify(np)); } catch { /* ignore */ } }
     else if (d.id === "pal") setPal({ x: np.x, y: np.y, open: false });
+    else if (d.id === "canv") setCanv({ x: np.x, y: np.y, open: false });
     else setFx({ x: np.x, y: np.y, open: false });
     setDockOpen(false);
     setDockHover(null);
   };
-  const iconOfBall = (id: BallId): string => id === "main" ? "i-pencil" : id === "pal" ? "i-palette" : "i-star";
+  const iconOfBall = (id: BallId): string => id === "main" ? "i-pencil" : id === "pal" ? "i-palette" : id === "canv" ? "i-canvas" : "i-star";
 
   // rotation / resize: keep every floating ball inside the viewport
   useEffect(() => {
@@ -740,6 +775,7 @@ function FloatingTools({ t, snap }: { t: ReturnType<typeof makeT>; snap: Snapsho
       setSel((s) => (s ? { ...s, x: clampXY({ x: s.x, y: s.y }).x, y: clampXY({ x: s.x, y: s.y }).y } : s));
       setPal((p) => ({ ...p, ...clampXY({ x: p.x, y: p.y }) }));
       setFx((p) => ({ ...p, ...clampXY({ x: p.x, y: p.y }) }));
+      setCanv((p) => ({ ...p, ...clampXY({ x: p.x, y: p.y }) }));
     };
     window.addEventListener("resize", fix);
     window.addEventListener("orientationchange", fix);
@@ -781,6 +817,7 @@ function FloatingTools({ t, snap }: { t: ReturnType<typeof makeT>; snap: Snapsho
     if (sel) setSel({ ...sel, open: false });
     if (pal) setPal({ ...pal, open: false });
     setFx((g) => (g ? { ...g, open: false } : g));
+    setCanv((g) => (g ? { ...g, open: false } : g));
   };
 
   const separate = (m: { x: number; y: number }, o: { x: number; y: number } | null) => {
@@ -802,7 +839,7 @@ function FloatingTools({ t, snap }: { t: ReturnType<typeof makeT>; snap: Snapsho
     return clampXY({ x: anchor.x + (dx / d) * RING_CLEAR, y: anchor.y + (dy / d) * RING_CLEAR });
   };
 
-  const moveBall = (which: "main" | "sel" | "pal" | "fx", nx: number, ny: number) => {
+  const moveBall = (which: OrbId, nx: number, ny: number) => {
     // drop exactly where the finger is: no auto repulsion from other orbs
     const p = clampXY({ x: nx, y: ny });
     if (which === "main") {
@@ -812,6 +849,8 @@ function FloatingTools({ t, snap }: { t: ReturnType<typeof makeT>; snap: Snapsho
       setSel({ x: p.x, y: p.y, open: false });
     } else if (which === "pal") {
       setPal((g) => ({ ...g, x: p.x, y: p.y, open: false }));
+    } else if (which === "canv") {
+      setCanv((g) => ({ ...g, x: p.x, y: p.y, open: false }));
     } else {
       setFx((g) => ({ ...g, x: p.x, y: p.y, open: false }));
     }
@@ -820,6 +859,7 @@ function FloatingTools({ t, snap }: { t: ReturnType<typeof makeT>; snap: Snapsho
     if (sel && which !== "sel") setSel((s) => (s ? { ...s, open: false } : s));
     if (pal && which !== "pal") setPal((g) => (g ? { ...g, open: false } : g));
     if (which !== "fx") setFx((g) => (g ? { ...g, open: false } : g));
+    if (which !== "canv") setCanv((g) => (g ? { ...g, open: false } : g));
   };
 
   type Item = { icon: string; label: string; act: () => void; active?: boolean; desc?: string; guide?: string };
@@ -1030,6 +1070,30 @@ function FloatingTools({ t, snap }: { t: ReturnType<typeof makeT>; snap: Snapsho
     })),
   ];
 
+  // canvas orb: everything that acts on the FOCUSED canvas
+  const canvItems: Item[] = [
+    { icon: "i-plus", label: t("canvasNew"), desc: t("canvasNewDesc"), act: () => { setCanv({ ...canv, open: false }); onCanvasNew(); } },
+    { icon: "i-pencil", label: t("canvasRename"), desc: t("canvasRenameDesc"), act: () => {
+      setCanv({ ...canv, open: false });
+      void (async () => {
+        const i = SESSION.docIdx;
+        const v = await SESSION.askText({ title: t("canvasRename"), value: SESSION.doc.name, ok: t("ok"), cancel: t("cancel") });
+        if (v !== null) SESSION.renameCanvas(i, v);
+      })();
+    } },
+    { icon: "i-size", label: t("resizeTitle"), desc: t("canvasResizeDesc"), act: () => { setCanv({ ...canv, open: false }); onCanvasSize(); } },
+    { icon: "i-eye", label: t("canvasPreview"), desc: t("canvasPreviewDesc"), act: () => { setCanv({ ...canv, open: false }); SESSION.addPreview(); } },
+    { icon: "i-save", label: t("canvasCloseSave"), desc: t("canvasCloseSaveDesc"), act: () => {
+      setCanv({ ...canv, open: false });
+      void (async () => {
+        const i = SESSION.docIdx;
+        const name = SESSION.doc.name || "untitled";
+        const ok = await SESSION.askConfirm({ msg: t("canvasCloseAsk") + " " + name, yes: t("ok"), no: t("cancel") });
+        if (ok) await SESSION.closeCanvas(i, true);
+      })();
+    } },
+  ];
+
   const mainItems: Item[] = sub
     ? [
         { icon: "", label: "\u2039", act: () => setSub(null), guide: "tool-back" },
@@ -1062,7 +1126,7 @@ function FloatingTools({ t, snap }: { t: ReturnType<typeof makeT>; snap: Snapsho
   };
 
   const renderBall = (
-    which: "main" | "sel" | "pal" | "fx",
+    which: OrbId,
     p: { x: number; y: number },
     icon: string,
     isOpen: boolean,
@@ -1229,6 +1293,29 @@ function FloatingTools({ t, snap }: { t: ReturnType<typeof makeT>; snap: Snapsho
         }
         setFx({ ...fx, open: !fx.open });
       })}
+      {!dockedById("canv") && renderBall("canv", { x: canv.x, y: canv.y }, "i-canvas", canv.open, t("canvasOrb"), bd(snap.lang, "canv"), () => {
+        setOpen(false);
+        setSub(null);
+        if (sel) setSel({ ...sel, open: false });
+        if (pal) setPal({ ...pal, open: false });
+        if (fx) setFx({ ...fx, open: false });
+        if (!canv.open) {
+          const np = clearRingOf({ x: canv.x, y: canv.y }, pos);
+          if (np && (np.x !== pos.x || np.y !== pos.y)) {
+            setPos(np);
+            try { localStorage.setItem(orbKey, JSON.stringify(np)); } catch { /* ignore */ }
+          }
+          if (pal) {
+            const pp = clearRingOf({ x: canv.x, y: canv.y }, { x: pal.x, y: pal.y });
+            if (pp) setPal({ ...pp, open: false });
+          }
+          if (fx) {
+            const fp = clearRingOf({ x: canv.x, y: canv.y }, { x: fx.x, y: fx.y });
+            if (fp) setFx({ ...fp, open: false });
+          }
+        }
+        setCanv({ ...canv, open: !canv.open });
+      })}
       {(docked.length > 0 || dockOpen) && (
         <div ref={dockWrap} className={"bdock" + (landD ? " horiz" : "") + (dockOpen ? " open" : "") + (dockArmed ? " armed" : "")}
           onPointerDown={(e) => {
@@ -1280,13 +1367,14 @@ function FloatingTools({ t, snap }: { t: ReturnType<typeof makeT>; snap: Snapsho
           ))}
         </div>
       )}
-      {(open || (sel && sel.open) || pal.open || fx.open) && (
+      {(open || (sel && sel.open) || pal.open || fx.open || canv.open) && (
         <div className="radial-back" onPointerDown={closeRadials} />
       )}
       <Keep on={open} el={open ? ring(pos, mainItems) : null} />
       <Keep on={!!sel && sel.open} el={sel && sel.open ? ring({ x: sel.x, y: sel.y }, selItems) : null} />
       <Keep on={pal.open} el={pal.open ? <PalBalls x={pal.x} y={pal.y} onDone={() => setPal({ ...pal, open: false })} /> : null} />
       <Keep on={fx.open} el={fx.open ? ring({ x: fx.x, y: fx.y }, fxItems) : null} />
+      <Keep on={canv.open} el={canv.open ? ring({ x: canv.x, y: canv.y }, canvItems) : null} />
       <Keep on={!!fxDlg} el={fxDlg ? <FxParamDialog run={fxDlg.run} vals={fxDlg.vals} onChange={fxChange} onApply={fxApplyDlg} onCancel={fxCance} /> : null} />
     </>
   );
@@ -1432,6 +1520,8 @@ function Viewport({ onColorClick, refImg, onRefClose, onFramePrev }: { onColorCl
   const viewRef = useRef<View | null>(null);
   const tv = makeT(SESSION.prefs.lang as Lang);
   const [, setTick] = useState(0);
+  /** bumped whenever the view transform changes (the canvas title bars follow) */
+  const [vt, setVt] = useState(0);
   const onFpRef = useRef(onFramePrev);
   onFpRef.current = onFramePrev;
   useEffect(() => {
@@ -1441,6 +1531,7 @@ function Viewport({ onColorClick, refImg, onRefClose, onFramePrev }: { onColorCl
     viewRef.current = v;
     // four-finger swipe-up opens the all-frames preview
     v.onFramePreview = () => onFpRef.current();
+    v.onViewChanged = () => setVt((x) => (x + 1) & 0xffff);
     SESSION.attachView(v);
     v.fit();
     const iv = window.setInterval(() => setTick((x) => x + 1), 300);
@@ -1452,6 +1543,7 @@ function Viewport({ onColorClick, refImg, onRefClose, onFramePrev }: { onColorCl
   return (
     <section className="viewport">
       <div className="view-canvas" ref={hostRef} />
+      <CanvasTitles view={viewRef.current} tick={vt} />
       <PreviewBox />
       {refImg && <RefImageBox img={refImg} onClose={onRefClose} />}
       {symOn && !SESSION.symLocked && (

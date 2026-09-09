@@ -64,6 +64,8 @@ export class View {
   /** pending animation frame of a coalesced repaint */
   private raf = 0;
   private composeCache = comp.newComposeCache();
+  /** cached composites of the OTHER canvases in the space (index -> canvas) */
+  private otherComps = new Map<number, { key: string; doc: Doc; cv: HTMLCanvasElement }>();
   /** identity + version of the selection the cached tint image belongs to */
   private selTintSel: unknown = null;
   private selTintVer = -1;
@@ -146,6 +148,8 @@ export class View {
   private fourView0: { ox: number; oy: number; zoom: number } | null = null;
   /** invoked after a clean four-finger gesture (wired up by the app shell) */
   onFramePreview: (() => void) | null = null;
+  /** invoked whenever the view transform changed (canvas title bars follow it) */
+  onViewChanged: (() => void) | null = null;
   /** the pinch actually zoomed (else it was a two-finger tap) */
   private pinchZoomed = false;
   /** midpoint of a two-finger tap, for double-tap detection */
@@ -209,12 +213,22 @@ export class View {
     this.composite = null;
     this.compKey = "";
     this.composeCache.ghosts.clear();
+    this.otherComps.clear();
   }
   setFrame(fi: number): void {
     void fi;
     this.composite = null;
     this.compKey = "";
     this.composeCache.ghosts.clear();
+  }
+
+  /** keep the space visually still when the focused canvas changes: the new
+   *  focused document must stay exactly where it already is on screen */
+  shiftFocus(dxSpace: number, dySpace: number): void {
+    this.ox += dxSpace * this.zoom;
+    this.oy += dySpace * this.zoom;
+    this.clampView();
+    this.refresh(false);
   }
 
   fit(): void {
@@ -232,8 +246,24 @@ export class View {
   /** Keep the canvas in view: stop panning when a canvas edge reaches the
    *  viewport edge, so the artwork can never be dragged off-screen. */
   private clampView(): void {
-    const doc = this.session.doc;
+    const s = this.session;
     const w = this.host.clientWidth, h = this.host.clientHeight;
+    if (s.docs.length > 1) {
+      // infinite space: keep a slice of the canvas bounding box on screen so
+      // the artwork can never be panned away forever
+      const focus = s.docs[s.docIdx];
+      let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+      for (const e of s.docs) {
+        const rx = (e.x - focus.x) * this.zoom, ry = (e.y - focus.y) * this.zoom;
+        x0 = Math.min(x0, rx); y0 = Math.min(y0, ry);
+        x1 = Math.max(x1, rx + e.doc.w * this.zoom); y1 = Math.max(y1, ry + e.doc.h * this.zoom);
+      }
+      const M = 60;
+      this.ox = clamp(this.ox, M - x1, w - M - x0);
+      this.oy = clamp(this.oy, M - y1, h - M - y0);
+      return;
+    }
+    const doc = s.doc;
     const dw = doc.w * this.zoom, dh = doc.h * this.zoom;
     this.ox = dw >= w ? clamp(this.ox, w - dw, 0) : clamp(this.ox, 0, Math.max(0, w - dw));
     this.oy = dh >= h ? clamp(this.oy, h - dh, 0) : clamp(this.oy, 0, Math.max(0, h - dh));
@@ -360,6 +390,8 @@ export class View {
       }
       chkPat = ctx.createPattern(chk, "repeat");
     }
+    // every other canvas of the space first, so the focused one stays on top
+    this.drawOtherCanvases(ctx, z, vw, vh);
     const wpx = doc.w * z, hpx = doc.h * z;
     // one tile = checker backdrop + the composite; the centre one is the only
     // editable canvas, the 8 neighbours are read-only preview copies
@@ -413,6 +445,65 @@ export class View {
     if (region) ctx.restore(); // end the dirty-rect clip
     this.blitFull = false;
     this.drawOverlay(need);
+    if (this.onViewChanged) this.onViewChanged();
+  }
+
+  /** draw every non-focused canvas at its place in the infinite space */
+  private drawOtherCanvases(ctx: CanvasRenderingContext2D, z: number, vw: number, vh: number): void {
+    const s = this.session;
+    if (s.docs.length <= 1) return;
+    const focus = s.docs[s.docIdx];
+    if (!focus) return;
+    for (let i = 0; i < s.docs.length; i++) {
+      if (i === s.docIdx) continue;
+      const e = s.docs[i];
+      const sx = this.ox + (e.x - focus.x) * z;
+      const sy = this.oy + (e.y - focus.y) * z;
+      const w = e.doc.w * z, h = e.doc.h * z;
+      if (sx > vw || sy > vh || sx + w < 0 || sy + h < 0) continue; // off screen
+      if (!e.doc.bg) {
+        const chk = this.checkerPattern(ctx);
+        if (chk) {
+          ctx.save();
+          ctx.fillStyle = chk;
+          ctx.translate(sx, sy);
+          ctx.scale(z, z);
+          ctx.fillRect(0, 0, e.doc.w, e.doc.h);
+          ctx.restore();
+        }
+      }
+      const cv = this.otherComposite(i, e.doc, e.fi);
+      if (cv) ctx.drawImage(cv, sx, sy, w, h);
+      ctx.save();
+      ctx.lineWidth = 1;
+      ctx.strokeStyle = "rgba(255,255,255,.22)";
+      ctx.strokeRect(sx - 0.5, sy - 0.5, w + 1, h + 1);
+      ctx.restore();
+    }
+  }
+  /** composite of a non-focused canvas, cached until its config changes */
+  private otherComposite(i: number, doc: Doc, fi: number): HTMLCanvasElement | null {
+    const key = doc.w + "x" + doc.h + "|" + fi + "|" + doc.layers.map((l) => (l.visible ? 1 : 0) + ":" + l.opacity + ":" + l.blend + (doc.bg ? "B" : "T")).join();
+    const got = this.otherComps.get(i);
+    if (got && got.key === key && got.doc === doc) return got.cv;
+    const cv = comp.composeFrame(doc, fi);
+    this.otherComps.set(i, { key, doc, cv });
+    return cv;
+  }
+  /** the 2x2 transparency checker, reused as a canvas pattern */
+  private checkerPattern(ctx: CanvasRenderingContext2D): CanvasPattern | null {
+    let chk = View.checker;
+    if (!chk) {
+      chk = document.createElement("canvas");
+      chk.width = 2; chk.height = 2;
+      const cc = chk.getContext("2d")!;
+      cc.fillStyle = "#9aa0b0"; cc.fillRect(0, 0, 1, 1);
+      cc.fillStyle = "#b9bec9"; cc.fillRect(1, 0, 1, 1);
+      cc.fillStyle = "#b9bec9"; cc.fillRect(0, 1, 1, 1);
+      cc.fillStyle = "#9aa0b0"; cc.fillRect(1, 1, 1, 1);
+      View.checker = chk;
+    }
+    return ctx.createPattern(chk, "repeat");
   }
 
   /** returns true when the whole composite had to be rebuilt */

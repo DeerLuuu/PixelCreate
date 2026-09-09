@@ -11,8 +11,7 @@ createRoot(host).render(<App />);
 void (async () => {
   try {
     const { SESSION } = await import("./ui/singleton");
-    const doc = await SESSION.restoreAutosave();
-    if (doc) SESSION.replaceDoc(doc);
+    await SESSION.restoreAutosave(); // brings back every open canvas
     // bring back the floating reference image as well
     await SESSION.restoreRefImage();
   } catch { /* ignore */ }

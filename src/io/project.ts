@@ -1,4 +1,8 @@
 // PixelCraft project file (.pxc): JSON with per-cel PNG data URLs.
+//
+// v2 = one document. v3 adds `canvases` (the whole infinite space: every open
+// canvas with its position and its own layer/frame selection) while keeping the
+// focused document in the v2 fields, so an older build still opens the file.
 import { Doc } from "../engine/doc";
 import { Cel } from "../engine/cel";
 import type { RGBA } from "../engine/types";
@@ -46,16 +50,25 @@ async function dataURLToPixels(dataURL: string, expectW: number, expectH: number
   });
 }
 
-/** `history` is the already-encoded history payload (see historyfile.ts) */
-export async function serialize(doc: Doc, history?: unknown): Promise<string> {
+/** the serialisable content of one document (no envelope fields) */
+interface DocPayload {
+  name: string;
+  w: number;
+  h: number;
+  bg: number[] | null;
+  layers: Array<{ name: string; visible: boolean; opacity: number; blend: string; locked: boolean }>;
+  frames: Array<{ durationMs: number }>;
+  palette: number[][];
+  cels: [string, string][];
+}
+
+async function docPayload(doc: Doc): Promise<DocPayload> {
   const cels: [string, string][] = [];
   for (const [k, cel] of doc.cels) {
     const png = await celToDataURL(cel);
     if (png) cels.push([k, png]);
   }
-  return JSON.stringify({
-    app: "PixelCraft",
-    v: 2,
+  return {
     name: doc.name,
     w: doc.w,
     h: doc.h,
@@ -64,40 +77,16 @@ export async function serialize(doc: Doc, history?: unknown): Promise<string> {
     frames: doc.frames.map((f) => ({ durationMs: f.durationMs })),
     palette: doc.palette.map((c) => [...c]),
     cels,
-    history: history ?? undefined,
-  });
-}
-
-export interface ParsedProject {
-  doc: Doc;
-  history: unknown | null;
-}
-
-/** parse a .pxc file including its optional operation history */
-export async function parseProject(text: string): Promise<ParsedProject | null> {
-  const doc = await parse(text);
-  if (!doc) return null;
-  let history: unknown | null = null;
-  try {
-    const o = JSON.parse(text) as { history?: unknown };
-    if (o && o.history) history = o.history;
-  } catch { /* ignore */ }
-  return { doc, history };
-}
-
-export async function parse(text: string): Promise<Doc | null> {
-  let o: unknown;
-  try {
-    o = JSON.parse(text);
-  } catch {
-    return null;
-  }
-  const obj = o as {
-    app?: string; w?: number; h?: number; name?: string;
-    bg?: number[] | null; layers?: Record<string, unknown>[]; frames?: { durationMs?: number }[];
-    palette?: number[][]; cels?: [string, string][];
   };
-  if (obj.app !== "PixelCraft" || !obj.w || !obj.h) return null;
+}
+
+/** rebuild one document from a v2 payload (or a v3 canvas entry) */
+async function docFromPayload(obj: {
+  w?: number; h?: number; name?: string;
+  bg?: number[] | null; layers?: Record<string, unknown>[]; frames?: { durationMs?: number }[];
+  palette?: number[][]; cels?: [string, string][];
+}): Promise<Doc | null> {
+  if (!obj || !obj.w || !obj.h) return null;
   const doc = new Doc(obj.w, obj.h, obj.name || "untitled");
   doc.layers = (obj.layers || []).map((l: Record<string, unknown>) => ({
     id: Math.random().toString(36).slice(2),
@@ -125,4 +114,88 @@ export async function parse(text: string): Promise<Doc | null> {
     }
   }
   return doc;
+}
+
+/** `history` is the already-encoded history payload (see historyfile.ts) */
+export async function serialize(doc: Doc, history?: unknown): Promise<string> {
+  const p = await docPayload(doc);
+  return JSON.stringify({ app: "PixelCraft", v: 2, ...p, history: history ?? undefined });
+}
+
+/** one canvas of the infinite space */
+export interface SpaceEntry {
+  doc: Doc;
+  x: number;
+  y: number;
+  li: number;
+  fi: number;
+}
+
+/** serialize the whole multi-canvas space (v3); the focused canvas also fills
+ *  the v2 fields so older builds can still open the file */
+export async function serializeSpace(entries: SpaceEntry[], focus: number, history?: unknown): Promise<string> {
+  const head = await docPayload(entries[focus] ? entries[focus].doc : entries[0].doc);
+  const canvases: unknown[] = [];
+  for (const e of entries) {
+    canvases.push({ x: e.x, y: e.y, li: e.li, fi: e.fi, ...(await docPayload(e.doc)) });
+  }
+  return JSON.stringify({ app: "PixelCraft", v: 3, ...head, focus, canvases, history: history ?? undefined });
+}
+
+export interface ParsedSpace {
+  entries: SpaceEntry[];
+  focus: number;
+  history: unknown | null;
+}
+
+/** parse a .pxc into the full space (v2 single document or v3 canvases) */
+export async function parseSpace(text: string): Promise<ParsedSpace | null> {
+  let o: unknown;
+  try {
+    o = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  const obj = o as Record<string, unknown> & { app?: string; focus?: number; history?: unknown; canvases?: Array<Record<string, unknown>> };
+  if (obj.app !== "PixelCraft") return null;
+  if (Array.isArray(obj.canvases) && obj.canvases.length) {
+    const entries: SpaceEntry[] = [];
+    for (const c of obj.canvases) {
+      const doc = await docFromPayload(c);
+      if (!doc) continue;
+      entries.push({
+        doc,
+        x: Math.round(Number(c.x) || 0),
+        y: Math.round(Number(c.y) || 0),
+        li: Math.max(0, Math.round(Number(c.li) || 0)),
+        fi: Math.max(0, Math.round(Number(c.fi) || 0)),
+      });
+    }
+    if (!entries.length) return null;
+    const focus = Math.max(0, Math.min(entries.length - 1, Math.round(Number(obj.focus) || 0)));
+    return { entries, focus, history: obj.history ?? null };
+  }
+  const doc = await docFromPayload(obj as Parameters<typeof docFromPayload>[0]);
+  if (!doc) return null;
+  return { entries: [{ doc, x: 0, y: 0, li: 0, fi: 0 }], focus: 0, history: obj.history ?? null };
+}
+
+export interface ParsedProject {
+  doc: Doc;
+  history: unknown | null;
+}
+
+/** single-document view of a .pxc (focused canvas only) */
+export async function parseProject(text: string): Promise<ParsedProject | null> {
+  const sp = await parseSpace(text);
+  if (!sp) return null;
+  const e = sp.entries[sp.focus] ?? sp.entries[0];
+  return { doc: e.doc, history: sp.history };
+}
+
+/** single-document parse (kept for callers that only need one doc) */
+export async function parse(text: string): Promise<Doc | null> {
+  const sp = await parseSpace(text);
+  if (!sp) return null;
+  return (sp.entries[sp.focus] ?? sp.entries[0]).doc;
 }

@@ -5,6 +5,7 @@ import {
 import { GESTURES, GESTURE_ACTIONS, gesturePath, isActionAllowed } from "../src/app/gestures";
 import { CORE_TOOLS, isSymTool } from "../src/tools/registry";
 import { History } from "../src/engine/history";
+import { Doc } from "../src/engine/doc";
 import { scalarActions } from "../src/app/history-io";
 import * as historyFile from "../src/io/historyfile";
 import * as bridge from "../src/io/bridge";
@@ -730,5 +731,52 @@ export function testSession(): void {
     eq("airbrush.rate.clamp-high", ab.prefs.airbrushRate, 60);
     ab.setAirbrushRate(1);
     eq("airbrush.rate.clamp-low", ab.prefs.airbrushRate, 5);
+  }
+
+  // --- multiple canvases share one infinite space ---
+  {
+    (globalThis as unknown as { localStorage: { clear(): void } }).localStorage.clear();
+    const m = new Session();
+    eq("canvas.initial.count", m.docs.length, 1);
+    eq("canvas.initial.focus", m.docIdx, 0);
+    m.doc.name = "one";
+    // a new canvas lands to the right of the focused one and takes focus
+    const i2 = m.addCanvas(new Doc(32, 24, "two"));
+    eq("canvas.add.count", m.docs.length, 2);
+    eq("canvas.add.focus", m.docIdx, i2);
+    ok("canvas.add.right", m.docs[1].x > m.docs[0].x, "x=" + m.docs[1].x);
+    eq("canvas.add.same-y", m.docs[1].y, m.docs[0].y);
+    // every canvas remembers its own layer/frame selection
+    m.frameAdd();
+    m.setFrame(1);
+    m.focusCanvas(0);
+    eq("canvas.focus.one-frame", m.curFrame(), 0);
+    m.focusCanvas(1);
+    eq("canvas.focus.two-frame", m.curFrame(), 1);
+    eq("canvas.focus.two-frames", m.doc.frames.length, 2);
+    // rename trims, move rounds, an empty name is ignored
+    m.renameCanvas(0, "  renamed  ");
+    eq("canvas.rename", m.docs[0].doc.name, "renamed");
+    m.renameCanvas(0, "   ");
+    eq("canvas.rename.blank-ignored", m.docs[0].doc.name, "renamed");
+    m.moveCanvas(1, 200.4, -40.6);
+    eq("canvas.move", [m.docs[1].x, m.docs[1].y], [200, -41]);
+    // one preview window per canvas, idempotent, closable by id
+    const p0 = m.addPreview(0);
+    const p1 = m.addPreview(1);
+    eq("canvas.preview.count", m.previews.length, 2);
+    eq("canvas.preview.same-again", m.addPreview(0), p0);
+    eq("canvas.preview.still-two", m.previews.length, 2);
+    m.closePreview(p1);
+    eq("canvas.preview.closed", m.previews.length, 1);
+    m.addPreview(1);
+    // closing a canvas drops its preview and renumbers the later ones
+    void m.closeCanvas(0, false);
+    eq("canvas.close.count", m.docs.length, 1);
+    eq("canvas.close.focus-name", m.doc.name, "two");
+    eq("canvas.close.preview-shift", m.previews.map((p) => p.canvas), [0]);
+    // the last canvas can never be closed
+    void m.closeCanvas(0, false);
+    eq("canvas.close.last-guard", m.docs.length, 1);
   }
 }

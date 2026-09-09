@@ -122,6 +122,19 @@ input[type=range]{width:64px;height:22px;accent-color:var(--accent)}
 
 /* canvas color indicator (current selected color box) */
 .view-canvas{position:absolute;inset:0}
+/* game-style title bar above every canvas in the multi-canvas space */
+.cv-title{position:absolute;height:26px;display:flex;align-items:center;gap:6px;padding:0 8px;
+  background:linear-gradient(180deg,rgba(38,42,56,.96),rgba(24,27,37,.96));color:#cfd5e6;
+  border:1px solid var(--line);border-radius:8px 8px 4px 4px;font-size:12px;font-weight:700;
+  box-shadow:0 3px 10px rgba(0,0,0,.45);z-index:6;cursor:grab;overflow:hidden;white-space:nowrap;
+  touch-action:none}
+.cv-title.on{border-color:var(--accent);color:#fff;background:linear-gradient(180deg,rgba(58,86,150,.96),rgba(32,42,68,.96))}
+.cv-title:active{cursor:grabbing}
+.cv-dot{width:7px;height:7px;border-radius:50%;background:#5a9;flex:0 0 auto}
+.cv-title.on .cv-dot{background:#7cf5c5}
+.cv-name{overflow:hidden;text-overflow:ellipsis;flex:1 1 auto;min-width:0}
+.cv-meta{color:#8a90a6;font-weight:600;font-size:10px;flex:0 0 auto}
+.cv-title.on .cv-meta{color:#b9c6e6}
 .colorbox{position:absolute;left:8px;top:8px;z-index:6;display:flex;align-items:center;gap:7px;
   background:rgba(16,17,22,.78);border:1px solid var(--line);border-radius:10px;padding:4px 9px}
 .cb-swatch{width:22px;height:22px;border-radius:6px;border:1px solid rgba(255,255,255,.4);display:inline-block;flex:0 0 auto}
@@ -242,11 +255,12 @@ input[type=range]{width:64px;height:22px;accent-color:var(--accent)}
 .qvbar::after{content:"";position:absolute;left:-2px;right:-2px;height:3px;border-radius:2px;background:#fff;
   box-shadow:0 0 3px rgba(0,0,0,.7);pointer-events:none;top:auto;bottom:calc(var(--vpos,0.5) * 100% - 2px)}
 
-/* image preview box + toggle */
-.prev-toggle{position:absolute;right:8px;top:8px;z-index:8;width:34px;height:34px;border-radius:9px;
-  background:rgba(18,19,26,.72);border:1px solid var(--line);color:#dfe3f0;display:flex;align-items:center;
-  justify-content:center}
-.prev-toggle:active{background:var(--bg4)}
+/* image preview boxes (created from the canvas orb) */
+.textinput{background:var(--bg3);border:1px solid var(--line);border-radius:8px;padding:8px 10px;color:var(--text);width:100%;outline:none;min-height:36px}
+.prev-close{position:absolute;left:6px;top:6px;z-index:3;width:22px;height:22px;border-radius:7px;
+  background:rgba(16,17,22,.78);border:1px solid var(--line);color:#cfd5e6;display:flex;
+  align-items:center;justify-content:center;padding:0}
+.prev-close:active{background:var(--accent);color:#fff}
 .prevbox{position:absolute;left:8px;top:8px;z-index:8;background:#101116;padding:0;
   box-shadow:0 0 0 1px var(--line),0 6px 18px rgba(0,0,0,.4);border-radius:10px;overflow:hidden;
   touch-action:none;user-select:none;-webkit-user-select:none}

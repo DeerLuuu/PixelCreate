@@ -25,7 +25,8 @@
 15. [渲染 `render/`](#15-渲染)
 16. [IO `io/`](#16-io)
 17. [UI 层与事件契约 `ui/`](#17-ui-层与事件契约)
-18. [扩展指南](#18-扩展指南)
+18. [多画布空间 / 新工具与特效（1.0.7.11 追加）](#18-多画布空间--新工具与特效)
+19. [扩展指南](#19-扩展指南)
 
 ---
 
@@ -790,7 +791,101 @@ writeClipboardPng(canvas): Promise<boolean>
 
 ---
 
-## 18. 扩展指南
+## 18. 多画布空间 / 新工具与特效
+
+### 18.1 表达式求值 `engine/expr.ts`
+
+```ts
+normalizeExpr(src: string): string          // 全角/× ÷ − 与空格千分位归一化
+evalExpr(src: string): number | null        // 完整算式才返回数值，否则 null
+```
+
+文法：`expr → term (('+'|'-') term)*`、`term → unary (('*'|'/'|'%') unary)*`、
+`unary → ('+'|'-') unary | pow`、`pow → primary ('^' unary)?`、`primary → 数字 | '(' expr ')'`。
+`ui/base.tsx` 的 `ScrubNum` 用它实现「数字框可输入算式」（`expr={false}` 可关闭）。
+
+### 18.2 区域填充与渐变 `engine/paint.ts`
+
+```ts
+floodRegion(cel, sx, sy, global, mask?): Array<[number, number]>
+gradientFillRegion(cel, cells, sx, sy, c0, c1, block, mask?): Rect | null
+sprayDots(cx, cy, radius, minSize, maxSize, count, rnd, fn): void
+```
+
+- `floodRegion` 只收集单元格（不落笔），`global` = 全画布同色而非连通区域。
+- `gradientFillRegion` 以种子点为圆心做径向 RGB 渐变；`block` = 取色方块边长（1 = 逐像素）。
+- `sprayDots` 在圆盘内均匀采样 `count` 个随机点，每点是一个边长 `[minSize, maxSize]` 的正方形；
+  `rnd` 可注入种子，便于测试。
+
+### 18.3 特效 `engine/effects.ts`
+
+```ts
+type OutlinePos = "outside" | "inside" | "center";
+outlineCel(d, w, h, width, color, pos = "outside"): void
+blurCel(d, w, h, radius): void      // 可分离 box 两遍≈高斯，alpha 预乘
+dropShadowCel(d, w, h, dx, dy, color, keepOriginal = true): void
+```
+
+### 18.4 多画布 `app/session.ts`
+
+```ts
+interface CanvasEntry { doc: Doc; x: number; y: number; li: number; fi: number }
+interface PreviewEntry { id: string; canvas: number; x: number | null; y: number | null; size: number }
+
+SESSION.docs: CanvasEntry[]   // 全部打开的画布（docIdx 为聚焦项）
+SESSION.docIdx: number
+SESSION.previews: PreviewEntry[]
+
+SESSION.doc                   // getter/setter：聚焦画布的文档（旧代码无需改动）
+addCanvas(doc, opts?): number         // 在空间里再开一张，返回下标
+focusCanvas(i): void                  // 切换聚焦，恢复该画布的图层/帧选择
+renameCanvas(i, name): void
+moveCanvas(i, x, y): void             // 拖动标题栏时调用（空间坐标，单位=像素）
+closeCanvas(i, save): Promise<boolean> // 可先存成单独 .pxc；最后一张不允许关闭
+addPreview(canvas?): string           // 每个画布最多一个预览框
+closePreview(id) / movePreview(id, x, y) / resizePreview(id, size)
+askConfirm(q) / askText(q)            // UI 注册的确认框 / 单行输入框
+```
+
+`changed()` 会把聚焦画布的 `layerIdx/frameIdx` 写回它的 `CanvasEntry`，因此每张画布都记得自己的状态。
+切换聚焦时 `View.shiftFocus(dx, dy)` 会反向平移视口，保证整个空间在屏幕上不跳动。
+
+### 18.5 工程文件 `io/project.ts`
+
+```ts
+interface SpaceEntry { doc: Doc; x: number; y: number; li: number; fi: number }
+serializeSpace(entries, focus, history?): Promise<string>   // v3：canvases + 聚焦画布（同时写 v2 字段）
+parseSpace(text): Promise<ParsedSpace | null>               // v2 单文档 / v3 多画布都能读
+serialize(doc, history?) / parseProject(text) / parse(text) // 单文档兼容入口
+```
+
+### 18.6 视口 `render/view.ts`
+
+```ts
+view.onViewChanged: (() => void) | null   // 平移/缩放/尺寸变化后回调（画布标题栏跟随）
+view.shiftFocus(dxSpace, dySpace): void   // 切换聚焦画布时保持空间视觉位置
+```
+
+非聚焦画布由 `drawOtherCanvases()` 在合成后绘制（各自缓存），聚焦画布始终画在最上层；
+多画布时 `clampView()` 改为「保证包围盒至少露出一角」，即无限空间。
+
+### 18.7 UI 新增
+
+| 文件 | 内容 |
+|---|---|
+| `ui/fxparam.tsx` | `FxRun` / `FxParamDef` / `FxParamDialog`：特效参数弹窗（int / color / enum），改动即从快照重算并实时预览 |
+| `ui/canvas.tsx` | `CanvasTitles`：画布标题栏（点按聚焦、拖动移动画布） |
+| `ui/preview.tsx` | `PreviewBox`：按 `SESSION.previews` 渲染多个预览框，每个绑定一张画布 |
+| `ui/base.tsx` | `ScrubNum` 支持算式与运算符浮条 |
+
+### 18.8 新增设置项
+
+`tools.bucketGrad` / `tools.bucketGradMode`（油漆桶渐变与颗粒）、
+`tools.airbrushMin` / `tools.airbrushMax` / `tools.airbrushRate`（喷枪）。
+
+---
+
+## 19. 扩展指南
 
 ### 新增一个绘制工具
 
