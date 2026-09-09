@@ -8,10 +8,10 @@ import { Icon } from "./base";
 import { TabBar } from "./tabs";
 
 /** keep in sync with android/AndroidManifest.xml versionName on every release */
-export const APP_VERSION = "1.0.7.11";
+export const APP_VERSION = "1.0.8.0";
 /** build stamp shown next to the version (support/debug: identifies the exact
  *  package a user is running when the version number itself does not change) */
-export const BUILD_TAG = "b0912d";
+export const BUILD_TAG = "b0912f";
 
 export type ClgKind = "add" | "imp" | "fix";
 export interface ClgItem { kind: ClgKind; zh: string; en: string }
@@ -21,7 +21,7 @@ const it = (kind: ClgKind, zh: string, en: string): ClgItem => ({ kind, zh, en }
 
 export const CHANGELOG: ClgVersion[] = [
   {
-    v: "1.0.7.11",
+    v: "1.0.8.0",
     date: "2026-09-09",
     items: [
       it("add", "预览窗口新增灰度预览：一键把画面转成灰度，方便检查明暗关系与对比度（只灰画面，底色保持不变）", "The preview box gained a greyscale mode: one tap turns the artwork greyscale to check values and contrast (only the artwork, the backdrop keeps its colour)"),
@@ -40,7 +40,7 @@ export const CHANGELOG: ClgVersion[] = [
       it("add", "像素完美笔画：手绘时自动去掉「L 形拐角」多余的那一个像素（Aseprite 的 pixel-perfect 规则），斜线/曲线不会再出现台阶上的双像素；底栏铅笔/橡皮旁有开关，设置 → 工具里可改默认", "Pixel-perfect strokes: freehand drawing drops the extra corner pixel of an L-shaped step (Aseprite's pixel-perfect rule), so diagonals and curves no longer double up on the staircase. There is a toggle next to the brush tip in the bottom bar and a setting under Tools"),
       it("add", "油漆桶升级：新增「相似色」容差（逐通道 0–255，抗锯齿边缘一次填满）与「填充缝隙」（填色前把边界上小于指定宽度的缺口临时封住，线稿有断口也不漏色）；底栏多出相似色开关与两个长按拖动按钮，设置 → 工具里注册了默认值与总开关", "Fill bucket upgraded: a Similar colour tolerance (per channel 0-255, fills anti-aliased edges in one go) and Fill gaps (seals boundary gaps narrower than the chosen width before filling, so a broken outline does not leak). The bottom bar gained the similar-colour toggle plus two hold-and-drag buttons, and Settings -> Tools registers their defaults and master switch"),
       it("add", "平铺模式下笔迹会环绕补画：画到边缘的像素同时出现在对面，一笔就能画出接缝对得上的无缝瓦片（画笔/橡皮/喷枪/形状/油漆桶/轮廓填充都支持）", "In tiled mode strokes wrap around the canvas: pixels drawn past an edge appear on the opposite side, so one stroke produces a seam-matching seamless tile (brush, eraser, airbrush, shapes, bucket and outline fill all follow)"),
-      it("add", "视图 90° 旋转：画布球 → 更多 → 「旋转视图 90°」按 0/90/180/270 循环，画布标题栏、指针命中与拖拽方向都会跟着转；躺着画或竖屏画横图时很顺手", "Rotate the view 90 degrees: Canvas ball -> More -> Rotate view 90 cycles 0/90/180/270. Canvas title bars, pointer hit-testing and drag direction all follow, which is handy when drawing a landscape sprite in portrait"),
+      it("add", "旋转画布内容：画布球 → 更多 → 「旋转画布 90°」把这张画布的像素整体顺时针转 90°（宽高互换、选区跟着转、可撤销），横图竖图互相转换一步搞定", "Rotate the canvas content: Canvas ball -> More -> Rotate canvas 90 turns this canvas' pixels 90 degrees clockwise (width and height swap, the selection rotates with it, undoable), so a portrait sprite becomes a landscape one in one step"),
       it("imp", "自动保存改为「按间隔保存」：默认每 5 分钟写一次（设置 → 数据里可调 1–60 分钟），不再是每次改动都写；切到后台或离开页面时仍会立即补存一次。自动保存的内容改成纯 JSON 数据（像素用 RLE 编码），不再内嵌 PNG 图片，体积更小、恢复更快", "Autosave now saves on an INTERVAL: once every 5 minutes by default (1-60 minutes in Settings -> Data) instead of on every change, and hiding the app or leaving the page still writes once immediately. The payload is pure JSON data (pixels RLE-encoded) with no embedded PNG images, so it is smaller and restores faster"),
       it("imp", "性能：把「像素变化」和「界面状态变化」分开——切工具、拖笔刷大小/不透明度、选颜色、改设置不再让引用画布重新镜像，也不再把其他画布的合成缓存判为过期（拖参数时明显更顺）", "Performance: pixel changes and UI-only changes are now separate, so switching tools, dragging brush size/opacity, picking colours or changing a setting no longer re-mirrors reference canvases or invalidates the other canvases' composite caches (noticeably smoother while dragging a slider)"),
       it("add", "索引色模式：调色板面板里的开关，开启后画上去的像素自动吸附到调色板里最接近的颜色（不透明度仍按画笔），画布始终保持调色板配色；配套的「映射到调色板」可以把已有画面一次性换成调色板颜色（一条历史可撤销）", "Indexed colour mode: a switch in the palette panel. While on, painted pixels snap to the nearest palette colour (brush opacity still applies) so the artwork always stays inside the palette, and the companion Map to palette action converts existing artwork in one undoable step"),

@@ -137,6 +137,7 @@ floodErase(cel, sx, sy, mask?, opts?): void;
 globalFill(cel, sx, sy, color, mask?, opts?): void;   // 整层同色替换
 globalErase(cel, sx, sy, mask?, opts?): void;
 splinePoints(pts, samples?): [number,number][]        // Catmull-Rom 采样（曲线工具）
+rotateDocContent(doc, dir?)                           // 旋转整幅画布 90°（cel + 选区，宽高互换）
 
 interface BrushStamp { size: number; cells: [number,number][]; outline: [number,number][] }
 brushStamp(size: number, shape?: BrushShape): BrushStamp;  // 圆笔尖/方笔尖（带缓存）
@@ -861,6 +862,7 @@ referenceCanvas(i, {mode}?): boolean  // 引用第 i 张画布（拒绝自引用
 isRefLayer(li): boolean                // 该图层是否为引用层
 strokeTarget(li)                       // 引用层的笔迹落点 {doc, li, fi}（按 refLayer 精确命中）；普通图层返回 null
 changedUI()                            // 只推进 UI 版本（rev）；像素没变时用它，别用 changed()
+rotateCanvasContent(dir?)              // 旋转当前画布内容 90°（宽高互换、选区跟随，一条历史）
 rotateView(step?) / viewRotation       // 视图旋转（0/90/180/270，内容不变）
 setIndexed(on) / paletteSnap(c)        // 索引色模式：就近取调色板颜色（保留 alpha）
 remapToPalette(scope?)                 // 把已有像素映射到调色板（一条历史）
