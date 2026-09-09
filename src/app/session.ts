@@ -1667,6 +1667,7 @@ export class Session {
     return this.colorPicking || now - this.lastColorAt <= windowMs;
   }
   setTool(t: ToolId): void {
+    this.view_?.flushStroke(); // finish a pending polyline / curve
     this.tool = t;
     this.prefs.tool = t;
     this.savePrefs();
@@ -1954,6 +1955,7 @@ export class Session {
     this.changed();
   }
   setLayer(li: number): void {
+    this.view_?.flushStroke();
     const n = Math.max(0, Math.min(this.doc.layers.length - 1, li));
     const moved = n !== this.layerIdx;
     this.layerIdx = n;

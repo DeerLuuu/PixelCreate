@@ -179,6 +179,9 @@ export class View {
   private longT: number | null = null;
   /** freehand outline tool: collected path, filled with the current colour on release */
   private outline: { pts: Array<[number, number]>; li: number; fi: number; before: Uint8ClampedArray | null } | null = null;
+  /** pending multi-point path (polyline / curve): tap adds a point, tapping
+   *  the last point finishes, tapping the one before removes it */
+  private path: { st: Stroke; pts: Array<[number, number]>; smooth: boolean; cur: [number, number] | null } | null = null;
   /** multi-finger long press (2 or 3 fingers held still): pending timer */
   private hold: { n: number; mid: { x: number; y: number }; starts: Map<number, { x: number; y: number }>; t: number } | null = null;
   /** set when a hold fired, so the following lifts cannot count as taps */
@@ -254,6 +257,7 @@ export class View {
   }
 
   destroy(): void {
+    this.endPath(true); // never lose a half-finished polyline
     this.ro?.disconnect();
     this.stopAnts();
     this.stopSpray();
@@ -462,6 +466,7 @@ export class View {
 
   /** commit a still-open gesture (e.g. bucket fill whose pointerup was lost) as its own history step */
   flushStroke(): boolean {
+    if (this.path) this.endPath(true);
     if (!this.stroke) return false;
     this.stopSpray();
     const rec = this.stroke.commit(this.session.history, this.labelFor(this.stroke.kind));
@@ -1695,6 +1700,10 @@ export class View {
     }
     this.gestureMoved = false;
     this.gestureStartPx = pp;
+    if (this.isPathTool(tool)) {
+      this.pathDown(pp);
+      return;
+    }
     try {
       // a reference layer is not painted in place: the stroke is redirected to
       // the referenced canvas' own current layer/frame (and recorded in THIS
@@ -1848,6 +1857,17 @@ export class View {
       this.xfMove(pt);
       return;
     }
+    if (this.path) {
+      // rubber band from the last committed point to the finger
+      if (wasDown && this.pointers.size === 1) {
+        const p = this.path;
+        if (!p.cur || p.cur[0] !== ppx.x || p.cur[1] !== ppx.y) {
+          p.cur = [ppx.x, ppx.y];
+          this.drawPathPreview();
+        }
+      }
+      return;
+    }
     if (this.stroke) {
       const pp = ppx;
       if (!this.gestureMoved && this.gestureStartPx && (pp.x !== this.gestureStartPx.x || pp.y !== this.gestureStartPx.y)) this.gestureMoved = true;
@@ -1873,7 +1893,7 @@ export class View {
     // hover: footprint marker follows the pointer across the whole drawing
     // area too (marks still clip to the canvas); it hides only off the view or
     // while the axis-adjust mode is on (painting is suspended there)
-    const drawing = ["pencil", "eraser", "bucket", "line", "rect", "ellipse", "circle", "polygon"].includes(this.session.tool);
+    const drawing = ["pencil", "eraser", "bucket", "line", "rect", "ellipse", "circle", "polygon", "polyline", "curve"].includes(this.session.tool);
     const inView = pt.x >= 0 && pt.y >= 0 && pt.x <= this.vpW() && pt.y <= this.vpH();
     this.cursor = drawing && inView
       ? { x: ppx.x, y: ppx.y, size: this.session.brushSize }
@@ -1891,6 +1911,13 @@ export class View {
     }
     if (this.pointers.size < 2) this.pinchBase = null;
     if (this.hold && this.pointers.size < this.hold.n) this.cancelHold();
+    if (this.pointers.size === 0 && this.path) {
+      // a tap added a point: drop the rubber band, keep the path pending
+      this.path.cur = null;
+      this.gestureMoved = false;
+      this.drawPathPreview();
+      return;
+    }
     if (this.pointers.size === 0 && this.outline) {
       this.endOutline(true);
       return;
@@ -2391,6 +2418,7 @@ export class View {
       line: "tools.line", rect: "tools.rect", rectfill: "tools.rectfill",
       ellipse: "tools.ellipse", ellipsefill: "tools.ellipsefill",
       circle: "tools.circle", polygon: "tools.polygon",
+      polyline: "tools.polyline", curve: "tools.curve",
     };
     return map[kind] ?? kind;
   }
@@ -2424,6 +2452,83 @@ export class View {
     });
     this.drawOverlay();
   }
+  // ---- multi-point path tools (polyline / curve) --------------------------
+  private isPathTool(t: string): boolean {
+    return t === "polyline" || t === "curve";
+  }
+  /** where a new path stroke would land (reference layers redirect) */
+  private pathTarget(): { doc: Doc; li: number; fi: number } {
+    const s = this.session;
+    const tgt = s.strokeTarget(s.curLayer());
+    return tgt ? { doc: tgt.doc, li: tgt.li, fi: tgt.fi } : { doc: s.doc, li: s.curLayer(), fi: s.curFrame() };
+  }
+  /** commit (or drop) the pending path */
+  private endPath(commit: boolean): void {
+    const p = this.path;
+    this.path = null;
+    if (!p) return;
+    if (commit) {
+      const rec = p.st.commit(this.session.history, this.labelFor(p.st.kind));
+      if (rec) this.session.changedUI();
+    } else {
+      p.st.cancel();
+    }
+    this.session.repaint();
+    this.drawOverlay();
+  }
+  /** repaint the pending path into the cel (with the rubber band if any) */
+  private drawPathPreview(): void {
+    const p = this.path;
+    if (!p) return;
+    const pts = p.cur ? [...p.pts, p.cur] : p.pts;
+    p.st.drawPath(pts, p.smooth);
+    const d = p.st.takeDirty();
+    if (d) this.session.repaintRect(d);
+    else this.session.repaint();
+    this.drawOverlay();
+  }
+  private pathDown(pp: { x: number; y: number }): void {
+    const s = this.session;
+    const tool = s.tool;
+    if (s.layerLocked()) { s.paintBlockedNote(); return; }
+    const tgt = this.pathTarget();
+    if (this.path) {
+      const p = this.path;
+      // a different tool / layer / frame: finish what we have first
+      if (p.st.kind !== tool || p.st.doc !== tgt.doc || p.st.li !== tgt.li || p.st.fi !== tgt.fi) this.endPath(true);
+    }
+    if (!this.path) {
+      let st: Stroke;
+      try {
+        st = new Stroke(tgt.doc, tgt.li, tgt.fi, tool as never, s.brush(), s.layerLocked(), s.sym,
+          s.shapeSides, s.shapeFill, s.symOx, s.symOy, s.symAng, s.symFour, s.prefs.bucketGlobal,
+          s.brushShape, s.shapeFromCenter);
+      } catch {
+        s.paintBlockedNote();
+        return;
+      }
+      st.snapColor = (c) => s.paletteSnap(c);
+      const tm = s.prefs.tileMode;
+      st.wrapX = tm === "row" || tm === "grid";
+      st.wrapY = tm === "col" || tm === "grid";
+      st.startAt(pp.x, pp.y);
+      this.path = { st, pts: [[pp.x, pp.y]], smooth: tool === "curve", cur: null };
+      this.drawPathPreview();
+      return;
+    }
+    const p = this.path;
+    const last = p.pts[p.pts.length - 1];
+    const prev = p.pts.length >= 2 ? p.pts[p.pts.length - 2] : null;
+    if (last[0] === pp.x && last[1] === pp.y) { this.endPath(true); return; } // tap the last point = finish
+    if (prev && prev[0] === pp.x && prev[1] === pp.y) {                        // tap the one before = remove it
+      p.pts.pop();
+      this.drawPathPreview();
+      return;
+    }
+    p.pts.push([pp.x, pp.y]);
+    this.drawPathPreview();
+  }
+
   /** release: close the path and fill the enclosed region in one history step */
   private endOutline(commit: boolean): void {
     const o = this.outline;

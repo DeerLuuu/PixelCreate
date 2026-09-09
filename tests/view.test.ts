@@ -9,7 +9,7 @@ import { View } from "../src/render/view";
 import { Doc, Sel } from "../src/engine/doc";
 import * as compositor from "../src/render/compositor";
 import { stubEnv } from "./session.test";
-import { ok } from "./common";
+import { eq, ok } from "./common";
 
 interface Stub { flush: () => void }
 
@@ -236,6 +236,29 @@ export function testView(): void {
       ok("view.rot.pixel-stable." + r, px.x === px0.x && px.y === px0.y, JSON.stringify([px0, px]));
     }
     view.setRotation(0);
+
+    // ---- multi-point path tools: tap to add, tap the last point to finish ----
+    s.focusCanvas(0);
+    s.setLayer(0); // the reference mirror is the top layer; paint on a normal one
+    s.setTool("polyline");
+    const sp = (px: number, py: number): { x: number; y: number } => ({
+      x: view.ox + (px + 0.5) * view.zoom, y: view.oy + (py + 0.5) * view.zoom,
+    });
+    const tap = (px: number, py: number): void => {
+      const q = sp(px, py);
+      (view as unknown as { onDown(e: PointerEvent): void }).onDown(ev(q.x, q.y));
+      (view as unknown as { onUp(e: PointerEvent): void }).onUp(ev(q.x, q.y));
+      dom.flush();
+    };
+    const steps0 = s.history.list().labels.length;
+    tap(2, 2); tap(12, 2); tap(12, 12);
+    ok("view.path.pending", !!(view as unknown as { path: unknown }).path);
+    tap(12, 12); // tap the last point again = finish
+    ok("view.path.finished", !(view as unknown as { path: unknown }).path);
+    eq("view.path.one-step", s.history.list().labels.length, steps0 + 1);
+    const pcel = s.doc.celAt(0, 0)!;
+    ok("view.path.painted", pcel.data[pcel.idx(2, 2) + 3] === 255 && pcel.data[pcel.idx(12, 2) + 3] === 255 &&
+      pcel.data[pcel.idx(12, 12) + 3] === 255, "px=" + [pcel.data[pcel.idx(2, 2) + 3], pcel.data[pcel.idx(12, 2) + 3]]);
 
     view.destroy();
   } finally {

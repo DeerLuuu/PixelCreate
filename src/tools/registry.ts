@@ -3,6 +3,7 @@ import type { RGBA } from "../engine/types";
 export type ToolId =
   | "pencil" | "eraser" | "bucket" | "picker" | "outline" | "airbrush"
   | "line" | "rect" | "ellipse" | "circle" | "polygon"
+  | "polyline" | "curve"
   | "select" | "wand" | "lasso";
 
 export interface ToolDef {
@@ -31,6 +32,9 @@ export const SHAPE_TOOLS: ToolDef[] = [
   { id: "ellipse", icon: "i-ellipse", drawing: false, shape: true },
   { id: "circle", icon: "i-circle", drawing: false, shape: true },
   { id: "polygon", icon: "i-poly", drawing: false, shape: true },
+  // multi-point tools: tap to add points, tap the last point to finish
+  { id: "polyline", icon: "i-line", drawing: false, shape: true },
+  { id: "curve", icon: "i-outline", drawing: false, shape: true },
 ];
 
 export const SELECT_TOOLS: ToolDef[] = [
@@ -53,7 +57,7 @@ export const nextSym = (m: SymMode): SymMode => SYM_CYCLE[(SYM_CYCLE.indexOf(m) 
 export const SYM_ANGLES = [0, 45, 90, 135] as const;
 
 /** brush/shape tools whose marks honour drawing symmetry */
-export const SYM_TOOLS = ["pencil", "eraser", "airbrush", "line", "rect", "ellipse", "circle", "polygon", "outline"] as const;
+export const SYM_TOOLS = ["pencil", "eraser", "airbrush", "line", "rect", "ellipse", "circle", "polygon", "polyline", "curve", "outline"] as const;
 export const isSymTool = (id: string): boolean => (SYM_TOOLS as readonly string[]).includes(id);
 
 export interface BrushState {

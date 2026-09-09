@@ -63,3 +63,31 @@ export function ellipseFill(
     row(x0 - 1, y1, x0 - 1); row(x1 + 1, y1--, x1 + 1);
   }
 }
+
+/**
+ * Smooth a polyline with a Catmull-Rom spline (endpoints duplicated), then
+ * sample it into a dense integer polyline ready for rasterization. Used by the
+ * curve tool: the user taps a few points, the spline passes through all of them.
+ */
+export function splinePoints(pts: Array<[number, number]>, samples = 12): Array<[number, number]> {
+  if (pts.length < 3) return pts.map((p) => [p[0], p[1]] as [number, number]);
+  const P = (i: number): [number, number] => pts[Math.max(0, Math.min(pts.length - 1, i))];
+  const out: Array<[number, number]> = [[pts[0][0], pts[0][1]]];
+  const n = Math.max(4, Math.round(samples));
+  for (let i = 0; i + 1 < pts.length; i++) {
+    const p0 = P(i - 1), p1 = P(i), p2 = P(i + 1), p3 = P(i + 2);
+    for (let s = 1; s <= n; s++) {
+      const t = s / n, t2 = t * t, t3 = t2 * t;
+      const x = 0.5 * ((2 * p1[0]) + (-p0[0] + p2[0]) * t +
+        (2 * p0[0] - 5 * p1[0] + 4 * p2[0] - p3[0]) * t2 +
+        (-p0[0] + 3 * p1[0] - 3 * p2[0] + p3[0]) * t3);
+      const y = 0.5 * ((2 * p1[1]) + (-p0[1] + p2[1]) * t +
+        (2 * p0[1] - 5 * p1[1] + 4 * p2[1] - p3[1]) * t2 +
+        (-p0[1] + 3 * p1[1] - 3 * p2[1] + p3[1]) * t3);
+      const cx = Math.round(x), cy = Math.round(y);
+      const last = out[out.length - 1];
+      if (last[0] !== cx || last[1] !== cy) out.push([cx, cy]);
+    }
+  }
+  return out;
+}

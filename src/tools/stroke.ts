@@ -4,12 +4,12 @@ import { Cel } from "../engine/cel";
 import type { RGBA, Rect } from "../engine/types";
 import { brushStamp, lineCells, floodFill, floodErase, globalFill, globalErase, paintAt, eraseAt, sprayDots, floodRegion, gradientFillRegion, type BrushShape, type GradAxis, type MaskFn } from "../engine/paint";
 import { mirrorCells, type SymAxis } from "../engine/symmetry";
-import { ellipseFill, ellipseOutline } from "../engine/shape";
+import { ellipseFill, ellipseOutline, splinePoints } from "../engine/shape";
 import type { History } from "../engine/history";
 import type { BrushState, SymMode } from "./registry";
 import { rgba } from "../engine/color";
 
-export type ToolKind = "pencil" | "eraser" | "bucket" | "airbrush" | "line" | "rect" | "ellipse" | "circle" | "polygon";
+export type ToolKind = "pencil" | "eraser" | "bucket" | "airbrush" | "line" | "rect" | "ellipse" | "circle" | "polygon" | "polyline" | "curve";
 
 export class Stroke {
   readonly doc: Doc;
@@ -274,8 +274,18 @@ export class Stroke {
         this.resetToBefore();
         this.redrawShape(x, y);
         break;
+      case "polyline":
+      case "curve":
+        // multi-point tools: the view owns the point list and calls drawPath()
+        this.resetToBefore();
+        this.stampBrush(x, y);
+        break;
       case "airbrush":
         // the spray is time-driven (see View's interval): moving only retargets it
+        break;
+      case "polyline":
+      case "curve":
+        // the view owns the point list: it calls drawPath() on every change
         break;
       case "bucket":
         // gradient mode only: the drag re-aims the ramp (a flat fill is a
@@ -463,9 +473,7 @@ export class Stroke {
     };
     // stamp the brush over a cell (lines & hollow outlines use brushSize as
     // their stroke thickness, like Aseprite's line tool)
-    const stamp = (px: number, py: number) => {
-      for (const [dx, dy] of brushStamp(this.size, this.brushShape).cells) paint(px + dx, py + dy);
-    };
+    const stamp = (px: number, py: number) => this.stampBrush(px, py);
     if (this.kind === "line") {
       lineCells(s[0], s[1], x, y, stamp);
       return;
@@ -524,6 +532,45 @@ export class Stroke {
           !inside(xx, yy + 1) || !inside(xx, yy - 1);
         if (border) stamp(xx, yy);
       }
+    }
+  }
+
+  /** one brush stamp at a cell (mirror + tiled wrap + mask, dirty box) */
+  private stampBrush(px: number, py: number): void {
+    const erase = this.color[3] === 0;
+    for (const [dx, dy] of brushStamp(this.size, this.brushShape).cells) {
+      for (const [mx, my] of this.mirrorPts(px + dx, py + dy)) {
+        for (const [X, Y] of this.wrapPts(mx, my)) {
+          this.markCell(X, Y);
+          if (erase ? eraseAt(this.cel, X, Y, this.mask) : paintAt(this.cel, X, Y, this.color, this.mask)) this.everPainted = true;
+        }
+      }
+    }
+  }
+
+  /**
+   * Multi-point path tools (polyline / curve): redraw the whole path from the
+   * pristine snapshot. `smooth` samples a Catmull-Rom spline through the points,
+   * otherwise straight segments are used. The view calls this whenever its point
+   * list changes (tap = add a point, drag = rubber band, finish = commit).
+   */
+  drawPath(pts: Array<[number, number]>, smooth: boolean): void {
+    this.resetToBefore();
+    if (!pts.length) return;
+    const list = smooth ? splinePoints(pts) : pts;
+    // keep the previous outline in the dirty region as well
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const [x, y] of list) {
+      if (x < x0) x0 = x; if (x > x1) x1 = x;
+      if (y < y0) y0 = y; if (y > y1) y1 = y;
+    }
+    const pad = Math.max(1, Math.ceil(this.size / 2)) + 1;
+    this.markBox(this.shapeBox);
+    this.shapeBox = { x0: x0 - pad, y0: y0 - pad, x1: x1 + pad, y1: y1 + pad };
+    this.markBox(this.shapeBox);
+    if (list.length === 1) { this.stampBrush(list[0][0], list[0][1]); return; }
+    for (let i = 0; i + 1 < list.length; i++) {
+      lineCells(list[i][0], list[i][1], list[i + 1][0], list[i + 1][1], (x, y) => this.stampBrush(x, y));
     }
   }
 

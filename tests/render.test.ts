@@ -8,6 +8,7 @@ import { growSelection, selOps, shrinkSelection } from "../src/tools/select";
 import { onionGhosts } from "../src/render/onion";
 import { compositeIsStale } from "../src/render/view";
 import { brushStamp } from "../src/engine/paint";
+import { splinePoints } from "../src/engine/shape";
 import { History } from "../src/engine/history";
 import { mirrorCells, mirrorMaskInPlace } from "../src/engine/symmetry";
 import { eq, ok } from "./common";
@@ -368,5 +369,39 @@ export function testRender(): void {
     os.moveTo(-1, 2, 1);
     os.commit(new History(), "tools.pencil");
     eq("wrap.off.no-copy", [at(off, 0, 2), at(off, 7, 2)], [255, 0]);
+  }
+  // ------------------------------------------------- multi-point path tools
+  {
+    const doc = new Doc(20, 20, "path");
+    const st = new Stroke(doc, 0, 0, "polyline", brush(1), false, "off");
+    st.drawPath([[0, 0], [6, 0], [6, 6]], false);
+    const cel = doc.celAt(0, 0)!;
+    const at = (x: number, y: number): number => cel.data[cel.idx(x, y) + 3];
+    eq("path.polyline.seg1", [at(0, 0), at(3, 0), at(6, 0)], [255, 255, 255]);
+    eq("path.polyline.seg2", [at(6, 3), at(6, 6)], [255, 255]);
+    eq("path.polyline.off-chord", at(3, 3), 0);
+    // redrawing replaces the previous path entirely
+    st.drawPath([[0, 0], [0, 6]], false);
+    eq("path.redraw.clears", [at(6, 6), at(3, 0), at(0, 3)], [0, 0, 255]);
+    // a single point is a dot
+    st.drawPath([[10, 10]], false);
+    eq("path.single-dot", at(10, 10), 255);
+    // the spline samples the control points and bulges off the straight chord
+    const sp = splinePoints([[0, 0], [10, 0], [10, 10]]);
+    ok("path.spline.samples", sp.length > 6, "n=" + sp.length);
+    ok("path.spline.ends", sp[0][0] === 0 && sp[0][1] === 0 && sp[sp.length - 1][0] === 10 && sp[sp.length - 1][1] === 10);
+    ok("path.spline.bulges", sp.some((p) => p[1] < 0 || p[1] > 10), JSON.stringify(sp.slice(0, 4)));
+    // ... and the curve tool paints cells a straight polyline would not touch
+    const cd = new Doc(20, 20, "curve");
+    const cs = new Stroke(cd, 0, 0, "curve", brush(1), false, "off");
+    cs.drawPath([[0, 8], [8, 8], [8, 0]], true);
+    const ccel = cd.celAt(0, 0)!;
+    const cat = (x: number, y: number): number => ccel.data[ccel.idx(x, y) + 3];
+    eq("path.curve.control-points", [cat(0, 8), cat(8, 8), cat(8, 0)], [255, 255, 255]);
+    ok("path.curve.bulge-painted", cat(4, 9) === 255, "at(4,9)=" + cat(4, 9));
+    const sd = new Doc(20, 20, "straight");
+    const ss = new Stroke(sd, 0, 0, "polyline", brush(1), false, "off");
+    ss.drawPath([[0, 8], [8, 8], [8, 0]], false);
+    eq("path.straight.no-bulge", sd.celAt(0, 0)!.data[sd.celAt(0, 0)!.idx(4, 9) + 3], 0);
   }
 }
