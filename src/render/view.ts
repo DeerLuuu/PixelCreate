@@ -88,8 +88,10 @@ export class View {
   private antTimer: number | null = null;
   /** cached selection tint layer (rebuilt only when the doc changes) */
   private selTint: HTMLCanvasElement | null = null;
-  /** brief highlight of a fresh snap: the two canvas indices + start time */
-  private snapPulse: { a: number; b: number; t0: number } | null = null;
+  /** the snap zone currently held while dragging (steady green), and the
+   *  one-shot flash that plays when it appears / disappears */
+  private snapLive: { a: number; b: number } | null = null;
+  private snapFlash: { a: number; b: number; t0: number; kind: "in" | "out" } | null = null;
   private snapRaf = 0;
   /** red dissolving links of just-released snaps (pairs of canvas indices) */
   private unsnapPulse: { pairs: Array<[number, number]>; t0: number } | null = null;
@@ -1010,18 +1012,32 @@ export class View {
   }
   /** freehand outline preview: the same trail as the lasso selection, plus a
    *  light preview of the region that will be filled (auto-closed to the start) */
-  /** flash the gap that just snapped, so the magnet is visible */
-  pulseSnap(a: number, b: number): void {
-    this.snapPulse = { a, b, t0: performance.now() };
+  /**
+   * Live snap feedback while a title bar is dragged: the first time a zone is
+   * entered it flashes, then it STAYS visible for as long as the finger keeps
+   * the canvases in range, and flashes once more when it is left again.
+   * `animate = false` clears it silently (used on release, where the permanent
+   * grouped highlight takes over).
+   */
+  setSnapPreview(a: number | null, b: number | null, animate = true): void {
+    const cur = this.snapLive;
+    const same = !!cur && a !== null && b !== null && cur.a === a && cur.b === b;
+    if (same) return;
+    if (cur && animate) this.snapFlash = { a: cur.a, b: cur.b, t0: performance.now(), kind: "out" };
+    if (a === null || b === null) {
+      this.snapLive = null;
+    } else {
+      this.snapLive = { a, b };
+      this.snapFlash = { a, b, t0: performance.now(), kind: "in" };
+    }
     if (this.snapRaf) return;
     const step = (): void => {
       this.snapRaf = 0;
-      const p = this.snapPulse;
-      if (!p) { this.drawOverlay(); return; }
-      const k = (performance.now() - p.t0) / 420;
       this.drawOverlay();
-      if (k < 1) this.snapRaf = window.requestAnimationFrame(step);
-      else { this.snapPulse = null; this.drawOverlay(); }
+      const f = this.snapFlash;
+      if (f && performance.now() - f.t0 < 420) { this.snapRaf = window.requestAnimationFrame(step); return; }
+      this.snapFlash = null;
+      this.drawOverlay();
     };
     this.snapRaf = window.requestAnimationFrame(step);
   }
@@ -1076,18 +1092,48 @@ export class View {
         ctx.fillRect(sx(x0), sy(y0), (x1 - x0) * z, (y1 - y0) * z);
       }
     }
-    // the pair that just snapped flashes brighter, then fades out
-    const p = this.snapPulse;
-    if (p) {
-      const k = Math.min(1, (performance.now() - p.t0) / 420);
-      const a = this.docsAt(p.a), b = this.docsAt(p.b);
+    // the zone held during the drag stays lit while the finger keeps it in range
+    const live = this.snapLive;
+    if (live) {
+      const a = this.docsAt(live.a), b = this.docsAt(live.b);
       const g = a && b ? this.gapBetween(a, b) : null;
       if (g) {
-        ctx.fillStyle = "rgba(120, 255, 180, " + (0.55 * (1 - k)).toFixed(3) + ")";
+        ctx.fillStyle = "rgba(80, 220, 140, 0.45)";
         ctx.fillRect(sx(g.x0), sy(g.y0), (g.x1 - g.x0) * z, (g.y1 - g.y0) * z);
-        ctx.strokeStyle = "rgba(150, 255, 200, " + (0.95 * (1 - k)).toFixed(3) + ")";
-        ctx.lineWidth = 2 + 3 * (1 - k);
-        ctx.strokeRect(sx(g.x0) - 1, sy(g.y0) - 1, (g.x1 - g.x0) * z + 2, (g.y1 - g.y0) * z + 2);
+      }
+    }
+    // one-shot flash: green when the zone is entered, red when it is left
+    const f = this.snapFlash;
+    if (f) {
+      const k = Math.min(1, (performance.now() - f.t0) / 420);
+      const fade = 1 - k;
+      const a = this.docsAt(f.a), b = this.docsAt(f.b);
+      const g = a && b ? this.gapBetween(a, b) : null;
+      if (g) {
+        const x = sx(g.x0), y = sy(g.y0);
+        const w = (g.x1 - g.x0) * z, h = (g.y1 - g.y0) * z;
+        const green = f.kind === "in";
+        ctx.fillStyle = green
+          ? "rgba(120, 255, 180, " + (0.55 * fade).toFixed(3) + ")"
+          : "rgba(255, 80, 80, " + (0.45 * fade).toFixed(3) + ")";
+        ctx.fillRect(x, y, w, h);
+        ctx.strokeStyle = green
+          ? "rgba(150, 255, 200, " + (0.95 * fade).toFixed(3) + ")"
+          : "rgba(255, 100, 100, " + (0.95 * fade).toFixed(3) + ")";
+        ctx.lineWidth = green ? 2 + 3 * fade : 2 + 9 * k;
+        ctx.beginPath();
+        if (w >= h) {
+          const cy = y + h / 2;
+          const grow = green ? 0 : 8 * k;
+          ctx.moveTo(x - grow, cy);
+          ctx.lineTo(x + w + grow, cy);
+        } else {
+          const cx = x + w / 2;
+          const grow = green ? 0 : 8 * k;
+          ctx.moveTo(cx, y - grow);
+          ctx.lineTo(cx, y + h + grow);
+        }
+        ctx.stroke();
       }
     }
     // a released snap: red translucent link that spreads and fades away

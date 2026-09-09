@@ -152,6 +152,26 @@ export function testView(): void {
     ok("view.drag.camera-stays", Math.abs(view.ox - ox2) < 0.001, "ox " + ox2 + " -> " + view.ox);
     ok("view.drag.ox-restored", Math.abs(ox0 - view.ox) < 40, "ox0=" + ox0 + " now=" + view.ox);
 
+    // live snap preview: entering a zone, holding it, then leaving it
+    const sv = view as unknown as { setSnapPreview(a: number | null, b: number | null, animate?: boolean): void; snapLive: unknown; snapFlash: unknown };
+    sv.setSnapPreview(0, bi);
+    dom.flush();
+    ok("view.snapzone.live", !!sv.snapLive);
+    ok("view.snapzone.flash-in", !!sv.snapFlash && (sv.snapFlash as { kind: string }).kind === "in");
+    // the same pair again must NOT restart the flash (single drag, one flash)
+    const flash0 = sv.snapFlash;
+    sv.setSnapPreview(0, bi);
+    ok("view.snapzone.steady", sv.snapFlash === flash0);
+    // leaving the zone: one flash, then the zone is gone
+    sv.setSnapPreview(null, null);
+    dom.flush();
+    ok("view.snapzone.cleared", !sv.snapLive);
+    ok("view.snapzone.flash-out", !!sv.snapFlash && (sv.snapFlash as { kind: string }).kind === "out");
+    // silent clear (release: the permanent group highlight takes over)
+    sv.setSnapPreview(0, bi);
+    sv.setSnapPreview(null, null, false);
+    ok("view.snapzone.silent-clear", !sv.snapLive);
+
     // the un-snap dissolve animation must run without throwing
     (view as unknown as { pulseUnsnap(p: Array<[number, number]>): void }).pulseUnsnap([[0, bi]]);
     dom.flush();

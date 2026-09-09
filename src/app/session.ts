@@ -1998,9 +1998,9 @@ export class Session {
     this.changed();
     this.scheduleAutosave();
   }
-  /** flash the snap gap of two canvases (called while dragging a title bar) */
-  pulseSnap(a: number, b: number): void {
-    this.view_?.pulseSnap(a, b);
+  /** live snap feedback while dragging: `b` = the canvas snapped to (null = none) */
+  setSnapPreview(a: number | null, b: number | null, animate = true): void {
+    this.view_?.setSnapPreview(a, b, animate);
   }
   /** true when the canvas position is locked */
   isCanvasLocked(i = this.docIdx): boolean {

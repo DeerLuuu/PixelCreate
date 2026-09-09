@@ -82,13 +82,14 @@ export function CanvasTitles({ view, tick }: { view: View | null; tick: number }
               // magnetically align with the other canvases (and their groups)
               const want = { x: d.x0 + dx / z, y: d.y0 + dy / z };
               const snap = SESSION.snapPosition(i, want.x, want.y, snapTol);
-              // feedback the moment the magnet engages: tick + a bright flash
+              // entering a zone: tick + a flash, then the zone stays lit while
+              // the finger keeps it in range; leaving it flashes once more
               if (snap.hit !== null && pulsed.current !== snap.hit) {
                 pulsed.current = snap.hit;
                 SESSION.hapticTick("吸附", 0.9);
-                SESSION.pulseSnap(i, snap.hit);
               } else if (snap.hit === null) pulsed.current = null;
               d.hit = snap.hit;
+              SESSION.setSnapPreview(snap.hit === null ? null : i, snap.hit);
               SESSION.moveCanvas(i, snap.x, snap.y);
             }}
             onPointerUp={(ev) => {
@@ -109,9 +110,10 @@ export function CanvasTitles({ view, tick }: { view: View | null; tick: number }
                 }
                 return;
               }
+              SESSION.setSnapPreview(null, null, false); // the group takes over
               SESSION.finishCanvasDrag(i, d.hit);
             }}
-            onPointerCancel={() => { drag.current = null; stopTip(); }}
+            onPointerCancel={() => { drag.current = null; stopTip(); SESSION.setSnapPreview(null, null); }}
           >
             {narrow ? null : (
             <button className={"cv-btn" + (SESSION.hasPreview(i) ? " on" : "")}
