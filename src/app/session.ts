@@ -387,8 +387,9 @@ export class Session {
    * canvas. Runs on every repaint / structural change; the source canvas is only
    * re-composed when it actually changed.
    */
-  syncRefLayers(): void {
-    if (!this.docs.length) return;
+  syncRefLayers(): boolean {
+    if (!this.docs.length) return false;
+    let touched = false;
     // edits that wrote a reference layer directly go back to its source first
     this.pushMirrorEdits(this.ensureEntry());
     // two passes so a chain A -> B -> C settles within one call
@@ -409,6 +410,7 @@ export class Session {
           if (!px) continue;
           const cel = holder.doc.ensureCel(li, 0);
           cel.data.set(px);
+          touched = true;
           this.refMirror.set(key, new Uint8ClampedArray(px));
           // every frame of a reference layer shows the same picture: share one cel
           for (let fi = 0; fi < holder.doc.frames.length; fi++) holder.doc.cels.set(holder.doc.key(li, fi), cel);
@@ -416,6 +418,7 @@ export class Session {
         }
       }
     }
+    return touched;
   }
   /** foreground / background slots */
   fg: RGBA = [20, 20, 20, 255];
@@ -697,7 +700,9 @@ export class Session {
   changed(): void {
     this.syncEntry(); // the focused canvas remembers its layer/frame
     this.doc.pixelRev++; // structural changes count as a content change
-    this.syncRefLayers(); // keep mirrored reference layers up to date
+    // keep mirrored reference layers up to date; when a mirror really changed
+    // the view has to repaint as well (its composite is built from the cels)
+    if (this.syncRefLayers()) this.view_?.invalidate();
     this.rev++;
     this.snapCache = null;
     for (const l of this.listeners) l();
@@ -1194,6 +1199,10 @@ export class Session {
     await autosave.clearAutosave();
   }
   syncAll(): void {
+    // refresh the reference mirrors FIRST: the composite below is built from the
+    // cels, so a mirror updated after the blit would not show up until the next
+    // repaint (undo/redo used to look one step behind on reference layers)
+    this.syncRefLayers();
     this.view_?.refresh(true);
     this.changed();
     this.firePreviews();
@@ -2545,6 +2554,17 @@ export class Session {
     this.changedUI();
   }
 
+  /** start a brand-new PROJECT: every open canvas and the whole history are
+   *  replaced by one fresh canvas (with the unsaved-work prompt first) */
+  async newProject(w: number, h: number, name: string, bg: RGBA | null): Promise<boolean> {
+    if (!(await this.askOverwrite("new"))) return false;
+    const doc = new Doc(w, h, name);
+    doc.palette = this.prefs.palette.length ? this.prefs.palette.map((hex) => hexToRgba(hex)) : defaultPalette();
+    doc.bg = bg;
+    const ok = await this.replaceDoc(doc, { ask: false });
+    if (ok) this.scheduleAutosave();
+    return ok;
+  }
   /** create a brand new canvas (the previous ones stay open) */
   async newDoc(w: number, h: number, name: string, bg: RGBA | null): Promise<boolean> {
     const doc = new Doc(w, h, name);

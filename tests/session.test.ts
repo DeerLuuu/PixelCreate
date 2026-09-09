@@ -1269,6 +1269,32 @@ export async function testSession(): Promise<void> {
     eq("canvas.empty.add-again", [m.docs.length, m.docIdx, back], [1, 0, 0]);
     eq("canvas.empty.origin", [m.docs[0].x, m.docs[0].y], [0, 0]);
   }
+  // --- new project: replaces every canvas and clears the history ---
+  {
+    (globalThis as unknown as { localStorage: { clear(): void } }).localStorage.clear();
+    const s = new Session();
+    const cel = s.doc.ensureCel(0, 0);
+    const b0 = new Uint8ClampedArray(cel.data);
+    cel.data[0] = 1; cel.data[3] = 255;
+    s.history.pushPixels("tools.pencil", s.doc, [{ li: 0, fi: 0, before: b0, after: new Uint8ClampedArray(cel.data) }]);
+    s.doc.name = "old";
+    s.addCanvas(new Doc(8, 8, "extra"));
+    // declining the unsaved-work prompt keeps everything
+    s.setConfirmAsk(async () => false);
+    ok("newProject.cancelled", !(await s.newProject(16, 16, "fresh", null)));
+    eq("newProject.cancelled-keeps", [s.docs.length, s.docs[0].doc.name], [2, "old"]);
+    ok("newProject.cancelled-keeps-history", s.history.canUndo());
+    // accepting replaces the whole space with one canvas
+    s.setConfirmAsk(async () => true);
+    ok("newProject.ok", await s.newProject(16, 16, "fresh", null));
+    eq("newProject.one-canvas", s.docs.length, 1);
+    eq("newProject.name", s.doc.name, "fresh");
+    eq("newProject.size", [s.doc.w, s.doc.h], [16, 16]);
+    eq("newProject.focus", s.docIdx, 0);
+    ok("newProject.history-cleared", !s.history.canUndo() && !s.history.canRedo());
+    ok("newProject.empty-pixels", !s.doc.celAt(0, 0) || !s.doc.celAt(0, 0)!.hasAnyOpaque());
+  }
+
   // --- a reference to a SMALLER canvas: paint must land on the same pixel ---
   // (the mirror is centred, so a cell of the holder maps to the source by
   //  subtracting the offset — this used to write out of bounds / off by the

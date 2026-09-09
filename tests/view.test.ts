@@ -283,6 +283,30 @@ export function testView(): void {
     ok("view.refsmall.mirror-px", !!mirCel && mirCel.data[(30 * 64 + 30) * 4 + 3] === 255,
       mirCel ? "a=" + mirCel.data[(30 * 64 + 30) * 4 + 3] : "no cel");
 
+    // ---- undo must refresh the mirror BEFORE the view re-composites ----
+    // The source canvas reverted, but the holder kept showing the old mirror
+    // because syncAll() blitted first and re-mirrored afterwards.
+    const prevOnion = cmod.composeFrameWithOnion;
+    let watchLi = refLi;
+    let watchIdx = (30 * 64 + 30) * 4 + 3;
+    let seenAtCompose: number | null = null;
+    cmod.composeFrameWithOnion = (...a2: unknown[]) => {
+      const d = a2[0] as Doc;
+      const cel = d.celAt(watchLi, 0);
+      seenAtCompose = cel ? cel.data[watchIdx] : 0;
+      return (prevOnion as (...x: unknown[]) => unknown)(...a2);
+    };
+    try {
+      seenAtCompose = null;
+      s.undo(); // revert the pencil stroke on the reference layer
+      dom.flush();
+      eq("view.undo.mirror-at-compose", seenAtCompose, 0);
+      const after = s.doc.celAt(refLi, 0);
+      eq("view.undo.mirror-cleared", after ? after.data[(30 * 64 + 30) * 4 + 3] : 0, 0);
+    } finally {
+      cmod.composeFrameWithOnion = prevOnion;
+    }
+
     view.destroy();
   } finally {
     cmod.composeFrameWithOnion = origOnion;

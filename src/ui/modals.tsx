@@ -20,7 +20,7 @@ import { canVibrate, hapticReport } from "../io/bridge";
 import { detectInsets } from "../io/safearea";
 import type { RefImg } from "./refimg";
 
-export type ModalId = "menu" | "changelog" | "newdoc" | "export" | "adjust" | "settings" | "frame" | "framePrev" | "size" | "sheet" | "history" | "canvasRef" | null;
+export type ModalId = "menu" | "changelog" | "newdoc" | "newproject" | "export" | "adjust" | "settings" | "frame" | "framePrev" | "size" | "sheet" | "history" | "canvasRef" | null;
 export type SizeMode = "canvas" | "sprite";
 export type SheetData = { w: number; h: number; px: Uint8ClampedArray; name: string };
 
@@ -338,7 +338,7 @@ export function MenuModal({ t, snap, onClose, onOpen, onSheet, onRef, onGuide }:
         <div className="dlg-head"><span>{t("menu")}</span><div className="grow" /><button className="btn small" onClick={onClose}><Icon id="i-x" size={16} /></button></div>
         <div className="dlg-body col">
           {!sub ? (<>
-            {go("newdoc")(t("newDoc"), "i-new", "menu-new")}
+            {go("newproject")(t("newProject"), "i-new", "menu-new")}
             {act(t("save"), "i-save", () => void saveProject(), "menu-save")}
             {act(t("open"), "i-open", () => void openFlow("new"), "menu-open")}
             <Btn label={t("import")} icon="i-import" className="menuitem" guide="menu-import" onClick={() => setSub("import")} />
@@ -420,7 +420,7 @@ export function SheetModal({ t, img, onClose }: { t: ReturnType<typeof makeT>; i
     </>
   );
 }
-export function NewDocModal({ t, onClose }: { t: ReturnType<typeof makeT>; onClose: () => void }) {
+export function NewDocModal({ t, onClose, mode = "canvas" }: { t: ReturnType<typeof makeT>; onClose: () => void; mode?: "canvas" | "project" }) {
   // remembered defaults: the last size / background the user created
   const [w, setW] = useState(String(SESSION.prefs.newDocW));
   const [h, setH] = useState(String(SESSION.prefs.newDocH));
@@ -432,14 +432,19 @@ export function NewDocModal({ t, onClose }: { t: ReturnType<typeof makeT>; onClo
     SESSION.setSetting("general.newDocW", nw);
     SESSION.setSetting("general.newDocH", nh);
     SESSION.setSetting("general.newDocBg", white ? "white" : "transparent");
-    if (await SESSION.newDoc(nw, nh, name || "untitled", white ? [255, 255, 255, 255] : null)) onClose();
+    const bg: [number, number, number, number] | null = white ? [255, 255, 255, 255] : null;
+    const ok = mode === "project"
+      ? await SESSION.newProject(nw, nh, name || "untitled", bg)
+      : await SESSION.newDoc(nw, nh, name || "untitled", bg);
+    if (ok) onClose();
   };
   return (
     <>
       <div className="dlg-mask" onClick={onClose} />
       <div className="dlg">
-        <div className="dlg-head"><span>{t("newDoc")}</span><div className="grow" /><button className="btn small" onClick={onClose}><Icon id="i-x" size={16} /></button></div>
+        <div className="dlg-head"><span>{t(mode === "project" ? "newProject" : "newDoc")}</span><div className="grow" /><button className="btn small" onClick={onClose}><Icon id="i-x" size={16} /></button></div>
         <div className="dlg-body">
+          {mode === "project" && <div className="row-note">{t("newProjectNote")}</div>}
           <label className="rowlabel">{t("name")}</label>
           <input value={name} onChange={(e) => setName(e.target.value)} />
           <label className="rowlabel">{t("docs.w")}</label>
