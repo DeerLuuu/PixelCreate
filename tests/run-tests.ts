@@ -17,6 +17,7 @@ import { testBack } from "./back.test";
 import { testI18n } from "./i18n.test";
 import { testExpr } from "./expr.test";
 import { testEffects } from "./effects.test";
+import { testView } from "./view.test";
 
 async function main(): Promise<void> {
   console.log("--- history ---");
@@ -49,6 +50,8 @@ async function main(): Promise<void> {
   testExport();
   console.log("--- back ---");
   testBack();
+  console.log("--- view ---");
+  testView();
   console.log("--- effects ---");
   testEffects();
   console.log("--- expr ---");
@@ -61,6 +64,7 @@ async function main(): Promise<void> {
 void main().catch((e: unknown) => {
   const msg = e && (e as Error).message ? (e as Error).message : String(e);
   console.log("FATAL " + msg);
+  if (e && (e as Error).stack) console.log((e as Error).stack);
   const p = (globalThis as { process?: { exitCode?: number } }).process;
   if (p) p.exitCode = 1;
 });

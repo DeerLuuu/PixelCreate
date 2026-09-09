@@ -370,6 +370,9 @@ export class View {
     if (!st) return;
     const d = st.takeDirty();
     if (!d) return;
+    // a redirected stroke painted into ANOTHER canvas: mirror it into the
+    // reference layer's own cel and repaint the whole canvas (the dirty rect
+    // lives in the other document's coordinates, so it cannot be mapped)
     if (this.strokeRedirected) this.session.repaint();
     else this.session.repaintRect(d);
   }
@@ -2041,7 +2044,10 @@ export class View {
       this.sprayAcc -= n;
       st.sprayBurst(n);
       const d = st.takeDirty();
-      if (d) { if (this.strokeRedirected) this.session.repaint(); else this.session.repaintRect(d); }
+      if (d) {
+        if (this.strokeRedirected) this.session.repaint();
+        else this.session.repaintRect(d);
+      }
     }, period);
   }
   private stopSpray(): void {

@@ -1,4 +1,5 @@
 import { Doc } from "../engine/doc";
+import { Cel } from "../engine/cel";
 import { History } from "../engine/history";
 import { uid } from "../engine/types";
 import type { Rect, RGBA, BlendMode } from "../engine/types";
@@ -255,25 +256,57 @@ export class Session {
     if (!id) return null;
     return this.docs.find((d) => d.id === id) ?? null;
   }
-  /** cache of the live images reference layers resolve to (cleared on change) */
-  private refCache = new Map<string, { rev: number; cv: HTMLCanvasElement }>();
-  private resolvingRefs = new Set<string>();
-  /** compositor hook: image of the referenced canvas at its own current frame */
-  private resolveRef = (refId: string, _fi: number): HTMLCanvasElement | null => {
+  /** image of a referenced canvas (its own current frame), centred on a canvas
+   *  of `w`x`h`; null when the canvas is gone */
+  private refImage(refId: string, w: number, h: number): HTMLCanvasElement | null {
     const e = this.entryOf(refId);
-    if (!e || this.resolvingRefs.has(refId)) return null; // gone / cycle
-    const got = this.refCache.get(refId);
-    if (got && got.rev === e.doc.pixelRev) return got.cv;
-    this.resolvingRefs.add(refId);
-    try {
-      const fi = Math.max(0, Math.min(e.doc.frames.length - 1, e.fi));
-      const cv = compositor.composeFrame(e.doc, fi);
-      this.refCache.set(refId, { rev: e.doc.pixelRev, cv });
-      return cv;
-    } finally {
-      this.resolvingRefs.delete(refId);
+    if (!e) return null;
+    const fi = Math.max(0, Math.min(e.doc.frames.length - 1, e.fi));
+    const src = compositor.composeFrame(e.doc, fi);
+    if (src.width === w && src.height === h) return src;
+    const cv = document.createElement("canvas");
+    cv.width = w;
+    cv.height = h;
+    const ctx = cv.getContext("2d")!;
+    ctx.drawImage(src, Math.round((w - src.width) / 2), Math.round((h - src.height) / 2));
+    return cv;
+  }
+  /** last mirrored state per reference layer: `${holderId}:${layerId}` */
+  private refSync = new Map<string, string>();
+  /**
+   * Reference layers are MIRRORED into their own cel instead of being resolved
+   * while compositing: the render path then is exactly the same as for a normal
+   * layer (which is what the device is known to update live while painting).
+   * Every frame of the layer shares one cel, because they all show the same
+   * canvas. Runs on every repaint / structural change; the source canvas is only
+   * re-composed when it actually changed.
+   */
+  syncRefLayers(): void {
+    if (!this.docs.length) return;
+    // two passes so a chain A -> B -> C settles within one call
+    for (let pass = 0; pass < 2; pass++) {
+      for (const holder of this.docs) {
+        for (let li = 0; li < holder.doc.layers.length; li++) {
+          const L = holder.doc.layers[li];
+          if (!L?.ref) continue;
+          const src = this.entryOf(L.ref);
+          const key = holder.id + ":" + L.id;
+          const stamp = src ? src.doc.pixelRev + ":" + holder.doc.frames.length + ":" + holder.doc.w + "x" + holder.doc.h : "gone";
+          if (this.refSync.get(key) === stamp) continue;
+          this.refSync.set(key, stamp);
+          if (!src) continue;
+          const img = this.refImage(src.id, holder.doc.w, holder.doc.h);
+          if (!img) continue;
+          const cel = holder.doc.ensureCel(li, 0);
+          const ctx = img.getContext("2d")!;
+          cel.data.set(ctx.getImageData(0, 0, holder.doc.w, holder.doc.h).data);
+          // every frame of a reference layer shows the same picture: share one cel
+          for (let fi = 0; fi < holder.doc.frames.length; fi++) holder.doc.cels.set(holder.doc.key(li, fi), cel);
+          holder.doc.pixelRev++;
+        }
+      }
     }
-  };
+  }
   /** foreground / background slots */
   fg: RGBA = [20, 20, 20, 255];
   bg: RGBA = [255, 255, 255, 255];
@@ -365,7 +398,6 @@ export class Session {
   private snapRev = -1;
 
   constructor() {
-    compositor.setRefResolver(this.resolveRef);
     this.prefs = this.loadPrefs();
     this.doc = new Doc(64, 64, "untitled");
     // the remembered palette wins over the built-in default
@@ -538,8 +570,8 @@ export class Session {
   }
   changed(): void {
     this.syncEntry(); // the focused canvas remembers its layer/frame
-    // reference layers must always show the newest pixels of their canvas
-    this.refCache.clear();
+    this.doc.pixelRev++; // structural changes count as a content change
+    this.syncRefLayers(); // keep mirrored reference layers up to date
     this.rev++;
     this.snapCache = null;
     for (const l of this.listeners) l();
@@ -681,6 +713,8 @@ export class Session {
       });
       this.layerIdx = at;
     });
+    this.refSync.clear();
+    this.syncRefLayers();
     toastFn(this.prefs.lang === "en" ? "Referenced " + (src.doc.name || "canvas") : "已引用画布「" + (src.doc.name || "") + "」");
     return true;
   }
@@ -705,25 +739,23 @@ export class Session {
     const doc = this.doc;
     const L = doc.layers[li];
     if (!L?.ref) return;
-    const img = this.resolveRef(L.ref, 0);
+    const img = this.refImage(L.ref, doc.w, doc.h);
     this.struct("layer-unref", () => {
       const d = this.doc;
       const N = d.layers[li];
       if (!N) return;
       N.ref = null;
+      const shared = img ? new Uint8ClampedArray(img.getContext("2d")!.getImageData(0, 0, d.w, d.h).data) : null;
+      // frames shared one cel while the link was live: split them now
       for (let fi = 0; fi < d.frames.length; fi++) {
-        const cel = d.ensureCel(li, fi);
-        cel.data.fill(0);
-        if (img) {
-          const cv = document.createElement("canvas");
-          cv.width = d.w; cv.height = d.h;
-          const ctx = cv.getContext("2d")!;
-          // 1:1, centred when the canvases differ in size (clipped to this one)
-          ctx.drawImage(img, Math.round((d.w - img.width) / 2), Math.round((d.h - img.height) / 2));
-          cel.data.set(ctx.getImageData(0, 0, d.w, d.h).data);
-        }
+        const cel = new Cel(d.w, d.h);
+        const old = d.cels.get(d.key(li, fi));
+        if (shared) cel.data.set(shared);
+        else if (old) cel.data.set(old.data);
+        d.cels.set(d.key(li, fi), cel);
       }
     });
+    this.refSync.clear();
     toastFn(this.prefs.lang === "en" ? "Reference released, pixels kept" : "已解除引用，图层内容保留");
   }
   /** move the current layer out into a canvas of its own */
@@ -740,7 +772,7 @@ export class Session {
       no: this.prefs.lang === "en" ? "Cancel" : "取消",
     });
     if (!ok) return null;
-    const refImg = L.ref ? this.resolveRef(L.ref, 0) : null;
+    const refImg = L.ref ? this.refImage(L.ref, doc.w, doc.h) : null;
     const nd = new Doc(doc.w, doc.h, (doc.name || "art") + "_" + L.name);
     nd.palette = doc.palette.map((c) => [...c] as RGBA);
     nd.bg = null;
@@ -811,6 +843,7 @@ export class Session {
   // ---------- canvas ----------
   repaint(): void {
     this.doc.pixelRev++;
+    this.syncRefLayers();
     this.view_?.invalidate();
     this.firePreviews();
     this.scheduleAutosave();
@@ -819,12 +852,14 @@ export class Session {
    *  and the canvas update just that region. null = full frame. */
   repaintRect(rect: Rect | null): void {
     this.doc.pixelRev++;
+    this.syncRefLayers();
     this.view_?.invalidate(rect);
     this.firePreviews();
     this.scheduleAutosave();
   }
   repaintAll(): void {
     this.doc.pixelRev++;
+    this.syncRefLayers();
     this.view_?.markDirty();
     this.view_?.refresh(true);
     this.firePreviews();

@@ -21,22 +21,6 @@ function celEntry(cel: Cel): CelEntry {
   return e;
 }
 
-/** resolves a reference layer to the LIVE image of another canvas. Installed by
- *  the Session; returns null when the target canvas is gone or forms a cycle. */
-export type RefResolver = (refId: string, fi: number) => HTMLCanvasElement | null;
-let refResolver: RefResolver | null = null;
-export function setRefResolver(fn: RefResolver | null): void { refResolver = fn; }
-
-/** what a layer contributes to the composite: its own cel, or the referenced
- *  canvas' image (the link is live, so it always shows the newest pixels) */
-function layerImage(doc: Doc, li: number, fi: number): HTMLCanvasElement | null {
-  const L = doc.layers[li];
-  if (!L) return null;
-  if (L.ref) return refResolver ? refResolver(L.ref, fi) : null;
-  const cel = doc.celAt(li, fi);
-  return cel ? celToCanvas(cel) : null;
-}
-
 export function canvasToBlendMode(m: BlendMode): GlobalCompositeOperation {
   const map: Record<string, GlobalCompositeOperation> = {
     normal: "source-over", multiply: "multiply", screen: "screen", overlay: "overlay",
@@ -82,23 +66,23 @@ export function composeFrame(doc: Doc, fi: number, opts: { bgOverride?: number[]
     ctx.fillRect(0, 0, doc.w, doc.h);
   }
   if (opts.onlyLi != null) {
-    // export a single layer: exact cel pixels (or the referenced canvas) over the backdrop
-    const img = layerImage(doc, opts.onlyLi, fi);
-    if (img) {
+    // export a single layer: exact cel pixels over the backdrop
+    const cel = doc.celAt(opts.onlyLi, fi);
+    if (cel) {
       ctx.globalAlpha = 1;
       ctx.globalCompositeOperation = "source-over";
-      ctx.drawImage(img, 0, 0);
+      ctx.drawImage(celToCanvas(cel), 0, 0);
     }
     return c;
   }
   for (let li = 0; li < doc.layers.length; li++) {
     const L = doc.layers[li];
     if (!L.visible) continue;
-    const img = layerImage(doc, li, fi);
-    if (!img) continue;
+    const cel = doc.celAt(li, fi);
+    if (!cel) continue;
     ctx.globalAlpha = L.opacity / 100;
     ctx.globalCompositeOperation = canvasToBlendMode(L.blend);
-    ctx.drawImage(img, 0, 0);
+    ctx.drawImage(celToCanvas(cel), 0, 0);
   }
   ctx.globalAlpha = 1;
   ctx.globalCompositeOperation = "source-over";
@@ -201,15 +185,6 @@ export function composeRectInto(
   for (let li = 0; li < doc.layers.length; li++) {
     const L = doc.layers[li];
     if (!L.visible) continue;
-    if (L.ref) {
-      // a reference layer has no cel of its own: draw the live image (clipped)
-      const img = layerImage(doc, li, fi);
-      if (!img) continue;
-      ctx.globalAlpha = L.opacity / 100;
-      ctx.globalCompositeOperation = canvasToBlendMode(L.blend);
-      ctx.drawImage(img, 0, 0);
-      continue;
-    }
     const cel = doc.celAt(li, fi);
     if (!cel) continue;
     ctx.globalAlpha = L.opacity / 100;

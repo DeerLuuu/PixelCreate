@@ -6,13 +6,16 @@ import { GESTURES, GESTURE_ACTIONS, gesturePath, isActionAllowed } from "../src/
 import { CORE_TOOLS, isSymTool } from "../src/tools/registry";
 import { History } from "../src/engine/history";
 import { Doc } from "../src/engine/doc";
+import { Stroke } from "../src/tools/stroke";
 import { scalarActions } from "../src/app/history-io";
 import * as historyFile from "../src/io/historyfile";
 import * as bridge from "../src/io/bridge";
 import { eq, ok } from "./common";
 
+declare const require: (m: string) => any;
+
 /** minimal DOM-less environment for Session (no View attached) */
-function stubEnv(): void {
+export function stubEnv(): void {
   const g = globalThis as unknown as Record<string, unknown>;
   if (!g.window) g.window = {};
   const w = g.window as Record<string, unknown>;
@@ -24,6 +27,26 @@ function stubEnv(): void {
   w.removeEventListener = () => {};
   w.dispatchEvent = () => {};
   w.PixelBridge = { toast: () => {}, vibrate: () => true };
+  // minimal canvas stubs: reference-layer mirroring composes other canvases
+  const ctx: unknown = new Proxy({}, {
+    get: (_t, k: string) => {
+      if (k === "getImageData") return (_x: number, _y: number, w: number, h: number) => ({ data: new Uint8ClampedArray(Math.max(4, (w | 0) * (h | 0) * 4)) });
+      if (k === "createPattern") return () => ({});
+      if (k === "measureText") return () => ({ width: 1 });
+      return () => undefined;
+    },
+    set: () => true,
+  });
+  const makeCanvas = (): unknown => ({
+    width: 0, height: 0, style: {}, getContext: () => ctx,
+    getBoundingClientRect: () => ({ left: 0, top: 0, width: 320, height: 240 }),
+  });
+  g.document = {
+    createElement: (tag: string) => (tag === "canvas" ? makeCanvas() : { style: {}, appendChild: () => undefined }),
+    addEventListener: () => undefined,
+    removeEventListener: () => undefined,
+  };
+  g.ImageData = class { constructor(public data: Uint8ClampedArray, public width: number, public height: number) {} };
   // stateful in-memory localStorage so persistence round trips can be tested
   const store = new Map<string, string>();
   g.localStorage = {
@@ -729,7 +752,8 @@ export async function testSession(): Promise<void> {
     (globalThis as unknown as { localStorage: { clear(): void } }).localStorage.clear();
     const r = new Session();
     r.doc.name = "A";
-    const bIdx = r.addCanvas(new Doc(16, 16, "B"));
+    // same size as the holder: mirroring then needs no canvas at all
+    const bIdx = r.addCanvas(new Doc(64, 64, "B"));
     r.focusCanvas(0);                       // back on A
     // referencing B adds a live layer pointing at B's canvas id
     ok("ref.add", r.referenceCanvas(bIdx));
@@ -777,6 +801,51 @@ export async function testSession(): Promise<void> {
     eq("extract.source-kept-one-layer", x.doc.layers.length, 1);
     eq("extract.source-frames", x.doc.frames.length, 2);
     ok("extract.source-empty", !x.doc.celAt(0, 0) && !x.doc.celAt(0, 1));
+  }
+
+  // --- reference layers are MIRRORED into their own cel (live preview) ---
+  {
+    const cmod = require("../src/render/compositor") as Record<string, unknown>;
+    const origFrame = cmod.composeFrame;
+    let tag = 0;
+    cmod.composeFrame = (doc: Doc) => {
+      tag++;
+      const w = doc.w, h = doc.h;
+      const data = new Uint8ClampedArray(w * h * 4);
+      for (let i = 0; i < data.length; i += 4) { data[i] = tag; data[i + 3] = 255; }
+      return { width: w, height: h, getContext: () => ({ getImageData: () => ({ data }) }) };
+    };
+    try {
+      (globalThis as unknown as { localStorage: { clear(): void } }).localStorage.clear();
+      const s = new Session();
+      s.doc.name = "A";
+      // same size as the holder, so the mirror needs no canvas at all
+      const bi = s.addCanvas(new Doc(64, 64, "B"));
+      s.focusCanvas(0);
+      ok("mirror.link", s.referenceCanvas(bi));
+      const li = s.curLayer();
+      const cel = s.doc.celAt(li, 0);
+      ok("mirror.filled", !!cel && cel.data[0] === tag && cel.data[3] === 255);
+      // every frame of a reference layer shares one cel (they show the same canvas)
+      s.frameAdd();
+      ok("mirror.shared-cel", s.doc.celAt(li, 0) === s.doc.celAt(li, 1));
+      // a change in the SOURCE re-mirrors ...
+      const t0 = tag;
+      s.docs[bi].doc.pixelRev++;
+      s.syncRefLayers();
+      ok("mirror.remirrors", tag > t0 && s.doc.celAt(li, 0)!.data[0] === tag);
+      // ... but nothing changed -> no work
+      const t1 = tag;
+      s.syncRefLayers();
+      eq("mirror.idempotent", tag, t1);
+      // releasing the link keeps the pixels and splits the shared cel
+      s.unrefLayer(li);
+      ok("mirror.unref-keeps-pixels", s.doc.celAt(li, 0)!.data[3] === 255);
+      ok("mirror.unref-splits-cel", s.doc.celAt(li, 0) !== s.doc.celAt(li, 1));
+      ok("mirror.unref-cleared", !s.doc.layers[li].ref);
+    } finally {
+      cmod.composeFrame = origFrame;
+    }
   }
 
   // --- a pending colour pick is routed to the FX dialog, not the brush ---

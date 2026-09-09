@@ -879,8 +879,9 @@ view.shiftFocus(dxSpace, dySpace): void   // 切换聚焦画布时保持空间�
 view.fitAnimated(ms = 220) / animateTo(z, ox, oy, ms)  // 缓动适配（双击标题 / 画布球适配）
 ```
 
-引用层由 `compositor.setRefResolver()` 安装的解析器实时取值（`Session.resolveRef`，按
-画布 id 缓存并在每次 `changed()` 失效；循环引用返回 null）；非聚焦画布由
+引用层不参与合成器的特殊逻辑：`Session.syncRefLayers()` 会把源画布的画面**镜像进引用层自己的 cel**
+（每帧共用同一个 cel，源画布版本号变化时才重新合成），所以渲染路径与普通图层完全一致；
+非聚焦画布由
 `drawOtherCanvases()` 在合成后绘制（各自缓存，存在引用层时会整体失效），聚焦画布始终画在最上层；
 多画布时 `clampView()` 改为「保证包围盒至少露出一角」，即无限空间。
 
