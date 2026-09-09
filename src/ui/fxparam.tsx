@@ -48,12 +48,14 @@ export function fxDefaults(run: FxRun): FxVals {
   return out;
 }
 
-export function FxParamDialog({ run, vals, onChange, onApply, onCancel }: {
+export function FxParamDialog({ run, vals, onChange, onApply, onCancel, onPickColor }: {
   run: FxRun;
   vals: FxVals;
   onChange: (key: string, v: number | string) => void;
   onApply: () => void;
   onCancel: () => void;
+  /** colour rows ask the host to open the palette panel */
+  onPickColor: (key: string) => void;
 }) {
   const t = makeT(SESSION.prefs.lang as Lang);
   return (
@@ -79,8 +81,10 @@ export function FxParamDialog({ run, vals, onChange, onApply, onCancel }: {
               )}
               {p.kind === "color" && (
                 <div className="fxp-ctl">
-                  <input type="color" value={String(vals[p.key])} onChange={(e) => onChange(p.key, e.target.value)} />
+                  <button type="button" className="fxp-swatch" title={t("colorPicked")}
+                    style={{ background: String(vals[p.key]) }} onClick={() => onPickColor(p.key)} />
                   <span className="fxp-unit">{String(vals[p.key])}</span>
+                  <input type="color" value={String(vals[p.key])} onChange={(e) => onChange(p.key, e.target.value)} />
                 </div>
               )}
               {p.kind === "enum" && (

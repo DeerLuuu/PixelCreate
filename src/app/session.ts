@@ -846,8 +846,23 @@ export class Session {
   // ---------- ui setters ----------
   /** current paint colour (= the active fg/bg slot) */
   currentColor(): RGBA { return this.color; }
+  /** while set, the next colour chosen anywhere is handed to this callback
+   *  instead of changing the paint colour (FX dialogs pick a parameter) */
+  private colorPickCb: ((c: RGBA) => void) | null = null;
+  /** route the next picked colour to `cb` (the palette panel closes itself) */
+  awaitColorPick(cb: (c: RGBA) => void): void { this.colorPickCb = cb; }
+  cancelColorPick(): void { this.colorPickCb = null; }
+
   /** edit the ACTIVE slot (this mutates the array `color` aliases) */
   setColor(c: RGBA): void {
+    const want = this.colorPickCb;
+    if (want) {
+      // a parameter pick must not touch the paint colour
+      this.colorPickCb = null;
+      want([c[0], c[1], c[2], c[3]]);
+      try { window.dispatchEvent(new CustomEvent("pc-color-picked")); } catch { /* ignore */ }
+      return;
+    }
     const arr = this.color;
     arr[0] = c[0]; arr[1] = c[1]; arr[2] = c[2]; arr[3] = c[3];
     this.lastColorAt = Date.now();

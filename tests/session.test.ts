@@ -724,6 +724,26 @@ export function testSession(): void {
     eq("fsel.mode-off-clears", f.frameSelList(), []);
   }
 
+  // --- a pending colour pick is routed to the FX dialog, not the brush ---
+  {
+    (globalThis as unknown as { localStorage: { clear(): void } }).localStorage.clear();
+    const cp = new Session();
+    cp.setColor([10, 20, 30, 255]);
+    let got: number[] | null = null;
+    cp.awaitColorPick((c) => { got = [c[0], c[1], c[2], c[3]]; });
+    cp.setColor([200, 100, 50, 255]);
+    eq("colorpick.routed", got, [200, 100, 50, 255]);
+    eq("colorpick.brush-untouched", [cp.color[0], cp.color[1], cp.color[2], cp.color[3]], [10, 20, 30, 255]);
+    // the callback is one-shot
+    cp.setColor([1, 2, 3, 255]);
+    eq("colorpick.one-shot", [cp.color[0], cp.color[1], cp.color[2], cp.color[3]], [1, 2, 3, 255]);
+    // cancel makes the next pick a normal colour change again
+    cp.awaitColorPick(() => { throw new Error("must not fire"); });
+    cp.cancelColorPick();
+    cp.setColor([9, 9, 9, 255]);
+    eq("colorpick.cancel", [cp.color[0], cp.color[1], cp.color[2], cp.color[3]], [9, 9, 9, 255]);
+  }
+
   // --- every canvas keeps its OWN undo stack ---
   {
     (globalThis as unknown as { localStorage: { clear(): void } }).localStorage.clear();

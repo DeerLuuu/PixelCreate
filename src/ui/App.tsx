@@ -352,6 +352,13 @@ export function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }), []);
 
+  // a colour picked for an FX parameter closes the palette panel again
+  useEffect(() => {
+    const onPicked = () => setPanel((p) => (p === "palette" ? null : p));
+    window.addEventListener("pc-color-picked", onPicked);
+    return () => window.removeEventListener("pc-color-picked", onPicked);
+  }, []);
+
   // gestures can be re-mapped to UI-level actions (timeline / preview / palette)
   useEffect(() => {
     const onGesture = (e: Event) => {
@@ -450,7 +457,8 @@ export function App() {
         onCanvasNew={() => setModal("newdoc")}
         onCanvasSize={() => { setSizeMode("canvas"); setModal("size"); }}
         onCanvasAdjust={() => setModal("adjust")}
-        onCanvasExport={() => setModal("export")} />}
+        onCanvasExport={() => setModal("export")}
+        onOpenPalette={() => setPanel("palette")} />}
       {replayOn && <ReplayOverlay t={t} snap={snap} nameFn={(lb) => histName(lb, t, snap.lang)} onClose={() => { setModal(null); setReplayOn(false); }} />}
       <Keep on={panel === "palette"} el={panel === "palette" ? (
         <Overlay onClose={() => setPanel(null)}>
@@ -572,9 +580,9 @@ function EmptyCanvas({ t, onNew, onOpen }: { t: ReturnType<typeof makeT>; onNew:
   );
 }
 
-function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onCanvasExport }: {
+function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onCanvasExport, onOpenPalette }: {
   t: ReturnType<typeof makeT>; snap: Snapshot; onCanvasNew: () => void; onCanvasSize: () => void;
-  onCanvasAdjust: () => void; onCanvasExport: () => void;
+  onCanvasAdjust: () => void; onCanvasExport: () => void; onOpenPalette: () => void;
 }) {
   const orbKey = "pc.orb.pos";
   const loadPos = () => {
@@ -962,6 +970,7 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
     fxPreview(g.run, vals);
   };
   const fxCance = () => {
+    SESSION.cancelColorPick();
     const o = fxOrig.current;
     fxOrig.current = null;
     setFxDlg(null);
@@ -972,6 +981,7 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
     SESSION.changed();
   };
   const fxApplyDlg = () => {
+    SESSION.cancelColorPick();
     const g = fxDlg, o = fxOrig.current;
     fxOrig.current = null;
     setFxDlg(null);
@@ -1426,7 +1436,8 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
           </div>
         </>
       ) : null} />
-      <Keep on={!!fxDlg} el={fxDlg ? <FxParamDialog run={fxDlg.run} vals={fxDlg.vals} onChange={fxChange} onApply={fxApplyDlg} onCancel={fxCance} /> : null} />
+      <Keep on={!!fxDlg} el={fxDlg ? <FxParamDialog run={fxDlg.run} vals={fxDlg.vals} onChange={fxChange} onApply={fxApplyDlg} onCancel={fxCance}
+        onPickColor={(key) => { SESSION.awaitColorPick((c) => fxChange(key, hexOf(c))); onOpenPalette(); }} /> : null} />
     </>
   );
 }
