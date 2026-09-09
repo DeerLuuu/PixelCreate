@@ -49,6 +49,8 @@ export interface Prefs {
   /** tint ghosts (previous red / next green) instead of drawing them as-is */
   onionTint: boolean;
   autosave: boolean;
+  /** autosave interval in minutes (1..60) */
+  autosaveMin: number;
   /** store the operation history inside saved project files */
   recordHistory: boolean;
   /** add frame via FrameAdd: clone current frame's cels into the new one */
@@ -494,6 +496,8 @@ export class Session {
   private docColorCache: { rev: number; colors: RGBA[] } | null = null;
   private playTimer: number | null = null;
   private autosaveTimer: number | null = null;
+  /** changes happened since the last autosave write */
+  private autosaveDirty = false;
   private replayActive = false;
   private opacityLive: { li: number; from: number; to: number } | null = null;
   /** visibility of every layer before the last solo-hide (null = not soloing) */
@@ -1109,17 +1113,27 @@ export class Session {
   private lastSaveNote = 0;
   /** mark replay mode: skip autosave while the history replay viewer steps */
   setReplayMode(on: boolean): void { this.replayActive = on; }
+  /** mark the project dirty; the actual write happens on the autosave
+   *  INTERVAL (Settings -> Data, default 5 minutes), not on every change.
+   *  Hiding the app still flushes immediately (flushAutosave). */
   scheduleAutosave(): void {
     if (!this.prefs.autosave || this.replayActive) return;
-    if (this.autosaveTimer !== null) window.clearTimeout(this.autosaveTimer);
+    this.autosaveDirty = true;
+    if (this.autosaveTimer !== null) return;
+    const ms = Math.max(10_000, Math.round((this.prefs.autosaveMin || 5) * 60_000));
     this.autosaveTimer = window.setTimeout(() => {
       this.autosaveTimer = null;
-      void this.writeAutosave();
-    }, 1200);
+      void this.writeAutosave().then(() => {
+        if (this.autosaveDirty && !this.replayActive) this.scheduleAutosave();
+      });
+    }, ms);
   }
-  async writeAutosave(): Promise<void> {
+  async writeAutosave(force = false): Promise<void> {
+    if (!force && !this.autosaveDirty) return;
+    this.autosaveDirty = false;
     try {
-      const txt = await this.serializeProject();
+      // the autosave stores pure JSON (RLE cel data), not PNG images
+      const txt = await this.serializeProject({ cels: "rle" });
       const meta = {
         savedAt: Date.now(), bytes: txt.length, name: this.doc.name,
         w: this.doc.w, h: this.doc.h,
@@ -1142,7 +1156,7 @@ export class Session {
       window.clearTimeout(this.autosaveTimer);
       this.autosaveTimer = null;
     }
-    await this.writeAutosave();
+    await this.writeAutosave(true);
   }
   /** bring back the autosaved space at launch (no confirmation prompt) */
   async restoreAutosave(): Promise<boolean> {
@@ -1169,7 +1183,7 @@ export class Session {
     const p: Prefs = {
       lang: "zh", gridMode: "off", gridSize: 1, magZoom: 12, loupe: true,
       onionOn: false, onionBefore: 1, onionAfter: 0, onionAlpha: 55, onionTint: true, onionWrap: true,
-      autosave: true, recordHistory: true, newFrameCopy: false, railSwap: true, previewBg: "white", previewGray: false, tileMode: "off", tlH: 200, tlHv: 2,
+      autosave: true, autosaveMin: 5, recordHistory: true, newFrameCopy: false, railSwap: true, previewBg: "white", previewGray: false, tileMode: "off", tlH: 200, tlHv: 2,
       immersive: true, safeArea: true, safeExtra: 0,
       histMode: "steps", histSteps: 120, shadowNewLayer: false, autoPan: true,
       snapOn: true, snapRange: 14, snapGap: 8, snapInColor: "#78ffb4", snapOutColor: "#ff6464",
@@ -1212,6 +1226,7 @@ export class Session {
       // migrate the old modes: plain repeat was a 3x3 grid, mirror is gone
       else if (saved.tileMode === "repeat" || saved.tileMode === "mirror") p.tileMode = "grid";
       if (typeof saved.autosave === "boolean") p.autosave = saved.autosave;
+      if (typeof saved.autosaveMin === "number") p.autosaveMin = Math.max(1, Math.min(60, Math.round(saved.autosaveMin)));
       if (typeof saved.recordHistory === "boolean") p.recordHistory = saved.recordHistory;
       if (typeof saved.newFrameCopy === "boolean") p.newFrameCopy = saved.newFrameCopy;
       if (typeof saved.railSwap === "boolean") p.railSwap = saved.railSwap;
@@ -2051,7 +2066,7 @@ export class Session {
     this.changed();
   }
   /** serialize every open canvas plus the ONE shared history as .pxc */
-  async serializeProject(): Promise<string> {
+  async serializeProject(opts?: { cels?: project.CelFormat }): Promise<string> {
     this.syncEntry();
     let hist: unknown = null;
     if (this.prefs.recordHistory && this.history.list().labels.length) {
@@ -2062,7 +2077,7 @@ export class Session {
       id: e.id, doc: e.doc, x: e.x, y: e.y, li: e.li, fi: e.fi,
       locked: e.locked === true, group: e.group ?? null,
     }));
-    return project.serializeSpace(entries, this.docIdx, hist);
+    return project.serializeSpace(entries, this.docIdx, hist, opts?.cels ?? "png");
   }
   /** older builds stored one history payload per canvas: merge them in canvas
    *  order so a project saved that way still replays as one sequence */

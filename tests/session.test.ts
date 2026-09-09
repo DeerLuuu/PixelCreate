@@ -1269,6 +1269,42 @@ export async function testSession(): Promise<void> {
     eq("canvas.empty.add-again", [m.docs.length, m.docIdx, back], [1, 0, 0]);
     eq("canvas.empty.origin", [m.docs[0].x, m.docs[0].y], [0, 0]);
   }
+  // --- autosave: interval writes + pure JSON (RLE) payload, no PNG ---
+  {
+    (globalThis as unknown as { localStorage: { clear(): void } }).localStorage.clear();
+    const amod = require("../src/io/autosave") as Record<string, unknown>;
+    const origSave = amod.saveAutosave;
+    let saves = 0;
+    let lastText = "";
+    amod.saveAutosave = async (text: string) => { saves++; lastText = text; return "idb"; };
+    try {
+      const s = new Session();
+      const cel = s.doc.ensureCel(0, 0);
+      cel.data[0] = 12; cel.data[1] = 34; cel.data[2] = 56; cel.data[3] = 255;
+      cel.data[4] = 12; cel.data[5] = 34; cel.data[6] = 56; cel.data[7] = 255;
+      s.scheduleAutosave();
+      eq("autosave.no-immediate-write", saves, 0);   // interval, not a debounce
+      await s.writeAutosave();
+      eq("autosave.writes-once", saves, 1);
+      ok("autosave.json-rle", lastText.indexOf('"celsRle"') >= 0 && lastText.indexOf('"cels"') < 0, lastText.slice(0, 140));
+      const back = await project.parseSpace(lastText);
+      ok("autosave.roundtrip", !!back);
+      const px = back!.entries[0].doc.celAt(0, 0)!;
+      eq("autosave.pixels", [px.data[0], px.data[1], px.data[2], px.data[3]], [12, 34, 56, 255]);
+      await s.writeAutosave();
+      eq("autosave.not-dirty-no-write", saves, 1);
+      await s.flushAutosave();
+      eq("autosave.flush-forces", saves, 2);
+      // the RLE codec round-trips a noisy buffer as well
+      const raw = new Uint8ClampedArray(64 * 4);
+      for (let i = 0; i < raw.length; i++) raw[i] = (i * 37) % 256;
+      const dec = project.rleDecodeCel(project.rleEncodeCel(raw), 8, 8)!;
+      eq("autosave.rle-roundtrip", dec.join(), raw.join());
+    } finally {
+      amod.saveAutosave = origSave;
+    }
+  }
+
   // --- project files keep layer ids: a per-layer reference survives a reload ---
   {
     (globalThis as unknown as { localStorage: { clear(): void } }).localStorage.clear();

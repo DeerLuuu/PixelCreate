@@ -549,6 +549,12 @@ const defs: SettingDef[] = [
     label: "autosave", default: true, refresh: "none",
     after: (s, v) => { if (v) s.scheduleAutosave(); },
   },
+  {
+    path: "data.autosaveMin", field: "autosaveMin", kind: "int", group: "data",
+    label: "autosaveMinLabel", desc: "autosaveMinDesc", default: 5, min: 1, max: 60,
+    unit: "min", reset: 5, refresh: "none",
+    visible: (s) => s.prefs.autosave,
+  },
 ];
 
 export const SETTINGS: SettingDef[] = defs;

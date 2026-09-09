@@ -5,6 +5,7 @@
 // (a single document) are still readable: they load as a one-canvas project.
 import { Doc } from "../engine/doc";
 import { Cel } from "../engine/cel";
+import { b64ToBytes, bytesToB64 } from "../engine/b64";
 import type { RGBA } from "../engine/types";
 
 function dataURLFromBytes(bytes: Uint8Array, mime: string): string {
@@ -59,15 +60,74 @@ interface DocPayload {
   layers: Array<{ id?: string; name: string; visible: boolean; opacity: number; blend: string; locked: boolean; ref?: string | null; refLayer?: string | null }>;
   frames: Array<{ durationMs: number }>;
   palette: number[][];
-  cels: [string, string][];
+  /** cel payload as PNG data URLs (the .pxc file format) */
+  cels?: [string, string][];
+  /** cel payload as RLE base64 (autosave: pure JSON data, no image encoder) */
+  celsRle?: [string, string][];
 }
 
-async function docPayload(doc: Doc): Promise<DocPayload> {
+/** Run-length encode a cel's RGBA pixels as [runLength, packedRGBA, ...]
+ *  (Uint32 pairs → base64). Pixel art is mostly long flat runs, so this stays
+ *  small — and the autosave stays pure JSON instead of embedding PNG images. */
+export function rleEncodeCel(data: Uint8ClampedArray): string {
+  const n = data.length / 4;
+  const out: number[] = [];
+  let i = 0;
+  const pack = (p: number): number =>
+    ((data[p] << 24) | (data[p + 1] << 16) | (data[p + 2] << 8) | data[p + 3]) >>> 0;
+  while (i < n) {
+    const px = pack(i * 4);
+    let run = 1;
+    while (i + run < n && pack((i + run) * 4) === px) run++;
+    out.push(run, px);
+    i += run;
+  }
+  return bytesToB64(new Uint8Array(new Uint32Array(out).buffer));
+}
+
+/** inverse of rleEncodeCel; null when the payload is malformed */
+export function rleDecodeCel(s: string, w: number, h: number): Uint8ClampedArray | null {
+  const bytes = b64ToBytes(s);
+  if (!bytes.length || bytes.length % 8) return null;
+  const u32 = new Uint32Array(bytes.buffer, bytes.byteOffset, bytes.length / 4);
+  const out = new Uint8ClampedArray(w * h * 4);
+  const total = w * h;
+  let i = 0;
+  for (let k = 0; k + 1 < u32.length; k += 2) {
+    const run = u32[k], px = u32[k + 1];
+    for (let n = 0; n < run && i < total; n++, i++) {
+      const p = i * 4;
+      out[p] = (px >>> 24) & 255;
+      out[p + 1] = (px >>> 16) & 255;
+      out[p + 2] = (px >>> 8) & 255;
+      out[p + 3] = px & 255;
+    }
+    if (i >= total) break;
+  }
+  return out;
+}
+
+/** how the cel pixels travel inside the JSON payload */
+export type CelFormat = "png" | "rle";
+
+async function docPayload(doc: Doc, fmt: CelFormat = "png"): Promise<DocPayload> {
   const cels: [string, string][] = [];
+  if (fmt === "rle") {
+    for (const [k, cel] of doc.cels) {
+      if (!cel.hasAnyOpaque()) continue; // same rule as PNG: empty cels are skipped
+      cels.push([k, rleEncodeCel(cel.data)]);
+    }
+    return { ...(await docPayloadHead(doc)), celsRle: cels };
+  }
   for (const [k, cel] of doc.cels) {
     const png = await celToDataURL(cel);
     if (png) cels.push([k, png]);
   }
+  return { ...(await docPayloadHead(doc)), cels };
+}
+
+/** the non-pixel part of a document payload */
+async function docPayloadHead(doc: Doc): Promise<Omit<DocPayload, "cels" | "celsRle">> {
   return {
     name: doc.name,
     w: doc.w,
@@ -79,7 +139,6 @@ async function docPayload(doc: Doc): Promise<DocPayload> {
     })),
     frames: doc.frames.map((f) => ({ durationMs: f.durationMs })),
     palette: doc.palette.map((c) => [...c]),
-    cels,
   };
 }
 
@@ -87,7 +146,7 @@ async function docPayload(doc: Doc): Promise<DocPayload> {
 async function docFromPayload(obj: {
   w?: number; h?: number; name?: string;
   bg?: number[] | null; layers?: Record<string, unknown>[]; frames?: { durationMs?: number }[];
-  palette?: number[][]; cels?: [string, string][];
+  palette?: number[][]; cels?: [string, string][]; celsRle?: [string, string][];
 }): Promise<Doc | null> {
   if (!obj || !obj.w || !obj.h) return null;
   const doc = new Doc(obj.w, obj.h, obj.name || "untitled");
@@ -110,15 +169,16 @@ async function docFromPayload(obj: {
   doc.bg = obj.bg && obj.bg.length === 4 ? (obj.bg as RGBA) : null;
   doc.palette = (obj.palette || []).map((c) => [c[0], c[1], c[2], c[3]] as RGBA);
   doc.cels = new Map();
-  for (const [k, png] of obj.cels || []) {
-    const px = await dataURLToPixels(png, doc.w, doc.h);
-    if (px) {
-      const cel = new Cel(doc.w, doc.h);
-      const n = Math.min(cel.data.length, px.length);
-      for (let i = 0; i < n; i++) cel.data[i] = px[i];
-      doc.cels.set(k, cel);
-    }
-  }
+  const put = (k: string, px: Uint8ClampedArray | null): void => {
+    if (!px) return;
+    const cel = new Cel(doc.w, doc.h);
+    const n = Math.min(cel.data.length, px.length);
+    for (let i = 0; i < n; i++) cel.data[i] = px[i];
+    doc.cels.set(k, cel);
+  };
+  // autosaves carry RLE data, .pxc files carry PNG data URLs
+  for (const [k, rle] of obj.celsRle || []) put(k, rleDecodeCel(rle, doc.w, doc.h));
+  for (const [k, png] of obj.cels || []) put(k, await dataURLToPixels(png, doc.w, doc.h));
   return doc;
 }
 
@@ -141,18 +201,18 @@ export interface SpaceEntry {
 
 /** serialize the whole multi-canvas space (v3); the focused canvas also fills
  *  the v2 fields so older builds can still open the file */
-export async function serializeSpace(entries: SpaceEntry[], focus: number, history?: unknown): Promise<string> {
+export async function serializeSpace(entries: SpaceEntry[], focus: number, history?: unknown, fmt: CelFormat = "png"): Promise<string> {
   const canvases: unknown[] = [];
   for (const e of entries) {
     canvases.push({
       id: e.id, x: e.x, y: e.y, li: e.li, fi: e.fi,
       hist: e.hist ?? undefined, locked: e.locked === true, group: e.group ?? null,
-      ...(await docPayload(e.doc)),
+      ...(await docPayload(e.doc, fmt)),
     });
   }
   // an empty space is a valid project: "everything closed" survives a restart
   if (!entries.length) return JSON.stringify({ app: "PixelCraft", v: 3, focus: 0, canvases });
-  const head = await docPayload(entries[focus] ? entries[focus].doc : entries[0].doc);
+  const head = await docPayload(entries[focus] ? entries[focus].doc : entries[0].doc, fmt);
   return JSON.stringify({ app: "PixelCraft", v: 3, ...head, focus, canvases, history: history ?? undefined });
 }
 
