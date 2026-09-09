@@ -408,6 +408,38 @@ export function testSession(): void {
       c.setLayer(0);
     }
 
+    // solo layers: long-press the eye hides every other layer, long-press again
+    // restores exactly the visibility each layer had before
+    {
+      (globalThis as unknown as { localStorage: { clear(): void } }).localStorage.clear();
+      const z = new Session();
+      z.layerAdd();
+      z.layerAdd();                    // 3 layers
+      z.toggleLayerVisible(2);         // layer 2 hidden
+      const vis0 = z.doc.layers.map((l) => l.visible);
+      eq("layer.solo.base", vis0, [true, true, false]);
+      z.toggleSoloLayers(1);
+      eq("layer.solo.only-target", z.doc.layers.map((l) => l.visible), [false, true, false]);
+      z.toggleSoloLayers(1);
+      eq("layer.solo.restored", z.doc.layers.map((l) => l.visible), vis0);
+      z.toggleSoloLayers(0);
+      eq("layer.solo.toggle", z.doc.layers.map((l) => l.visible), [true, false, false]);
+      z.undo();
+      eq("layer.solo.undo", z.doc.layers.map((l) => l.visible), vis0);
+      // a manual eye tap ends solo mode, so the next long-press starts fresh
+      z.toggleSoloLayers(0);
+      z.toggleLayerVisible(2);
+      z.toggleSoloLayers(1);
+      eq("layer.solo.after-manual", z.doc.layers.map((l) => l.visible), [false, true, false]);
+      // the step survives a project save: rebuild it from its payload
+      const acts = scalarActions({ k: "layer-solo", li: 0, on: true, before: [false, false, true] },
+        { doc: z.doc, showFrame: () => {} });
+      acts.apply();
+      eq("layer.solo.payload.apply", z.doc.layers.map((l) => l.visible), [true, false, false]);
+      acts.unapply();
+      eq("layer.solo.payload.unapply", z.doc.layers.map((l) => l.visible), [false, false, true]);
+    }
+
     // every gesture has a settings entry with matching options
     for (const g of GESTURES) {
       const def = SETTINGS.find((d) => d.path === gesturePath(g.id));

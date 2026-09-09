@@ -6,6 +6,7 @@ import type { BlendMode, RGBA } from "../engine/types";
 
 export type ScalarData =
   | { k: "layer-visible"; li: number; on: boolean; prev: boolean }
+  | { k: "layer-solo"; li: number; on: boolean; before: boolean[] }
   | { k: "layer-lock"; li: number; on: boolean; prev: boolean }
   | { k: "layer-rename"; li: number; name: string; prev: string }
   | { k: "layer-opacity"; li: number; v: number; prev: number }
@@ -32,6 +33,13 @@ export function scalarActions(d: ScalarData, ctx: ScalarCtx): { apply: () => voi
       return {
         apply: () => { const l = L(d.li); if (l) l.visible = d.on; },
         unapply: () => { const l = L(d.li); if (l) l.visible = d.prev; },
+      };
+    case "layer-solo":
+      // long-press the eye: on = only `li` stays visible, off = the saved
+      // visibility of every layer comes back
+      return {
+        apply: () => { doc.layers.forEach((l, i) => { l.visible = d.on ? i === d.li : (d.before[i] ?? true); }); },
+        unapply: () => { doc.layers.forEach((l, i) => { l.visible = d.on ? (d.before[i] ?? true) : i === d.li; }); },
       };
     case "layer-lock":
       return {

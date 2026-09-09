@@ -255,6 +255,8 @@ export class Session {
   private autosaveTimer: number | null = null;
   private replayActive = false;
   private opacityLive: { li: number; from: number; to: number } | null = null;
+  /** visibility of every layer before the last solo-hide (null = not soloing) */
+  private soloBackup: boolean[] | null = null;
   private view_: View | null = null;
   private listeners = new Set<() => void>();
   private previewCbs = new Set<() => void>();
@@ -1460,6 +1462,7 @@ export class Session {
     this.frameIdx = 0;
     this.history.clear();
     this.clip = null;
+    this.soloBackup = null;
     this.applySymPreset(this.sym);
     this.stopPlayback();
     this.view_?.setDoc(this.doc);
@@ -1475,6 +1478,7 @@ export class Session {
     this.frameIdx = 0;
     this.history.clear();
     this.clip = null;
+    this.soloBackup = null;
     this.applySymPreset(this.sym);
     this.stopPlayback();
     this.view_?.setDoc(doc);
@@ -1527,11 +1531,32 @@ export class Session {
   toggleLayerVisible(li: number): void {
     const L = this.doc.layers[li];
     if (!L) return;
+    this.soloBackup = null; // a manual eye tap leaves solo mode
     const old = L.visible;
     this.cheap("layer-visible",
       () => { const N = this.doc.layers[li]; if (N) N.visible = !old; },
       () => { const N = this.doc.layers[li]; if (N) N.visible = old; },
       { k: "layer-visible", li, on: !old, prev: old });
+  }
+  /** Long-press a layer's eye: hide every OTHER layer; long-press again to
+   *  bring back exactly the visibility each layer had before. */
+  toggleSoloLayers(li: number): void {
+    const doc = this.doc;
+    if (!doc.layers[li]) return;
+    const bak = this.soloBackup;
+    const on = !(bak && bak.length === doc.layers.length);
+    const before = bak && bak.length === doc.layers.length ? bak : doc.layers.map((l) => l.visible);
+    this.soloBackup = on ? before.slice() : null;
+    this.cheap("layer-solo",
+      () => { doc.layers.forEach((l, i) => { l.visible = on ? i === li : (before[i] ?? true); }); },
+      () => {
+        doc.layers.forEach((l, i) => { l.visible = on ? (before[i] ?? true) : i === li; });
+        this.soloBackup = on ? null : before.slice();
+      },
+      { k: "layer-solo", li, on, before: before.slice() });
+    toastFn(on
+      ? (this.prefs.lang === "en" ? "Hid the other layers (long-press the eye to restore)" : "已隐藏其他图层（再长按眼睛恢复）")
+      : (this.prefs.lang === "en" ? "Layer visibility restored" : "已恢复其他图层的显示"));
   }
   toggleLayerLock(li: number): void {
     const L = this.doc.layers[li];

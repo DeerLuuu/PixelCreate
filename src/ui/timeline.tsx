@@ -216,6 +216,34 @@ export function TimelineBar({ t, snap, onFrameDlg }: { t: ReturnType<typeof make
     return res;
   };
 
+  // long-press a layer's eye = solo: hide every other layer (a tap still just
+  // toggles that one layer). The pending press is cancelled as soon as the
+  // finger lifts, so a normal tap never waits.
+  const eyeHold = useRef<{ li: number; t: number; fired: boolean } | null>(null);
+  const eyeDown = (li: number) => (e: React.PointerEvent<HTMLButtonElement>) => {
+    e.stopPropagation();
+    const rec = { li, t: 0, fired: false };
+    rec.t = window.setTimeout(() => { rec.fired = true; SESSION.toggleSoloLayers(li); }, SESSION.prefs.longPressMs);
+    eyeHold.current = rec;
+  };
+  const eyeUp = (li: number) => (e: React.PointerEvent<HTMLButtonElement>) => {
+    e.stopPropagation();
+    const rec = eyeHold.current;
+    if (!rec || rec.li !== li) return;
+    window.clearTimeout(rec.t);
+    if (!rec.fired) eyeHold.current = null;
+    // after a solo long-press the trailing click must be swallowed
+    else window.setTimeout(() => { if (eyeHold.current === rec) eyeHold.current = null; }, 420);
+  };
+  const eyeCancel = () => { const rec = eyeHold.current; if (rec) { window.clearTimeout(rec.t); eyeHold.current = null; } };
+  const eyeClick = (li: number) => (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const rec = eyeHold.current;
+    eyeHold.current = null;
+    if (rec && rec.fired) return;
+    SESSION.toggleLayerVisible(li);
+  };
+
   const curLi = snap.layerIdx;
   const curL = layers[curLi];
   const [blendOpen, setBlendOpen] = useState(false);
@@ -304,7 +332,10 @@ export function TimelineBar({ t, snap, onFrameDlg }: { t: ReturnType<typeof make
               className={"ase-cell ase-lcell" + (li === snap.layerIdx ? " on" : "") + (isDrag ? " dragging" : "") + (isDrop ? " drop" : "")}
               style={{ gridColumn: 1, gridRow: li + 2, transform: isDrag && ldl ? "translateY(" + ldl.dy + "px)" : undefined }}
               onPointerDown={layDown(li)} onPointerMove={layMove(li)} onPointerUp={layUp(li)} onPointerCancel={resetL}>
-              <button className="mini" title={L.visible ? t("layerHide") : t("layerShow")} onClick={(e) => { e.stopPropagation(); SESSION.toggleLayerVisible(li); }}>
+              <button className="mini" data-guide="layer-eye"
+                title={(L.visible ? t("layerHide") : t("layerShow")) + " · " + t("layerSoloHint")}
+                onPointerDown={eyeDown(li)} onPointerUp={eyeUp(li)} onPointerCancel={eyeCancel} onPointerLeave={eyeCancel}
+                onClick={eyeClick(li)}>
                 <Icon id={L.visible ? "i-eye" : "i-eyeoff"} size={12} />
               </button>
               <button className="mini lock" title={L.locked ? t("lock") : t("unlock")} onClick={(e) => { e.stopPropagation(); SESSION.toggleLayerLock(li); }}>
