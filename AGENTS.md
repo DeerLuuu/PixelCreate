@@ -39,7 +39,8 @@ docs/          API.md / COMPARISON.md
 - **仓库内**：`package.json` + `tsconfig.json` + `scripts/`；`npm install` 后可用 `scripts/build-web.sh`、`scripts/run-tests.sh`。
 - **容器内（实际出包环境）**：`node_modules` 在 `/root/pcbuild`（FUSE 上装不上时在容器私有区安装后回拷）；同步目录 `/root/pcbuild/app/src`、`/root/pcbuild/app/tests`。
 - `aapt2` 在本容器是 Android/x86 二进制、**跑不起来**，所以打包走「`javac` + `d8` → 往模板 APK 里塞」的路线（见 §6）。
-- 浏览器调试：`node toolchain/devserver.js`（`app2/www`，端口 8090）。
+- 浏览器调试：`node toolchain/devserver.js`（`app2/www`，端口 8090；`app2/www/js/telemetry.js` 会把错误与布局信息 POST 到 `/log`）。
+- `toolchain/` 只保留自写脚本（`devserver.js`、`make-icon.js`，后者用 `node toolchain/make-icon.js <outdir>` 重新生成启动图标）；SDK 下载物已清理。
 - 大改动可用 git 回滚（仓库已有 90+ 提交）。
 
 ---
@@ -116,6 +117,7 @@ java -jar /root/pk/apksigner.jar verify --print-certs /sdcard/Download/PixelCraf
 - 提交信息：中文 + `type(scope): 摘要`（type 取 feat/fix/imp/chore/docs/refactor），正文用 `-` 列要点。
 - 提交前至少跑一遍 `tsc --noEmit` 与测试全绿。
 - 产物不入库：`build/`、`app2/www/js/app.js`、`app2/www/css/style.css`、`tests/.ts-out/`、`toolchain/*`（见 `.gitignore`）。
+- 不留临时文件：调试脚本、日志、一次性产物放 `/tmp` 或清理掉，仓库里只保留源码 / 文档 / 已提交的资源。
 
 ### 5.6 引导的「真操作演示」约定
 `src/app/guide.ts` + `src/ui/App.tsx` 的 `guideActions`：
@@ -238,6 +240,7 @@ java -jar /root/pk/apksigner.jar verify --print-certs /sdcard/Download/PixelCraf
 
 撤销重做全量 Command 化、历史双模式 + 全量回放（HistoryModal / ReplayOverlay）、魔法球 FX（描边/投影/外发光/反色/灰度/居中/智能裁剪）、图形即拖即选区、网格（off/pixel/iso）、三击缩放 + loupe 取色放大镜、帧预览、dock 持久化、全局长按菜单拦截、画布钳制 + 边缘自动平移、帧多选、洋葱皮首尾着色、导出帧范围、调色板排序/合并/去重、引导同步、设置搜索/重置/导入导出、返回手势双击确认、手势可重映射、操作历史随工程保存、震动反馈修复、设置卡片化、全面屏与安全区适配、时间线可拖动分割线。
 代码整理（2026-09-08）：删除旧 vanilla 版 `app/www` 与 boot-test/eng-test 旧脚本；i18n 死键与未用导出清理；调色板数据合并到 `src/data/palettes.ts`；构建配置收进仓库；未用导入/字段清理（`tsc noUnusedLocals` 0 错误）。
+死代码清理（2026-09-09）：`ts-prune` + 静态扫描删除未用导出（`squareCells`、`colorToHex6`）与 25 条旧布局 CSS（bottombar/zone/framebox/flyout/packrow/clg-v 等）、修好一个失衡的 `}`；删 `build.sh`/`tests/run.sh`/`toolchain/env.sh`/`toolchain/resolve.js` 与 696MB SDK 下载物；新增 `tests/i18n.test.ts` 静态校验 i18n 键（顺手修好 `t("loop.*")` 取错字典与 6 个缺失键）。
 
 ---
 

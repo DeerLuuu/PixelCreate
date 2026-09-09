@@ -30,18 +30,19 @@
 
 /* layout diagnostics dumped shortly after load */
 (function () {
-  function rect(id) {
-    var e = document.getElementById(id);
+  function rect(sel) {
+    var e = document.querySelector(sel);
     if (!e) return null;
     var r = e.getBoundingClientRect();
-    return { id: id, l: Math.round(r.left), t: Math.round(r.top), r: Math.round(r.right), b: Math.round(r.bottom), w: Math.round(r.width), h: Math.round(r.height) };
+    return { id: sel, l: Math.round(r.left), t: Math.round(r.top), r: Math.round(r.right), b: Math.round(r.bottom), w: Math.round(r.width), h: Math.round(r.height) };
   }
   function dump() {
     try {
       var de = document.documentElement, body = document.body;
       var parts = [];
-      var ids = ["app", "topbar", "workspace", "toolrail", "rightrail", "viewport", "bottombar", "timeline", "framestrip", "pixcanvas", "ovcanvas", "dlg", "panel"];
-      for (var i = 0; i < ids.length; i++) { var r = rect(ids[i]); if (r) parts.push(r); }
+      // current React shell selectors (the old vanilla ids are long gone)
+      var sels = [".app-root", ".topbar", ".workspace", ".view-canvas", ".ctrlbar", ".tline-wrap", ".ase-scroll", ".dlg", ".panel"];
+      for (var i = 0; i < sels.length; i++) { var r = rect(sels[i]); if (r) parts.push(r); }
       var info = {
         kind: "layout",
         innerW: window.innerWidth, innerH: window.innerHeight,

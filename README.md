@@ -38,7 +38,7 @@
 npm install            # 安装开发依赖（React / TypeScript / esbuild）
 
 npm run typecheck      # tsc 严格检查
-npm test               # 392 项引擎 / 逻辑回归测试
+npm test               # 引擎 / 逻辑回归测试（540+ 断言，无 DOM 依赖）
 npm run build          # 产出 app2/www/js/app.js + css/style.css
 ```
 
@@ -48,11 +48,13 @@ npm run build          # 产出 app2/www/js/app.js + css/style.css
 node toolchain/devserver.js      # http://127.0.0.1:8090/  （静态服务 + /diag + /log）
 ```
 
-打包 APK（需要 `toolchain/` 里的 aapt2 / d8 / apksigner，脚本自动调用）：
+打包 APK（容器内一键：javac + d8 编 dex → 模板 APK 重打包 → apksigner 签名，产出 `build/PixelCraft.apk` 与 `/sdcard/Download/PixelCraft-<版本号>.apk`）：
 
 ```bash
-bash build.sh          # aapt2 + javac + d8 + apksigner，产出 build/PixelCraft.apk
+sh /root/pk/make-apk.sh <版本号> <versionCode>   # 例：sh /root/pk/make-apk.sh 1.0.7.10 32
 ```
+
+完整流程、复核步骤与常见坑见 [`AGENTS.md`](AGENTS.md) 第 6 节。
 
 ---
 
@@ -69,7 +71,7 @@ src/
 tests/          引擎与逻辑测试（无 DOM 依赖，node 直接跑）
 android/        自研 APK 工程（AndroidManifest + MainActivity + 图标）
 app2/www/       PWA 产物（index.html + 构建后的 app.js/style.css）
-toolchain/      打包工具链（aapt2/d8/apksigner/devserver）
+toolchain/       开发辅助脚本（devserver 静态服务、make-icon 图标生成）
 ```
 
 ### 架构要点

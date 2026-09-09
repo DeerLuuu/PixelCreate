@@ -12,10 +12,8 @@ tests/.ts-out/
 
 # ---- toolchain: keep only authored scripts, ignore SDK downloads/extracts ----
 /toolchain/*
-!/toolchain/env.sh
 !/toolchain/devserver.js
 !/toolchain/make-icon.js
-!/toolchain/resolve.js
 
 # ---- self-contained web build deps (npm install in repo root) ----
 node_modules/
