@@ -819,12 +819,12 @@ export function HistoryModal({ t, snap, onClose, onReplay }: { t: ReturnType<typ
   );
 }
 
-function FrameThumb({ doc, fi }: { doc: Doc; fi: number }) {
+function FrameThumb({ doc, fi, sz = 132 }: { doc: Doc; fi: number; sz?: number }) {
   const ref = useRef<HTMLCanvasElement | null>(null);
   useEffect(() => {
     const cv = ref.current;
     if (!cv) return;
-    const SZ = 132;
+    const SZ = sz;
     cv.width = SZ; cv.height = SZ;
     const full = compose.composeFrame(doc, fi);
     const z = Math.min(SZ / doc.w, SZ / doc.h);
@@ -834,27 +834,61 @@ function FrameThumb({ doc, fi }: { doc: Doc; fi: number }) {
     ctx.fillStyle = "#1d2129";
     ctx.fillRect(0, 0, SZ, SZ);
     ctx.drawImage(full, (SZ - w) >> 1, (SZ - h) >> 1, w, h);
-  }, [doc, fi]);
-  return <canvas ref={ref} className="fp-thumb" />;
+  }, [doc, fi, sz]);
+  return <canvas ref={ref} className="fp-thumb" style={{ width: sz, height: sz }} />;
 }
 
 export function FramePreviewModal({ t, onClose }: { t: ReturnType<typeof makeT>; onClose: () => void }) {
   const snap = useSession();
   const doc = SESSION.doc;
   const frames = doc.frames;
+  // two-finger pinch scales the thumbnails (persisted); double-tap a thumbnail
+  // is not used here, the reset button in the footer restores the default
+  const DEF = 142;
+  const [cell, setCell] = useState(() => {
+    try { const n = parseInt(localStorage.getItem("pc.fprev.cell") || String(DEF), 10); return n >= 80 && n <= 320 ? n : DEF; } catch { return DEF; }
+  });
+  const pts = useRef(new Map<number, { x: number; y: number }>());
+  const pinch = useRef<{ d0: number; c0: number } | null>(null);
+  const dist = () => { const [a, b] = [...pts.current.values()]; return Math.max(1, Math.hypot(b.x - a.x, b.y - a.y)); };
+  const setCellSize = (n: number) => {
+    const v = Math.max(80, Math.min(320, Math.round(n)));
+    if (v === cell) return;
+    setCell(v);
+    try { localStorage.setItem("pc.fprev.cell", String(v)); } catch { /* ignore */ }
+  };
+  const thumb = Math.max(40, cell - 10);
   return (
     <>
       <div className="dlg-mask" onClick={onClose} />
       <div className="dlg dlg-frame-preview">
         <div className="dlg-head"><span>{t("framePreview")}</span><div className="grow" /><button className="btn small" onClick={onClose}><Icon id="i-x" size={16} /></button></div>
-        <div className="dlg-body fp-grid">
+        <div className="dlg-body fp-grid" style={{ touchAction: "pan-y" }}
+          onPointerDown={(e) => {
+            pts.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+            if (pts.current.size === 2) pinch.current = { d0: dist(), c0: cell };
+          }}
+          onPointerMove={(e) => {
+            if (!pts.current.has(e.pointerId)) return;
+            pts.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+            const p = pinch.current;
+            if (!p || pts.current.size < 2) return;
+            e.preventDefault();
+            setCellSize(p.c0 * (dist() / p.d0));
+          }}
+          onPointerUp={(e) => { pts.current.delete(e.pointerId); if (pts.current.size < 2) pinch.current = null; }}
+          onPointerCancel={(e) => { pts.current.delete(e.pointerId); if (pts.current.size < 2) pinch.current = null; }}>
           {frames.length === 0 ? <div className="row-note">{t("historyEmpty")}</div> : frames.map((f, i) => (
-            <button key={f.id} className={"fp-cell" + (i === snap.frameIdx ? " on" : "")} onClick={() => { SESSION.setFrame(i); onClose(); }}>
-              <FrameThumb doc={doc} fi={i} />
+            <button key={f.id} className={"fp-cell" + (i === snap.frameIdx ? " on" : "")}
+              style={{ width: cell, height: cell }} onClick={() => { SESSION.setFrame(i); onClose(); }}>
+              <FrameThumb doc={doc} fi={i} sz={thumb} />
             </button>
           ))}
         </div>
-        <div className="dlg-foot"><Btn label={t("close")} onClick={onClose} /></div>
+        <div className="dlg-foot">
+          {cell !== DEF && <Btn label={t("resetLabel")} onClick={() => setCellSize(DEF)} />}
+          <Btn label={t("close")} onClick={onClose} />
+        </div>
       </div>
     </>
   );

@@ -15,6 +15,13 @@ export function PreviewBox() {
   const grabStart = useRef<{ px: number; py: number; lx: number; ly: number } | null>(null);
   const rzStart = useRef<{ px: number; py: number; size: number } | null>(null);
   const [closing, setClosing] = useState(false);
+  /** two-finger pinch on the box resizes it (same range as the corner handle) */
+  const pts = useRef(new Map<number, { x: number; y: number }>());
+  const pinch = useRef<{ d0: number; s0: number } | null>(null);
+  const pinchDist = () => {
+    const [a, b] = [...pts.current.values()];
+    return Math.max(1, Math.hypot(b.x - a.x, b.y - a.y));
+  };
   /** the single "display" button opens this second-level menu (bg + greyscale) */
   const [menu, setMenu] = useState(false);
   const closeTimer = useRef<number | null>(null);
@@ -121,11 +128,31 @@ export function PreviewBox() {
       }}><Icon id="i-eye" size={16} /></button>
       {show && pos && (
         <>
-        <div className={"prevbox" + (closing ? " closing" : "")} ref={boxRef} style={{ left: pos.x, top: pos.y, width: s, height: s, padding: 0 }}>
+        <div className={"prevbox" + (closing ? " closing" : "")} ref={boxRef} style={{ left: pos.x, top: pos.y, width: s, height: s, padding: 0 }}
+          onPointerDown={(e) => {
+            pts.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+            if (pts.current.size === 2) { pinch.current = { d0: pinchDist(), s0: sizeRef.current }; grabStart.current = null; }
+          }}
+          onPointerMove={(e) => {
+            if (!pts.current.has(e.pointerId)) return;
+            pts.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+            const p = pinch.current;
+            if (!p || pts.current.size < 2) return;
+            e.preventDefault();
+            const r = parentRect();
+            const ns = Math.max(90, Math.min(Math.min(r.width - 20, r.height - 30, 380), Math.round(p.s0 * (pinchDist() / p.d0))));
+            if (ns === sizeRef.current) return;
+            sizeRef.current = ns;
+            setSize(ns);
+            try { localStorage.setItem("pc.prev.size", String(ns)); } catch { /* ignore */ }
+            clampPos(ns);
+          }}
+          onPointerUp={(e) => { pts.current.delete(e.pointerId); if (pts.current.size < 2) pinch.current = null; }}
+          onPointerCancel={(e) => { pts.current.delete(e.pointerId); if (pts.current.size < 2) pinch.current = null; }}>
           <canvas ref={cvRef} style={{ width: s, height: s, display: "block" }} />
           <div className="prev-grab"
             onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); } catch { /* ignore */ } const p = posRef.current ?? { x: 0, y: 10 }; grabStart.current = { px: e.clientX, py: e.clientY, lx: p.x, ly: p.y }; }}
-            onPointerMove={(e) => { const g = grabStart.current; if (!g) return; const p = { x: g.lx + (e.clientX - g.px), y: g.ly + (e.clientY - g.py) }; posRef.current = p; setPos(p); clampPos(sizeRef.current); }}
+            onPointerMove={(e) => { const g = grabStart.current; if (!g || pts.current.size > 1) return; const p = { x: g.lx + (e.clientX - g.px), y: g.ly + (e.clientY - g.py) }; posRef.current = p; setPos(p); clampPos(sizeRef.current); }}
             onPointerUp={(e) => { try { (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId); } catch { /* ignore */ } grabStart.current = null; }}
             onPointerCancel={() => { grabStart.current = null; }}
           />
