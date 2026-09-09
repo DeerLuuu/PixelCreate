@@ -190,6 +190,8 @@ export interface Snapshot {
 /** one open canvas: its document plus where it sits in the infinite space
  *  (doc-space pixels, top-left) and its own layer/frame selection */
 export interface CanvasEntry {
+  /** stable id: reference layers point at it (survives save/load) */
+  id: string;
   doc: Doc;
   x: number;
   y: number;
@@ -239,15 +241,44 @@ export class Session {
   set doc(d: Doc) {
     const e = this.ensureEntry();
     if (e) e.doc = d;
-    else this.docs.push({ doc: d, x: 0, y: 0, li: 0, fi: 0, history: new History() });
+    else this.docs.push(this.newEntry(d, 0, 0));
   }
   /** undo stack of the focused canvas (each canvas keeps its own) */
   get history(): History {
     return this.ensureEntry()?.history ?? this.spareHistory;
   }
   private newEntry(doc: Doc, x: number, y: number): CanvasEntry {
-    return { doc, x, y, li: 0, fi: 0, history: new History() };
+    return { id: uid(), doc, x, y, li: 0, fi: 0, history: new History() };
   }
+  /** true when any canvas has a reference layer (cache invalidation guard) */
+  private hasRefLayers(): boolean {
+    for (const e of this.docs) for (const L of e.doc.layers) if (L.ref) return true;
+    return false;
+  }
+  /** the canvas a reference layer points at (null when it is gone) */
+  private entryOf(id: string | null | undefined): CanvasEntry | null {
+    if (!id) return null;
+    return this.docs.find((d) => d.id === id) ?? null;
+  }
+  /** cache of the live images reference layers resolve to (cleared on change) */
+  private refCache = new Map<string, HTMLCanvasElement>();
+  private resolvingRefs = new Set<string>();
+  /** compositor hook: image of the referenced canvas at its own current frame */
+  private resolveRef = (refId: string, _fi: number): HTMLCanvasElement | null => {
+    const e = this.entryOf(refId);
+    if (!e || this.resolvingRefs.has(refId)) return null; // gone / cycle
+    const got = this.refCache.get(refId);
+    if (got) return got;
+    this.resolvingRefs.add(refId);
+    try {
+      const fi = Math.max(0, Math.min(e.doc.frames.length - 1, e.fi));
+      const cv = compositor.composeFrame(e.doc, fi);
+      this.refCache.set(refId, cv);
+      return cv;
+    } finally {
+      this.resolvingRefs.delete(refId);
+    }
+  };
   /** foreground / background slots */
   fg: RGBA = [20, 20, 20, 255];
   bg: RGBA = [255, 255, 255, 255];
@@ -339,6 +370,7 @@ export class Session {
   private snapRev = -1;
 
   constructor() {
+    compositor.setRefResolver(this.resolveRef);
     this.prefs = this.loadPrefs();
     this.doc = new Doc(64, 64, "untitled");
     // the remembered palette wins over the built-in default
@@ -511,6 +543,9 @@ export class Session {
   }
   changed(): void {
     this.syncEntry(); // the focused canvas remembers its layer/frame
+    // reference layers must always show the newest pixels of their canvas
+    this.refCache.clear();
+    if (this.hasRefLayers()) this.view_?.dropOtherComps();
     this.rev++;
     this.snapCache = null;
     for (const l of this.listeners) l();
@@ -607,7 +642,149 @@ export class Session {
     return { color: this.color, size: this.brushSize, alpha: this.color[3], pressure: 1 };
   }
   layerLocked(): boolean {
-    return this.doc.layers[this.curLayer()]?.locked ?? false;
+    const L = this.doc.layers[this.curLayer()];
+    if (!L) return false;
+    // a reference layer is never paintable in place: strokes are redirected to
+    // the source canvas, which enforces ITS own lock
+    if (L.ref) return this.entryOf(L.ref)?.doc.layers[this.entryOf(L.ref)!.li]?.locked ?? false;
+    return L.locked;
+  }
+  /** true when the given layer mirrors another canvas */
+  isRefLayer(li: number): boolean {
+    return !!this.doc.layers[li]?.ref;
+  }
+  /** where a stroke on layer `li` really lands: the referenced canvas' current
+   *  layer/frame, or null for a normal layer */
+  strokeTarget(li: number): { doc: Doc; li: number; fi: number; refId: string } | null {
+    const L = this.doc.layers[li];
+    const e = this.entryOf(L?.ref);
+    if (!L?.ref || !e) return null;
+    return {
+      doc: e.doc,
+      li: Math.max(0, Math.min(e.doc.layers.length - 1, e.li)),
+      fi: Math.max(0, Math.min(e.doc.frames.length - 1, e.fi)),
+      refId: e.id,
+    };
+  }
+  /** reference another canvas into this one as a new (live) layer */
+  referenceCanvas(canvasIndex: number): boolean {
+    const src = this.docs[canvasIndex];
+    if (!src || src === this.entryOf(this.docs[this.docIdx]?.id)) {
+      toastFn(this.prefs.lang === "en" ? "Cannot reference the current canvas" : "不能引用当前画布");
+      return false;
+    }
+    // refuse a link that would form a cycle (A -> B -> A)
+    if (this.refReaches(src.id, this.docs[this.docIdx]?.id)) {
+      toastFn(this.prefs.lang === "en" ? "That would create a reference loop" : "这样会形成循环引用");
+      return false;
+    }
+    const at = this.curLayer() + 1;
+    this.struct("layer-ref", () => {
+      const d = this.doc;
+      d.layers.splice(at, 0, {
+        id: uid(), name: src.doc.name || "ref", visible: true, opacity: 100,
+        blend: "normal", locked: false, ref: src.id,
+      });
+      this.layerIdx = at;
+    });
+    toastFn(this.prefs.lang === "en" ? "Referenced " + (src.doc.name || "canvas") : "已引用画布「" + (src.doc.name || "") + "」");
+    return true;
+  }
+  /** true when `fromId` already (transitively) references `targetId` */
+  private refReaches(fromId: string | null | undefined, targetId: string | null | undefined): boolean {
+    if (!fromId || !targetId) return false;
+    const seen = new Set<string>();
+    const stack = [fromId];
+    while (stack.length) {
+      const id = stack.pop()!;
+      if (id === targetId) return true;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      const e = this.entryOf(id);
+      if (!e) continue;
+      for (const L of e.doc.layers) if (L.ref) stack.push(L.ref);
+    }
+    return false;
+  }
+  /** break the link of a reference layer, keeping the pixels it shows */
+  unrefLayer(li = this.curLayer()): void {
+    const doc = this.doc;
+    const L = doc.layers[li];
+    if (!L?.ref) return;
+    const img = this.resolveRef(L.ref, 0);
+    this.struct("layer-unref", () => {
+      const d = this.doc;
+      const N = d.layers[li];
+      if (!N) return;
+      N.ref = null;
+      for (let fi = 0; fi < d.frames.length; fi++) {
+        const cel = d.ensureCel(li, fi);
+        cel.data.fill(0);
+        if (img) {
+          const cv = document.createElement("canvas");
+          cv.width = d.w; cv.height = d.h;
+          const ctx = cv.getContext("2d")!;
+          // 1:1, centred when the canvases differ in size (clipped to this one)
+          ctx.drawImage(img, Math.round((d.w - img.width) / 2), Math.round((d.h - img.height) / 2));
+          cel.data.set(ctx.getImageData(0, 0, d.w, d.h).data);
+        }
+      }
+    });
+    toastFn(this.prefs.lang === "en" ? "Reference released, pixels kept" : "已解除引用，图层内容保留");
+  }
+  /** move the current layer out into a canvas of its own */
+  async extractLayerToCanvas(li = this.curLayer()): Promise<number | null> {
+    const doc = this.doc;
+    const L = doc.layers[li];
+    if (!L) return null;
+    const en = this.prefs.lang === "en";
+    const ok = await this.askConfirm({
+      msg: en
+        ? "Extract layer \"" + L.name + "\" into its own canvas? It is removed from this canvas."
+        : "把图层「" + L.name + "」提取为单独画布？提取后该图层会从当前画布移除。",
+      yes: this.prefs.lang === "en" ? "Extract" : "提取",
+      no: this.prefs.lang === "en" ? "Cancel" : "取消",
+    });
+    if (!ok) return null;
+    const refImg = L.ref ? this.resolveRef(L.ref, 0) : null;
+    const nd = new Doc(doc.w, doc.h, (doc.name || "art") + "_" + L.name);
+    nd.palette = doc.palette.map((c) => [...c] as RGBA);
+    nd.bg = null;
+    nd.frames = doc.frames.map((f) => ({ id: uid(), durationMs: f.durationMs }));
+    nd.layers = [{ id: uid(), name: L.name, visible: true, opacity: L.opacity, blend: "normal", locked: false }];
+    nd.cels = new Map();
+    for (let fi = 0; fi < doc.frames.length; fi++) {
+      const cel = doc.celAt(li, fi);
+      const nc = nd.ensureCel(0, fi);
+      if (cel) nc.data.set(cel.data);
+      else if (refImg) {
+        const cv = document.createElement("canvas");
+        cv.width = nd.w; cv.height = nd.h;
+        const ctx = cv.getContext("2d")!;
+        ctx.drawImage(refImg, Math.round((nd.w - refImg.width) / 2), Math.round((nd.h - refImg.height) / 2));
+        nc.data.set(ctx.getImageData(0, 0, nd.w, nd.h).data);
+      }
+    }
+    this.struct("layer-extract", () => {
+      const d = this.doc;
+      d.layers.splice(li, 1);
+      if (!d.layers.length) {
+        d.layers.push({ id: uid(), name: "Layer 1", visible: true, opacity: 100, blend: "normal", locked: false });
+      }
+      for (const k of [...d.cels.keys()]) {
+        const [kl] = k.split(":");
+        if (Number(kl) === li) d.cels.delete(k);
+        else if (Number(kl) > li) {
+          const cel = d.cels.get(k)!;
+          d.cels.delete(k);
+          d.cels.set((Number(kl) - 1) + ":" + k.split(":")[1], cel);
+        }
+      }
+      this.layerIdx = Math.max(0, Math.min(d.layers.length - 1, li - 1));
+    });
+    this.addCanvas(nd);
+    toastFn(en ? "Extracted into its own canvas" : "已提取为单独画布");
+    return this.docs.length - 1;
   }
   /** magic-wand tolerance lives on prefs so it persists and shows in Settings */
   get selectionTolerance(): number {
@@ -1569,7 +1746,7 @@ export class Session {
     this.syncEntry();
     const wantHist = this.prefs.recordHistory;
     const entries: project.SpaceEntry[] = this.docs.map((e) => ({
-      doc: e.doc, x: e.x, y: e.y, li: e.li, fi: e.fi,
+      id: e.id, doc: e.doc, x: e.x, y: e.y, li: e.li, fi: e.fi,
       hist: wantHist && e.history.list().labels.length
         ? historyFile.encodeHistory(e.history.dump(), e.doc.w, e.doc.h)
         : null,
@@ -1581,7 +1758,9 @@ export class Session {
     const parsed = await project.parseSpace(text);
     if (!parsed) return false;
     if (opts?.ask !== false && !(await this.askOverwrite("open"))) return false;
-    this.docs = parsed.entries.map((e) => ({ doc: e.doc, x: e.x, y: e.y, li: e.li, fi: e.fi, history: new History() }));
+    this.docs = parsed.entries.map((e) => ({
+      id: e.id || uid(), doc: e.doc, x: e.x, y: e.y, li: e.li, fi: e.fi, history: new History(),
+    }));
     this.docIdx = parsed.focus;
     this.applyHistoryLimit();
     // rebuild every canvas' own undo stack
@@ -1840,6 +2019,10 @@ export class Session {
   layerMergeDown(): void {
     const li = this.curLayer();
     if (li <= 0) return;
+    if (this.isRefLayer(li) || this.isRefLayer(li - 1)) {
+      toastFn(this.prefs.lang === "en" ? "Release the reference first" : "请先解除引用再合并");
+      return;
+    }
     this.struct("layer-merge", () =>
       ops.mergeLayerDown(this.doc, li, (dst, src, o, b) => compositor.compositeOntoCel(dst, src, o, b))
     );

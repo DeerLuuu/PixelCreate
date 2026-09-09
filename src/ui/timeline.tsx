@@ -341,7 +341,8 @@ export function TimelineBar({ t, snap, onFrameDlg }: { t: ReturnType<typeof make
               <button className="mini lock" title={L.locked ? t("lock") : t("unlock")} onClick={(e) => { e.stopPropagation(); SESSION.toggleLayerLock(li); }}>
                 <Icon id={L.locked ? "i-lock" : "i-unlock"} size={12} />
               </button>
-              <button className="lname" title={L.name} onClick={(e) => { e.stopPropagation(); SESSION.setLayer(li); }}>{L.name}</button>
+              <button className={"lname" + (L.ref ? " ref" : "")} title={L.ref ? t("layerRefBadge") + " · " + L.name : L.name}
+                onClick={(e) => { e.stopPropagation(); SESSION.setLayer(li); }}>{L.ref ? "\u26ad " : ""}{L.name}</button>
             </div>
           );
         })}
@@ -387,6 +388,8 @@ export function TimelineBar({ t, snap, onFrameDlg }: { t: ReturnType<typeof make
             <Btn icon="i-down" className="mini" title={t("layerDown")} onClick={() => SESSION.layerDown()} />
             <Btn icon="i-dupe" className="mini" title={t("layerDupe")} onClick={() => SESSION.layerDuplicate()} />
             <Btn icon="i-merge" className="mini" title={t("layerMerge")} onClick={() => SESSION.layerMergeDown()} />
+            {curL.ref && <Btn icon="i-unlock" className="mini" title={t("layerUnref")} onClick={() => SESSION.unrefLayer(curLi)} />}
+            <Btn icon="i-dupe" className="mini" title={t("layerExtract")} onClick={() => void SESSION.extractLayerToCanvas(curLi)} />
             <Btn icon="i-trash" className="mini danger" title={t("layerDel")} onClick={() => SESSION.layerDelete()} />
           </div>
         </div>

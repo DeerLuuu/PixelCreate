@@ -56,7 +56,7 @@ interface DocPayload {
   w: number;
   h: number;
   bg: number[] | null;
-  layers: Array<{ name: string; visible: boolean; opacity: number; blend: string; locked: boolean }>;
+  layers: Array<{ name: string; visible: boolean; opacity: number; blend: string; locked: boolean; ref?: string | null }>;
   frames: Array<{ durationMs: number }>;
   palette: number[][];
   cels: [string, string][];
@@ -73,7 +73,10 @@ async function docPayload(doc: Doc): Promise<DocPayload> {
     w: doc.w,
     h: doc.h,
     bg: doc.bg ? [...doc.bg] : null,
-    layers: doc.layers.map((l) => ({ name: l.name, visible: l.visible, opacity: l.opacity, blend: l.blend, locked: l.locked })),
+    layers: doc.layers.map((l) => ({
+      name: l.name, visible: l.visible, opacity: l.opacity, blend: l.blend, locked: l.locked,
+      ref: l.ref ?? null,
+    })),
     frames: doc.frames.map((f) => ({ durationMs: f.durationMs })),
     palette: doc.palette.map((c) => [...c]),
     cels,
@@ -95,6 +98,7 @@ async function docFromPayload(obj: {
     opacity: Math.max(0, Math.min(100, Number(l.opacity ?? 100))),
     blend: (["normal", "multiply", "screen", "overlay", "darken", "lighten", "dodge", "burn", "hardlight", "softlight", "difference", "exclusion"].includes(String(l.blend)) ? String(l.blend) : "normal") as Doc["layers"][number]["blend"],
     locked: !!l.locked,
+    ref: typeof l.ref === "string" ? l.ref : null,
   }));
   doc.frames = (obj.frames && obj.frames.length ? obj.frames : [{ durationMs: 100 }]).map((f) => ({
     id: Math.random().toString(36).slice(2),
@@ -124,6 +128,8 @@ export async function serialize(doc: Doc, history?: unknown): Promise<string> {
 
 /** one canvas of the infinite space */
 export interface SpaceEntry {
+  /** stable canvas id (reference layers point at it) */
+  id?: string;
   doc: Doc;
   x: number;
   y: number;
@@ -138,7 +144,7 @@ export interface SpaceEntry {
 export async function serializeSpace(entries: SpaceEntry[], focus: number, history?: unknown): Promise<string> {
   const canvases: unknown[] = [];
   for (const e of entries) {
-    canvases.push({ x: e.x, y: e.y, li: e.li, fi: e.fi, hist: e.hist ?? undefined, ...(await docPayload(e.doc)) });
+    canvases.push({ id: e.id, x: e.x, y: e.y, li: e.li, fi: e.fi, hist: e.hist ?? undefined, ...(await docPayload(e.doc)) });
   }
   // an empty space is a valid project: "everything closed" survives a restart
   if (!entries.length) return JSON.stringify({ app: "PixelCraft", v: 3, focus: 0, canvases });
@@ -168,6 +174,7 @@ export async function parseSpace(text: string): Promise<ParsedSpace | null> {
       const doc = await docFromPayload(c);
       if (!doc) continue;
       entries.push({
+        id: typeof c.id === "string" ? c.id : undefined,
         doc,
         x: Math.round(Number(c.x) || 0),
         y: Math.round(Number(c.y) || 0),

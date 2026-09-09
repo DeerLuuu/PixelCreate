@@ -115,6 +115,8 @@ export class View {
   private hold: { n: number; mid: { x: number; y: number }; starts: Map<number, { x: number; y: number }>; t: number } | null = null;
   /** set when a hold fired, so the following lifts cannot count as taps */
   private holdFired = false;
+  /** the open stroke was redirected to a referenced canvas (no auto-select) */
+  private strokeRedirected = false;
   /** airbrush: interval that keeps spraying while the finger is held down */
   private sprayT: number | null = null;
   /** fractional specks owed to the next spray tick */
@@ -522,9 +524,15 @@ export class View {
       ctx.restore();
     }
   }
+  /** drop the cached composites of the other canvases (a reference layer's
+   *  source changed, so their pixels may be stale even though their own layer
+   *  configuration did not change) */
+  dropOtherComps(): void {
+    this.otherComps.clear();
+  }
   /** composite of a non-focused canvas, cached until its config changes */
   private otherComposite(i: number, doc: Doc, fi: number): HTMLCanvasElement | null {
-    const key = doc.w + "x" + doc.h + "|" + fi + "|" + doc.layers.map((l) => (l.visible ? 1 : 0) + ":" + l.opacity + ":" + l.blend + (doc.bg ? "B" : "T")).join();
+    const key = doc.w + "x" + doc.h + "|" + fi + "|" + doc.layers.map((l) => (l.visible ? 1 : 0) + ":" + l.opacity + ":" + l.blend + ":" + (l.ref ?? "") + (doc.bg ? "B" : "T")).join();
     const got = this.otherComps.get(i);
     if (got && got.key === key && got.doc === doc) return got.cv;
     const cv = comp.composeFrame(doc, fi);
@@ -554,7 +562,7 @@ export class View {
     const fi = s.curFrame();
     const p = s.prefs;
     const onionKey = p.onionOn ? "1:" + p.onionBefore + ":" + p.onionAfter + ":" + p.onionAlpha + ":" + (p.onionTint ? 1 : 0) + ":" + (p.onionWrap ? 1 : 0) : "0";
-    const key = doc.w + "x" + doc.h + "|" + fi + "|" + doc.layers.map((l) => (l.visible ? 1 : 0) + ":" + l.opacity + ":" + l.blend + (doc.bg ? "B" : "T")).join() + "|on" + onionKey;
+    const key = doc.w + "x" + doc.h + "|" + fi + "|" + doc.layers.map((l) => (l.visible ? 1 : 0) + ":" + l.opacity + ":" + l.blend + ":" + (l.ref ?? "") + (doc.bg ? "B" : "T")).join() + "|on" + onionKey;
     const onion = {
       before: p.onionOn ? p.onionBefore : 0,
       after: p.onionOn ? p.onionAfter : 0,
@@ -1383,7 +1391,13 @@ export class View {
     this.gestureMoved = false;
     this.gestureStartPx = pp;
     try {
-      this.stroke = new Stroke(doc, s.curLayer(), s.curFrame(), tool as never, s.brush(), s.layerLocked(), s.sym, s.shapeSides, s.shapeFill,
+      // a reference layer is not painted in place: the stroke is redirected to
+      // the referenced canvas' own current layer/frame (and recorded in THIS
+      // canvas' history, so undo works right here)
+      const tgt = s.strokeTarget(s.curLayer());
+      this.strokeRedirected = !!tgt;
+      this.stroke = new Stroke(tgt ? tgt.doc : doc, tgt ? tgt.li : s.curLayer(), tgt ? tgt.fi : s.curFrame(),
+        tool as never, s.brush(), s.layerLocked(), s.sym, s.shapeSides, s.shapeFill,
         s.symOx, s.symOy, s.symAng, s.symFour, s.prefs.bucketGlobal, s.brushShape, s.shapeFromCenter);
     } catch {
       this.stroke = null;
@@ -1714,7 +1728,7 @@ export class View {
         // shapes become an immediate selection of EXACTLY the pixels this stroke
         // painted (a pixel mask, not a rectangle) so only the shape moves;
         // neighbouring artwork that falls under the marquee stays untouched
-        if (doneMoved && doneStroke.start && doneStroke.last && this.isShapeKind(doneStroke.kind)) {
+        if (doneMoved && !this.strokeRedirected && doneStroke.start && doneStroke.last && this.isShapeKind(doneStroke.kind)) {
           this.selectStrokePixels(doneStroke);
           this.session.setTool("select");
         }
@@ -2041,9 +2055,13 @@ export class View {
   /** pointer down: start collecting the freehand path (nothing is painted yet) */
   private outlineDown(pp: { x: number; y: number }): void {
     const s = this.session;
-    const li = s.curLayer(), fi = s.curFrame();
     if (s.layerLocked()) return;
-    const cel = s.doc.celAt(li, fi);
+    // redirect onto the referenced canvas, exactly like a brush stroke
+    const tgt = s.strokeTarget(s.curLayer());
+    const doc = tgt ? tgt.doc : s.doc;
+    const li = tgt ? tgt.li : s.curLayer();
+    const fi = tgt ? tgt.fi : s.curFrame();
+    const cel = doc.celAt(li, fi);
     this.outline = { pts: [[pp.x, pp.y]], li, fi, before: cel ? new Uint8ClampedArray(cel.data) : null };
     this.cursor = null;
     this.drawOverlay();
@@ -2068,7 +2086,10 @@ export class View {
     this.outline = null;
     if (!o) return;
     const s = this.session;
-    const doc = s.doc;
+    // the outline was collected for the layer it will fill: resolve it again so
+    // a reference layer keeps writing into its source canvas
+    const tgt = s.strokeTarget(s.curLayer());
+    const doc = tgt && tgt.li === o.li ? tgt.doc : s.doc;
     // an empty layer has no cel yet: create it only when we are really filling
     const keep = commit && o.pts.length >= 3;
     let cel = doc.celAt(o.li, o.fi);

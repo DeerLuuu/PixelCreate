@@ -36,7 +36,7 @@ function stubEnv(): void {
   };
 }
 
-export function testSession(): void {
+export async function testSession(): Promise<void> {
   stubEnv();
   const s = new Session();
 
@@ -722,6 +722,61 @@ export function testSession(): void {
     eq("fsel.mode-on", f.frameSelList(), [0]);
     f.setFrameSelMode(false);
     eq("fsel.mode-off-clears", f.frameSelList(), []);
+  }
+
+  // --- reference layers: live link to another canvas ---
+  {
+    (globalThis as unknown as { localStorage: { clear(): void } }).localStorage.clear();
+    const r = new Session();
+    r.doc.name = "A";
+    const bIdx = r.addCanvas(new Doc(16, 16, "B"));
+    r.focusCanvas(0);                       // back on A
+    // referencing B adds a live layer pointing at B's canvas id
+    ok("ref.add", r.referenceCanvas(bIdx));
+    const L = r.doc.layers[r.curLayer()];
+    ok("ref.layer-linked", !!L.ref && L.ref === r.docs[bIdx].id);
+    eq("ref.layer-name", L.name, "B");
+    eq("ref.layer-count", r.doc.layers.length, 2);
+    // the stroke on a reference layer is redirected to B's current layer
+    const tgt = r.strokeTarget(r.curLayer());
+    ok("ref.stroke-redirected", !!tgt && tgt.doc === r.docs[bIdx].doc && tgt.li === 0 && tgt.fi === 0);
+    ok("ref.normal-layer-not-redirected", !r.strokeTarget(0));
+    // a canvas cannot reference itself, and cycles are refused
+    r.focusCanvas(bIdx);
+    ok("ref.self-refused", !r.referenceCanvas(bIdx));
+    eq("ref.cycle-refused", r.referenceCanvas(0), false);   // B -> A -> B
+    r.focusCanvas(0);
+    // merging a reference layer is refused instead of silently doing nothing
+    const before = r.doc.layers.length;
+    r.layerMergeDown();
+    eq("ref.merge-refused", r.doc.layers.length, before);
+  }
+
+  // --- extract a layer into its own canvas (confirm required) ---
+  {
+    (globalThis as unknown as { localStorage: { clear(): void } }).localStorage.clear();
+    const x = new Session();
+    x.setConfirmAsk(async () => false);
+    eq("extract.cancelled", await x.extractLayerToCanvas(0), null);
+    eq("extract.cancelled.count", x.docs.length, 1);
+    x.setConfirmAsk(async () => true);
+    x.frameAdd();                       // two frames
+    const cel0 = x.doc.ensureCel(0, 0);
+    cel0.data[0] = 200; cel0.data[3] = 255;
+    const cel1 = x.doc.ensureCel(0, 1);
+    cel1.data[4] = 100; cel1.data[7] = 255;
+    x.doc.name = "src";
+    const idx = await x.extractLayerToCanvas(0);
+    eq("extract.added-canvas", x.docs.length, 2);
+    eq("extract.focused", x.docIdx, idx);
+    eq("extract.new-name", x.doc.name, "src_Layer 1");
+    eq("extract.new-frames", x.doc.frames.length, 2);
+    eq("extract.copied-f0", x.doc.celAt(0, 0)!.data[0], 200);
+    eq("extract.copied-f1", x.doc.celAt(0, 1)!.data[4], 100);
+    x.focusCanvas(0);
+    eq("extract.source-kept-one-layer", x.doc.layers.length, 1);
+    eq("extract.source-frames", x.doc.frames.length, 2);
+    ok("extract.source-empty", !x.doc.celAt(0, 0) && !x.doc.celAt(0, 1));
   }
 
   // --- a pending colour pick is routed to the FX dialog, not the brush ---

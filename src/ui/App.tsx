@@ -21,7 +21,7 @@ import { TimelineBar } from "./timeline";
 import { PreviewBox } from "./preview";
 import { RefImageBox } from "./refimg";
 import type { RefImg } from "./refimg";
-import { PalettePanel, MenuModal, SizeModal, SheetModal, NewDocModal, ExportModal, AdjustModal, SettingsModal, FrameModal, FramePreviewModal, HistoryModal, histName, importFlow } from "./modals";
+import { PalettePanel, MenuModal, SizeModal, SheetModal, NewDocModal, ExportModal, AdjustModal, SettingsModal, FrameModal, FramePreviewModal, CanvasRefModal, HistoryModal, histName, importFlow } from "./modals";
 import { FxParamDialog, fxDefaults, type FxRun, type FxVals } from "./fxparam";
 import { CanvasTitles } from "./canvas";
 import { ChangelogModal, changelogNeedsShow } from "./changelog";
@@ -469,7 +469,8 @@ export function App() {
         onCanvasSize={() => { setSizeMode("canvas"); setModal("size"); }}
         onCanvasAdjust={() => setModal("adjust")}
         onCanvasExport={() => setModal("export")}
-        onOpenPalette={() => setPanel("palette")} />}
+        onOpenPalette={() => setPanel("palette")}
+        onCanvasRef={() => setModal("canvasRef")} />}
       {replayOn && <ReplayOverlay t={t} snap={snap} nameFn={(lb) => histName(lb, t, snap.lang)} onClose={() => { setModal(null); setReplayOn(false); }} />}
       <Keep on={panel === "palette"} el={panel === "palette" ? (
         <Overlay onClose={() => setPanel(null)}>
@@ -486,6 +487,7 @@ export function App() {
       <Keep on={frameDlgIdx !== null} el={frameDlgIdx !== null ? <FrameModal t={t} snap={snap} fi={typeof frameDlgIdx === "number" ? frameDlgIdx : snap.frameIdx} batch={frameDlgIdx === "batch"} onClose={() => setFrameDlgIdx(null)} /> : null} />
       <Keep on={modal === "history"} el={modal === "history" ? <HistoryModal t={t} snap={snap} onClose={() => setModal(null)} onReplay={() => { setModal(null); setReplayOn(true); }} /> : null} />
       <Keep on={modal === "framePrev"} el={modal === "framePrev" ? <FramePreviewModal t={t} onClose={() => setModal(null)} /> : null} />
+      <Keep on={modal === "canvasRef"} el={modal === "canvasRef" ? <CanvasRefModal t={t} onClose={() => setModal(null)} /> : null} />
       <Keep on={modal === "changelog"} el={modal === "changelog" ? <ChangelogModal onClose={() => setModal(null)} /> : null} />
       {guide && <GuideOverlay steps={guide} actions={guideActions} onDone={finishGuide} />}
       {textQ && (
@@ -591,9 +593,9 @@ function EmptyCanvas({ t, onNew, onOpen }: { t: ReturnType<typeof makeT>; onNew:
   );
 }
 
-function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onCanvasExport, onOpenPalette }: {
+function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onCanvasExport, onOpenPalette, onCanvasRef }: {
   t: ReturnType<typeof makeT>; snap: Snapshot; onCanvasNew: () => void; onCanvasSize: () => void;
-  onCanvasAdjust: () => void; onCanvasExport: () => void; onOpenPalette: () => void;
+  onCanvasAdjust: () => void; onCanvasExport: () => void; onOpenPalette: () => void; onCanvasRef: () => void;
 }) {
   const orbKey = "pc.orb.pos";
   const loadPos = () => {
@@ -1123,6 +1125,8 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
     { icon: "i-export", label: t("export"), desc: t("canvasExportDesc"), act: () => { closeCanv(); onCanvasExport(); }, guide: "canv-export" },
     { icon: "i-fit", label: t("fitView"), desc: t("canvasFitDesc"), act: () => { closeCanv(); SESSION.fitCanvas(); } },
     { icon: "i-grid", label: t("canvasTile"), desc: t("canvasTileDesc"), act: () => { setCanv({ ...canv, open: false }); setCanvSub(null); setTileDlg(true); }, guide: "canv-tile" },
+    { icon: "i-import", label: t("canvasRef"), desc: t("canvasRefDesc"), act: () => { closeCanv(); onCanvasRef(); }, guide: "canv-ref" },
+    { icon: "i-dupe", label: t("layerExtract"), desc: t("layerExtractDesc"), act: () => { closeCanv(); void SESSION.extractLayerToCanvas(); }, guide: "canv-extract" },
   ] : [
     { icon: "i-plus", label: t("canvasNew"), desc: t("canvasNewDesc"), act: () => { closeCanv(); onCanvasNew(); } },
     { icon: "i-pencil", label: t("canvasRename"), desc: t("canvasRenameDesc"), act: () => {

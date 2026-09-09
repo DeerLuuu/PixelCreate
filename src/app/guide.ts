@@ -169,6 +169,12 @@ export const GUIDE: GuideStep[] = [
     title: "guide.paletteOps.title", body: "guide.paletteOps.body",
   },
   {
+    // live reference layers + extracting a layer into its own canvas
+    id: "canvas.refs", module: "canvas", since: "1.0.7.11", target: '[data-guide="canv-ref"]', place: "auto", peek: true,
+    before: ["openCanvasRing", "canvasMore"], after: "closeCanvasRing",
+    title: "guide.canvasRefs.title", body: "guide.canvasRefs.body",
+  },
+  {
     // canvas orb: everything that acts on the focused canvas, in two pages
     id: "orbs.canvas", module: "orbs", since: "1.0.7.11", target: '[data-guide="orb-canv"]', place: "left", optional: true,
     before: ["closeOrbs", "undockOrbs"],

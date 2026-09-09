@@ -838,6 +838,11 @@ SESSION.docs: CanvasEntry[]   // 全部打开的画布（docIdx 为聚焦项）
 SESSION.docIdx: number
 SESSION.previews: PreviewEntry[]
 awaitColorPick(cb) / cancelColorPick() // 下一次选色改为回调（特效参数用），并派发 pc-color-picked
+referenceCanvas(i): boolean            // 把第 i 张画布引用成当前画布的一层（拒绝自引用/循环）
+isRefLayer(li): boolean                // 该图层是否为引用层
+strokeTarget(li)                       // 引用层的笔迹落点 {doc, li, fi}；普通图层返回 null
+unrefLayer(li?)                        // 解除引用：把画面烘焙进图层（居中、1:1）后断链
+extractLayerToCanvas(li?)              // 把图层（含所有帧）提取成独立画布（先确认）
 
 SESSION.doc                   // getter/setter：聚焦画布的文档（旧代码无需改动）
 addCanvas(doc, opts?): number         // 在空间里再开一张，返回下标
@@ -874,7 +879,9 @@ view.shiftFocus(dxSpace, dySpace): void   // 切换聚焦画布时保持空间�
 view.fitAnimated(ms = 220) / animateTo(z, ox, oy, ms)  // 缓动适配（双击标题 / 画布球适配）
 ```
 
-非聚焦画布由 `drawOtherCanvases()` 在合成后绘制（各自缓存），聚焦画布始终画在最上层；
+引用层由 `compositor.setRefResolver()` 安装的解析器实时取值（`Session.resolveRef`，按
+画布 id 缓存并在每次 `changed()` 失效；循环引用返回 null）；非聚焦画布由
+`drawOtherCanvases()` 在合成后绘制（各自缓存，存在引用层时会整体失效），聚焦画布始终画在最上层；
 多画布时 `clampView()` 改为「保证包围盒至少露出一角」，即无限空间。
 
 ### 18.7 UI 新增

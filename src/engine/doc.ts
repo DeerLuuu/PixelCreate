@@ -9,6 +9,9 @@ export interface LayerMeta {
   opacity: number; // 0..100
   blend: BlendMode;
   locked: boolean;
+  /** id of ANOTHER canvas this layer mirrors live (null = a normal layer).
+   *  The layer stores no pixels of its own while the link is active. */
+  ref?: string | null;
 }
 
 export interface FrameMeta {

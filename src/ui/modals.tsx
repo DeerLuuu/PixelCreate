@@ -20,7 +20,7 @@ import { canVibrate, hapticReport } from "../io/bridge";
 import { detectInsets } from "../io/safearea";
 import type { RefImg } from "./refimg";
 
-export type ModalId = "menu" | "changelog" | "newdoc" | "export" | "adjust" | "settings" | "frame" | "framePrev" | "size" | "sheet" | "history" | null;
+export type ModalId = "menu" | "changelog" | "newdoc" | "export" | "adjust" | "settings" | "frame" | "framePrev" | "size" | "sheet" | "history" | "canvasRef" | null;
 export type SizeMode = "canvas" | "sprite";
 export type SheetData = { w: number; h: number; px: Uint8ClampedArray; name: string };
 
@@ -826,6 +826,33 @@ function FrameThumb({ doc, fi, sz = 132 }: { doc: Doc; fi: number; sz?: number }
     ctx.drawImage(full, (SZ - w) >> 1, (SZ - h) >> 1, w, h);
   }, [doc, fi, sz]);
   return <canvas ref={ref} className="fp-thumb" style={{ width: sz, height: sz }} />;
+}
+
+/** pick another canvas to mirror into the focused one as a live layer */
+export function CanvasRefModal({ t, onClose }: { t: ReturnType<typeof makeT>; onClose: () => void }) {
+  useSession(); // the list must follow canvases opening / closing / renaming
+  const cur = SESSION.docIdx;
+  const list = SESSION.docs.map((e, i) => ({ e, i })).filter(({ i }) => i !== cur);
+  return (
+    <>
+      <div className="dlg-mask" onClick={onClose} />
+      <div className="dlg dlg-frame-preview" data-guide="dlg-canvasref">
+        <div className="dlg-head"><span>{t("canvasRefPick")}</span><div className="grow" /><button className="btn small" onClick={onClose}><Icon id="i-x" size={16} /></button></div>
+        <div className="dlg-body fp-grid">
+          {list.length === 0 ? <div className="row-note">{t("canvasRefNone")}</div> : list.map(({ e, i }) => (
+            <button key={e.id} className="fp-cell col" style={{ width: 148, height: 168 }}
+              title={e.doc.name + " · " + e.doc.w + "\u00d7" + e.doc.h}
+              onClick={() => { if (SESSION.referenceCanvas(i)) onClose(); }}>
+              <FrameThumb doc={e.doc} fi={e.fi} sz={124} />
+              <span className="fp-name">{e.doc.name || "untitled"}</span>
+              <span className="fp-meta">{e.doc.w + "\u00d7" + e.doc.h}</span>
+            </button>
+          ))}
+        </div>
+        <div className="dlg-foot"><Btn label={t("close")} onClick={onClose} /></div>
+      </div>
+    </>
+  );
 }
 
 export function FramePreviewModal({ t, onClose }: { t: ReturnType<typeof makeT>; onClose: () => void }) {
