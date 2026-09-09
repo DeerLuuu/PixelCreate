@@ -8,7 +8,7 @@ import { Icon } from "./base";
 import { TabBar } from "./tabs";
 
 /** keep in sync with android/AndroidManifest.xml versionName on every release */
-export const APP_VERSION = "1.0.7.5";
+export const APP_VERSION = "1.0.7.6";
 
 export type ClgKind = "add" | "imp" | "fix";
 export interface ClgItem { kind: ClgKind; zh: string; en: string }
@@ -17,6 +17,13 @@ export interface ClgVersion { v: string; date: string; items: ClgItem[] }
 const it = (kind: ClgKind, zh: string, en: string): ClgItem => ({ kind, zh, en });
 
 export const CHANGELOG: ClgVersion[] = [
+  {
+    v: "1.0.7.6",
+    date: "2026-09-08",
+    items: [
+      it("imp", "震动问题排查用诊断版：启动时直接用 Java 震一下（不经过 JS），设置 → 数据 里新增“震动环境诊断”一行，显示 桥接 / 震动接口 / navigator.vibrate / 马达 / 上次调用结果", "Diagnostic build for the vibration issue: a Java-only buzz on launch (no JS involved) plus a Vibration diagnostics line in Settings -> Data showing bridge / vibrate API / navigator.vibrate / motor / last call result"),
+    ],
+  },
   {
     v: "1.0.7.5",
     date: "2026-09-08",

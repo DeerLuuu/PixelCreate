@@ -44,15 +44,35 @@ export function toast(msg: string): void {
  *  declares). Failures are silent: vibration is only a nicety. */
 export function vibrate(ms: number): boolean {
   const d = Math.max(10, Math.min(200, Math.round(ms)));
+  let ok = false;
   try {
     const b = window.PixelBridge;
-    if (b?.vibrate) return b.vibrate(d) === true; // native answer, synchronously
-  } catch { /* fall through */ }
-  try {
-    const nav = navigator as Navigator & { vibrate?: (p: number | number[]) => boolean };
-    if (nav.vibrate) return nav.vibrate(d);
-  } catch { /* ignore */ }
-  return false;
+    if (b?.vibrate) ok = b.vibrate(d) === true; // native answer, synchronously
+  } catch { ok = false; }
+  if (!ok) {
+    try {
+      const nav = navigator as Navigator & { vibrate?: (p: number | number[]) => boolean };
+      if (nav.vibrate) ok = nav.vibrate(d);
+    } catch { /* ignore */ }
+  }
+  lastVibrateResult = ok;
+  return ok;
+}
+
+/** result of the most recent vibrate() call (diagnostics) */
+export let lastVibrateResult: boolean | null = null;
+
+/** one-line report of the vibration-related environment (diagnostics) */
+export function hapticReport(): string {
+  const hasBridge = !!window.PixelBridge;
+  const hasVib = !!(window.PixelBridge && typeof window.PixelBridge.vibrate === "function");
+  const navVib = typeof (navigator as Navigator & { vibrate?: unknown }).vibrate === "function";
+  const motor = canVibrate();
+  return "桥接=" + (hasBridge ? "有" : "无") +
+    " · 震动接口=" + (hasVib ? "有" : "无") +
+    " · navigator.vibrate=" + (navVib ? "有" : "无") +
+    " · 马达=" + (motor === null ? "未知" : String(motor)) +
+    " · 上次调用=" + (lastVibrateResult === null ? "未测试" : String(lastVibrateResult));
 }
 
 /** true when the device reports a usable vibrator (null = unknown) */

@@ -16,7 +16,7 @@ import * as bridge from "../io/bridge";
 import * as autosave from "../io/autosave";
 import { Btn, Icon, useSession, ScrubNum, useBlankTap } from "./base";
 import { DropMenu, TabBar } from "./tabs";
-import { canVibrate } from "../io/bridge";
+import { canVibrate, hapticReport } from "../io/bridge";
 import type { RefImg } from "./refimg";
 
 export type ModalId = "menu" | "changelog" | "newdoc" | "export" | "adjust" | "settings" | "frame" | "framePrev" | "size" | "sheet" | "history" | null;
@@ -730,6 +730,8 @@ export function SettingsModal({ t, onClose }: { t: ReturnType<typeof makeT>; onC
                       <Btn label={t("autosaveNow")} onClick={() => { void SESSION.flushAutosave().then(() => SESSION.autosaveInfo().then(setAsInfo)); }} />
                       <Btn label={t("autosaveClear")} className="danger" onClick={() => { void SESSION.clearAutosave().then(() => setAsInfo(null)); }} />
                     </div>
+                    {/* vibration diagnostics: what the page can actually see */}
+                    <div className="row-note" data-guide="haptic-report">{t("hapticReport")}：{hapticReport()}</div>
                   </>
                 )}
               </div>
