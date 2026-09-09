@@ -860,7 +860,8 @@ closePreview(id) / movePreview(id, x, y) / resizePreview(id, size)
 askConfirm(q) / askText(q)            // UI 注册的确认框 / 单行输入框
 ```
 
-`CanvasEntry` 自带 `history`（每张画布独立撤销栈，切换不丢，工程文件逐张保存）；
+`Session.history` 是**整个工程共用的一条撤销栈**（`History.Entry.doc` 记录该步属于哪张画布，
+`dropByDoc()` 在关闭画布时丢弃其步骤；`dump(docIdOf)`/`loadDump({docFor})` 让历史随工程存取）；
 `changed()` 会把聚焦画布的 `layerIdx/frameIdx` 写回它的 entry。
 `docs` 允许为空数组（默认空白工程，`doc` 返回 1×1 占位文档），此时 UI 只渲染空状态卡片。
 切换聚焦时 `View.shiftFocus(dx, dy)` 会反向平移视口，保证整个空间在屏幕上不跳动。

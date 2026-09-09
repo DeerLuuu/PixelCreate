@@ -17,6 +17,8 @@ interface Entry {
   enc?: EncChange[];
   snap?: { before: DocSnapshot; after: DocSnapshot };
   data?: ScalarData;
+  /** the document this step edited (history is shared by every canvas) */
+  doc?: Doc;
 }
 
 /** one serializable history step (raw typed arrays / snapshots, not base64) */
@@ -27,6 +29,8 @@ export interface HistoryDumpEntry {
   before?: DocSnapshot;
   after?: DocSnapshot;
   data?: ScalarData;
+  /** id of the canvas this step belongs to (history is project-wide) */
+  docId?: string;
 }
 
 export interface HistoryDump {
@@ -37,8 +41,11 @@ export interface HistoryDump {
 
 /** host hooks needed to rebuild steps after a reload */
 export interface HistoryHost {
+  /** fallback document (the focused canvas) */
   doc: Doc;
-  scalarActions: (data: ScalarData) => { apply: () => void; unapply: () => void };
+  /** resolve a stored canvas id back to its document (shared history) */
+  docFor?: (docId: string | undefined) => Doc | null;
+  scalarActions: (data: ScalarData, doc?: Doc) => { apply: () => void; unapply: () => void };
 }
 
 /** Compact per-cel pixel change. idx is a list of PIXEL indices (not byte
@@ -84,12 +91,14 @@ function writeSparse(cel: Cel, idx: number[] | null, vals: Uint8ClampedArray | n
 }
 
 function applyFwd(doc: Doc, e: EncChange): void {
+  doc.pixelRev++; // the view keys its other-canvas cache on this
   if (e.remove) { doc.cels.delete(doc.key(e.li, e.fi)); return; }
   const cel = ensureCel(doc, e.li, e.fi);
   if (e.fullA) cel.data.set(e.fullA);
   else writeSparse(cel, e.idx, e.post);
 }
 function applyBack(doc: Doc, e: EncChange): void {
+  doc.pixelRev++; // the view keys its other-canvas cache on this
   const k = doc.key(e.li, e.fi);
   if (e.born) { doc.cels.delete(k); return; }
   if (e.remove) { // edit removed the cel -> undo brings it back (whole buffer)
@@ -194,8 +203,8 @@ export class History {
    * inverse. Prefer this over pushStruct (deep snapshot) whenever the inverse
    * can be expressed directly.
    */
-  record(label: string, actions: { apply: () => void; unapply: () => void }, data?: ScalarData): void {
-    this.push({ label, fwd: () => actions.apply(), back: () => actions.unapply(), data });
+  record(label: string, actions: { apply: () => void; unapply: () => void }, data?: ScalarData, doc?: Doc): void {
+    this.push({ label, fwd: () => actions.apply(), back: () => actions.unapply(), data, doc });
   }
 
   /** Pixel-level change. The caller must have ALREADY applied "after" to the doc. */
@@ -211,6 +220,7 @@ export class History {
       fwd: () => { for (const e of enc) applyFwd(doc, e); },
       back: () => { for (let i = enc.length - 1; i >= 0; i--) applyBack(doc, enc[i]); },
       enc,
+      doc,
     });
   }
 
@@ -227,13 +237,20 @@ export class History {
       fwd: () => restore(after),
       back: () => restore(before),
       snap: { before, after },
+      doc,
     });
+  }
+
+  /** forget every step that edited `doc` (a canvas was closed) */
+  dropByDoc(doc: Doc): void {
+    this.undoStack = this.undoStack.filter((e) => e.doc !== doc);
+    this.redoStack = this.redoStack.filter((e) => e.doc !== doc);
   }
 
   /** Export the stack for a project file. Steps that have no serializable
    *  payload stop the export: everything older than the newest such step is
    *  dropped so the remaining history stays correct. */
-  dump(): HistoryDump {
+  dump(docIdOf?: (doc: Doc) => string | undefined): HistoryDump {
     const all = [...this.undoStack, ...this.redoStack];
     let start = 0;
     for (let i = 0; i < all.length; i++) {
@@ -242,9 +259,10 @@ export class History {
     const entries: HistoryDumpEntry[] = [];
     for (let i = start; i < all.length; i++) {
       const e = all[i];
-      if (e.enc) entries.push({ label: e.label, kind: "pixels", enc: e.enc });
-      else if (e.snap) entries.push({ label: e.label, kind: "struct", before: e.snap.before, after: e.snap.after });
-      else if (e.data) entries.push({ label: e.label, kind: "scalar", data: e.data });
+      const docId = e.doc && docIdOf ? docIdOf(e.doc) : undefined;
+      if (e.enc) entries.push({ label: e.label, kind: "pixels", enc: e.enc, docId });
+      else if (e.snap) entries.push({ label: e.label, kind: "struct", before: e.snap.before, after: e.snap.after, docId });
+      else if (e.data) entries.push({ label: e.label, kind: "scalar", data: e.data, docId });
     }
     return { index: Math.max(0, this.undoStack.length - start), entries };
   }
@@ -255,25 +273,28 @@ export class History {
     const doc = host.doc;
     const built: Entry[] = [];
     for (const e of dump.entries) {
+      const target = (e.docId && host.docFor?.(e.docId)) || doc;
       if (e.kind === "pixels" && e.enc) {
         const enc = e.enc;
         built.push({
           label: e.label,
-          fwd: () => { for (const c of enc) applyFwd(doc, c); },
-          back: () => { for (let i = enc.length - 1; i >= 0; i--) applyBack(doc, enc[i]); },
+          fwd: () => { for (const c of enc) applyFwd(target, c); },
+          back: () => { for (let i = enc.length - 1; i >= 0; i--) applyBack(target, enc[i]); },
           enc,
+          doc: target,
         });
       } else if (e.kind === "struct" && e.before && e.after) {
         const before = e.before, after = e.after;
         built.push({
           label: e.label,
-          fwd: () => doc.restore(after),
-          back: () => doc.restore(before),
+          fwd: () => target.restore(after),
+          back: () => target.restore(before),
           snap: { before, after },
+          doc: target,
         });
       } else if (e.kind === "scalar" && e.data) {
-        const acts = host.scalarActions(e.data);
-        built.push({ label: e.label, fwd: () => acts.apply(), back: () => acts.unapply(), data: e.data });
+        const acts = host.scalarActions(e.data, target);
+        built.push({ label: e.label, fwd: () => acts.apply(), back: () => acts.unapply(), data: e.data, doc: target });
       }
     }
     const idx = Math.max(0, Math.min(built.length, dump.index));

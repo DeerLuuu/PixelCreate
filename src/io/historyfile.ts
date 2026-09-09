@@ -26,6 +26,9 @@ function encSnapshot(s: DocSnapshot): unknown {
 function decSnapshot(v: unknown, w: number, h: number): DocSnapshot | null {
   const o = v as Record<string, unknown> | null;
   if (!o || typeof o !== "object") return null;
+  // a snapshot knows its own size: history is shared by canvases of any size
+  w = Math.max(1, Math.min(1024, Number(o.w) || w));
+  h = Math.max(1, Math.min(1024, Number(o.h) || h));
   const cels = new Map<string, Cel>();
   for (const pair of (o.cels as unknown[]) ?? []) {
     const [k, data] = pair as [string, string];
@@ -55,12 +58,12 @@ function decSnapshot(v: unknown, w: number, h: number): DocSnapshot | null {
 }
 
 /** JSON-safe history payload (or null when there is nothing worth storing) */
-export function encodeHistory(dump: HistoryDump, w: number, h: number): unknown | null {
+export function encodeHistory(dump: HistoryDump): unknown | null {
   if (!dump.entries.length) return null;
   const entries = dump.entries.map((e) => {
     if (e.kind === "pixels") {
       return {
-        label: e.label, kind: e.kind,
+        label: e.label, kind: e.kind, docId: e.docId,
         enc: (e.enc ?? []).map((c) => ({
           li: c.li, fi: c.fi, born: c.born, remove: c.remove,
           idx: c.idx, pre: encBytes(c.pre), post: encBytes(c.post),
@@ -69,23 +72,26 @@ export function encodeHistory(dump: HistoryDump, w: number, h: number): unknown 
       };
     }
     if (e.kind === "struct") {
-      return { label: e.label, kind: e.kind, before: encSnapshot(e.before!), after: encSnapshot(e.after!) };
+      return { label: e.label, kind: e.kind, docId: e.docId, before: encSnapshot(e.before!), after: encSnapshot(e.after!) };
     }
-    return { label: e.label, kind: e.kind, data: e.data };
+    return { label: e.label, kind: e.kind, docId: e.docId, data: e.data };
   });
-  return { v: 1, w, h, index: dump.index, entries };
+  return { v: 1, index: dump.index, entries };
 }
 
 /** rebuild a dump read from a project file (null when malformed) */
 export function decodeHistory(raw: unknown): HistoryDump | null {
   const o = raw as { w?: number; h?: number; index?: number; entries?: unknown[] } | null;
   if (!o || !Array.isArray(o.entries)) return null;
-  const w = Math.max(1, Math.min(1024, Number(o.w) || 0));
-  const h = Math.max(1, Math.min(1024, Number(o.h) || 0));
+  // v1 payloads had one size for the whole stack; each snapshot now carries its
+  // own, and every entry names the canvas it belongs to
+  const w = Math.max(1, Math.min(1024, Number(o.w) || 1));
+  const h = Math.max(1, Math.min(1024, Number(o.h) || 1));
   const entries: HistoryDumpEntry[] = [];
   for (const raw2 of o.entries) {
     const e = raw2 as Record<string, unknown>;
     const label = String(e.label ?? "step");
+    const docId = typeof e.docId === "string" ? e.docId : undefined;
     if (e.kind === "pixels" && Array.isArray(e.enc)) {
       const enc = (e.enc as Record<string, unknown>[]).map((c) => ({
         li: Number(c.li) || 0,
@@ -98,13 +104,13 @@ export function decodeHistory(raw: unknown): HistoryDump | null {
         fullB: decBytes(c.fullB),
         fullA: decBytes(c.fullA),
       }));
-      entries.push({ label, kind: "pixels", enc });
+      entries.push({ label, kind: "pixels", enc, docId });
     } else if (e.kind === "struct") {
       const before = decSnapshot(e.before, w, h);
       const after = decSnapshot(e.after, w, h);
-      if (before && after) entries.push({ label, kind: "struct", before, after });
+      if (before && after) entries.push({ label, kind: "struct", before, after, docId });
     } else if (e.kind === "scalar" && isScalarData(e.data)) {
-      entries.push({ label, kind: "scalar", data: e.data });
+      entries.push({ label, kind: "scalar", data: e.data, docId });
     }
   }
   if (!entries.length) return null;

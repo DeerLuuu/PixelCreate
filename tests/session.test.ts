@@ -544,7 +544,7 @@ export async function testSession(): Promise<void> {
     eq("hist.dump.kinds", dump.entries.map((e) => e.kind), ["pixels", "struct", "scalar"]);
 
     // encode -> JSON -> decode (this is what a .pxc file carries)
-    const enc = historyFile.encodeHistory(dump, doc.w, doc.h);
+    const enc = historyFile.encodeHistory(dump);
     ok("hist.encode.some", !!enc);
     const round = historyFile.decodeHistory(JSON.parse(JSON.stringify(enc)));
     ok("hist.decode", !!round && round.entries.length === 3);
@@ -976,28 +976,55 @@ export async function testSession(): Promise<void> {
     eq("colorpick.cancel", [cp.color[0], cp.color[1], cp.color[2], cp.color[3]], [9, 9, 9, 255]);
   }
 
-  // --- every canvas keeps its OWN undo stack ---
+  // --- ONE shared undo stack across every canvas (global undo + replay) ---
   {
     (globalThis as unknown as { localStorage: { clear(): void } }).localStorage.clear();
     const h = new Session();
     h.doc.name = "A";
-    const cel = h.doc.ensureCel(0, 0);
-    const before = new Uint8ClampedArray(cel.data);
-    cel.data[0] = 255; cel.data[3] = 255;
-    h.history.pushPixels("tools.pencil", h.doc, [{ li: 0, fi: 0, before, after: new Uint8ClampedArray(cel.data) }]);
-    ok("history.percanvas.a-can-undo", h.history.canUndo());
-    h.addCanvas(new Doc(8, 8, "B"));
-    ok("history.percanvas.b-empty", !h.history.canUndo());
-    h.focusCanvas(0);
-    ok("history.percanvas.a-kept", h.history.canUndo());
+    const celA = h.doc.ensureCel(0, 0);
+    const beforeA = new Uint8ClampedArray(celA.data);
+    celA.data[0] = 255; celA.data[3] = 255;
+    h.history.pushPixels("tools.pencil", h.doc, [{ li: 0, fi: 0, before: beforeA, after: new Uint8ClampedArray(celA.data) }]);
+    const bi = h.addCanvas(new Doc(8, 8, "B"));
+    // switching canvas keeps the whole stack
+    ok("history.shared.kept-after-add", h.history.canUndo());
+    eq("history.shared.step-count", h.history.list().labels.length, 1);
+    // a step recorded while B is focused goes on the same stack
+    const celB = h.doc.ensureCel(0, 0);
+    const beforeB = new Uint8ClampedArray(celB.data);
+    celB.data[4] = 200; celB.data[7] = 255;
+    h.history.pushPixels("tools.eraser", h.doc, [{ li: 0, fi: 0, before: beforeB, after: new Uint8ClampedArray(celB.data) }]);
+    eq("history.shared.two-steps", h.history.list().labels.length, 2);
+    // undo applies to the canvas the step belongs to, in global order
     h.undo();
-    eq("history.percanvas.a-undone", h.doc.celAt(0, 0)!.data[3], 0);
+    eq("history.shared.undo-b", h.doc.celAt(0, 0)!.data[4], 0);
+    eq("history.shared.undo-b-keeps-a", h.docs[0].doc.celAt(0, 0)!.data[3], 255);
+    h.undo();
+    eq("history.shared.undo-a", h.docs[0].doc.celAt(0, 0)!.data[3], 0);
     h.redo();
-    eq("history.percanvas.a-redone", h.doc.celAt(0, 0)!.data[3], 255);
-    h.focusCanvas(1);
-    ok("history.percanvas.b-still-empty", !h.history.canUndo());
+    h.redo();
+    eq("history.shared.redo-all", [h.docs[0].doc.celAt(0, 0)!.data[3], h.doc.celAt(0, 0)!.data[4]], [255, 200]);
+    // undoing a step of a NON-focused canvas must invalidate its render cache
+    const revBefore = h.docs[0].doc.pixelRev;
+    h.focusCanvas(bi);
+    h.undo();  // B's step (focused)
+    h.undo();  // A's step, while B is focused
+    ok("history.shared.undo-bumps-rev", h.docs[0].doc.pixelRev > revBefore, "rev " + revBefore + " -> " + h.docs[0].doc.pixelRev);
+    h.redo();
+    h.redo();
+    // focusing elsewhere never loses the stack
     h.focusCanvas(0);
-    ok("history.percanvas.a-still-there", h.history.canUndo());
+    ok("history.shared.still-there", h.history.canUndo());
+    eq("history.shared.still-two", h.history.list().labels.length, 2);
+    // closing a canvas drops exactly its steps
+    const bDoc = h.docs[bi].doc;
+    h.focusCanvas(bi);
+    h.closeCanvas(bi);
+    eq("history.shared.closed-drops", h.history.list().labels.length, 1);
+    ok("history.shared.closed-can-undo", h.history.canUndo());
+    h.undo();
+    eq("history.shared.closed-undo-a", h.docs[0].doc.celAt(0, 0)!.data[3], 0);
+    ok("history.shared.closed-b-gone", !h.docs.some((d) => d.doc === bDoc));
   }
 
   // --- airbrush speck range stays ordered; the rate is clamped ---

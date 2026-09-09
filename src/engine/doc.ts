@@ -151,6 +151,7 @@ export class Doc {
   }
 
   restore(s: DocSnapshot): void {
+    this.pixelRev++;
     this.w = s.w; this.h = s.h; this.name = s.name;
     this.layers = s.layers.map((l) => ({ ...l }));
     this.frames = s.frames.map((f) => ({ ...f }));

@@ -1,6 +1,6 @@
 import { Doc } from "../engine/doc";
 import { Cel } from "../engine/cel";
-import { History } from "../engine/history";
+import { History, type HistoryDump, type HistoryDumpEntry } from "../engine/history";
 import { uid } from "../engine/types";
 import type { Rect, RGBA, BlendMode } from "../engine/types";
 import { defaultPalette } from "../data/palettes";
@@ -206,8 +206,6 @@ export interface CanvasEntry {
   y: number;
   li: number;
   fi: number;
-  /** per-canvas undo stack: switching canvases never loses the other one */
-  history: History;
   /** position locked: the title bar can no longer drag this canvas */
   locked?: boolean;
   /** canvases snapped together share a group id and move as one */
@@ -235,8 +233,9 @@ export class Session {
   previews: PreviewEntry[] = [];
   /** stand-in document while no canvas is open (the UI is hidden then) */
   private emptyDoc: Doc | null = null;
-  /** history of a stand-in document; real canvases own theirs */
-  private spareHistory = new History();
+  /** ONE undo stack for the whole project: steps remember which canvas they
+   *  edited, so undo/redo and the replay walk every canvas in order */
+  history = new History();
 
   /** the focused canvas entry, or null when nothing is open */
   private ensureEntry(): CanvasEntry | null {
@@ -256,12 +255,8 @@ export class Session {
     if (e) e.doc = d;
     else this.docs.push(this.newEntry(d, 0, 0));
   }
-  /** undo stack of the focused canvas (each canvas keeps its own) */
-  get history(): History {
-    return this.ensureEntry()?.history ?? this.spareHistory;
-  }
   private newEntry(doc: Doc, x: number, y: number): CanvasEntry {
-    return { id: uid(), doc, x, y, li: 0, fi: 0, history: new History(), locked: false, group: null };
+    return { id: uid(), doc, x, y, li: 0, fi: 0, locked: false, group: null };
   }
   /** the canvas a reference layer points at (null when it is gone) */
   private entryOf(id: string | null | undefined): CanvasEntry | null {
@@ -342,7 +337,7 @@ export class Session {
         touched = true;
       }
       if (!touched) continue;
-      holder.history.pushPixels("layer-ref-edit", src.doc, [{ li: sli, fi: sfi, before, after: new Uint8ClampedArray(tcel.data) }]);
+      this.history.pushPixels("layer-ref-edit", src.doc, [{ li: sli, fi: sfi, before, after: new Uint8ClampedArray(tcel.data) }]);
       src.doc.pixelRev++;
       this.refMirror.set(key, new Uint8ClampedArray(d)); // in sync again
     }
@@ -605,12 +600,10 @@ export class Session {
 
   /** enforce the configured recording mode on the history stack */
   applyHistoryLimit(): void {
-    for (const h of [...this.docs.map((d) => d.history), this.spareHistory]) {
-      if (this.prefs.histMode === "full") h.setCap(Infinity);
-      else {
-        h.setCap(this.prefs.histSteps);
-        h.trimToCap();
-      }
+    if (this.prefs.histMode === "full") this.history.setCap(Infinity);
+    else {
+      this.history.setCap(this.prefs.histSteps);
+      this.history.trimToCap();
     }
   }
   setHistMode(m: "steps" | "full"): void { this.setSetting("history.mode", m); }
@@ -1573,7 +1566,7 @@ export class Session {
     this.history.record("palette-add", {
       apply: () => { if (doc.palette.length <= idx) doc.palette.push(col); },
       unapply: () => { if (doc.palette[idx]) doc.palette.splice(idx, 1); },
-    }, { k: "palette-add", idx, color: col });
+    }, { k: "palette-add", idx, color: col }, doc);
     this.rememberPalette();
     this.changed();
   }
@@ -1585,7 +1578,7 @@ export class Session {
     this.history.record("palette-remove", {
       apply: () => { if (doc.palette.length > idx) doc.palette.splice(idx, 1); },
       unapply: () => { doc.palette.splice(Math.min(idx, doc.palette.length), 0, col); },
-    }, { k: "palette-remove", idx, color: col });
+    }, { k: "palette-remove", idx, color: col }, doc);
     this.rememberPalette();
     this.changed();
   }
@@ -1666,7 +1659,7 @@ export class Session {
       this.history.record("frame-switch", {
         apply: () => this.applyFrame(next),
         unapply: () => this.applyFrame(prev),
-      }, { k: "frame-switch", fi: next, prev });
+      }, { k: "frame-switch", fi: next, prev }, this.doc);
     }
     this.applyFrame(next);
   }
@@ -1853,7 +1846,7 @@ export class Session {
   /** cheap scalar command: fn applied now; undo restores via back(). */
   private cheap(label: string, fn: () => void, back: () => void, data?: ScalarData): void {
     fn();
-    this.history.record(label, { apply: fn, unapply: back }, data);
+    this.history.record(label, { apply: fn, unapply: back }, data, this.doc);
     this.syncAfterDocChange();
   }
 
@@ -1872,18 +1865,32 @@ export class Session {
     this.repaintAll();
     this.changed();
   }
-  /** serialize every open canvas (each with its own history) as .pxc */
+  /** serialize every open canvas plus the ONE shared history as .pxc */
   async serializeProject(): Promise<string> {
     this.syncEntry();
-    const wantHist = this.prefs.recordHistory;
+    let hist: unknown = null;
+    if (this.prefs.recordHistory && this.history.list().labels.length) {
+      const idOf = (doc: Doc): string | undefined => this.docs.find((d) => d.doc === doc)?.id;
+      hist = historyFile.encodeHistory(this.history.dump(idOf));
+    }
     const entries: project.SpaceEntry[] = this.docs.map((e) => ({
       id: e.id, doc: e.doc, x: e.x, y: e.y, li: e.li, fi: e.fi,
       locked: e.locked === true, group: e.group ?? null,
-      hist: wantHist && e.history.list().labels.length
-        ? historyFile.encodeHistory(e.history.dump(), e.doc.w, e.doc.h)
-        : null,
     }));
-    return project.serializeSpace(entries, this.docIdx);
+    return project.serializeSpace(entries, this.docIdx, hist);
+  }
+  /** older builds stored one history payload per canvas: merge them in canvas
+   *  order so a project saved that way still replays as one sequence */
+  private legacyHistoryDump(parsed: project.ParsedSpace): HistoryDump | null {
+    const entries: HistoryDumpEntry[] = [];
+    parsed.entries.forEach((e, i) => {
+      if (!e.hist) return;
+      const d = historyFile.decodeHistory(e.hist);
+      if (!d) return;
+      const id = e.id ?? this.docs[i]?.id;
+      for (const en of d.entries) entries.push({ ...en, docId: en.docId ?? id });
+    });
+    return entries.length ? { index: entries.length, entries } : null;
   }
   /** load a .pxc: one canvas (v2) or a whole space (v3) */
   async loadProjectText(text: string, opts?: { ask?: boolean }): Promise<boolean> {
@@ -1891,22 +1898,30 @@ export class Session {
     if (!parsed) return false;
     if (opts?.ask !== false && !(await this.askOverwrite("open"))) return false;
     this.docs = parsed.entries.map((e) => ({
-      id: e.id || uid(), doc: e.doc, x: e.x, y: e.y, li: e.li, fi: e.fi, history: new History(),
+      id: e.id || uid(), doc: e.doc, x: e.x, y: e.y, li: e.li, fi: e.fi,
       locked: e.locked === true, group: e.group ?? null,
     }));
     this.docIdx = parsed.focus;
     this.applyHistoryLimit();
-    // rebuild every canvas' own undo stack
-    parsed.entries.forEach((e, i) => {
-      const entry = this.docs[i];
-      const dump = e.hist ? historyFile.decodeHistory(e.hist) : null;
-      if (entry && dump) {
-        entry.history.loadDump(dump, {
-          doc: entry.doc,
-          scalarActions: (d: ScalarData) => scalarActions(d, { doc: entry.doc, showFrame: (fi) => this.applyFramePublic(fi) }),
-        });
-      }
-    });
+    // one shared stack; steps name the canvas they edited
+    this.history.clear();
+    const dump = parsed.history
+      ? historyFile.decodeHistory(parsed.history)
+      : this.legacyHistoryDump(parsed);
+    if (dump) {
+      this.history.loadDump(dump, {
+        doc: this.doc,
+        docFor: (id) => this.docs.find((d) => d.id === id)?.doc ?? null,
+        scalarActions: (d: ScalarData, doc?: Doc) => scalarActions(d, {
+          doc: doc ?? this.doc,
+          showFrame: (fi) => {
+            const ent = doc ? this.docs.find((x) => x.doc === doc) : null;
+            if (ent) ent.fi = fi;
+            else this.applyFramePublic(fi);
+          },
+        }),
+      });
+    }
     const e = this.docs[this.docIdx] ?? this.docs[0];
     this.layerIdx = e ? Math.max(0, Math.min(e.doc.layers.length - 1, e.li)) : 0;
     this.frameIdx = e ? Math.max(0, Math.min(e.doc.frames.length - 1, e.fi)) : 0;
@@ -2117,6 +2132,7 @@ export class Session {
     const e = this.docs[i];
     if (!e) return false;
     const wasFocus = i === this.docIdx;
+    this.history.dropByDoc(e.doc); // its steps can no longer be replayed
     this.docs.splice(i, 1);
     this.previews = this.previews
       .filter((p) => p.canvas !== i)
@@ -2337,7 +2353,7 @@ export class Session {
     this.history.record("layer-opacity", {
       apply: () => { const L = this.doc.layers[live.li]; if (L) L.opacity = live.to; },
       unapply: () => { const L = this.doc.layers[live.li]; if (L) L.opacity = live.from; },
-    }, { k: "layer-opacity", li: live.li, v: live.to, prev: live.from });
+    }, { k: "layer-opacity", li: live.li, v: live.to, prev: live.from }, this.doc);
     this.changed();
   }
   setLayerBlend(li: number, b: BlendMode): void {

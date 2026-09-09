@@ -139,7 +139,7 @@ export interface SpaceEntry {
 
 /** serialize the whole multi-canvas space (v3); the focused canvas also fills
  *  the v2 fields so older builds can still open the file */
-export async function serializeSpace(entries: SpaceEntry[], focus: number): Promise<string> {
+export async function serializeSpace(entries: SpaceEntry[], focus: number, history?: unknown): Promise<string> {
   const canvases: unknown[] = [];
   for (const e of entries) {
     canvases.push({
@@ -151,12 +151,14 @@ export async function serializeSpace(entries: SpaceEntry[], focus: number): Prom
   // an empty space is a valid project: "everything closed" survives a restart
   if (!entries.length) return JSON.stringify({ app: "PixelCraft", v: 3, focus: 0, canvases });
   const head = await docPayload(entries[focus] ? entries[focus].doc : entries[0].doc);
-  return JSON.stringify({ app: "PixelCraft", v: 3, ...head, focus, canvases });
+  return JSON.stringify({ app: "PixelCraft", v: 3, ...head, focus, canvases, history: history ?? undefined });
 }
 
 export interface ParsedSpace {
   entries: SpaceEntry[];
   focus: number;
+  /** the project-wide history payload (v3), null when there is none */
+  history: unknown | null;
 }
 
 /** parse a .pxc into the full space (v2 single document or v3 canvases) */
@@ -187,14 +189,12 @@ export async function parseSpace(text: string): Promise<ParsedSpace | null> {
       });
     }
     // "canvases": [] is an explicitly empty project (all canvases closed)
-    if (!entries.length) return { entries: [], focus: 0 };
+    if (!entries.length) return { entries: [], focus: 0, history: obj.history ?? null };
     const focus = Math.max(0, Math.min(entries.length - 1, Math.round(Number(obj.focus) || 0)));
-    // a v2 file carries one top-level history: attach it to the focused canvas
-    if (obj.history && !entries[focus].hist) entries[focus].hist = obj.history;
-    return { entries, focus };
+    return { entries, focus, history: obj.history ?? null };
   }
   const doc = await docFromPayload(obj as Parameters<typeof docFromPayload>[0]);
   if (!doc) return null;
-  return { entries: [{ doc, x: 0, y: 0, li: 0, fi: 0, hist: obj.history ?? null }], focus: 0 };
+  return { entries: [{ doc, x: 0, y: 0, li: 0, fi: 0 }], focus: 0, history: obj.history ?? null };
 }
 
