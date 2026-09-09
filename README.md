@@ -88,7 +88,7 @@ toolchain/      打包工具链（aapt2/d8/apksigner/devserver）
 |---|---|
 | [`docs/API.md`](docs/API.md) | 各模块 API 接口文档（函数签名、参数、返回值、用法示例） |
 | [`docs/COMPARISON.md`](docs/COMPARISON.md) | 与 Aseprite / Resprite 的功能对比与改进优先级 |
-| [`NOTES.md`](NOTES.md) | 协作约定：版本号规则、出包流程、声明式优先、提交规范 |
+| [`AGENTS.md`](AGENTS.md) | AI 代理约定：环境与命令、架构要点、工程约定（版本号/提交/文档同步）、导出 APK 完整 runbook、已知缺口 |
 
 ---
 
