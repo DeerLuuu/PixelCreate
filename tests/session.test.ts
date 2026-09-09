@@ -3,6 +3,7 @@ import {
   SETTINGS, SETTING_GROUPS, settingsOfGroup, coerceSetting, exportSettings, importSettings, isDefault, resetSetting,
 } from "../src/app/settings";
 import { GESTURES, GESTURE_ACTIONS, gesturePath, isActionAllowed } from "../src/app/gestures";
+import { CORE_TOOLS, isSymTool } from "../src/tools/registry";
 import { History } from "../src/engine/history";
 import { scalarActions } from "../src/app/history-io";
 import * as historyFile from "../src/io/historyfile";
@@ -343,6 +344,16 @@ export function testSession(): void {
     eq("gesture.clamp.longPress", c.prefs.longPressMs, 800);
     eq("gesture.clamp.fourFinger", c.prefs.fourFingerPx, 8);
     ok("gesture.clamp.zoomRange", c.prefs.zoomMax > c.prefs.zoomMin, c.prefs.zoomMin + "/" + c.prefs.zoomMax);
+  }
+
+  // --- freehand outline tool ---
+  {
+    const def = CORE_TOOLS.find((x) => x.id === "outline");
+    ok("tool.outline.registered", !!def && def.icon === "i-outline" && def.shape === false);
+    ok("tool.outline.symmetry", isSymTool("outline"));
+    s.setTool("outline");
+    eq("tool.outline.selected", s.tool, "outline");
+    s.setTool("pencil");
   }
 
   // --- gesture -> action mapping ---

@@ -14,7 +14,7 @@ const zh: Dict = {
   tools: {
     pencil: "铅笔", eraser: "橡皮", bucket: "油漆桶", picker: "取色器", line: "直线",
     rect: "矩形", rectfill: "矩形填充", ellipse: "椭圆", ellipsefill: "椭圆填充", circle: "圆形", polygon: "多边形",
-    select: "选区", wand: "魔棒", lasso: "套索",
+    select: "选区", wand: "魔棒", lasso: "套索", outline: "轮廓填充",
   },
   sides: "边数",
   shapeSolid: "实心",
@@ -220,7 +220,7 @@ const en: Dict = {
   tools: {
     pencil: "Pencil", eraser: "Eraser", bucket: "Fill", picker: "Picker", line: "Line",
     rect: "Rect", rectfill: "Rect fill", ellipse: "Ellipse", ellipsefill: "Ellipse fill", circle: "Circle", polygon: "Polygon",
-    select: "Select", wand: "Wand", lasso: "Lasso",
+    select: "Select", wand: "Wand", lasso: "Lasso", outline: "Outline fill",
   },
   sides: "Sides",
   shapeSolid: "Filled",

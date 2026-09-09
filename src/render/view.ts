@@ -6,7 +6,8 @@ import { Sel } from "../engine/doc";
 import * as comp from "./compositor";
 import { Stroke } from "../tools/stroke";
 import { isSymTool, SYM_ANGLES } from "../tools/registry";
-import { lineCells, brushStamp } from "../engine/paint";
+import type { SymAxis } from "../engine/symmetry";
+import { lineCells, brushStamp, fillPolygon } from "../engine/paint";
 import { selOps, lassoFill, beginMove, xformFloating, type MoveState } from "../tools/select";
 import type { Session } from "../app/session";
 import { clamp } from "../engine/types";
@@ -103,6 +104,8 @@ export class View {
   private panLast: PxPoint | null = null;
   private selDrag: { kind: "rect" | "move" | "lasso"; x0: number; y0: number; x1: number; y1: number; before: Uint8ClampedArray | null; b: { x: number; y: number; w: number; h: number }; moved: boolean; sx: number; sy: number; mv?: MoveState | null; pts?: [number, number][]; dx?: number; dy?: number; cut?: boolean } | null = null;
   private longT: number | null = null;
+  /** freehand outline tool: collected path, filled with the current colour on release */
+  private outline: { pts: Array<[number, number]>; li: number; fi: number; before: Uint8ClampedArray | null } | null = null;
   /** two-finger long press: fires when both fingers stay still long enough */
   private twoLongT: number | null = null;
   private twoLongMid: { x: number; y: number } | null = null;
@@ -516,6 +519,7 @@ export class View {
     }
     this.drawSelTransform();
     this.drawFlash(ctx);
+    this.drawOutlinePreview(ctx);
     // floating selection content: pixels held above the layer during a drag
     const fg = this.selDrag;
     if (fg && fg.kind === "move" && fg.mv && fg.cut && fg.moved) {
@@ -817,6 +821,30 @@ export class View {
       this.stepFlash();
     });
   }
+  /** freehand outline preview: the traced path plus the region it will fill */
+  private drawOutlinePreview(ctx: CanvasRenderingContext2D): void {
+    const o = this.outline;
+    if (!o || o.pts.length < 2) return;
+    const z = this.zoom;
+    const sx = (x: number) => this.ox + (x + 0.5) * z;
+    const sy = (y: number) => this.oy + (y + 0.5) * z;
+    ctx.save();
+    ctx.beginPath();
+    ctx.moveTo(sx(o.pts[0][0]), sy(o.pts[0][1]));
+    for (let i = 1; i < o.pts.length; i++) ctx.lineTo(sx(o.pts[i][0]), sy(o.pts[i][1]));
+    ctx.closePath();
+    // the fill preview uses the live colour so the result is predictable
+    const c = this.session.color;
+    ctx.fillStyle = "rgba(" + c[0] + "," + c[1] + "," + c[2] + "," + Math.min(0.55, Math.max(0.18, c[3] / 255 * 0.45)) + ")";
+    ctx.fill();
+    ctx.setLineDash([6, 4]);
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = "rgba(126,255,214,.95)";
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.restore();
+  }
+
   /** the layer-switch pulse, drawn into the overlay (no composite work) */
   private drawFlash(ctx: CanvasRenderingContext2D): void {
     const f = this.flash;
@@ -975,6 +1003,7 @@ export class View {
       this.twoTapPt = null;
       this.twoTapMid = null;
       this.panLast = null;
+      if (this.outline) this.endOutline(false);
       if (this.stroke) { this.stroke.cancel(); this.stroke = null; }
       if (this.selDrag) {
         if (this.selDrag.kind === "move" && this.selDrag.cut) this.endSelDrag(false);
@@ -997,6 +1026,7 @@ export class View {
     // the hand is going for the 4-finger swipe, so anything the first two
     // fingers started is dropped and the gesture waits quietly for the 4th
     if (this.pointers.size >= 3) {
+      if (this.outline) this.endOutline(false);
       if (this.stroke) { this.stroke.cancel(); this.stroke = null; }
       if (this.selDrag) {
         if (this.selDrag.kind === "move" && this.selDrag.cut) this.endSelDrag(false);
@@ -1014,6 +1044,7 @@ export class View {
       return;
     }
     if (this.pointers.size >= 2) {
+      if (this.outline) this.endOutline(false); // 2nd finger = navigation, not a fill
       if (this.stroke) {
         // a second contact means navigation (pinch / multi-finger gesture),
         // never drawing: roll the half-drawn stroke back entirely instead of
@@ -1067,6 +1098,10 @@ export class View {
     const tool = s.tool;
     const pp = this.screenToPixel(pt.x, pt.y);
     const doc = s.doc;
+    if (tool === "outline") {
+      this.outlineDown(pp);
+      return;
+    }
     const selOn = !!doc.sel && doc.sel.hasAny();
     // long-press eyedropper: disabled while a selection is shown or a selection
     // tool is active (holds there mean marquee/transform, not colour picking)
@@ -1259,6 +1294,10 @@ export class View {
       this.session.repaintRect(this.stroke.takeDirty());
       return;
     }
+    if (this.outline) {
+      this.outlineMove(this.screenToPixel(pt.x, pt.y));
+      return;
+    }
     if (this.selDrag) {
       const pp = this.screenToPixel(pt.x, pt.y);
       this.selMove(pp);
@@ -1284,6 +1323,10 @@ export class View {
     }
     if (this.pointers.size < 2) this.pinchBase = null;
     if (this.pointers.size < 2) this.cancelTwoLong();
+    if (this.pointers.size === 0 && this.outline) {
+      this.endOutline(true);
+      return;
+    }
     if (this.pointers.size === 0) {
       if (this.longT !== null) {
         window.clearTimeout(this.longT);
@@ -1482,6 +1525,7 @@ export class View {
 
   private onCancel(e: PointerEvent): void {
     this.pointers.delete(e.pointerId);
+    if (this.outline) this.endOutline(false);
     this.cancelTwoLong();
     this.twoLongFired = false;
     this.gestureHadTwo = false;
@@ -1724,6 +1768,68 @@ export class View {
       circle: "tools.circle", polygon: "tools.polygon",
     };
     return map[kind] ?? kind;
+  }
+
+  // ---- freehand outline tool (draw a closed shape → fill it) ----
+  /** pointer down: start collecting the freehand path (nothing is painted yet) */
+  private outlineDown(pp: { x: number; y: number }): void {
+    const s = this.session;
+    const li = s.curLayer(), fi = s.curFrame();
+    if (s.layerLocked()) return;
+    const cel = s.doc.celAt(li, fi);
+    this.outline = { pts: [[pp.x, pp.y]], li, fi, before: cel ? new Uint8ClampedArray(cel.data) : null };
+    this.cursor = null;
+    this.drawOverlay();
+  }
+  private outlineMove(pp: { x: number; y: number }): void {
+    const o = this.outline;
+    if (!o) return;
+    const last = o.pts[o.pts.length - 1];
+    if (last[0] === pp.x && last[1] === pp.y) return;
+    // keep the path contiguous so the scanline fill has no gaps
+    lineCells(last[0], last[1], pp.x, pp.y, (x, y) => {
+      const l = o.pts[o.pts.length - 1];
+      if (l[0] !== x || l[1] !== y) {
+        if (o.pts.length < 4000) o.pts.push([x, y]);
+      }
+    });
+    this.drawOverlay();
+  }
+  /** release: close the path and fill the enclosed region in one history step */
+  private endOutline(commit: boolean): void {
+    const o = this.outline;
+    this.outline = null;
+    if (!o) return;
+    const s = this.session;
+    const doc = s.doc;
+    // an empty layer has no cel yet: create it only when we are really filling
+    const keep = commit && o.pts.length >= 3;
+    let cel = doc.celAt(o.li, o.fi);
+    if (keep && !cel) {
+      doc.ensureCel(o.li, o.fi);
+      cel = doc.celAt(o.li, o.fi);
+    }
+    if (!keep || !cel) {
+      // nothing enclosed: drop a cel that was created for nothing
+      if (!o.before && cel && !cel.hasAnyOpaque()) doc.cels.delete(doc.key(o.li, o.fi));
+      this.drawOverlay();
+      return;
+    }
+    const ax: SymAxis = { on: s.sym !== "off", four: s.symFour, ox: s.symOx, oy: s.symOy, angDeg: s.symAng };
+    const mask = doc.selectionActive() ? (x: number, y: number) => doc.selAt(x, y) === 1 : null;
+    const color = s.color;
+    fillPolygon(cel, doc.w, doc.h, o.pts, color, mask, ax);
+    const after = new Uint8ClampedArray(cel.data);
+    // a fresh cel counts as changed; otherwise compare pixel by pixel
+    const changed = o.before === null || after.some((v, i) => v !== o.before![i]);
+    if (!changed) {
+      if (!o.before && !cel.hasAnyOpaque()) doc.cels.delete(doc.key(o.li, o.fi));
+      this.drawOverlay();
+      return;
+    }
+    s.history.pushPixels("outline-fill", doc, [{ li: o.li, fi: o.fi, before: o.before, after }]);
+    s.repaint();
+    s.changed();
   }
 
   // ---- selection gestures ----

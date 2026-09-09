@@ -121,6 +121,9 @@ paintAt(cel, x, y, c: RGBA, mask?): boolean;          // 画一点（受遮罩�
 eraseAt(cel, x, y, mask?): boolean;                   // 擦一点
 
 lineCells(x0, y0, x1, y1, fn): void;                  // Bresenham，逐点回调
+polygonCells(w, h, pts, fn): void;                    // 闭合多边形扫描线填充（even-odd，自动闭合）
+fillPolygon(cel, w, h, pts, color, mask?, ax?): Rect | null
+                                                      // 扫描线 + 对称镜像 + 选区遮罩，返回改动 bbox（null = 没画到）
 
 floodFill(cel, sx, sy, color, mask?): void;           // 连续区域填充
 floodErase(cel, sx, sy, mask?): void;
@@ -281,13 +284,14 @@ adjustPixel(r, g, b, a, adj): [number, number, number]
 `src/tools/registry.ts`
 
 ```ts
-type ToolId = "pencil" | "eraser" | "bucket" | "picker"
+type ToolId = "pencil" | "eraser" | "bucket" | "picker" | "outline"
   | "line" | "rect" | "rectfill" | "ellipse" | "ellipsefill" | "circle" | "polygon"
   | "select" | "wand" | "lasso";
 type BrushShape = "circle" | "square";   // engine/paint.ts 导出
 
 interface ToolDef { id: ToolId; icon: string; drawing: boolean; shape: boolean }
 const CORE_TOOLS / SHAPE_TOOLS / SELECT_TOOLS: ToolDef[];
+// outline = 轮廓填充：手绘闭合路径，松手后自动填充内部（View.outlineDown/Move/endOutline）
 isShapeTool(id) / isSelectTool(id) / isSymTool(id): boolean;
 
 interface BrushState { color: RGBA; size: number; alpha: number; pressure: number }

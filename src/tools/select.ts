@@ -4,6 +4,7 @@ import { Cel } from "../engine/cel";
 import type { RGBA } from "../engine/types";
 import type { History } from "../engine/history";
 import { blendOver } from "../engine/color";
+import { polygonCells } from "../engine/paint";
 
 function record(doc: Doc, history: History, li: number, fi: number, before: Uint8ClampedArray | null, label: string): void {
   const cel = doc.celAt(li, fi);
@@ -144,26 +145,8 @@ export function outlineSelected(doc: Doc, history: History, li: number, fi: numb
 export function lassoFill(doc: Doc, pts: Array<[number, number]>): void {
   if (!doc.sel) doc.sel = new Sel(doc.w, doc.h, false);
   doc.sel.clear();
-  if (pts.length < 3) return;
   const sel = doc.sel;
-  const n = pts.length;
-  for (let y = 0; y < doc.h; y++) {
-    const xs: number[] = [];
-    for (let i = 0; i < n; i++) {
-      const [x0, y0] = pts[i];
-      const [x1, y1] = pts[(i + 1) % n];
-      if ((y0 <= y && y < y1) || (y1 <= y && y < y0)) {
-        const x = x0 + ((x1 - x0) * (y - y0)) / (y1 - y0);
-        xs.push(x);
-      }
-    }
-    xs.sort((a, b) => a - b);
-    for (let k = 0; k + 1 < xs.length; k += 2) {
-      const xa = Math.max(0, Math.ceil(xs[k]));
-      const xb = Math.min(doc.w - 1, Math.floor(xs[k + 1]));
-      for (let x = xa; x <= xb; x++) sel.set(x, y, 1);
-    }
-  }
+  polygonCells(doc.w, doc.h, pts, (x, y) => sel.set(x, y, 1));
 }
 /** One-time state captured when a selection-move gesture begins. */
 export interface MoveState {

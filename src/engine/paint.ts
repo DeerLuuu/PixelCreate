@@ -1,5 +1,6 @@
 // Pixel-level drawing algorithms operating directly on Cel buffers.
 import { Cel } from "./cel";
+import { mirrorCells, type SymAxis } from "./symmetry";
 import type { RGBA } from "./types";
 import { blendOver, writePixel } from "./color";
 
@@ -20,6 +21,51 @@ export function eraseAt(cel: Cel, x: number, y: number, mask?: MaskFn | null): b
   const i = cel.idx(x, y);
   cel.data[i] = 0; cel.data[i + 1] = 0; cel.data[i + 2] = 0; cel.data[i + 3] = 0;
   return true;
+}
+
+/** Scanline-fill a closed polygon, calling fn(x, y) for every pixel inside.
+ *  Even-odd rule; the path is closed implicitly (last → first point), so a
+ *  freehand outline drawn by the user becomes the filled region. */
+export function polygonCells(w: number, h: number, pts: Array<[number, number]>, fn: (x: number, y: number) => void): void {
+  const n = pts.length;
+  if (n < 3 || w <= 0 || h <= 0) return;
+  for (let y = 0; y < h; y++) {
+    const xs: number[] = [];
+    for (let i = 0; i < n; i++) {
+      const [x0, y0] = pts[i];
+      const [x1, y1] = pts[(i + 1) % n];
+      if ((y0 <= y && y < y1) || (y1 <= y && y < y0)) {
+        xs.push(x0 + ((x1 - x0) * (y - y0)) / (y1 - y0));
+      }
+    }
+    xs.sort((a, b) => a - b);
+    for (let k = 0; k + 1 < xs.length; k += 2) {
+      const xa = Math.max(0, Math.ceil(xs[k]));
+      const xb = Math.min(w - 1, Math.floor(xs[k + 1]));
+      for (let x = xa; x <= xb; x++) fn(x, y);
+    }
+  }
+}
+
+/** Fill a closed freehand path into a cel: scanline raster + optional symmetry
+ *  mirror + optional selection mask. Returns the bounding box of the cells the
+ *  paint actually touched (null = nothing was painted). */
+export function fillPolygon(cel: Cel, w: number, h: number, pts: Array<[number, number]>, color: RGBA,
+                            mask?: MaskFn | null, ax?: SymAxis): { x: number; y: number; w: number; h: number } | null {
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  polygonCells(w, h, pts, (x, y) => {
+    const targets = ax ? mirrorCells(x, y, w, h, ax) : [[x, y]] as Array<[number, number]>;
+    for (const [mx, my] of targets) {
+      if (mx < 0 || my < 0 || mx >= w || my >= h) continue;
+      if (!paintAt(cel, mx, my, color, mask)) continue;
+      if (mx < x0) x0 = mx;
+      if (my < y0) y0 = my;
+      if (mx > x1) x1 = mx;
+      if (my > y1) y1 = my;
+    }
+  });
+  if (x1 < 0) return null;
+  return { x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 + 1 };
 }
 
 /** Bresenham line: calls fn for every cell. */

@@ -1,7 +1,7 @@
 import type { RGBA } from "../engine/types";
 
 export type ToolId =
-  | "pencil" | "eraser" | "bucket" | "picker"
+  | "pencil" | "eraser" | "bucket" | "picker" | "outline"
   | "line" | "rect" | "ellipse" | "circle" | "polygon"
   | "select" | "wand" | "lasso";
 
@@ -19,6 +19,8 @@ export const CORE_TOOLS: ToolDef[] = [
   { id: "eraser", icon: "i-eraser", drawing: true, shape: false },
   { id: "bucket", icon: "i-bucket", drawing: true, shape: false },
   { id: "picker", icon: "i-picker", drawing: false, shape: false },
+  // freehand closed shape that fills itself on release (lasso + bucket in one)
+  { id: "outline", icon: "i-outline", drawing: false, shape: false },
 ];
 
 export const SHAPE_TOOLS: ToolDef[] = [
@@ -49,7 +51,7 @@ export const nextSym = (m: SymMode): SymMode => SYM_CYCLE[(SYM_CYCLE.indexOf(m) 
 export const SYM_ANGLES = [0, 45, 90, 135] as const;
 
 /** brush/shape tools whose marks honour drawing symmetry */
-export const SYM_TOOLS = ["pencil", "eraser", "line", "rect", "ellipse", "circle", "polygon"] as const;
+export const SYM_TOOLS = ["pencil", "eraser", "line", "rect", "ellipse", "circle", "polygon", "outline"] as const;
 export const isSymTool = (id: string): boolean => (SYM_TOOLS as readonly string[]).includes(id);
 
 export interface BrushState {
