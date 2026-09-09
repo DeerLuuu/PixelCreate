@@ -12,6 +12,7 @@ import { selOps, lassoFill, beginMove, xformFloating, type MoveState } from "../
 import type { Session } from "../app/session";
 import type { GestureActionId } from "../app/gesture-ids";
 import { clamp } from "../engine/types";
+import { SNAP_GAP } from "../app/canvas-snap";
 
 /** Is the composite canvas stale? `compRect === null` means "the whole canvas
  *  changed" (FX ops, selection edits, paste …) — the caller MUST rebuild it
@@ -609,6 +610,8 @@ export class View {
     if (!doc) return;
     const z = this.zoom;
     this.drawIsoGuide(ctx);
+    // green gaps between snapped canvases
+    this.drawSnapGaps(ctx, z);
     // selections of referenced canvases: only on their reference layer
     this.drawRefSelections(ctx, z);
     // selection tint + ants
@@ -986,6 +989,42 @@ export class View {
   }
   /** freehand outline preview: the same trail as the lasso selection, plus a
    *  light preview of the region that will be filled (auto-closed to the start) */
+  /** the empty space between two snapped canvases is tinted green */
+  private drawSnapGaps(ctx: CanvasRenderingContext2D, z: number): void {
+    const s = this.session;
+    const docs = s.docs;
+    if (docs.length < 2) return;
+    const focus = docs[s.docIdx];
+    if (!focus) return;
+    const sx = (v: number): number => this.ox + (v - focus.x) * z;
+    const sy = (v: number): number => this.oy + (v - focus.y) * z;
+    ctx.save();
+    ctx.fillStyle = "rgba(80, 220, 140, 0.30)";
+    for (let i = 0; i < docs.length; i++) {
+      const a = docs[i];
+      if (!a.group) continue;
+      for (let j = i + 1; j < docs.length; j++) {
+        const b = docs[j];
+        if (b.group !== a.group) continue;
+        const ax1 = a.x + a.doc.w, ay1 = a.y + a.doc.h;
+        const bx1 = b.x + b.doc.w, by1 = b.y + b.doc.h;
+        let x0 = 0, y0 = 0, x1 = 0, y1 = 0, ok = false;
+        if (ax1 + SNAP_GAP === b.x && a.y < by1 && b.y < ay1) {
+          x0 = ax1; x1 = b.x; y0 = Math.max(a.y, b.y); y1 = Math.min(ay1, by1); ok = true;
+        } else if (bx1 + SNAP_GAP === a.x && a.y < by1 && b.y < ay1) {
+          x0 = bx1; x1 = a.x; y0 = Math.max(a.y, b.y); y1 = Math.min(ay1, by1); ok = true;
+        } else if (ay1 + SNAP_GAP === b.y && a.x < bx1 && b.x < ax1) {
+          y0 = ay1; y1 = b.y; x0 = Math.max(a.x, b.x); x1 = Math.min(ax1, bx1); ok = true;
+        } else if (by1 + SNAP_GAP === a.y && a.x < bx1 && b.x < ax1) {
+          y0 = by1; y1 = a.y; x0 = Math.max(a.x, b.x); x1 = Math.min(ax1, bx1); ok = true;
+        }
+        if (!ok) continue;
+        ctx.fillRect(sx(x0), sy(y0), (x1 - x0) * z, (y1 - y0) * z);
+      }
+    }
+    ctx.restore();
+  }
+
   /**
    * A referenced canvas may have its own selection. Show it on the reference
    * layer that mirrors it (faint violet tint + dashed frame), so it is clear

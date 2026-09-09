@@ -149,6 +149,7 @@ input[type=range]{width:64px;height:22px;accent-color:var(--accent)}
   color:#cfd5e6;display:flex;align-items:center;justify-content:center;padding:0;flex:0 0 auto}
 .cv-btn:active{background:var(--accent);color:#fff}
 .cv-unlink{color:#ffd166}
+.cv-btn.on{background:var(--accent);color:#fff}
 .cv-lock{display:flex;align-items:center;color:#ffb4b4;flex:0 0 auto}
 .cv-title.locked{border-color:#8a5a5a}
 .cv-title.on .cv-dot{background:#7cf5c5}

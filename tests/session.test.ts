@@ -821,9 +821,10 @@ export async function testSession(): Promise<void> {
     eq("canvas.snap.initial-gap", c.docs[b].x, c.docs[0].x + 64 + 24);
     // dragging B towards A snaps it flush against A's right edge
     const near = c.snapPosition(b, c.docs[0].x + 64 + 5, c.docs[0].y, 12);
-    eq("canvas.snap.touch", [near.x, near.y, near.hit], [c.docs[0].x + 64, c.docs[0].y, 0]);
+    // snapped neighbours keep SNAP_GAP px of empty space between them
+    eq("canvas.snap.touch", [near.x, near.y, near.hit], [c.docs[0].x + 64 + 8, c.docs[0].y, 0]);
     c.moveCanvas(b, near.x, near.y);
-    eq("canvas.snap.moved", c.docs[b].x, c.docs[0].x + 64);
+    eq("canvas.snap.moved", c.docs[b].x, c.docs[0].x + 64 + 8);
     // releasing while flush groups them
     c.finishCanvasDrag(b, near.hit);
     ok("canvas.snap.grouped", !!c.docs[b].group && c.docs[b].group === c.docs[0].group);
@@ -844,6 +845,11 @@ export async function testSession(): Promise<void> {
     eq("canvas.lock.blocks-move", c.docs[0].x, ax);
     c.toggleCanvasLock(0);
     ok("canvas.lock.off", !c.isCanvasLocked(0));
+    // the title-bar eye toggles one preview window per canvas
+    ok("canvas.preview.toggle-open", c.togglePreview(0));
+    ok("canvas.preview.toggle-has", c.hasPreview(0));
+    eq("canvas.preview.toggle-close", c.togglePreview(0), false);
+    ok("canvas.preview.toggle-gone", !c.hasPreview(0));
   }
 
   // --- reference layers are MIRRORED into their own cel (live preview) ---

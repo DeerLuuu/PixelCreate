@@ -25,7 +25,7 @@ import { mirrorMaskInPlace } from "../engine/symmetry";
 import { adjustPixel, type HslAdj } from "../engine/adjust";
 import { type LoopMode, nextLoopMode, nextPlayFrame, startPlayDir, startPlayFrame } from "./playback";
 import { SETTINGS_BY_PATH, normalizeSetting, type SettingValue } from "./settings";
-import { snapToTargets, type SnapTarget } from "./canvas-snap";
+import { snapToTargets, SNAP_GAP, type SnapTarget } from "./canvas-snap";
 
 export interface Prefs {
   lang: "zh" | "en";
@@ -2003,15 +2003,15 @@ export class Session {
       if (o === e || (e.group && o.group === e.group)) continue;
       targets.push({ id: k, x: o.x, y: o.y, w: o.doc.w, h: o.doc.h });
     }
-    const r = snapToTargets({ x, y, w: e.doc.w, h: e.doc.h }, targets, tol);
+    const r = snapToTargets({ x, y, w: e.doc.w, h: e.doc.h }, targets, tol, SNAP_GAP);
     return { x: r.x, y: r.y, hit: r.hit };
   }
-  /** true when two canvases share an edge (they are adjacent) */
+  /** true when two canvases are neighbours with exactly the snap gap between */
   private canvasesTouch(a: CanvasEntry, b: CanvasEntry): boolean {
     const ax1 = a.x + a.doc.w, ay1 = a.y + a.doc.h;
     const bx1 = b.x + b.doc.w, by1 = b.y + b.doc.h;
-    const sideBySide = (ax1 === b.x || bx1 === a.x) && a.y < by1 && b.y < ay1;
-    const stacked = (ay1 === b.y || by1 === a.y) && a.x < bx1 && b.x < ax1;
+    const sideBySide = (ax1 + SNAP_GAP === b.x || bx1 + SNAP_GAP === a.x) && a.y < by1 && b.y < ay1;
+    const stacked = (ay1 + SNAP_GAP === b.y || by1 + SNAP_GAP === a.y) && a.x < bx1 && b.x < ax1;
     return sideBySide || stacked;
   }
   /** a drag ended on canvas `hit`: snap them together when they really touch */
@@ -2098,6 +2098,17 @@ export class Session {
     this.previews.push({ id, canvas, x: null, y: null, size });
     this.changed();
     return id;
+  }
+  /** the eye on a canvas title: open this canvas' preview, or close it again */
+  togglePreview(canvas = this.docIdx): boolean {
+    const open = this.previews.find((p) => p.canvas === canvas);
+    if (open) { this.closePreview(open.id); return false; }
+    this.addPreview(canvas);
+    return true;
+  }
+  /** true when a preview window is open for this canvas */
+  hasPreview(canvas = this.docIdx): boolean {
+    return this.previews.some((p) => p.canvas === canvas);
   }
   closePreview(id: string): void {
     const n = this.previews.length;

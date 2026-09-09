@@ -50,7 +50,8 @@ export function CanvasTitles({ view, tick }: { view: View | null; tick: number }
               ev.preventDefault();
               ev.stopPropagation();
               stopTip();
-              if (ev.target !== ev.currentTarget) return; // a button inside owns it
+              // only the buttons inside own the press; the name/labels drag
+              if ((ev.target as HTMLElement).closest("button")) return;
               try { (ev.currentTarget as HTMLElement).setPointerCapture(ev.pointerId); } catch { /* ignore */ }
               drag.current = {
                 i, x: ev.clientX, y: ev.clientY, x0: e.x, y0: e.y,
@@ -62,7 +63,7 @@ export function CanvasTitles({ view, tick }: { view: View | null; tick: number }
               if (!d || d.i !== i) return;
               const dx = ev.clientX - d.x;
               const dy = ev.clientY - d.y;
-              if (!d.moved && Math.hypot(dx, dy) < 6) return;
+              if (!d.moved && Math.hypot(dx, dy) < 4) return;
               if (d.locked) {
                 if (!d.warned) {
                   d.warned = true;
@@ -101,10 +102,11 @@ export function CanvasTitles({ view, tick }: { view: View | null; tick: number }
             }}
             onPointerCancel={() => { drag.current = null; stopTip(); }}
           >
-            <button className="cv-btn" title={t("canvasPreview")}
+            <button className={"cv-btn" + (SESSION.hasPreview(i) ? " on" : "")}
+              title={SESSION.hasPreview(i) ? t("canvasPreviewOff") : t("canvasPreview")}
               onPointerDown={(ev) => ev.stopPropagation()}
-              onClick={(ev) => { ev.stopPropagation(); SESSION.addPreview(i); }}>
-              <Icon id="i-eye" size={13} />
+              onClick={(ev) => { ev.stopPropagation(); SESSION.togglePreview(i); }}>
+              <Icon id={SESSION.hasPreview(i) ? "i-eye" : "i-eyeoff"} size={13} />
             </button>
             <span className="cv-dot" />
             <span className="cv-name">{e.doc.name || "untitled"}</span>
@@ -116,7 +118,6 @@ export function CanvasTitles({ view, tick }: { view: View | null; tick: number }
                 <Icon id="i-unlink" size={13} />
               </button>
             )}
-            <span className="cv-meta">{e.doc.w + "\u00d7" + e.doc.h}</span>
           </div>
         );
       })}

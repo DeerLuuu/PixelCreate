@@ -7,6 +7,9 @@
 // Pure and unit-tested: the host passes the proposed position and the other
 // canvases, and gets back the adjusted position plus the canvas it snapped to.
 
+/** empty space kept between two snapped canvases (doc pixels) */
+export const SNAP_GAP = 8;
+
 export interface SnapRect {
   x: number;
   y: number;
@@ -25,8 +28,8 @@ export interface SnapResult<T> {
   hit: T | null;
 }
 
-/** gap between two 1D intervals (0 when they touch or overlap) */
-function gap(a0: number, a1: number, b0: number, b1: number): number {
+/** distance between two 1D intervals (0 when they touch or overlap) */
+function axisGap(a0: number, a1: number, b0: number, b1: number): number {
   return Math.max(0, Math.max(a0 - b1, b0 - a1));
 }
 
@@ -39,7 +42,7 @@ function gap(a0: number, a1: number, b0: number, b1: number): number {
  * (within `tol * 2`), so distant canvases never snap just because their left
  * edges happen to line up.
  */
-export function snapToTargets<T>(moving: SnapRect, targets: Array<SnapTarget<T>>, tol: number): SnapResult<T> {
+export function snapToTargets<T>(moving: SnapRect, targets: Array<SnapTarget<T>>, tol: number, gap = SNAP_GAP): SnapResult<T> {
   if (tol <= 0 || !targets.length) return { x: moving.x, y: moving.y, hit: null };
   const mx1 = moving.x + moving.w;
   const my1 = moving.y + moving.h;
@@ -48,14 +51,14 @@ export function snapToTargets<T>(moving: SnapRect, targets: Array<SnapTarget<T>>
   for (const t of targets) {
     const tx1 = t.x + t.w;
     const ty1 = t.y + t.h;
-    const vGap = gap(moving.y, my1, t.y, ty1); // vertical distance between them
-    const hGap = gap(moving.x, mx1, t.x, tx1);
+    const vGap = axisGap(moving.y, my1, t.y, ty1); // vertical distance between them
+    const hGap = axisGap(moving.x, mx1, t.x, tx1);
     if (vGap <= tol * 2) {
       const cands: number[] = [
-        t.x - mx1,        // our right edge touches their left edge
-        tx1 - moving.x,   // our left edge touches their right edge
-        t.x - moving.x,   // left edges aligned
-        tx1 - mx1,        // right edges aligned
+        t.x - gap - mx1,        // our right edge sits `gap` left of their left edge
+        tx1 + gap - moving.x,   // our left edge sits `gap` right of their right edge
+        t.x - moving.x,         // left edges aligned
+        tx1 - mx1,              // right edges aligned
       ];
       for (const d of cands) {
         if (Math.abs(d) > tol) continue;
@@ -64,10 +67,10 @@ export function snapToTargets<T>(moving: SnapRect, targets: Array<SnapTarget<T>>
     }
     if (hGap <= tol * 2) {
       const cands: number[] = [
-        t.y - my1,        // our bottom edge touches their top edge
-        ty1 - moving.y,   // our top edge touches their bottom edge
-        t.y - moving.y,   // top edges aligned
-        ty1 - my1,        // bottom edges aligned
+        t.y - gap - my1,        // our bottom edge sits `gap` above their top edge
+        ty1 + gap - moving.y,   // our top edge sits `gap` below their bottom edge
+        t.y - moving.y,         // top edges aligned
+        ty1 - my1,              // bottom edges aligned
       ];
       for (const d of cands) {
         if (Math.abs(d) > tol) continue;
