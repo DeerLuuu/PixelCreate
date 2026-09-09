@@ -263,20 +263,45 @@ export class Session {
     if (!id) return null;
     return this.docs.find((d) => d.id === id) ?? null;
   }
-  /** image of a referenced canvas (its own current frame), centred on a canvas
-   *  of `w`x`h`; null when the canvas is gone */
-  private refImage(refId: string, w: number, h: number): HTMLCanvasElement | null {
+  /** pixels of a referenced canvas (its current frame) laid out on a w×h grid,
+   *  centred. `layerId` mirrors exactly ONE layer of it (its opacity applied);
+   *  null mirrors the flattened canvas. */
+  private refPixels(refId: string, w: number, h: number, layerId?: string | null): Uint8ClampedArray | null {
     const e = this.entryOf(refId);
     if (!e) return null;
     const fi = Math.max(0, Math.min(e.doc.frames.length - 1, e.fi));
+    const sw = e.doc.w, sh = e.doc.h;
+    const ox = Math.round((w - sw) / 2), oy = Math.round((h - sh) / 2);
+    if (layerId) {
+      const out = new Uint8ClampedArray(w * h * 4);
+      const li = e.doc.layers.findIndex((l) => l.id === layerId);
+      if (li < 0) return out; // the source layer is gone: the mirror empties
+      const cel = e.doc.celAt(li, fi);
+      if (!cel) return out;
+      const op = Math.max(0, Math.min(100, e.doc.layers[li].opacity)) / 100;
+      for (let y = 0; y < sh; y++) {
+        const ty = y + oy;
+        if (ty < 0 || ty >= h) continue;
+        for (let x = 0; x < sw; x++) {
+          const tx = x + ox;
+          if (tx < 0 || tx >= w) continue;
+          const p = (y * sw + x) * 4, q = (ty * w + tx) * 4;
+          const a = cel.data[p + 3];
+          if (!a) continue;
+          out[q] = cel.data[p]; out[q + 1] = cel.data[p + 1]; out[q + 2] = cel.data[p + 2];
+          out[q + 3] = Math.round(a * op);
+        }
+      }
+      return out;
+    }
     const src = compositor.composeFrame(e.doc, fi);
-    if (src.width === w && src.height === h) return src;
+    if (sw === w && sh === h) return new Uint8ClampedArray(src.getContext("2d")!.getImageData(0, 0, w, h).data);
     const cv = document.createElement("canvas");
     cv.width = w;
     cv.height = h;
     const ctx = cv.getContext("2d")!;
-    ctx.drawImage(src, Math.round((w - src.width) / 2), Math.round((h - src.height) / 2));
-    return cv;
+    ctx.drawImage(src, ox, oy);
+    return new Uint8ClampedArray(ctx.getImageData(0, 0, w, h).data);
   }
   /** last mirrored state per reference layer: `${holderId}:${layerId}` */
   private refSync = new Map<string, string>();
@@ -322,7 +347,8 @@ export class Session {
       const hw = holder.doc.w, hh = holder.doc.h;
       const sw = src.doc.w, sh = src.doc.h;
       const ox = Math.round((hw - sw) / 2), oy = Math.round((hh - sh) / 2);
-      const sli = Math.max(0, Math.min(src.doc.layers.length - 1, src.li));
+      const sli = this.refLayerIndex(src, L.refLayer);
+      if (sli < 0) continue;
       const sfi = Math.max(0, Math.min(src.doc.frames.length - 1, src.fi));
       const tcel = src.doc.ensureCel(sli, sfi);
       const before = new Uint8ClampedArray(tcel.data);
@@ -362,15 +388,15 @@ export class Session {
           if (!L?.ref) continue;
           const src = this.entryOf(L.ref);
           const key = holder.id + ":" + L.id;
-          const stamp = src ? src.doc.pixelRev + ":" + holder.doc.frames.length + ":" + holder.doc.w + "x" + holder.doc.h : "gone";
+          const stamp = src
+            ? src.doc.pixelRev + ":" + holder.doc.frames.length + ":" + holder.doc.w + "x" + holder.doc.h + ":" + (L.refLayer ?? "*")
+            : "gone";
           if (this.refSync.get(key) === stamp) continue;
           this.refSync.set(key, stamp);
           if (!src) continue;
-          const img = this.refImage(src.id, holder.doc.w, holder.doc.h);
-          if (!img) continue;
+          const px = this.refPixels(src.id, holder.doc.w, holder.doc.h, L.refLayer);
+          if (!px) continue;
           const cel = holder.doc.ensureCel(li, 0);
-          const ctx = img.getContext("2d")!;
-          const px = ctx.getImageData(0, 0, holder.doc.w, holder.doc.h).data;
           cel.data.set(px);
           this.refMirror.set(key, new Uint8ClampedArray(px));
           // every frame of a reference layer shows the same picture: share one cel
@@ -743,13 +769,47 @@ export class Session {
     if (!L) return false;
     // a reference layer is never paintable in place: strokes are redirected to
     // the source canvas, which enforces ITS own lock
-    if (L.ref) return this.entryOf(L.ref)?.doc.layers[this.entryOf(L.ref)!.li]?.locked ?? false;
+    if (L.ref) return this.refPaintBlock(this.curLayer()) !== null;
     return L.locked;
+  }
+  /** which layer of a source canvas a mirror shows: the bound layer, or (for a
+   *  flattened reference) whatever layer is selected in the source right now */
+  private refLayerIndex(src: CanvasEntry, refLayer?: string | null): number {
+    if (refLayer) return src.doc.layers.findIndex((l) => l.id === refLayer);
+    return Math.max(0, Math.min(src.doc.layers.length - 1, src.li));
+  }
+  /** why a reference layer cannot be painted right now (null = it can):
+   *  its source layer is locked, or no longer exists */
+  refPaintBlock(li: number): "locked" | "gone" | null {
+    const L = this.doc.layers[li];
+    if (!L?.ref) return null;
+    const e = this.entryOf(L.ref);
+    if (!e) return null; // the source canvas is gone: the mirror paints locally
+    const sli = this.refLayerIndex(e, L.refLayer);
+    if (sli < 0) return "gone";
+    return e.doc.layers[sli].locked ? "locked" : null;
+  }
+  /** tell the user why nothing was painted (a silent no-op is the worst case) */
+  paintBlockedNote(): void {
+    const en = this.prefs.lang === "en";
+    const why = this.refPaintBlock(this.curLayer());
+    if (why === "locked") toastFn(en ? "That layer is locked in the source canvas" : "源画布里的该图层已锁定");
+    else if (why === "gone") toastFn(en ? "The referenced layer is gone — release the reference to paint here" : "被引用的图层已不存在——解除引用后即可在此绘制");
+    else toastFn(en ? "This layer is locked" : "该图层已锁定");
   }
   /** the canvas a reference layer points at (null = normal layer / gone) */
   refSourceOf(li: number): CanvasEntry | null {
     const L = this.doc.layers[li];
     return L?.ref ? this.entryOf(L.ref) : null;
+  }
+  /** the source layer a mirror shows (null = the whole flattened canvas) */
+  refSourceLayerOf(li: number): { name: string; li: number } | null {
+    const L = this.doc.layers[li];
+    const e = this.entryOf(L?.ref);
+    if (!L?.ref || !e) return null;
+    if (!L.refLayer) return null;
+    const k = e.doc.layers.findIndex((l) => l.id === L.refLayer);
+    return k < 0 ? null : { name: e.doc.layers[k].name, li: k };
   }
   /** where the referenced canvas' pixels sit inside this canvas (centred) */
   refOffset(li: number): { ox: number; oy: number } {
@@ -764,21 +824,32 @@ export class Session {
   isRefLayer(li: number): boolean {
     return !!this.doc.layers[li]?.ref;
   }
-  /** where a stroke on layer `li` really lands: the referenced canvas' current
-   *  layer/frame, or null for a normal layer */
+  /** where a stroke on layer `li` really lands: the layer of the referenced
+   *  canvas this mirror shows (a bound layer, or the source's current one for a
+   *  flattened reference), or null for a normal layer */
   strokeTarget(li: number): { doc: Doc; li: number; fi: number; refId: string } | null {
     const L = this.doc.layers[li];
     const e = this.entryOf(L?.ref);
     if (!L?.ref || !e) return null;
+    const sli = this.refLayerIndex(e, L.refLayer);
+    if (sli < 0) return null; // the mirrored layer no longer exists
     return {
       doc: e.doc,
-      li: Math.max(0, Math.min(e.doc.layers.length - 1, e.li)),
+      li: sli,
       fi: Math.max(0, Math.min(e.doc.frames.length - 1, e.fi)),
       refId: e.id,
     };
   }
-  /** reference another canvas into this one as a new (live) layer */
-  referenceCanvas(canvasIndex: number): boolean {
+  /**
+   * Reference another canvas into this one.
+   *  - mode "layers" (default): every layer of the source becomes its own live
+   *    reference layer, in the same order, each bound to that exact source
+   *    layer — so painting/undo land where you expect and the holder shows the
+   *    source's layer structure (artwork + shadow …).
+   *  - mode "flat": one layer mirroring the flattened canvas (edits go to the
+   *    source's currently selected layer).
+   */
+  referenceCanvas(canvasIndex: number, opts?: { mode?: "layers" | "flat" }): boolean {
     const src = this.docs[canvasIndex];
     if (!src || src === this.entryOf(this.docs[this.docIdx]?.id)) {
       toastFn(this.prefs.lang === "en" ? "Cannot reference the current canvas" : "不能引用当前画布");
@@ -789,18 +860,26 @@ export class Session {
       toastFn(this.prefs.lang === "en" ? "That would create a reference loop" : "这样会形成循环引用");
       return false;
     }
+    const flat = opts?.mode === "flat";
+    const srcLayers = src.doc.layers.map((l) => ({ id: l.id, name: l.name }));
     const at = this.curLayer() + 1;
     this.struct("layer-ref", () => {
       const d = this.doc;
-      d.layers.splice(at, 0, {
-        id: uid(), name: src.doc.name || "ref", visible: true, opacity: 100,
-        blend: "normal", locked: false, ref: src.id,
-      });
-      this.layerIdx = at;
+      const added: Doc["layers"] = flat || !srcLayers.length
+        ? [{ id: uid(), name: src.doc.name || "ref", visible: true, opacity: 100, blend: "normal", locked: false, ref: src.id, refLayer: null }]
+        : srcLayers.map((L) => ({
+            id: uid(), name: L.name, visible: true, opacity: 100, blend: "normal" as const,
+            locked: false, ref: src.id, refLayer: L.id,
+          }));
+      d.layers.splice(at, 0, ...added);
+      this.layerIdx = at + added.length - 1; // the top-most mirror
     });
     this.refSync.clear();
     this.syncRefLayers();
-    toastFn(this.prefs.lang === "en" ? "Referenced " + (src.doc.name || "canvas") : "已引用画布「" + (src.doc.name || "") + "」");
+    const n = this.doc.layers.filter((l) => l.ref === src.id).length;
+    toastFn(this.prefs.lang === "en"
+      ? "Referenced " + (src.doc.name || "canvas") + (flat ? "" : " (" + n + " layers, live)")
+      : "已引用画布「" + (src.doc.name || "") + "」" + (flat ? "" : "（" + n + " 个图层，实时联动）"));
     return true;
   }
   /** true when `fromId` already (transitively) references `targetId` */
@@ -819,23 +898,68 @@ export class Session {
     }
     return false;
   }
-  /** break the link of a reference layer, keeping the pixels it shows */
-  unrefLayer(li = this.curLayer()): void {
+  /** can this (flattened) reference be split into one mirror per source layer? */
+  canSplitRef(li = this.curLayer()): boolean {
+    const L = this.doc.layers[li];
+    const e = this.entryOf(L?.ref);
+    return !!L?.ref && !L.refLayer && !!e && e.doc.layers.length > 1;
+  }
+  /** upgrade a flattened reference (saved by an older build) into one mirror
+   *  per source layer, in place — the same thing a fresh reference now creates */
+  splitRefLayer(li = this.curLayer()): boolean {
+    const L = this.doc.layers[li];
+    const e = this.entryOf(L?.ref);
+    if (!L?.ref || L.refLayer || !e || e.doc.layers.length < 2) return false;
+    this.syncRefLayers(); // flush pending direct edits back into the source first
+    const srcId = e.id;
+    const metas = e.doc.layers.map((s) => ({ id: s.id, name: s.name }));
+    this.struct("layer-ref", () => {
+      const d = this.doc;
+      const cur = d.layers[li];
+      if (!cur) return;
+      const added = metas.map((m) => ({
+        id: uid(), name: m.name, visible: cur.visible, opacity: cur.opacity,
+        blend: cur.blend, locked: false, ref: srcId, refLayer: m.id,
+      }));
+      d.layers.splice(li, 1, ...added);
+      // the old mirror cel (one per frame) goes; the cels above shift up
+      const shift = added.length - 1;
+      for (const k of [...d.cels.keys()]) {
+        const [kls, kf] = k.split(":");
+        const kl = Number(kls);
+        if (kl === li) { d.cels.delete(k); continue; }
+        if (kl > li && shift) {
+          const cel = d.cels.get(k)!;
+          d.cels.delete(k);
+          d.cels.set((kl + shift) + ":" + kf, cel);
+        }
+      }
+      this.layerIdx = li + added.length - 1;
+    });
+    this.refSync.clear();
+    this.refMirror.clear();
+    this.syncRefLayers();
+    toastFn(this.prefs.lang === "en"
+      ? "Split into " + metas.length + " reference layers"
+      : "已拆成 " + metas.length + " 条引用图层");
+    return true;
+  }
+  /** break the link of a reference layer, keeping the pixels it shows */  unrefLayer(li = this.curLayer()): void {
     const doc = this.doc;
     const L = doc.layers[li];
     if (!L?.ref) return;
-    const img = this.refImage(L.ref, doc.w, doc.h);
+    const px = this.refPixels(L.ref, doc.w, doc.h, L.refLayer);
     this.struct("layer-unref", () => {
       const d = this.doc;
       const N = d.layers[li];
       if (!N) return;
       N.ref = null;
-      const shared = img ? new Uint8ClampedArray(img.getContext("2d")!.getImageData(0, 0, d.w, d.h).data) : null;
+      N.refLayer = null;
       // frames shared one cel while the link was live: split them now
       for (let fi = 0; fi < d.frames.length; fi++) {
         const cel = new Cel(d.w, d.h);
         const old = d.cels.get(d.key(li, fi));
-        if (shared) cel.data.set(shared);
+        if (px) cel.data.set(px);
         else if (old) cel.data.set(old.data);
         d.cels.set(d.key(li, fi), cel);
       }
@@ -843,6 +967,34 @@ export class Session {
     this.refSync.clear();
     this.refMirror.clear();
     toastFn(this.prefs.lang === "en" ? "Reference released, pixels kept" : "已解除引用，图层内容保留");
+  }
+  /** release EVERY reference layer of this canvas in one step (keeps pixels) */
+  unrefAll(): number {
+    const doc = this.doc;
+    const list = doc.layers.map((L, li) => ({ L, li })).filter((x) => !!x.L.ref);
+    if (!list.length) return 0;
+    const px = list.map(({ L }) => this.refPixels(L.ref!, doc.w, doc.h, L.refLayer));
+    this.struct("layer-unref", () => {
+      const d = this.doc;
+      for (let n = 0; n < list.length; n++) {
+        const { li } = list[n];
+        const N = d.layers[li];
+        if (!N) continue;
+        N.ref = null;
+        N.refLayer = null;
+        for (let fi = 0; fi < d.frames.length; fi++) {
+          const cel = new Cel(d.w, d.h);
+          const old = d.cels.get(d.key(li, fi));
+          if (px[n]) cel.data.set(px[n]!);
+          else if (old) cel.data.set(old.data);
+          d.cels.set(d.key(li, fi), cel);
+        }
+      }
+    });
+    this.refSync.clear();
+    this.refMirror.clear();
+    toastFn(this.prefs.lang === "en" ? "All references released, pixels kept" : "已解除全部引用，图层内容保留");
+    return list.length;
   }
   /** move the current layer out into a canvas of its own */
   async extractLayerToCanvas(li = this.curLayer()): Promise<number | null> {
@@ -858,7 +1010,7 @@ export class Session {
       no: this.prefs.lang === "en" ? "Cancel" : "取消",
     });
     if (!ok) return null;
-    const refImg = L.ref ? this.refImage(L.ref, doc.w, doc.h) : null;
+    const refPx = L.ref ? this.refPixels(L.ref, doc.w, doc.h, L.refLayer) : null;
     const nd = new Doc(doc.w, doc.h, (doc.name || "art") + "_" + L.name);
     nd.palette = doc.palette.map((c) => [...c] as RGBA);
     nd.bg = null;
@@ -869,13 +1021,7 @@ export class Session {
       const cel = doc.celAt(li, fi);
       const nc = nd.ensureCel(0, fi);
       if (cel) nc.data.set(cel.data);
-      else if (refImg) {
-        const cv = document.createElement("canvas");
-        cv.width = nd.w; cv.height = nd.h;
-        const ctx = cv.getContext("2d")!;
-        ctx.drawImage(refImg, Math.round((nd.w - refImg.width) / 2), Math.round((nd.h - refImg.height) / 2));
-        nc.data.set(ctx.getImageData(0, 0, nd.w, nd.h).data);
-      }
+      else if (refPx) nc.data.set(refPx);
     }
     this.struct("layer-extract", () => {
       const d = this.doc;

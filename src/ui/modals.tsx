@@ -838,20 +838,32 @@ function FrameThumb({ doc, fi, sz = 132 }: { doc: Doc; fi: number; sz?: number }
 export function CanvasRefModal({ t, onClose }: { t: ReturnType<typeof makeT>; onClose: () => void }) {
   useSession(); // the list must follow canvases opening / closing / renaming
   const cur = SESSION.docIdx;
+  // "layers" (default) mirrors every source layer as its own live layer, so a
+  // stroke edits exactly the layer you painted on; "flat" keeps one layer that
+  // mirrors the whole canvas (edits go to the source's selected layer)
+  const [mode, setMode] = useState<"layers" | "flat">("layers");
   const list = SESSION.docs.map((e, i) => ({ e, i })).filter(({ i }) => i !== cur);
   return (
     <>
       <div className="dlg-mask" onClick={onClose} />
       <div className="dlg dlg-frame-preview dlg-canvasref" data-guide="dlg-canvasref">
         <div className="dlg-head"><span>{t("canvasRefPick")}</span><div className="grow" /><button className="btn small" onClick={onClose}><Icon id="i-x" size={16} /></button></div>
+        <div className="ref-mode">
+          {(["layers", "flat"] as const).map((m) => (
+            <button key={m} className={"ref-mode-btn" + (mode === m ? " on" : "")} onClick={() => setMode(m)}>
+              <b>{t(m === "layers" ? "canvasRefModeLayers" : "canvasRefModeFlat")}</b>
+              <span>{t(m === "layers" ? "canvasRefModeLayersDesc" : "canvasRefModeFlatDesc")}</span>
+            </button>
+          ))}
+        </div>
         <div className="dlg-body fp-grid">
           {list.length === 0 ? <div className="row-note">{t("canvasRefNone")}</div> : list.map(({ e, i }) => (
             <button key={e.id} className="fp-cell col" style={{ width: 178, height: 190 }}
-              title={e.doc.name + " · " + e.doc.w + "\u00d7" + e.doc.h}
-              onClick={() => { if (SESSION.referenceCanvas(i)) onClose(); }}>
+              title={e.doc.name + " · " + e.doc.w + "\u00d7" + e.doc.h + " · " + e.doc.layers.length + t("canvasRefLayerCount")}
+              onClick={() => { if (SESSION.referenceCanvas(i, { mode })) onClose(); }}>
               <FrameThumb doc={e.doc} fi={e.fi} sz={124} />
               <span className="fp-name">{e.doc.name || "untitled"}</span>
-              <span className="fp-meta">{e.doc.w + "\u00d7" + e.doc.h}</span>
+              <span className="fp-meta">{e.doc.w + "\u00d7" + e.doc.h + " · " + e.doc.layers.length + t("canvasRefLayerCount")}</span>
             </button>
           ))}
         </div>

@@ -9,6 +9,7 @@ import { Doc } from "../src/engine/doc";
 import { Stroke } from "../src/tools/stroke";
 import { scalarActions } from "../src/app/history-io";
 import * as historyFile from "../src/io/historyfile";
+import * as project from "../src/io/project";
 import * as bridge from "../src/io/bridge";
 import { eq, ok } from "./common";
 
@@ -747,33 +748,78 @@ export async function testSession(): Promise<void> {
     eq("fsel.mode-off-clears", f.frameSelList(), []);
   }
 
-  // --- reference layers: live link to another canvas ---
+  // --- reference layers: live link to another canvas (per layer by default) ---
   {
     (globalThis as unknown as { localStorage: { clear(): void } }).localStorage.clear();
     const r = new Session();
     r.doc.name = "A";
     // same size as the holder: mirroring then needs no canvas at all
     const bIdx = r.addCanvas(new Doc(64, 64, "B"));
+    const b = r.docs[bIdx].doc;
+    // B has two layers: 影子 (bottom) + 本图层 (top), each with one pixel
+    b.layers[0].name = "影子";
+    b.layers.push({ id: "artLayer", name: "本图层", visible: true, opacity: 100, blend: "normal", locked: false });
+    const shadowCel = b.ensureCel(0, 0); shadowCel.data[0] = 11; shadowCel.data[3] = 255;
+    const artCel = b.ensureCel(1, 0); artCel.data[4] = 22; artCel.data[7] = 255;
     r.focusCanvas(0);                       // back on A
-    // referencing B adds a live layer pointing at B's canvas id
+    // referencing B mirrors EVERY layer of B as its own live layer
     ok("ref.add", r.referenceCanvas(bIdx));
-    const L = r.doc.layers[r.curLayer()];
-    ok("ref.layer-linked", !!L.ref && L.ref === r.docs[bIdx].id);
-    eq("ref.layer-name", L.name, "B");
-    eq("ref.layer-count", r.doc.layers.length, 2);
-    // the stroke on a reference layer is redirected to B's current layer
-    const tgt = r.strokeTarget(r.curLayer());
-    ok("ref.stroke-redirected", !!tgt && tgt.doc === r.docs[bIdx].doc && tgt.li === 0 && tgt.fi === 0);
+    eq("ref.layer-count", r.doc.layers.length, 3);   // A's layer + 2 mirrors
+    const L0 = r.doc.layers[1], L1 = r.doc.layers[2];
+    eq("ref.layer-names", [L0.name, L1.name], ["影子", "本图层"]);
+    ok("ref.layer-linked", !!L0.ref && L0.ref === r.docs[bIdx].id);
+    ok("ref.bound-to-source-layer", L0.refLayer === b.layers[0].id && L1.refLayer === "artLayer");
+    eq("ref.top-focused", r.curLayer(), 2);
+    // each mirror shows exactly its own source layer
+    eq("ref.mirror-bottom", [r.doc.celAt(1, 0)!.data[0], r.doc.celAt(1, 0)!.data[4]], [11, 0]);
+    eq("ref.mirror-top", [r.doc.celAt(2, 0)!.data[0], r.doc.celAt(2, 0)!.data[4]], [0, 22]);
+    // a stroke on a mirror is redirected to the layer it mirrors (never guessed)
+    const t0 = r.strokeTarget(1), t1 = r.strokeTarget(2);
+    ok("ref.stroke-redirected", !!t0 && t0.doc === b && t0.li === 0 && t0.fi === 0);
+    eq("ref.stroke-target-top", t1 && t1.li, 1);
     ok("ref.normal-layer-not-redirected", !r.strokeTarget(0));
+    // a real stroke lands in the bound source layer and mirrors back
+    const st = new Stroke(t0!.doc, t0!.li, t0!.fi, "pencil", { color: [200, 0, 0, 255], size: 1, alpha: 255, pressure: 1 }, false, "off");
+    st.startAt(3, 3);
+    st.commit(r.history, "tools.pencil");
+    st.takeDirty(); // what the view does to drive the repaint / mirror sync
+    r.repaintAll();
+    eq("ref.stroke-lands-in-bound", b.celAt(0, 0)!.data[(3 * 64 + 3) * 4 + 3], 255);
+    eq("ref.stroke-keeps-other-layer", b.celAt(1, 0)!.data[(3 * 64 + 3) * 4 + 3], 0);
+    eq("ref.stroke-mirrors-back", r.doc.celAt(1, 0)!.data[(3 * 64 + 3) * 4], 200);
+    // the source layer being hidden no longer hides the mirror (each mirror is
+    // its own layer in the holder): painting always stays visible
+    b.layers[0].visible = false; b.pixelRev++;
+    r.syncRefLayers();
+    eq("ref.hidden-source-still-shown", r.doc.celAt(1, 0)!.data[(3 * 64 + 3) * 4], 200);
+    b.layers[0].visible = true; b.pixelRev++;
+    // a locked source layer blocks painting AND says why
+    b.layers[1].locked = true;
+    eq("ref.block-locked", r.refPaintBlock(2), "locked");
+    r.setLayer(2);
+    ok("ref.locked-layer-blocks", r.layerLocked());
+    b.layers[1].locked = false;
+    ok("ref.unlocked-again", !r.layerLocked());
+    // deleting the mirrored source layer is reported as "gone"
+    b.layers.splice(1, 1);
+    eq("ref.block-gone", r.refPaintBlock(2), "gone");
+    ok("ref.gone-no-target", !r.strokeTarget(2));
     // the view asks these to draw the source canvas' selection on its layer
-    eq("ref.source-of", r.refSourceOf(r.curLayer())?.id, r.docs[bIdx].id);
+    eq("ref.source-of", r.refSourceOf(1)?.id, r.docs[bIdx].id);
     eq("ref.source-of-normal", r.refSourceOf(0), null);
-    eq("ref.offset-same-size", [r.refOffset(r.curLayer()).ox, r.refOffset(r.curLayer()).oy], [0, 0]);
+    eq("ref.source-layer-name", r.refSourceLayerOf(1)?.name, "影子");
+    eq("ref.offset-same-size", [r.refOffset(1).ox, r.refOffset(1).oy], [0, 0]);
+    // release every mirror at once: pixels stay, links go, one history step
+    eq("ref.unref-all-count", r.unrefAll(), 2);
+    eq("ref.unref-all-cleared", r.doc.layers.filter((l) => !!l.ref).length, 0);
+    eq("ref.unref-all-keeps-pixels", r.doc.celAt(1, 0)!.data[(3 * 64 + 3) * 4], 200);
+    ok("ref.unref-all-one-step", !!r.history.undo());
+    eq("ref.unref-all-undo", r.doc.layers.filter((l) => !!l.ref).length, 2);
     // a smaller source canvas is mirrored centred, and so is its selection
     r.focusCanvas(bIdx);
     r.doc.w = 32; r.doc.h = 24;
     r.focusCanvas(0);
-    eq("ref.offset-centred", [r.refOffset(r.curLayer()).ox, r.refOffset(r.curLayer()).oy], [16, 20]);
+    eq("ref.offset-centred", [r.refOffset(1).ox, r.refOffset(1).oy], [16, 20]);
     // a canvas cannot reference itself, and cycles are refused
     r.focusCanvas(bIdx);
     ok("ref.self-refused", !r.referenceCanvas(bIdx));
@@ -783,6 +829,52 @@ export async function testSession(): Promise<void> {
     const before = r.doc.layers.length;
     r.layerMergeDown();
     eq("ref.merge-refused", r.doc.layers.length, before);
+  }
+
+  // --- reference in "flattened" mode: one mirror of the whole canvas ---
+  {
+    (globalThis as unknown as { localStorage: { clear(): void } }).localStorage.clear();
+    const f = new Session();
+    f.doc.name = "A";
+    const bi = f.addCanvas(new Doc(32, 32, "B"));
+    f.docs[bi].doc.layers.push({ id: "top", name: "top", visible: true, opacity: 100, blend: "normal", locked: false });
+    f.focusCanvas(0);
+    ok("refFlat.add", f.referenceCanvas(bi, { mode: "flat" }));
+    eq("refFlat.layer-count", f.doc.layers.length, 2);
+    ok("refFlat.no-bound-layer", !f.doc.layers[1].refLayer);
+    // a flattened mirror has no bound layer: it follows the source selection
+    f.docs[bi].li = 1;
+    eq("refFlat.target-follows-source", f.strokeTarget(1)!.li, 1);
+    f.docs[bi].li = 0;
+    eq("refFlat.target-follows-source-2", f.strokeTarget(1)!.li, 0);
+    eq("refFlat.unref-all-count", f.unrefAll(), 1);
+  }
+
+  // --- an older flattened reference can be upgraded to per-layer mirrors ---
+  {
+    (globalThis as unknown as { localStorage: { clear(): void } }).localStorage.clear();
+    const u = new Session();
+    u.doc.name = "A";
+    // same size as the holder, so a mirror is not offset by the centring
+    const bi = u.addCanvas(new Doc(64, 64, "B"));
+    const b = u.docs[bi].doc;
+    b.layers[0].name = "\u5f71\u5b50";
+    b.layers.push({ id: "art", name: "\u672c\u56fe\u5c42", visible: true, opacity: 100, blend: "normal", locked: false });
+    const c0 = b.ensureCel(0, 0); c0.data[0] = 5; c0.data[3] = 255;
+    const c1 = b.ensureCel(1, 0); c1.data[4] = 6; c1.data[7] = 255;
+    u.focusCanvas(0);
+    ok("splitRef.add-flat", u.referenceCanvas(bi, { mode: "flat" }));
+    ok("splitRef.can", u.canSplitRef(1));
+    eq("splitRef.before-count", u.doc.layers.length, 2);
+    ok("splitRef.split", u.splitRefLayer(1));
+    eq("splitRef.after-count", u.doc.layers.length, 3);
+    eq("splitRef.names", [u.doc.layers[1].name, u.doc.layers[2].name], ["\u5f71\u5b50", "\u672c\u56fe\u5c42"]);
+    ok("splitRef.bound", u.doc.layers[1].refLayer === b.layers[0].id && u.doc.layers[2].refLayer === "art");
+    eq("splitRef.mirror-bottom", u.doc.celAt(1, 0)!.data[0], 5);
+    eq("splitRef.mirror-top", u.doc.celAt(2, 0)!.data[4], 6);
+    ok("splitRef.no-more-can", !u.canSplitRef(1) && !u.splitRefLayer(1));
+    ok("splitRef.undo", !!u.history.undo());
+    eq("splitRef.undo-flat", [u.doc.layers.length, !u.doc.layers[1].refLayer], [2, true]);
   }
 
   // --- extract a layer into its own canvas (confirm required) ---
@@ -898,6 +990,52 @@ export async function testSession(): Promise<void> {
 
   // --- reference layers are MIRRORED into their own cel (live preview) ---
   {
+    (globalThis as unknown as { localStorage: { clear(): void } }).localStorage.clear();
+    const s = new Session();
+    s.doc.name = "A";
+    // same size as the holder, so the mirror needs no canvas at all
+    const bi = s.addCanvas(new Doc(64, 64, "B"));
+    const srcCel = s.docs[bi].doc.ensureCel(0, 0);
+    srcCel.data[0] = 77; srcCel.data[3] = 255;
+    s.focusCanvas(0);
+    ok("mirror.link", s.referenceCanvas(bi));
+    const li = s.curLayer();
+    const cel = s.doc.celAt(li, 0);
+    ok("mirror.filled", !!cel && cel.data[0] === 77 && cel.data[3] === 255);
+    // every frame of a reference layer shares one cel (they show the same canvas)
+    s.frameAdd();
+    ok("mirror.shared-cel", s.doc.celAt(li, 0) === s.doc.celAt(li, 1));
+    // a change in the SOURCE re-mirrors ...
+    srcCel.data[0] = 88; s.docs[bi].doc.pixelRev++;
+    s.syncRefLayers();
+    ok("mirror.remirrors", s.doc.celAt(li, 0)!.data[0] === 88);
+    // ... but nothing changed -> the mirror is left alone
+    const mirrorRef = s.doc.celAt(li, 0)!.data;
+    s.syncRefLayers();
+    ok("mirror.idempotent", s.doc.celAt(li, 0)!.data === mirrorRef);
+    // a DIRECT edit of the reference layer (selection fill / FX / move …)
+    // must be pushed back into the SOURCE canvas on the next sync
+    const srcBefore = srcCel.data.join();
+    const mirror = s.doc.celAt(li, 0)!;
+    // simulate an edit that only touched the mirror
+    mirror.data[0] = 200; mirror.data[1] = 100; mirror.data[2] = 50; mirror.data[3] = 255;
+    s.syncRefLayers();
+    ok("mirror.push-to-source", srcCel.data[0] === 200 && srcCel.data[3] === 255);
+    ok("mirror.push-recorded", s.history.canUndo());
+    s.history.undo();
+    ok("mirror.push-undo", srcCel.data.join() === srcBefore);
+    s.history.redo();
+    ok("mirror.push-redo", srcCel.data[0] === 200);
+
+    // releasing the link keeps the pixels and splits the shared cel
+    s.unrefLayer(li);
+    ok("mirror.unref-keeps-pixels", s.doc.celAt(li, 0)!.data[3] === 255);
+    ok("mirror.unref-splits-cel", s.doc.celAt(li, 0) !== s.doc.celAt(li, 1));
+    ok("mirror.unref-cleared", !s.doc.layers[li].ref && !s.doc.layers[li].refLayer);
+  }
+
+  // --- a FLATTENED reference still mirrors through the compositor ---
+  {
     const cmod = require("../src/render/compositor") as Record<string, unknown>;
     const origFrame = cmod.composeFrame;
     let tag = 0;
@@ -912,45 +1050,18 @@ export async function testSession(): Promise<void> {
       (globalThis as unknown as { localStorage: { clear(): void } }).localStorage.clear();
       const s = new Session();
       s.doc.name = "A";
-      // same size as the holder, so the mirror needs no canvas at all
       const bi = s.addCanvas(new Doc(64, 64, "B"));
       s.focusCanvas(0);
-      ok("mirror.link", s.referenceCanvas(bi));
+      ok("refFlatMirror.link", s.referenceCanvas(bi, { mode: "flat" }));
       const li = s.curLayer();
-      const cel = s.doc.celAt(li, 0);
-      ok("mirror.filled", !!cel && cel.data[0] === tag && cel.data[3] === 255);
-      // every frame of a reference layer shares one cel (they show the same canvas)
-      s.frameAdd();
-      ok("mirror.shared-cel", s.doc.celAt(li, 0) === s.doc.celAt(li, 1));
-      // a change in the SOURCE re-mirrors ...
+      ok("refFlatMirror.filled", s.doc.celAt(li, 0)!.data[0] === tag);
       const t0 = tag;
       s.docs[bi].doc.pixelRev++;
       s.syncRefLayers();
-      ok("mirror.remirrors", tag > t0 && s.doc.celAt(li, 0)!.data[0] === tag);
-      // ... but nothing changed -> no work
+      ok("refFlatMirror.remirrors", tag > t0 && s.doc.celAt(li, 0)!.data[0] === tag);
       const t1 = tag;
       s.syncRefLayers();
-      eq("mirror.idempotent", tag, t1);
-      // a DIRECT edit of the reference layer (selection fill / FX / move …)
-      // must be pushed back into the SOURCE canvas on the next sync
-      const srcCel = s.docs[bi].doc.ensureCel(0, 0);
-      const srcBefore = srcCel.data.join();
-      const mirror = s.doc.celAt(li, 0)!;
-      // simulate an edit that only touched the mirror
-      mirror.data[0] = 200; mirror.data[1] = 100; mirror.data[2] = 50; mirror.data[3] = 255;
-      s.syncRefLayers();
-      ok("mirror.push-to-source", srcCel.data[0] === 200 && srcCel.data[3] === 255);
-      ok("mirror.push-recorded", s.history.canUndo());
-      s.history.undo();
-      ok("mirror.push-undo", srcCel.data.join() === srcBefore);
-      s.history.redo();
-      ok("mirror.push-redo", srcCel.data[0] === 200);
-
-      // releasing the link keeps the pixels and splits the shared cel
-      s.unrefLayer(li);
-      ok("mirror.unref-keeps-pixels", s.doc.celAt(li, 0)!.data[3] === 255);
-      ok("mirror.unref-splits-cel", s.doc.celAt(li, 0) !== s.doc.celAt(li, 1));
-      ok("mirror.unref-cleared", !s.doc.layers[li].ref);
+      eq("refFlatMirror.idempotent", tag, t1);
     } finally {
       cmod.composeFrame = origFrame;
     }
@@ -1157,5 +1268,24 @@ export async function testSession(): Promise<void> {
     const back = m.addCanvas(new Doc(8, 8, "fresh"));
     eq("canvas.empty.add-again", [m.docs.length, m.docIdx, back], [1, 0, 0]);
     eq("canvas.empty.origin", [m.docs[0].x, m.docs[0].y], [0, 0]);
+  }
+  // --- project files keep layer ids: a per-layer reference survives a reload ---
+  {
+    (globalThis as unknown as { localStorage: { clear(): void } }).localStorage.clear();
+    const pj = new Session();
+    pj.doc.name = "A";
+    const bi = pj.addCanvas(new Doc(8, 8, "B"));
+    pj.docs[bi].doc.layers[0].name = "\u5f71\u5b50";
+    pj.focusCanvas(0);
+    ok("proj.ref-add", pj.referenceCanvas(bi));
+    const text = await pj.serializeProject();
+    const parsed = await project.parseSpace(text);
+    ok("proj.parse", !!parsed);
+    const holder = parsed!.entries[0].doc;
+    const src = parsed!.entries[1].doc;
+    eq("proj.layer-count", holder.layers.length, 2);
+    eq("proj.ref-canvas-id", holder.layers[1].ref, parsed!.entries[1].id);
+    eq("proj.ref-layer-id", holder.layers[1].refLayer, src.layers[0].id);
+    eq("proj.ref-layer-name", holder.layers[1].name, "\u5f71\u5b50");
   }
 }

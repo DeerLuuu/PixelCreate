@@ -56,7 +56,7 @@ interface DocPayload {
   w: number;
   h: number;
   bg: number[] | null;
-  layers: Array<{ name: string; visible: boolean; opacity: number; blend: string; locked: boolean; ref?: string | null }>;
+  layers: Array<{ id?: string; name: string; visible: boolean; opacity: number; blend: string; locked: boolean; ref?: string | null; refLayer?: string | null }>;
   frames: Array<{ durationMs: number }>;
   palette: number[][];
   cels: [string, string][];
@@ -74,8 +74,8 @@ async function docPayload(doc: Doc): Promise<DocPayload> {
     h: doc.h,
     bg: doc.bg ? [...doc.bg] : null,
     layers: doc.layers.map((l) => ({
-      name: l.name, visible: l.visible, opacity: l.opacity, blend: l.blend, locked: l.locked,
-      ref: l.ref ?? null,
+      id: l.id, name: l.name, visible: l.visible, opacity: l.opacity, blend: l.blend, locked: l.locked,
+      ref: l.ref ?? null, refLayer: l.refLayer ?? null,
     })),
     frames: doc.frames.map((f) => ({ durationMs: f.durationMs })),
     palette: doc.palette.map((c) => [...c]),
@@ -92,13 +92,15 @@ async function docFromPayload(obj: {
   if (!obj || !obj.w || !obj.h) return null;
   const doc = new Doc(obj.w, obj.h, obj.name || "untitled");
   doc.layers = (obj.layers || []).map((l: Record<string, unknown>) => ({
-    id: Math.random().toString(36).slice(2),
+    // ids are kept: reference layers point at a specific source layer by id
+    id: typeof l.id === "string" && l.id ? l.id : Math.random().toString(36).slice(2),
     name: String(l.name ?? "Layer"),
     visible: l.visible !== false,
     opacity: Math.max(0, Math.min(100, Number(l.opacity ?? 100))),
     blend: (["normal", "multiply", "screen", "overlay", "darken", "lighten", "dodge", "burn", "hardlight", "softlight", "difference", "exclusion"].includes(String(l.blend)) ? String(l.blend) : "normal") as Doc["layers"][number]["blend"],
     locked: !!l.locked,
     ref: typeof l.ref === "string" ? l.ref : null,
+    refLayer: typeof l.refLayer === "string" ? l.refLayer : null,
   }));
   doc.frames = (obj.frames && obj.frames.length ? obj.frames : [{ durationMs: 100 }]).map((f) => ({
     id: Math.random().toString(36).slice(2),

@@ -68,7 +68,9 @@ class Sel {
   bump(): void;              // 直接写 mask 后手动调用
 }
 
-interface LayerMeta { id: string; name: string; visible: boolean; locked: boolean; opacity: number; blend: BlendMode }
+interface LayerMeta { id: string; name: string; visible: boolean; locked: boolean; opacity: number; blend: BlendMode;
+                     ref?: string | null;      // 引用层：源画布 id
+                     refLayer?: string | null } // 引用层绑定源画布的哪个图层（id；null = 整张合成）
 interface FrameMeta { id: string; durationMs: number }
 
 class Doc {
@@ -838,10 +840,14 @@ SESSION.docs: CanvasEntry[]   // 全部打开的画布（docIdx 为聚焦项）
 SESSION.docIdx: number
 SESSION.previews: PreviewEntry[]
 awaitColorPick(cb) / cancelColorPick() // 下一次选色改为回调（特效参数用），并派发 pc-color-picked
-referenceCanvas(i): boolean            // 把第 i 张画布引用成当前画布的一层（拒绝自引用/循环）
+referenceCanvas(i, {mode}?): boolean  // 引用第 i 张画布（拒绝自引用/循环）；mode="layers"（默认）每个源图层各一条引用层，
+                                       // mode="flat" 只引用整张合成画面（编辑落在源画布当前图层）
 isRefLayer(li): boolean                // 该图层是否为引用层
-strokeTarget(li)                       // 引用层的笔迹落点 {doc, li, fi}；普通图层返回 null
+strokeTarget(li)                       // 引用层的笔迹落点 {doc, li, fi}（按 refLayer 精确命中）；普通图层返回 null
+refSourceLayerOf(li)                   // 引用层镜像的源图层 {name, li}（整张引用时返回 null）
+refPaintBlock(li)                      // 为什么画不上：源图层已锁定 "locked" / 已不存在 "gone" / 可画 null
 unrefLayer(li?)                        // 解除引用：把画面烘焙进图层（居中、1:1）后断链
+unrefAll(): number                     // 一次性解除当前画布的所有引用层（保留画面，一条历史）
 extractLayerToCanvas(li?)              // 把图层（含所有帧）提取成独立画布（先确认）
 
 SESSION.doc                   // getter/setter：聚焦画布的文档（旧代码无需改动）
@@ -876,6 +882,7 @@ parseSpace(text): Promise<ParsedSpace | null>    // v2 单文档 / v3 多画布�
 ```
 
 工程是唯一的文件单位：单文档的 `serialize/parse/parseProject` 已删除，v2 文件仍可读入为一个单画布工程。
+图层的 `id` 与 `refLayer` 会一起存盘（旧文件没有 id 时现场生成），所以「引用画布」的按图层绑定在重新打开工程后依然有效。
 
 ### 18.6 视口 `render/view.ts`
 

@@ -1651,7 +1651,9 @@ export class View {
         tool as never, s.brush(), s.layerLocked(), s.sym, s.shapeSides, s.shapeFill,
         s.symOx, s.symOy, s.symAng, s.symFour, s.prefs.bucketGlobal, s.brushShape, s.shapeFromCenter);
     } catch {
+      // the layer is locked (or a reference whose source layer is locked/gone)
       this.stroke = null;
+      s.paintBlockedNote();
       return;
     }
     if (tool === "bucket" && s.prefs.bucketGrad) {
@@ -2333,7 +2335,7 @@ export class View {
   /** pointer down: start collecting the freehand path (nothing is painted yet) */
   private outlineDown(pp: { x: number; y: number }): void {
     const s = this.session;
-    if (s.layerLocked()) return;
+    if (s.layerLocked()) { s.paintBlockedNote(); return; }
     // redirect onto the referenced canvas, exactly like a brush stroke
     const tgt = s.strokeTarget(s.curLayer());
     const doc = tgt ? tgt.doc : s.doc;

@@ -12,6 +12,10 @@ export interface LayerMeta {
   /** id of ANOTHER canvas this layer mirrors live (null = a normal layer).
    *  The layer stores no pixels of its own while the link is active. */
   ref?: string | null;
+  /** WHICH layer of that canvas this mirror shows (its layer id; null/absent =
+   *  the whole flattened canvas). Painting on the mirror edits exactly this
+   *  layer, so a reference of a multi-layer canvas is unambiguous. */
+  refLayer?: string | null;
 }
 
 export interface FrameMeta {
