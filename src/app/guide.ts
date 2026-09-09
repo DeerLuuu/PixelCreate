@@ -26,7 +26,7 @@ export type GuideAction =
   | "demoSettings" | "closeSettings" | "demoChangelog" | "closeChangelog"
   | "closeOrbs"
   | "openPalettePanel" | "closePalettePanel"
-  | "demoExportRange" | "closeExport"
+  | "demoExportRange" | "closeExport" | "demoBucketGrad"
   | "demoFramePick";
 
 /** a step may request several actions; they run in order */
@@ -105,6 +105,12 @@ export const GUIDE: GuideStep[] = [
     title: "guide.coreTools.title", body: "guide.coreTools.body",
   },
   {
+    // bucket gradient: the two bottom-bar buttons appear while the bucket is active
+    id: "tools.bucketGrad", module: "tools", since: "1.0.7.11", target: '[data-guide="btn-bucket-grad"]', place: "top", peek: true,
+    before: "demoBucketGrad",
+    title: "guide.bucketGrad.title", body: "guide.bucketGrad.body",
+  },
+  {
     id: "tools.shape", module: "tools", since: "1.0.6.0", target: '[data-guide="tool-line"]', place: "right",
     click: '[data-guide="tool-shape-group"]',
     before: ["openToolRing", "toolSubShape", "demoShapeTool"], optional: true, peek: true,
@@ -161,6 +167,12 @@ export const GUIDE: GuideStep[] = [
     id: "orbs.paletteOps", module: "orbs", since: "1.0.7", target: '[data-guide="pal-ops"]', place: "auto", peek: true,
     before: ["openPalettePanel"], after: "closePalettePanel",
     title: "guide.paletteOps.title", body: "guide.paletteOps.body",
+  },
+  {
+    // canvas orb: everything that acts on the focused canvas, in two pages
+    id: "orbs.canvas", module: "orbs", since: "1.0.7.11", target: '[data-guide="orb-canv"]', place: "left", optional: true,
+    before: ["closeOrbs", "undockOrbs"],
+    title: "guide.orbCanvas.title", body: "guide.orbCanvas.body",
   },
   {
     id: "orbs.fx", module: "orbs", since: "1.0.6.0", target: '[data-guide="orb-fx"]', place: "left", optional: true,

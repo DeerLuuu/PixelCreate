@@ -139,6 +139,7 @@ export function testGuide(): void {
       "demoOnionFrame", "demoFramePreview",
       "demoSettings", "closeSettings", "demoChangelog", "closeChangelog", "closeOrbs",
       "openPalettePanel", "closePalettePanel", "demoExportRange", "closeExport", "demoFramePick",
+      "demoBucketGrad",
     ]);
     eq("guide.demo.actions-known", used.filter((a) => !known.has(a)), []);
     // every real demo the app implements must actually be requested by a step

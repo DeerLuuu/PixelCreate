@@ -808,12 +808,14 @@ evalExpr(src: string): number | null        // 完整算式才返回数值，否
 
 ```ts
 floodRegion(cel, sx, sy, global, mask?): Array<[number, number]>
-gradientFillRegion(cel, cells, sx, sy, c0, c1, block, mask?): Rect | null
+interface GradAxis { x0: number; y0: number; dx: number; dy: number }
+gradientFillRegion(cel, cells, c0, c1, block, axis: GradAxis | null, mask?): Rect | null
 sprayDots(cx, cy, radius, minSize, maxSize, count, rnd, fn): void
 ```
 
 - `floodRegion` 只收集单元格（不落笔），`global` = 全画布同色而非连通区域。
-- `gradientFillRegion` 以种子点为圆心做径向 RGB 渐变；`block` = 取色方块边长（1 = 逐像素）。
+- `gradientFillRegion` 沿 `axis`（拖动向量）做线性 RGB 渐变，投影超出两端自动钳制；
+  `axis = null` 时按区域包围盒自动从上到下；`block` = 取色方块边长（1 = 逐像素）。
 - `sprayDots` 在圆盘内均匀采样 `count` 个随机点，每点是一个边长 `[minSize, maxSize]` 的正方形；
   `rnd` 可注入种子，便于测试。
 
@@ -835,19 +837,24 @@ interface PreviewEntry { id: string; canvas: number; x: number | null; y: number
 SESSION.docs: CanvasEntry[]   // 全部打开的画布（docIdx 为聚焦项）
 SESSION.docIdx: number
 SESSION.previews: PreviewEntry[]
+awaitColorPick(cb) / cancelColorPick() // 下一次选色改为回调（特效参数用），并派发 pc-color-picked
 
 SESSION.doc                   // getter/setter：聚焦画布的文档（旧代码无需改动）
 addCanvas(doc, opts?): number         // 在空间里再开一张，返回下标
-focusCanvas(i): void                  // 切换聚焦，恢复该画布的图层/帧选择
+focusCanvas(i): void                  // 切换聚焦，恢复该画布的图层/帧/撤销栈
 renameCanvas(i, name): void
 moveCanvas(i, x, y): void             // 拖动标题栏时调用（空间坐标，单位=像素）
-closeCanvas(i, save): Promise<boolean> // 可先存成单独 .pxc；最后一张不允许关闭
+saveCanvas(i?): Promise<boolean>      // 把一张画布存成它自己的 .pxc
+closeCanvas(i, save): Promise<boolean> // 可先存成单独 .pxc；允许关到 0 张（空工程）
+fitCanvas(): void                     // 缓动缩放视图到聚焦画布的适配大小
 addPreview(canvas?): string           // 每个画布最多一个预览框
 closePreview(id) / movePreview(id, x, y) / resizePreview(id, size)
 askConfirm(q) / askText(q)            // UI 注册的确认框 / 单行输入框
 ```
 
-`changed()` 会把聚焦画布的 `layerIdx/frameIdx` 写回它的 `CanvasEntry`，因此每张画布都记得自己的状态。
+`CanvasEntry` 自带 `history`（每张画布独立撤销栈，切换不丢，工程文件逐张保存）；
+`changed()` 会把聚焦画布的 `layerIdx/frameIdx` 写回它的 entry。
+`docs` 允许为空数组（默认空白工程，`doc` 返回 1×1 占位文档），此时 UI 只渲染空状态卡片。
 切换聚焦时 `View.shiftFocus(dx, dy)` 会反向平移视口，保证整个空间在屏幕上不跳动。
 
 ### 18.5 工程文件 `io/project.ts`
@@ -864,6 +871,7 @@ serialize(doc, history?) / parseProject(text) / parse(text) // 单文档兼容�
 ```ts
 view.onViewChanged: (() => void) | null   // 平移/缩放/尺寸变化后回调（画布标题栏跟随）
 view.shiftFocus(dxSpace, dySpace): void   // 切换聚焦画布时保持空间视觉位置
+view.fitAnimated(ms = 220) / animateTo(z, ox, oy, ms)  // 缓动适配（双击标题 / 画布球适配）
 ```
 
 非聚焦画布由 `drawOtherCanvases()` 在合成后绘制（各自缓存），聚焦画布始终画在最上层；

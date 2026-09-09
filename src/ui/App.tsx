@@ -261,6 +261,17 @@ export function App() {
       }, 1800);
     },
     // really select another tool, then hand the previous one back
+    // really switch to the bucket with gradient mode on, then put it back
+    demoBucketGrad: () => {
+      const prevTool = SESSION.tool;
+      const prevGrad = SESSION.prefs.bucketGrad;
+      SESSION.setTool("bucket");
+      SESSION.setBucketGrad(true);
+      window.setTimeout(() => {
+        if (SESSION.tool === "bucket") SESSION.setTool(prevTool);
+        if (SESSION.prefs.bucketGrad === true) SESSION.setBucketGrad(prevGrad);
+      }, 2600);
+    },
     demoToolSwitch: () => {
       const prev = SESSION.tool;
       const alt: ToolId = prev === "eraser" ? "pencil" : "eraser";

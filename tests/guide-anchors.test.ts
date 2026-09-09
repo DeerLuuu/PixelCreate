@@ -37,7 +37,7 @@ export function testGuideAnchors(): void {
   // ids assembled at runtime: tool ring items, orb balls, palette mode chips
   for (const t of [...CORE_TOOLS, ...SHAPE_TOOLS, ...SELECT_TOOLS]) anchors.add("tool-" + t.id);
   for (const g of ["tool-shape-group", "tool-select-group", "tool-back"]) anchors.add(g);
-  for (const o of ["orb-main", "orb-sel", "orb-pal", "orb-fx"]) anchors.add(o);
+  for (const o of ["orb-main", "orb-sel", "orb-pal", "orb-fx", "orb-canv"]) anchors.add(o);
   ok("guideanchor.anchors-found", anchors.size >= 25, "anchors=" + anchors.size);
 
   // every [data-guide="x"] the guide uses must exist in the UI sources
