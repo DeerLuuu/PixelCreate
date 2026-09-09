@@ -273,6 +273,68 @@ export class Session {
   }
   /** last mirrored state per reference layer: `${holderId}:${layerId}` */
   private refSync = new Map<string, string>();
+  /** the exact pixels we last mirrored, so a DIRECT edit of a reference layer
+   *  (selection fill / move / FX … — anything that does not go through the
+   *  stroke redirect) can be pushed back into the source canvas */
+  private refMirror = new Map<string, Uint8ClampedArray>();
+
+  /** reference-layer key: one entry per (canvas, layer) */
+  private refKey(holder: CanvasEntry, L: { id: string }): string {
+    return holder.id + ":" + L.id;
+  }
+
+  /**
+   * A reference layer can be edited through paths that write its cel directly
+   * (selection fill/paste/move, effects, …). Those edits only touch the mirror,
+   * so they are diffed against what we mirrored last time and written back into
+   * the SOURCE canvas — that keeps "edit either side, the other follows" true
+   * for every tool, not just the brush. History is recorded in the canvas the
+   * user was working in (undo works right there).
+   */
+  private pushMirrorEdits(holder: CanvasEntry | null): void {
+    if (!holder) return;
+    for (let li = 0; li < holder.doc.layers.length; li++) {
+      const L = holder.doc.layers[li];
+      if (!L?.ref) continue;
+      const key = this.refKey(holder, L);
+      const last = this.refMirror.get(key);
+      const cel = holder.doc.celAt(li, 0);
+      const src = this.entryOf(L.ref);
+      if (!last || !cel || !src || last.length !== cel.data.length) continue;
+      const d = cel.data;
+      const idx: number[] = [];
+      const vals: number[] = [];
+      for (let p = 0; p < last.length; p += 4) {
+        if (last[p] === d[p] && last[p + 1] === d[p + 1] && last[p + 2] === d[p + 2] && last[p + 3] === d[p + 3]) continue;
+        idx.push(p >> 2);
+        vals.push(d[p], d[p + 1], d[p + 2], d[p + 3]);
+      }
+      if (!idx.length) continue;
+      const post = Uint8ClampedArray.from(vals);
+      // map the changed pixels back into the source canvas (mirror is centred)
+      const hw = holder.doc.w, hh = holder.doc.h;
+      const sw = src.doc.w, sh = src.doc.h;
+      const ox = Math.round((hw - sw) / 2), oy = Math.round((hh - sh) / 2);
+      const sli = Math.max(0, Math.min(src.doc.layers.length - 1, src.li));
+      const sfi = Math.max(0, Math.min(src.doc.frames.length - 1, src.fi));
+      const tcel = src.doc.ensureCel(sli, sfi);
+      const before = new Uint8ClampedArray(tcel.data);
+      let touched = false;
+      for (let k = 0; k < idx.length; k++) {
+        const p = idx[k];
+        const x = (p % hw) - ox, y = Math.floor(p / hw) - oy;
+        if (x < 0 || y < 0 || x >= sw || y >= sh) continue;
+        const j = (y * sw + x) * 4, q = k * 4;
+        tcel.data[j] = post[q]; tcel.data[j + 1] = post[q + 1];
+        tcel.data[j + 2] = post[q + 2]; tcel.data[j + 3] = post[q + 3];
+        touched = true;
+      }
+      if (!touched) continue;
+      holder.history.pushPixels("layer-ref-edit", src.doc, [{ li: sli, fi: sfi, before, after: new Uint8ClampedArray(tcel.data) }]);
+      src.doc.pixelRev++;
+      this.refMirror.set(key, new Uint8ClampedArray(d)); // in sync again
+    }
+  }
   /**
    * Reference layers are MIRRORED into their own cel instead of being resolved
    * while compositing: the render path then is exactly the same as for a normal
@@ -283,6 +345,8 @@ export class Session {
    */
   syncRefLayers(): void {
     if (!this.docs.length) return;
+    // edits that wrote a reference layer directly go back to its source first
+    this.pushMirrorEdits(this.ensureEntry());
     // two passes so a chain A -> B -> C settles within one call
     for (let pass = 0; pass < 2; pass++) {
       for (const holder of this.docs) {
@@ -299,7 +363,9 @@ export class Session {
           if (!img) continue;
           const cel = holder.doc.ensureCel(li, 0);
           const ctx = img.getContext("2d")!;
-          cel.data.set(ctx.getImageData(0, 0, holder.doc.w, holder.doc.h).data);
+          const px = ctx.getImageData(0, 0, holder.doc.w, holder.doc.h).data;
+          cel.data.set(px);
+          this.refMirror.set(key, new Uint8ClampedArray(px));
           // every frame of a reference layer shows the same picture: share one cel
           for (let fi = 0; fi < holder.doc.frames.length; fi++) holder.doc.cels.set(holder.doc.key(li, fi), cel);
           holder.doc.pixelRev++;
@@ -756,6 +822,7 @@ export class Session {
       }
     });
     this.refSync.clear();
+    this.refMirror.clear();
     toastFn(this.prefs.lang === "en" ? "Reference released, pixels kept" : "已解除引用，图层内容保留");
   }
   /** move the current layer out into a canvas of its own */

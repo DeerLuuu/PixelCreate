@@ -838,6 +838,21 @@ export async function testSession(): Promise<void> {
       const t1 = tag;
       s.syncRefLayers();
       eq("mirror.idempotent", tag, t1);
+      // a DIRECT edit of the reference layer (selection fill / FX / move …)
+      // must be pushed back into the SOURCE canvas on the next sync
+      const srcCel = s.docs[bi].doc.ensureCel(0, 0);
+      const srcBefore = srcCel.data.join();
+      const mirror = s.doc.celAt(li, 0)!;
+      // simulate an edit that only touched the mirror
+      mirror.data[0] = 200; mirror.data[1] = 100; mirror.data[2] = 50; mirror.data[3] = 255;
+      s.syncRefLayers();
+      ok("mirror.push-to-source", srcCel.data[0] === 200 && srcCel.data[3] === 255);
+      ok("mirror.push-recorded", s.history.canUndo());
+      s.history.undo();
+      ok("mirror.push-undo", srcCel.data.join() === srcBefore);
+      s.history.redo();
+      ok("mirror.push-redo", srcCel.data[0] === 200);
+
       // releasing the link keeps the pixels and splits the shared cel
       s.unrefLayer(li);
       ok("mirror.unref-keeps-pixels", s.doc.celAt(li, 0)!.data[3] === 255);

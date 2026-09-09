@@ -96,6 +96,18 @@ export function testView(): void {
     ok("view.ref.painted-into-source", !!src.doc.celAt(src.li, src.fi)?.hasAnyOpaque());
     ok("view.ref.mirror-cel-exists", !!s.doc.celAt(li, 0));
 
+    // focusing the SOURCE canvas must not lose what was painted through the
+    // reference layer (regression: the mirror used to overwrite it)
+    const srcPix = src.doc.celAt(src.li, src.fi)!.data.join();
+    s.focusCanvas(bi);
+    dom.flush();
+    ok("view.ref.source-keeps-paint", src.doc.celAt(src.li, src.fi)!.data.join() === srcPix);
+    s.focusCanvas(0);
+    dom.flush();
+    // (the mirrored CONTENT cannot be checked here: the stub canvas does not
+    // rasterise — the Session tests cover the mirror pixel-for-pixel)
+    ok("view.ref.mirror-cel-still-linked", s.isRefLayer(li) && !!s.doc.celAt(li, 0));
+
     // ---- shape -> selection still works (normal layer AND reference layer) ----
     // normal layer of the holder
     s.setLayer(0);

@@ -2110,7 +2110,7 @@ export class View {
     // the outline was collected for the layer it will fill: resolve it again so
     // a reference layer keeps writing into its source canvas
     const tgt = s.strokeTarget(s.curLayer());
-    const doc = tgt && tgt.li === o.li ? tgt.doc : s.doc;
+    const doc = tgt ? tgt.doc : s.doc;
     // an empty layer has no cel yet: create it only when we are really filling
     const keep = commit && o.pts.length >= 3;
     let cel = doc.celAt(o.li, o.fi);
