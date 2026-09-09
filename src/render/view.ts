@@ -11,6 +11,13 @@ import { selOps, lassoFill, beginMove, xformFloating, type MoveState } from "../
 import type { Session } from "../app/session";
 import { clamp } from "../engine/types";
 
+/** Is the composite canvas stale? `compRect === null` means "the whole canvas
+ *  changed" (FX ops, selection edits, paste …) — the caller MUST rebuild it
+ *  instead of blitting the old one. */
+export function compositeIsStale(hasComposite: boolean, keySame: boolean, compRect: Rect | null): boolean {
+  return !hasComposite || !keySame || !compRect;
+}
+
 interface PxPoint {
   x: number;
   y: number;
@@ -396,7 +403,7 @@ export class View {
     const fi = s.curFrame();
     const p = s.prefs;
     const onionKey = p.onionOn ? "1:" + p.onionBefore + ":" + p.onionAfter + ":" + p.onionAlpha + ":" + (p.onionTint ? 1 : 0) + ":" + (p.onionWrap ? 1 : 0) : "0";
-    const key = fi + "|" + doc.layers.map((l) => (l.visible ? 1 : 0) + ":" + l.opacity + ":" + l.blend + (doc.bg ? "B" : "T")).join() + "|on" + onionKey;
+    const key = doc.w + "x" + doc.h + "|" + fi + "|" + doc.layers.map((l) => (l.visible ? 1 : 0) + ":" + l.opacity + ":" + l.blend + (doc.bg ? "B" : "T")).join() + "|on" + onionKey;
     const onion = {
       before: p.onionOn ? p.onionBefore : 0,
       after: p.onionOn ? p.onionAfter : 0,
@@ -404,13 +411,15 @@ export class View {
       tint: p.onionTint,
       wrap: p.onionWrap,
     };
-    if (!force && this.composite && this.compKey === key) {
-      // same frame / layers / onion config: only the changed region is stale
-      if (this.compRect) {
-        comp.composeRectInto(doc, fi, onion, this.compRect, this.composite, this.composeCache);
-        return false;
-      }
-      return true;
+    // A partial update is only valid when the composite exists, the frame /
+    // layer config is unchanged AND the dirty region is known (compRect).
+    // Anything else — including a full dirty (compRect === null) — must really
+    // rebuild: returning "full" while keeping the old canvas made the view blit
+    // stale pixels (FX / selection edits looked delayed, the preview box was
+    // correct because it always composites from the doc).
+    if (!force && !compositeIsStale(!!this.composite, this.compKey === key, this.compRect)) {
+      comp.composeRectInto(doc, fi, onion, this.compRect!, this.composite!, this.composeCache);
+      return false;
     }
     this.compKey = key;
     this.composeCache.ghosts.clear(); // frame or layer config changed
@@ -1670,7 +1679,7 @@ export class View {
           if (g.pts!.length < 4000) g.pts!.push([x, y]);
         }
       });
-      this.session.repaint();
+      this.drawOverlay(); // mask only: the composite is untouched
       this.startAnts();
       return;
     }
@@ -1680,7 +1689,7 @@ export class View {
       g.y1 = pp.y;
       selOps.setRect(this.session.doc, g.x0, g.y0, g.x1, g.y1);
       this.session.mirrorSelectionMask();
-      this.session.repaint();
+      this.drawOverlay(); // mask only: the composite is untouched
       this.startAnts();
       return;
     }
@@ -1691,10 +1700,13 @@ export class View {
     if (dx || dy) g.moved = true;
     if (g.moved && g.mv) {
       const s = this.session;
-      if (!g.cut) { g.cut = true; selOps.floatCut(s.doc, s.curLayer(), s.curFrame(), g.mv); }
+      const firstCut = !g.cut;
+      if (firstCut) { g.cut = true; selOps.floatCut(s.doc, s.curLayer(), s.curFrame(), g.mv); }
       g.dx = dx; g.dy = dy;
       selOps.shiftMask(s.doc, g.mv, dx, dy);
-      this.session.repaint();
+      // the cut changes pixels once; after that only the floating overlay moves
+      if (firstCut) this.session.repaint();
+      else this.drawOverlay();
     }
   }
 

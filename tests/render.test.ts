@@ -6,6 +6,7 @@ import type { BrushState, SymMode } from "../src/tools/registry";
 import { clampRect, coversAll, screenRectOf, unionRect, tileRect, TILE_OFFSETS } from "../src/render/rect";
 import { growSelection, selOps, shrinkSelection } from "../src/tools/select";
 import { onionGhosts } from "../src/render/onion";
+import { compositeIsStale } from "../src/render/view";
 import { brushStamp } from "../src/engine/paint";
 import { mirrorCells, mirrorMaskInPlace } from "../src/engine/symmetry";
 import { eq, ok } from "./common";
@@ -47,6 +48,15 @@ export function testRender(): void {
   eq("rect.screen.pad0", screenRectOf({ x: 0, y: 0, w: 1, h: 1 }, 0, 0, 1, 0), { x: 0, y: 0, w: 1, h: 1 });
   ok("rect.covers", coversAll({ x: 0, y: 0, w: 16, h: 16 }, 16, 16));
   ok("rect.covers.no", !coversAll({ x: 1, y: 0, w: 15, h: 16 }, 16, 16));
+
+  // ------------------------------------------- composite rebuild decision
+  // regression: a full dirty (compRect === null, e.g. FX / selection edits)
+  // must count as stale, otherwise the view blits the OLD composite and the
+  // canvas looks frozen while the preview box is already correct
+  ok("composite.stale.full-dirty", compositeIsStale(true, true, null));
+  ok("composite.stale.no-composite", compositeIsStale(false, true, { x: 0, y: 0, w: 1, h: 1 }));
+  ok("composite.stale.key-changed", compositeIsStale(true, false, { x: 0, y: 0, w: 1, h: 1 }));
+  ok("composite.fresh.partial", !compositeIsStale(true, true, { x: 2, y: 3, w: 4, h: 5 }));
 
   // ------------------------------------------------- tiled preview rects
   eq("tile.offsets", TILE_OFFSETS.length, 9);
