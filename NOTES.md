@@ -7,7 +7,7 @@
   - `sh scripts/run-tests.sh` → tsc 编译 tests/ + 引擎回归（history/ops/move/sym）
   - 类型检查：`node node_modules/typescript/bin/tsc -p tsconfig.json --noEmit`（noUnusedLocals 已开）
   - node_modules 在 /sdcard（FUSE）装不上时，可在容器私有区镜像安装后回拷产物
-- APK 构建仍在宿主机真机跑 build.sh（aapt2/javac/d8/apksigner 离线链，需 java+android-sdk；本仓库只产出 web assets）
+- APK 构建已可在本容器内全程完成：见下文「导出 APK 完整流程」（javac+d8 出 dex → 模板 APK 重打包 → apksigner 签名；aapt2 在本容器跑不起来，不用它）
 - 浏览器测试: node toolchain/devserver.js（app2/www, 8090）
 - git 已有 77+ 提交，大改动可 git 回滚
 
@@ -25,7 +25,7 @@
 代码整理（2026-09-08）：删除旧 vanilla 版 app/www 与 boot-test/eng-test 旧脚本；i18n 死键与未用导出清理；调色板数据合并到 src/data/palettes.ts；构建配置收进仓库；view/session 等未用导入/字段清理（tsc noUnusedLocals 0 错误）。
 
 ## 待办/已知缺口
-- APK 打包只能在宿主机（本仓库无 java/android-sdk）；AndroidManifest versionCode/versionName 与 changelog 需手动同步
+- AndroidManifest versionCode/versionName 与 changelog 的 APP_VERSION 需手动同步（无自动校验，容易漏）
 - view.ts(~1460)/session.ts(~1020)/App.tsx(~900) 仍偏大：手势/渲染、会话、UI 可继续拆
 - 无键盘快捷键；渲染已做脏矩形增量（仍未做 overlay 笔迹层 / Web Worker，见 docs/COMPARISON.md 优先级）
 
@@ -39,11 +39,8 @@
 - **版本号**：`1.0.x` 的第三段由用户决定，不要自行递增；小改动只递增第四段（`1.0.6.0 → 1.0.6.1`），且只在用户要求出包时才改；`versionCode` 为覆盖安装需要可内部递增。
 - **声明式优先**：设置项走 `src/app/settings.ts`，引导步骤走 `src/app/guide.ts`；新增功能 = 一条声明 + i18n 文案，界面/引擎自动适配。
 - **文档同步**：新增/修改对外 API 或功能后，同步更新 `docs/API.md`（接口签名）与 `README.md`（功能表）；对比文档的“最新进展”表也一并刷新。
-- **出包流程**：改源码 → tsc → 引擎/逻辑测试 → `app2/www` 重建（esbuild，注意仓库中文路径需在 ASCII 目录构建后回拷）→ 打包 → apksigner 签名 → 解析包内 manifest 复核。
-  - 只改了 Web 层（TS/TSX/CSS）：`/root/pk/rebuild.py`（换 assets + 改写 AXML 版本）即可。
-  - **改了 Java 层（android/java）**：本容器里 aapt2 是 Android/x86 二进制跑不起来，但 `javac` + `d8.jar` 可用，所以用 `sh /root/pk/make-apk.sh <版本号> <versionCode>`（如 `sh /root/pk/make-apk.sh 1.0.7.7 29`）：它先跑 `rebuild2.py`（javac+d8 编出 `classes.dex`，从模板 APK 重打包，替换 assets/www + classes.dex + 改写 AXML 版本），**再 apksigner 签名并 `verify` 复核**，最后拷到 `/sdcard/Download/PixelCraft-<版本号>.apk` 和仓库 `build/PixelCraft.apk`。**只用 rebuild.py 的话 Java 改动不会进包**（模板里的 classes.dex 是旧的）。
-  - ⚠️ `rebuild2.py` 的产物 `repack.apk` 是**未签名**的，直接发出去会提示「缺少开发者证书」而装不上——必须走 `make-apk.sh`（或手动补 apksigner 那一步），发包前用 `apksigner verify --print-certs` 确认 `Verifies` 且证书 SHA-256 为 `745beeceeda9f891c04e7aae584a0a8a3e27f0023075044d2f55adb6bb442f1f`。
-  - 复核：解包 `classes.dex` 里 grep 关键字符串（如 `__pc_back()===true`）、解析 AXML 的 versionName/versionCode、检查 `assets/www/js/app.js` 是否含新代码。
+- **出包流程**：完整 runbook 见下文「导出 APK 完整流程」。一句话版：改源码 → 同步 `/root/pcbuild` → `tsc` + 测试 → esbuild 重建 `app2/www` → `sh /root/pk/make-apk.sh <版本号> <versionCode>`（重打包 + 签名 + 校验 + 拷贝）→ 复核 → 提交。
+
 - **提交约定**：每完成一个功能就提交一次（不要攒着）。提交信息用中文 + `type(scope): 摘要`（type 取 feat/fix/imp/chore/docs/refactor），正文用 `-` 列出改动要点；产物不进版本库（`build/`、`app2/www/js/app.js`、`app2/www/css/style.css`、`tests/.ts-out/`、`toolchain/` 已在 `.gitignore`）。提交前至少跑一遍 `tsc --noEmit` 与 `tests` 全绿。
 - **引导的“真操作演示”约定**（`src/app/guide.ts` + `src/ui/App.tsx` 的 `guideActions`）：
   - 真操作一般放 **before**（放在 `after` 的演示会被下一步的遮罩盖住，等于看不见）；只有需要在离开步骤后继续的才放 `after`（如四指步骤→真的打开帧预览）。
@@ -52,3 +49,101 @@
   - 点控件统一用 `simulateTap()`（从 `src/ui/guide.tsx` 导出），它派发 pointerdown/up/click，和真手指一致。
   - 新增选择器后跑 `tests/guide-anchors.test.ts`：它静态扫描 `src/ui` 源码，确认引导里每个 `[data-guide="..."]` 锚点真实存在（没有浏览器也能防“步骤指向已改名的按钮”）。
 
+
+## 导出 APK 完整流程（runbook）
+
+> 2026-09 起本容器可全程出包，不再需要宿主机 build.sh。容器内 **aapt2 是 Android/x86 二进制、跑不起来**，
+> 所以走「javac + d8 出 dex → 往模板 APK 里塞」的路线。
+
+### 0. 一次性前置（都在容器里，不在仓库里）
+
+| 路径 | 用途 |
+|---|---|
+| `/root/pk/orig.apk` | 已签名模板 APK（提供 manifest / res / lib；`assets/www` 与 `classes.dex` 会被替换） |
+| `/root/pk/debug.keystore` | 签名库，别名 `pixelcraft`，口令均为 `pixelcraft`（**换库会导致无法覆盖安装**） |
+| `/root/pk/apksigner.jar` | 签名 / 校验 |
+| `/root/apk/bt/d8.jar` | dex 编译（配合 `javac`） |
+| `/root/apk/platform/android-34/android.jar` | 编译用平台（`-bootclasspath`） |
+| `/root/pk/rebuild2.py` | javac+d8 出 `classes.dex` → 重打包 → 改写 AXML 版本号 |
+| `/root/pk/make-apk.sh` | **一键**：rebuild2 → sign → verify → 拷贝产物 |
+| `/root/pk/verify-apk.py` | 复核包内 versionName/versionCode/dex 大小/app.js 指纹 |
+| `/root/pcbuild/node_modules` | `tsc` / `esbuild`（仓库里没有 node_modules） |
+
+### 1. 改版本号（**只有用户要求出包时才动**）
+
+| 位置 | 字段 | 规则 |
+|---|---|---|
+| `android/AndroidManifest.xml` | `versionName` / `versionCode` | versionName 与 changelog 的 `APP_VERSION` **必须一致**；versionCode 每次 +1 |
+| `src/ui/changelog.tsx` | `APP_VERSION` + `CHANGELOG` 顶部新条目 | 新条目写中英双语（`it(kind, zh, en)`），kind 取 add/imp/fix |
+
+版本规则：`1.0.x` 的第三段由用户决定，不要自行递增；小改动只递增第四段（`1.0.7.9 → 1.0.7.10`）。
+
+### 2. 同步源码到 ASCII 构建目录（**不要 rm -rf**）
+
+```sh
+cp -r src/. /root/pcbuild/app/src/
+cp -r tests/. /root/pcbuild/app/tests/
+```
+增量覆盖；累计约 5 次清理一次陈旧文件，计数在 `/root/pcbuild/.sync-count`。
+
+### 3. 类型检查 + 测试（必须全绿）
+
+```sh
+cd /root/pcbuild && ./node_modules/.bin/tsc -p tsconfig.json --noEmit
+cd /root/pcbuild/app/tests && ../../node_modules/.bin/tsc -p tsconfig.json && node .ts-out/tests/run-tests.js   # 期望 ALL PASS
+```
+
+### 4. 重建 Web 包（esbuild）
+
+```sh
+cd /root/pcbuild/buildsrc && cp -r /root/pcbuild/app/src/. .
+../node_modules/.bin/esbuild main.tsx --bundle --format=iife --platform=browser --target=es2019 \
+  --define:process.env.NODE_ENV='"production"' --outfile=out-app.js --log-level=warning
+cp out-app.js "<repo>/app2/www/js/app.js"
+cp ui/style.css "<repo>/app2/www/css/style.css"
+```
+- 仓库路径含中文：esbuild 的输出目录必须在 ASCII 路径（`buildsrc` 内构建后回拷），否则报 `mkdir /root: read-only file system` 之类的错。
+- esbuild 默认把非 ASCII 转义成 `\uXXXX`，所以 `grep 中文` 查不到属正常；用 `grep -a "u9707u52a8"` 或直接搜英文标识符验证。
+
+### 5. 打包 + 签名（一条命令）
+
+```sh
+sh /root/pk/make-apk.sh <版本号> <versionCode>      # 例：sh /root/pk/make-apk.sh 1.0.7.10 32
+```
+它依次做四件事：
+1. `rebuild2.py`：`javac -encoding UTF-8 -bootclasspath android.jar` + `d8.jar` 编出 `classes.dex`，从模板 APK 重打包（替换 `assets/www` + `classes.dex` + 改写 AXML 的 versionName/versionCode）；
+2. `apksigner sign`（v2+v3）；
+3. `apksigner verify`——**失败即退出**，不会产出成品；
+4. 拷贝到 `/sdcard/Download/PixelCraft-<版本号>.apk` 与仓库 `build/PixelCraft.apk`。
+
+> 只改了 Web 层也可以用 `/root/pk/rebuild.py`（只换 assets + 改版本号），但它**不会**更新 Java 层；
+> 只要 `android/java` 动过，就必须走 `make-apk.sh` / `rebuild2.py`。
+
+### 6. 交付前复核（必做）
+
+```sh
+python3 /root/pk/verify-apk.py /sdcard/Download/PixelCraft-<版本号>.apk <repo>/app2/www/js/app.js
+java -jar /root/pk/apksigner.jar verify --print-certs /sdcard/Download/PixelCraft-<版本号>.apk
+```
+- `verify-apk.py` 输出：package / versionName / versionCode / min,targetSdk / VIBRATE / dex 大小 / app.js 大小与 md5 / **app.js 是否与本地构建一致**。
+- `apksigner verify` 无输出即通过；证书 SHA-256 必须是
+  `745beeceeda9f891c04e7aae584a0a8a3e27f0023075044d2f55adb6bb442f1f`（否则覆盖安装会失败）。
+- 改了 Java 时再 grep 一下 dex 里的新字符串，例如 `grep -c setImmersive <(unzip -p ... classes.dex)`。
+- 最后把 `/sdcard/Download/PixelCraft-<版本号>.apk` 路径告诉用户，并用
+  `curl "http://127.0.0.1:3090/app/notify?token=$(cat /root/.dsh/.bridge_token)&title=...&text=..."` 发个通知（常返回 `FOREGROUND_SKIP`，正常）。
+
+### 7. 提交
+
+中文提交信息 `type(scope): 摘要` + 正文要点；产物不入库（`build/`、`app2/www/js/app.js`、`app2/www/css/style.css`、`tests/.ts-out/`、`toolchain/` 已在 `.gitignore`）。
+
+### 8. 常见坑
+
+| 症状 | 原因 | 处理 |
+|---|---|---|
+| 安装提示「缺少开发者证书」 | 把 `rebuild2.py` 的 **未签名** 中间产物 `repack.apk` 当成品发了 | 走 `make-apk.sh`；发前 `apksigner verify` |
+| Java 改动没生效 | 只用了 `rebuild.py` | 用 `make-apk.sh` / `rebuild2.py` |
+| `javac` 报 `unmappable character` | Java 源里出现中文且未指定编码 | Java 注释保持英文；`rebuild2.py` 已加 `-encoding UTF-8` |
+| `esbuild` 报 `mkdir /root: read-only file system` | 输出路径落在中文仓库路径 | 在 `/root/pcbuild/buildsrc` 构建后回拷 |
+| 新包体积和上一版一模一样 | 签名块按 4096 对齐，压缩差值被吸收 | **用 app.js 的 md5 判断**，别凭体积判断是否打进新代码 |
+| 覆盖安装失败 / 签名冲突 | 换了 keystore | 必须用 `/root/pk/debug.keystore` |
+| 装完版本号没变 | 忘同步 `AndroidManifest.xml` 与 `APP_VERSION` | 见第 1 步 |
