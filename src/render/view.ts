@@ -91,6 +91,9 @@ export class View {
   /** brief highlight of a fresh snap: the two canvas indices + start time */
   private snapPulse: { a: number; b: number; t0: number } | null = null;
   private snapRaf = 0;
+  /** red dissolving links of just-released snaps (pairs of canvas indices) */
+  private unsnapPulse: { pairs: Array<[number, number]>; t0: number } | null = null;
+  private unsnapRaf = 0;
   /** tints of the SELECTIONS of referenced canvases, keyed by layer id */
   private refSelTint = new Map<string, { sel: unknown; ver: number; cv: HTMLCanvasElement }>();
   private selTintBounds: { x: number; y: number; w: number; h: number } | null = null;
@@ -1023,6 +1026,23 @@ export class View {
     this.snapRaf = window.requestAnimationFrame(step);
   }
 
+  /** a released snap dissolves: a red translucent link fading out */
+  pulseUnsnap(pairs: Array<[number, number]>): void {
+    if (!pairs.length) return;
+    this.unsnapPulse = { pairs, t0: performance.now() };
+    if (this.unsnapRaf) return;
+    const step = (): void => {
+      this.unsnapRaf = 0;
+      const p = this.unsnapPulse;
+      if (!p) return;
+      const k = (performance.now() - p.t0) / 520;
+      this.drawOverlay();
+      if (k < 1) this.unsnapRaf = window.requestAnimationFrame(step);
+      else { this.unsnapPulse = null; this.drawOverlay(); }
+    };
+    this.unsnapRaf = window.requestAnimationFrame(step);
+  }
+
   /** the empty space between two snapped canvases is tinted green */
   private drawSnapGaps(ctx: CanvasRenderingContext2D, z: number): void {
     const s = this.session;
@@ -1068,6 +1088,35 @@ export class View {
         ctx.strokeStyle = "rgba(150, 255, 200, " + (0.95 * (1 - k)).toFixed(3) + ")";
         ctx.lineWidth = 2 + 3 * (1 - k);
         ctx.strokeRect(sx(g.x0) - 1, sy(g.y0) - 1, (g.x1 - g.x0) * z + 2, (g.y1 - g.y0) * z + 2);
+      }
+    }
+    // a released snap: red translucent link that spreads and fades away
+    const u = this.unsnapPulse;
+    if (u) {
+      const k = Math.min(1, (performance.now() - u.t0) / 520);
+      const fade = 1 - k;
+      for (const [ia, ib] of u.pairs) {
+        const a = this.docsAt(ia), b = this.docsAt(ib);
+        const g = a && b ? this.gapBetween(a, b) : null;
+        if (!g) continue;
+        const x = sx(g.x0), y = sy(g.y0);
+        const w = (g.x1 - g.x0) * z, h = (g.y1 - g.y0) * z;
+        ctx.fillStyle = "rgba(255, 80, 80, " + (0.45 * fade).toFixed(3) + ")";
+        ctx.fillRect(x, y, w, h);
+        ctx.strokeStyle = "rgba(255, 100, 100, " + (0.95 * fade).toFixed(3) + ")";
+        ctx.lineWidth = 2 + 9 * k;
+        const grow = 8 * k;
+        ctx.beginPath();
+        if (w >= h) {
+          const cy = y + h / 2;
+          ctx.moveTo(x - grow, cy);
+          ctx.lineTo(x + w + grow, cy);
+        } else {
+          const cx = x + w / 2;
+          ctx.moveTo(cx, y - grow);
+          ctx.lineTo(cx, y + h + grow);
+        }
+        ctx.stroke();
       }
     }
     ctx.restore();

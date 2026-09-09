@@ -834,6 +834,15 @@ export async function testSession(): Promise<void> {
     // a canvas that is NOT touching does not group, even when aligned
     c.unlinkCanvas(b);
     ok("canvas.snap.unlinked", !c.docs[b].group && !c.docs[0].group);
+    // releasing only one member of a 3-canvas group keeps the rest linked
+    c.finishCanvasDrag(b, 0);
+    const d = c.addCanvas(new Doc(64, 64, "C"), { x: c.docs[b].x + 64 + 8, y: c.docs[b].y });
+    c.finishCanvasDrag(d, b);
+    ok("canvas.snap.group-of-three", c.docs[0].group === c.docs[b].group && c.docs[b].group === c.docs[d].group);
+    c.unlinkCanvas(b);
+    ok("canvas.snap.middle-released", !c.docs[b].group && !!c.docs[0].group && c.docs[0].group === c.docs[d].group);
+    c.unlinkCanvas(d);
+    ok("canvas.snap.rest-released", !c.docs[0].group && !c.docs[d].group);
     c.moveCanvas(b, c.docs[0].x + 300, c.docs[0].y);
     c.finishCanvasDrag(b, 0);
     ok("canvas.snap.no-touch-no-group", !c.docs[b].group);

@@ -2058,9 +2058,20 @@ export class Session {
     const e = this.docs[i];
     if (!e?.group) return;
     const g = e.group;
+    // the neighbours that lose their link: shown as a red dissolving connection
+    const pairs: Array<[number, number]> = [];
+    for (let k = 0; k < this.docs.length; k++) {
+      const o = this.docs[k];
+      if (o === e || o.group !== g) continue;
+      if (this.canvasesTouch(e, o)) pairs.push([i, k]);
+    }
     e.group = null;
     const rest = this.docs.filter((o) => o.group === g);
     if (rest.length === 1) rest[0].group = null; // a group of one is no group
+    if (pairs.length) {
+      this.view_?.pulseUnsnap(pairs);
+      this.hapticTick("解除吸附", 0.7);
+    }
     this.changed();
     this.scheduleAutosave();
     toastFn(this.prefs.lang === "en" ? "Un-snapped" : "已解除吸附");

@@ -11,7 +11,7 @@ import { TabBar } from "./tabs";
 export const APP_VERSION = "1.0.7.11";
 /** build stamp shown next to the version (support/debug: identifies the exact
  *  package a user is running when the version number itself does not change) */
-export const BUILD_TAG = "b09122";
+export const BUILD_TAG = "b09123";
 
 export type ClgKind = "add" | "imp" | "fix";
 export interface ClgItem { kind: ClgKind; zh: string; en: string }
@@ -32,6 +32,7 @@ export const CHANGELOG: ClgVersion[] = [
       it("imp", "画布不再是一个文件：画布球里的「保存 / 关闭并保存」已移除（换成「关闭画布」，只是把它从当前工程里移除），顶部工具栏恢复保存按钮——它保存的是整个工程（含所有画布、每张画布的位置/帧/图层选择与操作记录），工程仍然是自动保存的", "A canvas is no longer a file: the canvas orb's Save / Close & save are gone (replaced by Close canvas, which just removes it from the current project), and the toolbar has the Save button back — it writes the WHOLE project (every canvas, with each canvas' position, frames, layer selection and history), which keeps autosaving as well"),
       it("fix", "修复在引用画布上绘画没有实时预览的 bug（笔、图形、橡皮擦）：引用层不再在合成时去取源画布的画面，而是把源画布的画面**镜像进引用层自己的像素**（每帧共用一份，源画布变了才重新镜像）——这样它的渲染路径和普通图层完全一样，画的过程中就跟着手指走", "Fixed the missing live preview when painting on a reference layer (pencil, shapes, eraser): instead of resolving the source canvas while compositing, the reference layer now MIRRORS the source picture into its own pixels (one shared cel per layer, re-mirrored only when the source changes), so its render path is exactly the same as a normal layer and follows the finger while painting"),
       it("add", "双击画布（不只是标题）也能快速聚焦并适配到那张画布：双击任意一张画布的画面即可切过去并缩放到适配大小；双击当前画布则只做适配（若你把「画布内双击」映射成了别的功能，仍然执行你的映射）", "Double-tapping a canvas BODY (not just its title) now focuses that canvas and zooms it to fit: double-tap any canvas' artwork to switch to it and fit it on screen. Double-tapping the current canvas just fits it, and a user mapping of \"double tap on canvas\" still wins"),
+      it("add", "解除吸附也有动画反馈：点标题栏右侧的解除按钮时，两张画布之间那道连接会变成红色半透明，向两边扩散并淡出（约 0.5 秒），同时震一下，明确表示连接已经断开", "Releasing a snap now animates too: tapping the un-snap button turns the connection between the two canvases into a red translucent link that spreads outwards and fades away (~0.5s), with a haptic tick, so it is obvious the link is gone"),
       it("add", "吸附反馈：拖动时一旦吸上，立刻震一下，并在两张画布之间的空隙上闪一道亮绿色（约 0.4 秒淡出），松手时再有提示文字，不再需要猜有没有吸附上", "Snap feedback: the moment the magnet engages while dragging you get a haptic tick and a bright green flash on the gap between the two canvases (fading out over ~0.4s), plus the toast on release — no more guessing whether it snapped"),
       it("imp", "画布缩得很小（比标题栏还窄）时，标题栏只显示画布名称，并且保持相对画布居中", "When a canvas is smaller on screen than its title bar, the bar shows only the canvas name and stays centred on the canvas"),
       it("fix", "修复拖动画布时「相机跟着画布跑」的怪异手感：相机锚定在聚焦画布上，以前拖动聚焦画布时画布在屏幕上不动、整个空间从它下面滑走；现在拖动聚焦画布（或它所在的组）会同步平移视口，画布跟着手指走、周围画布保持不动；拖动非聚焦画布时相机仍然不动", "Fixed the odd \"camera follows the canvas\" feel when dragging: the view is anchored on the focused canvas, so dragging THAT canvas used to keep it glued to the screen while the whole space slid underneath. Moving the focused canvas (or its group) now pans the view by the same amount, so the canvas follows your finger and the neighbours stay put; dragging a canvas that is not focused still leaves the camera alone"),

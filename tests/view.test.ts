@@ -152,6 +152,11 @@ export function testView(): void {
     ok("view.drag.camera-stays", Math.abs(view.ox - ox2) < 0.001, "ox " + ox2 + " -> " + view.ox);
     ok("view.drag.ox-restored", Math.abs(ox0 - view.ox) < 40, "ox0=" + ox0 + " now=" + view.ox);
 
+    // the un-snap dissolve animation must run without throwing
+    (view as unknown as { pulseUnsnap(p: Array<[number, number]>): void }).pulseUnsnap([[0, bi]]);
+    dom.flush();
+    ok("view.unsnap.pulse", true);
+
     // double-tap ON another canvas focuses it and zooms it to fit
     s.focusCanvas(0);
     dom.flush();
