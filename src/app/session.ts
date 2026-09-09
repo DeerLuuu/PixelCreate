@@ -25,7 +25,7 @@ import { mirrorMaskInPlace } from "../engine/symmetry";
 import { adjustPixel, type HslAdj } from "../engine/adjust";
 import { type LoopMode, nextLoopMode, nextPlayFrame, startPlayDir, startPlayFrame } from "./playback";
 import { SETTINGS_BY_PATH, normalizeSetting, type SettingValue } from "./settings";
-import { snapToTargets, snapCandidates, snapGapRect, SNAP_GAP, type GapRect, type SnapTarget } from "./canvas-snap";
+import { snapToTargets, snapCandidates, snapGapRect, type GapRect, type SnapTarget } from "./canvas-snap";
 
 export interface Prefs {
   lang: "zh" | "en";
@@ -131,6 +131,13 @@ export interface Prefs {
   shadowNewLayer: boolean;
   /** auto-pan the canvas when a brush/selection drag reaches the viewport edge */
   autoPan: boolean;
+  /** canvas snapping: master switch, magnetic range (screen px), the empty
+   *  space left between two snapped canvases (doc px) and the two colours */
+  snapOn: boolean;
+  snapRange: number;
+  snapGap: number;
+  snapInColor: string;
+  snapOutColor: string;
   /** paint bucket: fill every matching pixel in the layer (true) or only the
    *  connected region (false) */
   bucketGlobal: boolean;
@@ -1016,6 +1023,7 @@ export class Session {
       autosave: true, recordHistory: true, newFrameCopy: false, railSwap: true, previewBg: "white", previewGray: false, tileMode: "off", tlH: 200, tlHv: 2,
       immersive: true, safeArea: true, safeExtra: 0,
       histMode: "steps", histSteps: 120, shadowNewLayer: false, autoPan: true,
+      snapOn: true, snapRange: 14, snapGap: 8, snapInColor: "#78ffb4", snapOutColor: "#ff6464",
       bucketGlobal: false, loopMode: "loop", recentColorsMax: 16, selectionTolerance: 8,
       bucketGrad: false, bucketGradMode: "rgb",
       airbrushMin: 1, airbrushMax: 3, airbrushRate: 20,
@@ -1070,6 +1078,11 @@ export class Session {
       if (typeof saved.histSteps === "number") p.histSteps = Math.max(10, Math.min(500, Math.round(saved.histSteps)));
       if (typeof saved.shadowNewLayer === "boolean") p.shadowNewLayer = saved.shadowNewLayer;
       if (typeof saved.autoPan === "boolean") p.autoPan = saved.autoPan;
+      if (typeof saved.snapOn === "boolean") p.snapOn = saved.snapOn;
+      if (typeof saved.snapRange === "number") p.snapRange = Math.max(4, Math.min(48, Math.round(saved.snapRange)));
+      if (typeof saved.snapGap === "number") p.snapGap = Math.max(0, Math.min(48, Math.round(saved.snapGap)));
+      if (typeof saved.snapInColor === "string" && /^#[0-9a-fA-F]{6}$/.test(saved.snapInColor)) p.snapInColor = saved.snapInColor.toLowerCase();
+      if (typeof saved.snapOutColor === "string" && /^#[0-9a-fA-F]{6}$/.test(saved.snapOutColor)) p.snapOutColor = saved.snapOutColor.toLowerCase();
       if (typeof saved.bucketGlobal === "boolean") p.bucketGlobal = saved.bucketGlobal;
       if (typeof saved.bucketGrad === "boolean") p.bucketGrad = saved.bucketGrad;
       if (saved.bucketGradMode === "rgb" || saved.bucketGradMode === "2" || saved.bucketGradMode === "4" || saved.bucketGradMode === "8") p.bucketGradMode = saved.bucketGradMode;
@@ -2016,7 +2029,8 @@ export class Session {
     zones: Array<{ a: number; b: number } & GapRect>;
   } {
     const e = this.docs[i];
-    if (!e) return { x, y, hit: null, zones: [] };
+    if (!e || !this.prefs.snapOn) return { x, y, hit: null, zones: [] };
+    const gap = Math.max(0, Math.round(this.prefs.snapGap));
     const targets: Array<SnapTarget<number>> = [];
     for (let k = 0; k < this.docs.length; k++) {
       const o = this.docs[k];
@@ -2024,24 +2038,25 @@ export class Session {
       targets.push({ id: k, x: o.x, y: o.y, w: o.doc.w, h: o.doc.h });
     }
     const moving = { x, y, w: e.doc.w, h: e.doc.h };
-    const r = snapToTargets(moving, targets, tol, SNAP_GAP);
+    const r = snapToTargets(moving, targets, tol, gap);
     // every target that would snap, with the gap it would leave: all of those
     // zones are shown at once, not only the one the position ends up using
     const zones: Array<{ a: number; b: number } & GapRect> = [];
-    for (const c of snapCandidates(moving, targets, tol, SNAP_GAP)) {
+    for (const c of snapCandidates(moving, targets, tol, gap)) {
       const o = this.docs[c.id];
       if (!o) continue;
-      const g = snapGapRect({ x: c.x, y: c.y, w: e.doc.w, h: e.doc.h }, { x: o.x, y: o.y, w: o.doc.w, h: o.doc.h });
+      const g = snapGapRect({ x: c.x, y: c.y, w: e.doc.w, h: e.doc.h }, { x: o.x, y: o.y, w: o.doc.w, h: o.doc.h }, gap);
       if (g) zones.push({ a: i, b: c.id, ...g });
     }
     return { x: r.x, y: r.y, hit: r.hit, zones };
   }
   /** true when two canvases are neighbours with exactly the snap gap between */
   private canvasesTouch(a: CanvasEntry, b: CanvasEntry): boolean {
+    const gap = Math.max(0, Math.round(this.prefs.snapGap));
     const ax1 = a.x + a.doc.w, ay1 = a.y + a.doc.h;
     const bx1 = b.x + b.doc.w, by1 = b.y + b.doc.h;
-    const sideBySide = (ax1 + SNAP_GAP === b.x || bx1 + SNAP_GAP === a.x) && a.y < by1 && b.y < ay1;
-    const stacked = (ay1 + SNAP_GAP === b.y || by1 + SNAP_GAP === a.y) && a.x < bx1 && b.x < ax1;
+    const sideBySide = (ax1 + gap === b.x || bx1 + gap === a.x) && a.y < by1 && b.y < ay1;
+    const stacked = (ay1 + gap === b.y || by1 + gap === a.y) && a.x < bx1 && b.x < ax1;
     return sideBySide || stacked;
   }
   /** a drag ended on canvas `hit`: snap them together when they really touch */

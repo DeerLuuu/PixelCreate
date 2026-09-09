@@ -12,7 +12,7 @@ import * as bridge from "../io/bridge";
 import { applySafeArea } from "../io/safearea";
 
 export type SettingValue = boolean | number | string;
-export type SettingKind = "bool" | "int" | "enum";
+export type SettingKind = "bool" | "int" | "enum" | "color";
 /** how the app must react when a value changes */
 export type SettingRefresh = "none" | "changed" | "repaint" | "repaintAll";
 
@@ -95,6 +95,7 @@ export function coerceSetting(d: SettingDef, v: unknown): SettingValue | undefin
     return Math.max(lo, Math.min(hi, Math.round(n)));
   }
   if (typeof v !== "string") return undefined;
+  if (d.kind === "color") return /^#[0-9a-fA-F]{6}$/.test(v) ? v.toLowerCase() : undefined;
   return (d.options ?? []).some((o) => o.value === v) ? v : undefined;
 }
 
@@ -187,6 +188,30 @@ const defs: SettingDef[] = [
     path: "canvas.gridSize", field: "gridSize", kind: "int", group: "canvas",
     label: "gridSize", default: 1, min: 1, max: 32, unit: "px", reset: 1, refresh: "repaintAll",
     visible: (s) => s.prefs.gridMode !== "off",
+  },
+  {
+    path: "canvas.snapOn", field: "snapOn", kind: "bool", group: "canvas",
+    label: "snapOn", desc: "snapOnDesc", default: true, refresh: "none",
+  },
+  {
+    path: "canvas.snapRange", field: "snapRange", kind: "int", group: "canvas",
+    label: "snapRange", desc: "snapRangeDesc", default: 14, min: 4, max: 48, unit: "px", reset: 14, refresh: "none",
+    visible: (s) => s.prefs.snapOn,
+  },
+  {
+    path: "canvas.snapGap", field: "snapGap", kind: "int", group: "canvas",
+    label: "snapGap", desc: "snapGapDesc", default: 8, min: 0, max: 48, unit: "px", reset: 8, refresh: "repaintAll",
+    visible: (s) => s.prefs.snapOn,
+  },
+  {
+    path: "canvas.snapInColor", field: "snapInColor", kind: "color", group: "canvas",
+    label: "snapInColor", desc: "snapInColorDesc", default: "#78ffb4", refresh: "repaintAll",
+    visible: (s) => s.prefs.snapOn,
+  },
+  {
+    path: "canvas.snapOutColor", field: "snapOutColor", kind: "color", group: "canvas",
+    label: "snapOutColor", desc: "snapOutColorDesc", default: "#ff6464", refresh: "repaintAll",
+    visible: (s) => s.prefs.snapOn,
   },
   {
     path: "canvas.autoPan", field: "autoPan", kind: "bool", group: "canvas",
@@ -522,5 +547,6 @@ export function normalizeSetting(def: SettingDef, raw: SettingValue): SettingVal
   }
   const opts = def.options ?? [];
   const v = String(raw);
+  if (def.kind === "color") return /^#[0-9a-fA-F]{6}$/.test(v) ? v.toLowerCase() : null;
   return opts.some((o) => o.value === v) ? v : null;
 }

@@ -12,7 +12,7 @@ import { showTip, hideTip } from "./tooltip";
 import type { Lang } from "./i18n";
 import type { View } from "../render/view";
 
-/** how close (in screen px) two canvases must be to snap together */
+/** fallback magnetic range in screen px (Settings -> Canvas -> snap range) */
 const SNAP_SCREEN_PX = 14;
 
 export function CanvasTitles({ view, tick }: { view: View | null; tick: number }) {
@@ -33,7 +33,7 @@ export function CanvasTitles({ view, tick }: { view: View | null; tick: number }
   const focus = SESSION.docs[SESSION.docIdx];
   if (!focus) return null;
   const z = view.zoom;
-  const snapTol = SNAP_SCREEN_PX / z;
+  const snapTol = (SESSION.prefs.snapRange || SNAP_SCREEN_PX) / z;
   return (
     <>
       {SESSION.docs.map((e, i) => {
@@ -81,7 +81,9 @@ export function CanvasTitles({ view, tick }: { view: View | null; tick: number }
               ev.preventDefault();
               // magnetically align with the other canvases (and their groups)
               const want = { x: d.x0 + dx / z, y: d.y0 + dy / z };
-              const snap = SESSION.snapPosition(i, want.x, want.y, snapTol);
+              const snap = SESSION.prefs.snapOn
+                ? SESSION.snapPosition(i, want.x, want.y, snapTol)
+                : { x: want.x, y: want.y, hit: null, zones: [] };
               // entering a zone: tick + a flash, then the zone stays lit while
               // the finger keeps it in range; leaving it flashes once more
               if (snap.hit !== null && pulsed.current !== snap.hit) {
@@ -92,7 +94,9 @@ export function CanvasTitles({ view, tick }: { view: View | null; tick: number }
               SESSION.moveCanvas(i, snap.x, snap.y);
               // light up EVERY zone that is satisfied at the position the
               // canvas actually took (several can be active at once)
-              SESSION.setSnapZones(SESSION.snapPosition(i, snap.x, snap.y, snapTol).zones);
+              SESSION.setSnapZones(snap.zones.length || snap.hit !== null
+                ? SESSION.snapPosition(i, snap.x, snap.y, snapTol).zones
+                : []);
             }}
             onPointerUp={(ev) => {
               const d = drag.current;

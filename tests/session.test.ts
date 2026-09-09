@@ -812,6 +812,41 @@ export async function testSession(): Promise<void> {
     ok("extract.source-empty", !x.doc.celAt(0, 0) && !x.doc.celAt(0, 1));
   }
 
+  // --- snap settings: range, gap, colours, master switch ---
+  {
+    (globalThis as unknown as { localStorage: { clear(): void } }).localStorage.clear();
+    const g = new Session();
+    const gb = g.addCanvas(new Doc(64, 64, "B"));
+    eq("snapset.defaults", [g.prefs.snapOn, g.prefs.snapRange, g.prefs.snapGap, g.prefs.snapInColor, g.prefs.snapOutColor],
+      [true, 14, 8, "#78ffb4", "#ff6464"]);
+    // the gap comes from the settings
+    g.setSetting("canvas.snapGap", 20);
+    const near = g.snapPosition(gb, g.docs[0].x + 64 + 16, g.docs[0].y, 12);
+    eq("snapset.gap-used", near.x, g.docs[0].x + 64 + 20);
+    // colours are validated like any other colour setting
+    g.setSetting("canvas.snapInColor", "#00FF00");
+    eq("snapset.color-normalised", g.prefs.snapInColor, "#00ff00");
+    g.setSetting("canvas.snapInColor", "nope");
+    eq("snapset.color-invalid-ignored", g.prefs.snapInColor, "#00ff00");
+    eq("snapset.color-export", g.settingValue("canvas.snapOutColor"), "#ff6464");
+    // the master switch disables snapping entirely
+    g.setSetting("canvas.snapOn", false);
+    const off = g.snapPosition(gb, g.docs[0].x + 64 + 16, g.docs[0].y, 12);
+    eq("snapset.off", [off.x, off.y, off.hit, off.zones.length], [g.docs[0].x + 64 + 16, g.docs[0].y, null, 0]);
+    g.setSetting("canvas.snapOn", true);
+    ok("snapset.back-on", g.snapPosition(gb, g.docs[0].x + 64 + 16, g.docs[0].y, 12).hit === 0);
+    // snap details are hidden while snapping is off
+    g.setSetting("canvas.snapOn", false);
+    ok("snapset.details-hidden", !settingsOfGroup(g, "canvas").some((d) => d.path === "canvas.snapGap"));
+    g.setSetting("canvas.snapOn", true);
+    ok("snapset.details-shown", settingsOfGroup(g, "canvas").some((d) => d.path === "canvas.snapGap"));
+    // settings round trip keeps them
+    const file = exportSettings(g);
+    const h2 = new Session();
+    importSettings(h2, file);
+    eq("snapset.roundtrip", [h2.prefs.snapGap, h2.prefs.snapInColor], [20, "#00ff00"]);
+  }
+
   // --- canvas position lock + snapping into groups ---
   {
     (globalThis as unknown as { localStorage: { clear(): void } }).localStorage.clear();

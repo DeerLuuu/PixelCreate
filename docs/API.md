@@ -898,7 +898,12 @@ view.fitAnimated(ms = 220) / animateTo(z, ox, oy, ms)  // 缓动适配（双击�
 | `ui/preview.tsx` | `PreviewBox`：按 `SESSION.previews` 渲染多个预览框，每个绑定一张画布 |
 | `ui/base.tsx` | `ScrubNum` 支持算式与运算符浮条 |
 
-### 18.8 新增设置项
+### 18.8 吸附设置
+
+`canvas.snapOn`（总开关）、`canvas.snapRange`（4–48 屏幕像素）、`canvas.snapGap`（0–48 画布像素）、
+`canvas.snapInColor` / `canvas.snapOutColor`（`kind: "color"`，`#rrggbb`，非法值被拒绝）。
+
+### 18.9 新增设置项
 
 `tools.bucketGrad` / `tools.bucketGradMode`（油漆桶渐变与颗粒）、
 `tools.airbrushMin` / `tools.airbrushMax` / `tools.airbrushRate`（喷枪）。

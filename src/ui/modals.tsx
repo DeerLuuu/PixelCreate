@@ -645,6 +645,12 @@ function SettingRow({ def, t }: { def: SettingDef; t: ReturnType<typeof makeT> }
             onChange={(n) => SESSION.setSetting(def.path, n)} />
         )}
       </div>
+      {def.kind === "color" && (
+        <div className="set-color">
+          <input type="color" value={String(v)} onChange={(e) => SESSION.setSetting(def.path, e.target.value)} />
+          <span className="set-hex">{String(v)}</span>
+        </div>
+      )}
       {def.kind === "enum" && (asDrop ? (
         <div className="set-drop">
           <DropMenu

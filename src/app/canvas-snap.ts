@@ -48,14 +48,21 @@ function axisGap(a0: number, a1: number, b0: number, b1: number): number {
   return Math.max(0, Math.max(a0 - b1, b0 - a1));
 }
 
-/** the snap gap rect between two rects (null = not adjacent with exactly `gap`) */
-export function snapGapRect(a: SnapRect, b: SnapRect, gap = SNAP_GAP): GapRect | null {
+/** the snap gap rect between two rects (null = not adjacent). `tol` relaxes the
+ *  distance check so already-grouped pairs still highlight after the configured
+ *  gap changed; the returned rect always covers the REAL gap. */
+export function snapGapRect(a: SnapRect, b: SnapRect, gap = SNAP_GAP, tol = 0): GapRect | null {
   const ax1 = a.x + a.w, ay1 = a.y + a.h;
   const bx1 = b.x + b.w, by1 = b.y + b.h;
-  if (ax1 + gap === b.x && a.y < by1 && b.y < ay1) return { x0: ax1, y0: Math.max(a.y, b.y), x1: b.x, y1: Math.min(ay1, by1) };
-  if (bx1 + gap === a.x && a.y < by1 && b.y < ay1) return { x0: bx1, y0: Math.max(a.y, b.y), x1: a.x, y1: Math.min(ay1, by1) };
-  if (ay1 + gap === b.y && a.x < bx1 && b.x < ax1) return { x0: Math.max(a.x, b.x), y0: ay1, x1: Math.min(ax1, bx1), y1: b.y };
-  if (by1 + gap === a.y && a.x < bx1 && b.x < ax1) return { x0: Math.max(a.x, b.x), y0: by1, x1: Math.min(ax1, bx1), y1: a.y };
+  const near = (d: number): boolean => Math.abs(d) <= tol;
+  const dRight = b.x - ax1;
+  if (near(dRight - gap) && a.y < by1 && b.y < ay1) return { x0: ax1, y0: Math.max(a.y, b.y), x1: b.x, y1: Math.min(ay1, by1) };
+  const dLeft = a.x - bx1;
+  if (near(dLeft - gap) && a.y < by1 && b.y < ay1) return { x0: bx1, y0: Math.max(a.y, b.y), x1: a.x, y1: Math.min(ay1, by1) };
+  const dDown = b.y - ay1;
+  if (near(dDown - gap) && a.x < bx1 && b.x < ax1) return { x0: Math.max(a.x, b.x), y0: ay1, x1: Math.min(ax1, bx1), y1: b.y };
+  const dUp = a.y - by1;
+  if (near(dUp - gap) && a.x < bx1 && b.x < ax1) return { x0: Math.max(a.x, b.x), y0: by1, x1: Math.min(ax1, bx1), y1: a.y };
   return null;
 }
 

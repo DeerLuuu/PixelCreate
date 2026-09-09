@@ -12,7 +12,8 @@ import { selOps, lassoFill, beginMove, xformFloating, type MoveState } from "../
 import type { Session } from "../app/session";
 import type { GestureActionId } from "../app/gesture-ids";
 import { clamp } from "../engine/types";
-import { SNAP_GAP, snapGapRect, type GapRect } from "../app/canvas-snap";
+import { snapGapRect, type GapRect } from "../app/canvas-snap";
+import { hexToRgba } from "../engine/color";
 
 /** Is the composite canvas stale? `compRect === null` means "the whole canvas
  *  changed" (FX ops, selection edits, paste …) — the caller MUST rebuild it
@@ -1062,6 +1063,12 @@ export class View {
     this.unsnapRaf = window.requestAnimationFrame(step);
   }
 
+  /** rgba() string of a "#rrggbb" setting colour at the given alpha */
+  private tint(hex: string, alpha: number): string {
+    const c = hexToRgba(hex);
+    return "rgba(" + c[0] + "," + c[1] + "," + c[2] + "," + alpha.toFixed(3) + ")";
+  }
+
   /** the empty space between two snapped canvases is tinted green */
   private drawSnapGaps(ctx: CanvasRenderingContext2D, z: number): void {
     const s = this.session;
@@ -1071,34 +1078,31 @@ export class View {
     if (!focus) return;
     const sx = (v: number): number => this.ox + (v - focus.x) * z;
     const sy = (v: number): number => this.oy + (v - focus.y) * z;
+    const gapPx = Math.max(0, Math.round(s.prefs.snapGap));
+    const inCol = s.prefs.snapInColor || "#78ffb4";
+    const outCol = s.prefs.snapOutColor || "#ff6464";
     ctx.save();
-    ctx.fillStyle = "rgba(80, 220, 140, 0.30)";
+    ctx.fillStyle = this.tint(inCol, 0.30);
     for (let i = 0; i < docs.length; i++) {
       const a = docs[i];
       if (!a.group) continue;
       for (let j = i + 1; j < docs.length; j++) {
         const b = docs[j];
         if (b.group !== a.group) continue;
-        const ax1 = a.x + a.doc.w, ay1 = a.y + a.doc.h;
-        const bx1 = b.x + b.doc.w, by1 = b.y + b.doc.h;
-        let x0 = 0, y0 = 0, x1 = 0, y1 = 0, ok = false;
-        if (ax1 + SNAP_GAP === b.x && a.y < by1 && b.y < ay1) {
-          x0 = ax1; x1 = b.x; y0 = Math.max(a.y, b.y); y1 = Math.min(ay1, by1); ok = true;
-        } else if (bx1 + SNAP_GAP === a.x && a.y < by1 && b.y < ay1) {
-          x0 = bx1; x1 = a.x; y0 = Math.max(a.y, b.y); y1 = Math.min(ay1, by1); ok = true;
-        } else if (ay1 + SNAP_GAP === b.y && a.x < bx1 && b.x < ax1) {
-          y0 = ay1; y1 = b.y; x0 = Math.max(a.x, b.x); x1 = Math.min(ax1, bx1); ok = true;
-        } else if (by1 + SNAP_GAP === a.y && a.x < bx1 && b.x < ax1) {
-          y0 = by1; y1 = a.y; x0 = Math.max(a.x, b.x); x1 = Math.min(ax1, bx1); ok = true;
-        }
-        if (!ok) continue;
+        // tolerant: a group snapped with an older gap still shows its gap
+        const g = snapGapRect(
+          { x: a.x, y: a.y, w: a.doc.w, h: a.doc.h },
+          { x: b.x, y: b.y, w: b.doc.w, h: b.doc.h },
+          gapPx, 8);
+        if (!g) continue;
+        const x0 = g.x0, y0 = g.y0, x1 = g.x1, y1 = g.y1;
         ctx.fillRect(sx(x0), sy(y0), (x1 - x0) * z, (y1 - y0) * z);
       }
     }
     // every satisfied zone stays lit while the finger keeps it in range
     for (const zn of this.snapZones.values()) {
       const g = zn.rect;
-      ctx.fillStyle = "rgba(80, 220, 140, 0.45)";
+      ctx.fillStyle = this.tint(inCol, 0.45);
       ctx.fillRect(sx(g.x0), sy(g.y0), (g.x1 - g.x0) * z, (g.y1 - g.y0) * z);
     }
     // one-shot flashes: green when a zone is entered, red when it is left
@@ -1109,13 +1113,9 @@ export class View {
       const x = sx(g.x0), y = sy(g.y0);
       const w = (g.x1 - g.x0) * z, h = (g.y1 - g.y0) * z;
       const green = f.kind === "in";
-      ctx.fillStyle = green
-        ? "rgba(120, 255, 180, " + (0.55 * fade).toFixed(3) + ")"
-        : "rgba(255, 80, 80, " + (0.45 * fade).toFixed(3) + ")";
+      ctx.fillStyle = this.tint(green ? inCol : outCol, (green ? 0.55 : 0.45) * fade);
       ctx.fillRect(x, y, w, h);
-      ctx.strokeStyle = green
-        ? "rgba(150, 255, 200, " + (0.95 * fade).toFixed(3) + ")"
-        : "rgba(255, 100, 100, " + (0.95 * fade).toFixed(3) + ")";
+      ctx.strokeStyle = this.tint(green ? inCol : outCol, 0.95 * fade);
       ctx.lineWidth = green ? 2 + 3 * fade : 2 + 9 * k;
       const grow = green ? 0 : 8 * k;
       ctx.beginPath();
@@ -1137,13 +1137,13 @@ export class View {
       const fade = 1 - k;
       for (const [ia, ib] of u.pairs) {
         const a = this.docsAt(ia), b = this.docsAt(ib);
-        const g = a && b ? snapGapRect({ x: a.x, y: a.y, w: a.doc.w, h: a.doc.h }, { x: b.x, y: b.y, w: b.doc.w, h: b.doc.h }) : null;
+        const g = a && b ? snapGapRect({ x: a.x, y: a.y, w: a.doc.w, h: a.doc.h }, { x: b.x, y: b.y, w: b.doc.w, h: b.doc.h }, gapPx, 8) : null;
         if (!g) continue;
         const x = sx(g.x0), y = sy(g.y0);
         const w = (g.x1 - g.x0) * z, h = (g.y1 - g.y0) * z;
-        ctx.fillStyle = "rgba(255, 80, 80, " + (0.45 * fade).toFixed(3) + ")";
+        ctx.fillStyle = this.tint(outCol, 0.45 * fade);
         ctx.fillRect(x, y, w, h);
-        ctx.strokeStyle = "rgba(255, 100, 100, " + (0.95 * fade).toFixed(3) + ")";
+        ctx.strokeStyle = this.tint(outCol, 0.95 * fade);
         ctx.lineWidth = 2 + 9 * k;
         const grow = 8 * k;
         ctx.beginPath();
