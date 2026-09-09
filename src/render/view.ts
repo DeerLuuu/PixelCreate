@@ -821,27 +821,56 @@ export class View {
       this.stepFlash();
     });
   }
-  /** freehand outline preview: the traced path plus the region it will fill */
+  /** freehand outline preview: the same trail as the lasso selection, plus a
+   *  light preview of the region that will be filled (auto-closed to the start) */
   private drawOutlinePreview(ctx: CanvasRenderingContext2D): void {
     const o = this.outline;
     if (!o || o.pts.length < 2) return;
     const z = this.zoom;
-    const sx = (x: number) => this.ox + (x + 0.5) * z;
-    const sy = (y: number) => this.oy + (y + 0.5) * z;
+    const sx = (x: number) => this.ox + x * z;
+    const sy = (y: number) => this.oy + y * z;
+    const pts = o.pts;
+    const first = pts[0], last = pts[pts.length - 1];
+    const path = (): void => {
+      ctx.beginPath();
+      ctx.moveTo(sx(first[0]), sy(first[1]));
+      for (let i = 1; i < pts.length; i++) ctx.lineTo(sx(pts[i][0]), sy(pts[i][1]));
+    };
     ctx.save();
-    ctx.beginPath();
-    ctx.moveTo(sx(o.pts[0][0]), sy(o.pts[0][1]));
-    for (let i = 1; i < o.pts.length; i++) ctx.lineTo(sx(o.pts[i][0]), sy(o.pts[i][1]));
-    ctx.closePath();
-    // the fill preview uses the live colour so the result is predictable
-    const c = this.session.color;
-    ctx.fillStyle = "rgba(" + c[0] + "," + c[1] + "," + c[2] + "," + Math.min(0.55, Math.max(0.18, c[3] / 255 * 0.45)) + ")";
-    ctx.fill();
-    ctx.setLineDash([6, 4]);
-    ctx.lineWidth = 1.5;
-    ctx.strokeStyle = "rgba(126,255,214,.95)";
+    ctx.lineJoin = "round";
+    ctx.lineCap = "round";
+    // the fill preview sits under the trail, kept faint so the line stays clear
+    if (pts.length >= 3) {
+      const c = this.session.color;
+      path();
+      ctx.closePath();
+      ctx.fillStyle = "rgba(" + c[0] + "," + c[1] + "," + c[2] + "," + Math.min(0.34, Math.max(0.12, (c[3] / 255) * 0.3)) + ")";
+      ctx.fill();
+    }
+    // trail: identical style to the lasso selection
+    ctx.strokeStyle = "#63f5c5";
+    ctx.lineWidth = 2;
+    ctx.shadowColor = "rgba(0,0,0,.4)";
+    ctx.shadowBlur = 3;
+    path();
     ctx.stroke();
-    ctx.setLineDash([]);
+    ctx.shadowBlur = 0;
+    // the segment that will be added automatically to close the shape
+    if (pts.length >= 3 && (last[0] !== first[0] || last[1] !== first[1])) {
+      ctx.setLineDash([5, 4]);
+      ctx.lineWidth = 1.4;
+      ctx.strokeStyle = "rgba(99,245,197,.75)";
+      ctx.beginPath();
+      ctx.moveTo(sx(last[0]), sy(last[1]));
+      ctx.lineTo(sx(first[0]), sy(first[1]));
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    // start anchor
+    ctx.fillStyle = "#ffffff";
+    ctx.beginPath();
+    ctx.arc(sx(first[0]), sy(first[1]), 4, 0, Math.PI * 2);
+    ctx.fill();
     ctx.restore();
   }
 
@@ -1815,6 +1844,8 @@ export class View {
       this.drawOverlay();
       return;
     }
+    // polygonCells closes the path implicitly (last → first point), so a
+    // shape the user left open is closed automatically here
     const ax: SymAxis = { on: s.sym !== "off", four: s.symFour, ox: s.symOx, oy: s.symOy, angDeg: s.symAng };
     const mask = doc.selectionActive() ? (x: number, y: number) => doc.selAt(x, y) === 1 : null;
     const color = s.color;
