@@ -241,30 +241,34 @@ export class History {
     });
   }
 
-  /** forget every step that edited `doc` (a canvas was closed) */
-  dropByDoc(doc: Doc): void {
-    this.undoStack = this.undoStack.filter((e) => e.doc !== doc);
-    this.redoStack = this.redoStack.filter((e) => e.doc !== doc);
-  }
-
-  /** Export the stack for a project file. Steps that have no serializable
-   *  payload stop the export: everything older than the newest such step is
-   *  dropped so the remaining history stays correct. */
+  /** Export the stack for a project file.
+   *  - steps of a canvas that is not part of the file (closed canvases, and the
+   *    close steps themselves) are skipped: they cannot be replayed there, but
+   *    they never break the chain for the canvases that ARE in the file;
+   *  - steps without a serializable payload cannot be rebuilt after a reload,
+   *    so everything older than the newest of them is dropped. */
   dump(docIdOf?: (doc: Doc) => string | undefined): HistoryDump {
     const all = [...this.undoStack, ...this.redoStack];
+    const gone = (e: Entry): boolean => !!(e.doc && docIdOf && !docIdOf(e.doc));
     let start = 0;
     for (let i = 0; i < all.length; i++) {
-      if (!all[i].enc && !all[i].snap && !all[i].data) start = i + 1;
+      const e = all[i];
+      if (e.enc || e.snap || e.data || gone(e)) continue;
+      start = i + 1;
     }
     const entries: HistoryDumpEntry[] = [];
+    let index = 0;
     for (let i = start; i < all.length; i++) {
       const e = all[i];
+      if (gone(e)) continue;
       const docId = e.doc && docIdOf ? docIdOf(e.doc) : undefined;
       if (e.enc) entries.push({ label: e.label, kind: "pixels", enc: e.enc, docId });
       else if (e.snap) entries.push({ label: e.label, kind: "struct", before: e.snap.before, after: e.snap.after, docId });
       else if (e.data) entries.push({ label: e.label, kind: "scalar", data: e.data, docId });
+      else continue;
+      if (i < this.undoStack.length) index++;
     }
-    return { index: Math.max(0, this.undoStack.length - start), entries };
+    return { index, entries };
   }
 
   /** Rebuild a stack previously written by dump() + the project encoder. */

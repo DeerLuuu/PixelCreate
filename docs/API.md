@@ -849,7 +849,7 @@ addCanvas(doc, opts?): number         // 在空间里再开一张，返回下标
 focusCanvas(i): void                  // 切换聚焦，恢复该画布的图层/帧/撤销栈
 renameCanvas(i, name): void
 moveCanvas(i, x, y): void             // 拖动标题栏时调用（空间坐标，单位=像素）
-closeCanvas(i): boolean               // 从工程里移除一张画布（允许关到 0 张 = 空工程）
+closeCanvas(i): boolean               // 关闭一张画布（记一条 "canvas-close" 历史步，可撤销找回；允许关到 0 张 = 空工程）
 fitCanvas(): void                     // 缓动缩放视图到聚焦画布的适配大小
 toggleCanvasLock(i?) / isCanvasLocked(i?)   // 锁定 / 解锁画布位置（锁定后不可拖动）
 snapPosition(i, x, y, tol)            // 拖动时的吸附位置 {x, y, hit}
@@ -860,8 +860,9 @@ closePreview(id) / movePreview(id, x, y) / resizePreview(id, size)
 askConfirm(q) / askText(q)            // UI 注册的确认框 / 单行输入框
 ```
 
-`Session.history` 是**整个工程共用的一条撤销栈**（`History.Entry.doc` 记录该步属于哪张画布，
-`dropByDoc()` 在关闭画布时丢弃其步骤；`dump(docIdOf)`/`loadDump({docFor})` 让历史随工程存取）；
+`Session.history` 是**整个工程共用的一条撤销栈**（`History.Entry.doc` 记录该步属于哪张画布；
+关闭画布也是一条普通历史步 `canvas-close`，撤销即把该画布（含位置/锁定/吸附组/预览框）放回原位，
+直到打开新工程才清空；`dump(docIdOf)` 会跳过不在文件里的画布步骤，`loadDump({docFor})` 让历史随工程存取）；
 `changed()` 会把聚焦画布的 `layerIdx/frameIdx` 写回它的 entry。
 `docs` 允许为空数组（默认空白工程，`doc` 返回 1×1 占位文档），此时 UI 只渲染空状态卡片。
 切换聚焦时 `View.shiftFocus(dx, dy)` 会反向平移视口，保证整个空间在屏幕上不跳动。

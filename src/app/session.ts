@@ -2127,35 +2127,76 @@ export class Session {
     this.view_?.fitAnimated();
     this.changed();
   }
-  /** close a canvas: the project is the only file, so nothing is written here */
-  closeCanvas(i: number): boolean {
-    const e = this.docs[i];
-    if (!e) return false;
-    const wasFocus = i === this.docIdx;
-    this.history.dropByDoc(e.doc); // its steps can no longer be replayed
-    this.docs.splice(i, 1);
-    this.previews = this.previews
-      .filter((p) => p.canvas !== i)
-      .map((p) => (p.canvas > i ? { ...p, canvas: p.canvas - 1 } : p));
-    if (this.docIdx > i) this.docIdx--;
-    if (this.docIdx >= this.docs.length) this.docIdx = this.docs.length - 1;
-    if (wasFocus && this.docs.length) {
-      const n = this.docs[this.docIdx];
-      this.layerIdx = Math.max(0, Math.min(n.doc.layers.length - 1, n.li));
-      this.frameIdx = Math.max(0, Math.min(n.doc.frames.length - 1, n.fi));
-      if (n !== e) this.view_?.shiftFocus(n.x - e.x, n.y - e.y);
-      this.view_?.setDoc(n.doc);
-      this.view_?.setFrame(this.frameIdx);
-      this.view_?.fit();
-    } else if (wasFocus) {
-      // the last canvas is gone: the shell shows the empty-space screen
+  /** re-anchor the view on docs[i] (or on the empty stub when the space is
+   *  empty) and bring that canvas' own layer/frame selection back; `from` is
+   *  the space position the view was anchored on, so the rest of the space does
+   *  not jump on screen */
+  private anchorFocus(i: number, from: { x: number; y: number } | null): void {
+    if (!this.docs.length) {
+      this.docIdx = 0;
       this.layerIdx = 0;
       this.frameIdx = 0;
       this.view_?.setDoc(this.doc);
+      return;
     }
-    this.repaintAll();
-    this.changed();
-    this.scheduleAutosave();
+    this.docIdx = Math.max(0, Math.min(this.docs.length - 1, i));
+    const e = this.docs[this.docIdx];
+    this.layerIdx = Math.max(0, Math.min(e.doc.layers.length - 1, e.li));
+    this.frameIdx = Math.max(0, Math.min(e.doc.frames.length - 1, e.fi));
+    if (from && (from.x !== e.x || from.y !== e.y)) this.view_?.shiftFocus(e.x - from.x, e.y - from.y);
+    this.view_?.setDoc(e.doc);
+    this.view_?.setFrame(this.frameIdx);
+  }
+  /** close a canvas: the project is the only file, so nothing is written here.
+   *  The close is an ordinary history step, so a closed canvas can be brought
+   *  back with undo (and walks through the replay) until the project itself is
+   *  closed — opening another project or starting a new one clears the stack. */
+  closeCanvas(i: number): boolean {
+    const e = this.docs[i];
+    if (!e) return false;
+    this.syncEntry(); // the entry keeps its layer/frame selection
+    const at = i;
+    const gone = this.previews.filter((p) => p.canvas === at);
+    // did the close take the focus away? then undo gives it back
+    let tookFocus = false;
+    const drop = (): void => {
+      const k = this.docs.indexOf(e);
+      if (k < 0) return;
+      const focused = this.docs[this.docIdx] === e;
+      this.previews = this.previews
+        .filter((p) => p.canvas !== k)
+        .map((p) => (p.canvas > k ? { ...p, canvas: p.canvas - 1 } : p));
+      this.docs.splice(k, 1);
+      if (focused) {
+        tookFocus = true;
+        this.anchorFocus(Math.min(k, this.docs.length - 1), { x: e.x, y: e.y });
+        this.view_?.fit();
+      } else if (k < this.docIdx) {
+        this.docIdx--;
+      }
+      this.repaintAll();
+      this.changed();
+      this.scheduleAutosave();
+    };
+    const restore = (): void => {
+      if (this.docs.includes(e)) return;
+      const k = Math.max(0, Math.min(this.docs.length, at));
+      this.docs.splice(k, 0, e);
+      e.doc.pixelRev++; // its render cache is stale by now
+      this.previews = this.previews.map((p) => (p.canvas >= k ? { ...p, canvas: p.canvas + 1 } : p));
+      for (const p of gone) if (!this.previews.some((q) => q.id === p.id)) this.previews.push({ ...p, canvas: k });
+      if (tookFocus) {
+        this.anchorFocus(k, null);
+        this.view_?.fit();
+      } else if (k <= this.docIdx) {
+        this.docIdx++;
+      }
+      this.repaintAll();
+      this.changed();
+      this.scheduleAutosave();
+    };
+    this.history.record("canvas-close", { apply: drop, unapply: restore }, undefined, e.doc);
+    drop();
     return true;
   }
 

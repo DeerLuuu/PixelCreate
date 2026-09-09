@@ -561,13 +561,16 @@ function TopBar({
   t: ReturnType<typeof makeT>; snap: Snapshot; tlOn: boolean; noCanvas: boolean; onToggleTl: () => void; onMenu: () => void; onHistory: () => void; onSave: () => void;
 }) {
   const off = (fn: () => void) => (noCanvas ? () => { /* no canvas open */ } : fn);
+  // undo/redo stay live on the empty-space screen: closing the LAST canvas is
+  // itself a history step, so it can be brought back from there
+  const hist = snap.canUndo || snap.canRedo;
   return (
     <header className="topbar">
       <Btn icon="i-menu" onClick={onMenu} title={t("menu")} desc={bd(snap.lang, "menu")} guide="btn-menu" />
       <div className="grow" />
-      <Btn icon="i-history" onClick={off(onHistory)} title={t("historyTitle")} desc={bd(snap.lang, "hist")} className={noCanvas ? "off" : ""} guide="btn-history" />
-      <Btn icon="i-undo" onClick={off(() => SESSION.undo())} title={t("undo")} desc={bd(snap.lang, "undo")} className={!noCanvas && snap.canUndo ? "" : "off"} guide="btn-undo" />
-      <Btn icon="i-redo" onClick={off(() => SESSION.redo())} title={t("redo")} desc={bd(snap.lang, "redo")} className={!noCanvas && snap.canRedo ? "" : "off"} guide="btn-redo" />
+      <Btn icon="i-history" onClick={onHistory} title={t("historyTitle")} desc={bd(snap.lang, "hist")} className={noCanvas && !hist ? "off" : ""} guide="btn-history" />
+      <Btn icon="i-undo" onClick={() => SESSION.undo()} title={t("undo")} desc={bd(snap.lang, "undo")} className={snap.canUndo ? "" : "off"} guide="btn-undo" />
+      <Btn icon="i-redo" onClick={() => SESSION.redo()} title={t("redo")} desc={bd(snap.lang, "redo")} className={snap.canRedo ? "" : "off"} guide="btn-redo" />
       <Btn icon="i-save" onClick={off(onSave)} title={t("save")} desc={bd(snap.lang, "save")} className={noCanvas ? "off" : ""} guide="btn-save" />
       <Btn icon="i-timeline" onClick={off(onToggleTl)} active={tlOn && !noCanvas} title={t(tlOn ? "timelineHide" : "timelineShow")} className={noCanvas ? "off" : ""} guide="btn-timeline" />
     </header>

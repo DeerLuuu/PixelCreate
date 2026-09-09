@@ -1016,15 +1016,75 @@ export async function testSession(): Promise<void> {
     h.focusCanvas(0);
     ok("history.shared.still-there", h.history.canUndo());
     eq("history.shared.still-two", h.history.list().labels.length, 2);
-    // closing a canvas drops exactly its steps
+    // closing a canvas is an ordinary step: nothing is dropped, and the close
+    // itself can be undone (the canvas comes back) until the project closes
     const bDoc = h.docs[bi].doc;
     h.focusCanvas(bi);
     h.closeCanvas(bi);
-    eq("history.shared.closed-drops", h.history.list().labels.length, 1);
-    ok("history.shared.closed-can-undo", h.history.canUndo());
-    h.undo();
-    eq("history.shared.closed-undo-a", h.docs[0].doc.celAt(0, 0)!.data[3], 0);
-    ok("history.shared.closed-b-gone", !h.docs.some((d) => d.doc === bDoc));
+    eq("history.close.step-added", h.history.list().labels.length, 3);
+    eq("history.close.label", h.history.list().labels[2], "canvas-close");
+    ok("history.close.b-gone", !h.docs.some((d) => d.doc === bDoc));
+    h.undo(); // the close is undone: B is back and focused again
+    eq("history.close.undo-restores", h.docs.length, 2);
+    eq("history.close.undo-focus", h.doc.name, "B");
+    eq("history.close.undo-pixels", h.doc.celAt(0, 0)!.data[4], 200);
+    h.undo(); // ... and B's own steps are still on the stack
+    eq("history.close.undo-b-step", h.doc.celAt(0, 0)!.data[4], 0);
+    h.redo();
+    h.redo();
+    ok("history.close.redo-gone", !h.docs.some((d) => d.doc === bDoc));
+  }
+
+  // --- a closed canvas keeps everything: undo brings it back in place -------
+  {
+    (globalThis as unknown as { localStorage: { clear(): void } }).localStorage.clear();
+    const c = new Session();
+    c.doc.name = "one";
+    const cel = c.doc.ensureCel(0, 0);
+    const b0 = new Uint8ClampedArray(cel.data);
+    cel.data[0] = 255; cel.data[3] = 255;
+    c.history.pushPixels("tools.pencil", c.doc, [{ li: 0, fi: 0, before: b0, after: new Uint8ClampedArray(cel.data) }]);
+    const i2 = c.addCanvas(new Doc(16, 16, "two"));
+    c.moveCanvas(i2, 120, 60);
+    c.toggleCanvasLock(i2);
+    const pid = c.addPreview(i2);
+    c.closeCanvas(i2);
+    eq("closeUndo.closed", c.docs.length, 1);
+    eq("closeUndo.preview-gone", c.previews.length, 0);
+    eq("closeUndo.one-step", c.history.list().labels.length, 2);
+    c.undo();
+    eq("closeUndo.back", c.docs.length, 2);
+    eq("closeUndo.name", c.docs[1].doc.name, "two");
+    eq("closeUndo.place", [c.docs[1].x, c.docs[1].y], [120, 60]);
+    ok("closeUndo.lock", c.isCanvasLocked(1));
+    eq("closeUndo.preview-back", c.previews.map((p) => [p.canvas, p.id]), [[1, pid]]);
+    eq("closeUndo.focus", c.docIdx, 1);
+    eq("closeUndo.pixels-kept", c.docs[0].doc.celAt(0, 0)!.data[3], 255);
+    c.redo();
+    eq("closeUndo.redo", c.docs.length, 1);
+    // a saved project cannot replay a canvas that is not in it: those steps
+    // (and the close itself) are skipped, the rest keeps its order
+    const dump = c.history.dump((d) => c.docs.find((e) => e.doc === d)?.id);
+    eq("closeUndo.dump.entries", dump.entries.map((e) => e.label), ["tools.pencil"]);
+    eq("closeUndo.dump.index", dump.index, 1);
+    // the LAST canvas can be closed too, and undo refills the empty space
+    c.undo(); // bring "two" back
+    c.closeCanvas(1);
+    c.closeCanvas(0);
+    eq("closeUndo.empty", c.docs.length, 0);
+    eq("closeUndo.empty-stub", c.doc.w, 1);
+    c.undo();
+    eq("closeUndo.empty-undo", [c.docs.length, c.doc.name], [1, "one"]);
+    eq("closeUndo.empty-focus", c.docIdx, 0);
+    // closing a canvas you are NOT looking at keeps the focus where it is
+    const d = new Session();
+    d.doc.name = "keep";
+    d.addCanvas(new Doc(8, 8, "other"));
+    d.focusCanvas(0);
+    d.closeCanvas(1);
+    eq("closeUndo.unfocused.closed", [d.docs.length, d.doc.name], [1, "keep"]);
+    d.undo();
+    eq("closeUndo.unfocused.back", [d.docs.length, d.doc.name, d.docIdx], [2, "keep", 0]);
   }
 
   // --- airbrush speck range stays ordered; the rate is clamped ---
