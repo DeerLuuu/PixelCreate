@@ -218,14 +218,14 @@ export class Stroke {
         // the spray is time-driven (see View's interval): moving only retargets it
         break;
       case "bucket":
+        // gradient mode only: the drag re-aims the ramp (a flat fill is a
+        // single-shot action and ignores movement)
         if (this.gradEnd && this.gradCells) {
           const s0 = this.start!;
           this.gradAxis = { x0: s0[0], y0: s0[1], dx: x - s0[0], dy: y - s0[1] };
           this.resetToBefore();
           this.redrawGradient();
         }
-        break;
-      case "bucket":
         break;
     }
     this.last = [x, y];
