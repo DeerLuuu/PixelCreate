@@ -8,7 +8,7 @@ import { Icon } from "./base";
 import { TabBar } from "./tabs";
 
 /** keep in sync with android/AndroidManifest.xml versionName on every release */
-export const APP_VERSION = "1.0.7.10";
+export const APP_VERSION = "1.0.7.11";
 
 export type ClgKind = "add" | "imp" | "fix";
 export interface ClgItem { kind: ClgKind; zh: string; en: string }
@@ -17,6 +17,15 @@ export interface ClgVersion { v: string; date: string; items: ClgItem[] }
 const it = (kind: ClgKind, zh: string, en: string): ClgItem => ({ kind, zh, en });
 
 export const CHANGELOG: ClgVersion[] = [
+  {
+    v: "1.0.7.11",
+    date: "2026-09-09",
+    items: [
+      it("add", "预览窗口新增灰度预览：一键把画面转成灰度，方便检查明暗关系与对比度（只灰画面，底色保持不变）", "The preview box gained a greyscale mode: one tap turns the artwork greyscale to check values and contrast (only the artwork, the backdrop keeps its colour)"),
+      it("imp", "预览窗口右上角那个按钮改成二级菜单：点一下展开「白底 / 黑底 / 格子底」+「灰度预览」四个选项（原来只能循环切换底色），当前底色与灰度状态都有高亮", "The top-right button of the preview box now opens a second-level menu with White / Black / Checker plus Greyscale preview (it used to only cycle the backdrop), highlighting both the active backdrop and the greyscale state"),
+      it("imp", "设置 → 显示与取色 新增「灰度预览」开关，与预览底色并列，状态随设置持久化", "Settings -> Display & Colour gained a Greyscale preview switch next to the preview backdrop, persisted with the rest of the settings"),
+    ],
+  },
   {
     v: "1.0.7.10",
     date: "2026-09-08",

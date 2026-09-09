@@ -15,6 +15,8 @@ export function PreviewBox() {
   const grabStart = useRef<{ px: number; py: number; lx: number; ly: number } | null>(null);
   const rzStart = useRef<{ px: number; py: number; size: number } | null>(null);
   const [closing, setClosing] = useState(false);
+  /** the single "display" button opens this second-level menu (bg + greyscale) */
+  const [menu, setMenu] = useState(false);
   const closeTimer = useRef<number | null>(null);
   const tp = makeT(SESSION.prefs.lang as Lang);
 
@@ -60,7 +62,12 @@ export function PreviewBox() {
       const down = sc < 1;
       ctx.imageSmoothingEnabled = down;
       if (down) ctx.imageSmoothingQuality = "high";
+      // greyscale preview: filter only the artwork, so the chosen backdrop
+      // keeps its own colour (white / black / checker stay readable)
+      const gray = SESSION.prefs.previewGray === true;
+      if (gray) ctx.filter = "grayscale(1)";
       ctx.drawImage(c, ox, oy, w, h);
+      if (gray) ctx.filter = "none";
     } catch { /* ignore */ }
   };
 
@@ -84,6 +91,11 @@ export function PreviewBox() {
   }, [show, pos, size]);
 
   const s = size;
+  const bgMode = SESSION.prefs.previewBg || "white";
+  const gray = SESSION.prefs.previewGray === true;
+  const bgCss = bgMode === "white" ? "#fff"
+    : bgMode === "black" ? "#101116"
+    : "repeating-conic-gradient(#9aa0b0 0% 25%, #b9bec9 0% 50%)";
   return (
     <>
       <button className="prev-toggle" title={tp("preview")} onClick={() => {
@@ -125,14 +137,33 @@ export function PreviewBox() {
             onPointerCancel={() => { rzStart.current = null; }}
           />
         </div>
-        <button className="prev-bg" title={tp("previewBgHint")}
-          onClick={() => {
-            const m = SESSION.prefs.previewBg || "white";
-            const n = m === "white" ? "black" : m === "black" ? "checker" : "white";
-            SESSION.setPreviewBg(n);
-            window.setTimeout(() => draw(), 0);
-          }}
-          style={{ left: pos.x + s - 24, top: pos.y - 8, background: (SESSION.prefs.previewBg || "white") === "white" ? "#fff" : (SESSION.prefs.previewBg || "white") === "black" ? "#101116" : "repeating-conic-gradient(#9aa0b0 0% 25%, #b9bec9 0% 50%)" }} />
+        <button className={"prev-bg" + (gray ? " gray" : "")} title={tp("previewBgHint")}
+          onClick={() => setMenu(!menu)}
+          style={{ left: pos.x + s - 24, top: pos.y - 8, background: bgCss }} />
+        {menu && (
+          <>
+            <div className="dropmenu-back" onClick={() => setMenu(false)} />
+            <div className="prev-menu" style={{
+              left: Math.max(6, Math.min(window.innerWidth - 168, pos.x + s - 162)),
+              top: Math.min(window.innerHeight - 190, pos.y + 22),
+            }}>
+              <div className="prev-menu-head">{tp("previewBg")}</div>
+              {(["white", "black", "checker"] as const).map((m) => (
+                <button key={m} type="button"
+                  className={"dropmenu-item" + ((SESSION.prefs.previewBg || "white") === m ? " on" : "")}
+                  onClick={() => { SESSION.setPreviewBg(m); setMenu(false); window.setTimeout(draw, 0); }}>
+                  {tp(m === "white" ? "previewWhite" : m === "black" ? "previewBlack" : "previewChecker")}
+                </button>
+              ))}
+              <div className="prev-menu-sep" />
+              <button type="button"
+                className={"dropmenu-item" + (gray ? " on" : "")}
+                onClick={() => { SESSION.setPreviewGray(!gray); setMenu(false); window.setTimeout(draw, 0); }}>
+                {tp("previewGray")}
+              </button>
+            </div>
+          </>
+        )}
         </>
       )}
     </>

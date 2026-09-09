@@ -107,6 +107,8 @@ export interface Prefs {
   /** extra safe-area padding in px for ROMs that report nothing (0 = off) */
   safeExtra: number;
   previewBg: "white" | "black" | "checker";
+  /** preview box: draw the artwork in greyscale (value/contrast check) */
+  previewGray: boolean;
   /** height of the whole timeline panel in px (the drag handle resizes this) */
   tlH: number;
   /** tlH semantics marker: 2 = whole-panel height (1.x older = matrix max) */
@@ -147,6 +149,7 @@ export interface Snapshot {
   gridMode: Prefs["gridMode"];
   gridSize: number;
   previewBg: Prefs["previewBg"];
+  previewGray: boolean;
   selActive: boolean;
   docName: string;
   w: number;
@@ -460,6 +463,7 @@ export class Session {
       gridMode: this.prefs.gridMode,
   gridSize: this.prefs.gridSize,
       previewBg: this.prefs.previewBg,
+      previewGray: this.prefs.previewGray,
       selActive: this.doc.selectionActive(),
       docName: this.doc.name,
       w: this.doc.w,
@@ -594,7 +598,7 @@ export class Session {
     const p: Prefs = {
       lang: "zh", gridMode: "off", gridSize: 1, magZoom: 12, loupe: true,
       onionOn: false, onionBefore: 1, onionAfter: 0, onionAlpha: 55, onionTint: true, onionWrap: true,
-      autosave: true, recordHistory: true, newFrameCopy: false, railSwap: true, previewBg: "white", tlH: 200, tlHv: 2,
+      autosave: true, recordHistory: true, newFrameCopy: false, railSwap: true, previewBg: "white", previewGray: false, tlH: 200, tlHv: 2,
       immersive: true, safeArea: true, safeExtra: 0,
       histMode: "steps", histSteps: 120, shadowNewLayer: false, autoPan: true,
       bucketGlobal: false, loopMode: "loop", recentColorsMax: 16, selectionTolerance: 8,
@@ -627,6 +631,7 @@ export class Session {
       if (typeof saved.onionTint === "boolean") p.onionTint = saved.onionTint;
       if (typeof saved.onionWrap === "boolean") p.onionWrap = saved.onionWrap;
       if (saved.previewBg === "black" || saved.previewBg === "checker" || saved.previewBg === "white") p.previewBg = saved.previewBg;
+      if (typeof saved.previewGray === "boolean") p.previewGray = saved.previewGray;
       if (typeof saved.autosave === "boolean") p.autosave = saved.autosave;
       if (typeof saved.recordHistory === "boolean") p.recordHistory = saved.recordHistory;
       if (typeof saved.newFrameCopy === "boolean") p.newFrameCopy = saved.newFrameCopy;
@@ -1222,6 +1227,7 @@ export class Session {
   setOnionTint(on: boolean): void { this.setSetting("onion.tint", on); }
   setOnionWrap(on: boolean): void { this.setSetting("onion.wrap", on); }
   setPreviewBg(b: "white" | "black" | "checker"): void { this.setSetting("display.previewBg", b); }
+  setPreviewGray(on: boolean): void { this.setSetting("display.previewGray", on); }
   /** helper grid mode: off | pixel | iso */
   setGridMode(m: "off" | "pixel" | "iso"): void { this.setSetting("canvas.grid", m); }
   /** helper grid cell size / iso spacing (sprite px) */

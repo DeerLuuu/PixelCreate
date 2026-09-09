@@ -420,6 +420,10 @@ const defs: SettingDef[] = [
     options: [{ value: "white", label: "previewWhite" }, { value: "black", label: "previewBlack" }, { value: "checker", label: "previewChecker" }],
   },
   {
+    path: "display.previewGray", field: "previewGray", kind: "bool", group: "display",
+    label: "previewGray", desc: "previewGrayDesc", default: false, refresh: "changed",
+  },
+  {
     path: "display.loupe", field: "loupe", kind: "bool", group: "display",
     label: "loupe", default: true, refresh: "changed",
   },

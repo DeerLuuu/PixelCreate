@@ -221,6 +221,19 @@ export function testSession(): void {
     eq("timeline.migrate.kept", new Session().prefs.tlH, 260);
   }
 
+  // --- preview box: greyscale toggle lives next to the backdrop setting ---
+  {
+    s.setPreviewBg("checker");
+    s.setPreviewGray(true);
+    eq("preview.bg", s.prefs.previewBg, "checker");
+    eq("preview.gray", s.prefs.previewGray, true);
+    s.savePrefs();
+    const raw = JSON.parse((globalThis as unknown as { localStorage: { getItem(k: string): string } }).localStorage.getItem("pc.prefs"));
+    eq("preview.persist", [raw.previewBg, raw.previewGray], ["checker", true]);
+    s.setPreviewGray(false);
+    s.setPreviewBg("white");
+  }
+
   // --- haptics: the tick is gated by the switch and uses the chosen length ---
   {
     s.setSetting("gesture.hapticLen", "100");

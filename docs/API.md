@@ -358,7 +358,7 @@ getVersion(): number
 snapshot(): Snapshot                      // 缓存过的不可变快照，供 React 渲染
 ```
 
-`Snapshot` 关键字段：`tool, shape, brushSize, brushAlpha, colorHex, layerIdx, frameIdx, layerCount, frameCount, canUndo, canRedo, onionOn, gridMode, gridSize, previewBg, selActive, docName, w, h, playing, loopMode, frameSel, frameSelOn`。
+`Snapshot` 关键字段：`tool, shape, brushSize, brushAlpha, colorHex, layerIdx, frameIdx, layerCount, frameCount, canUndo, canRedo, onionOn, gridMode, gridSize, previewBg, previewGray, selActive, docName, w, h, playing, loopMode, frameSel, frameSelOn`。
 
 ### 11.2 渲染
 
@@ -739,7 +739,7 @@ writeClipboardPng(canvas): Promise<boolean>
 | `GuideOverlay` | `ui/guide.tsx` | 高亮引导引擎（含 `simulateTap`） |
 | `GuideDemo` | `ui/guide-demo.tsx` | 虚拟触点动画 |
 | `View` | `render/view.ts` | 画布视口（非 React 组件） |
-| `HsvWheel` / `HoldAdjust` / `PreviewBox` / `RefImageBox` / `ReplayOverlay` | 各自文件 | 色轮、长按拖动数值、预览浮窗、参考图、历史回放 |
+| `HsvWheel` / `HoldAdjust` / `PreviewBox` / `RefImageBox` / `ReplayOverlay` | 各自文件 | 色轮、长按拖动数值、预览浮窗（右上角按钮 = 二级菜单：白底/黑底/格子底 + 灰度预览，灰度只作用于画面本身）、参考图、历史回放 |
 | `TabBar` / `DropMenu` | `ui/tabs.tsx` | 共用选项卡与可展开下拉（色板 / 导出 / 更新日志） |
 | `useBlankTap` | `ui/base.tsx` | 点容器空白处执行动作（调色板面板点击关闭） |
 | 时间线分割线 | `ui/App.tsx`（`.tl-grip`） | 时间线面板顶部的拖动条：上下拖动 = `setTlHeight()`（面板总高度 140–520px，默认 200），拖动时显示 px 浮标，双击复位 200；`prefs.tlH` 是整块面板高度，矩阵 `flex:1` 填充，图层行不足时用 `.ase-fill` 单元格补底 |
