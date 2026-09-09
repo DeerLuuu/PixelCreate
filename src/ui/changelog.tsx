@@ -11,7 +11,7 @@ import { TabBar } from "./tabs";
 export const APP_VERSION = "1.0.7.11";
 /** build stamp shown next to the version (support/debug: identifies the exact
  *  package a user is running when the version number itself does not change) */
-export const BUILD_TAG = "b0911a";
+export const BUILD_TAG = "b0911b";
 
 export type ClgKind = "add" | "imp" | "fix";
 export interface ClgItem { kind: ClgKind; zh: string; en: string }
