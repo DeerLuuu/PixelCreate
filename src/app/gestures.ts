@@ -29,6 +29,8 @@ export const GESTURE_ACTIONS: GestureActionDef[] = [
   { id: "framePreview", label: "gactPreview" },
   { id: "nextFrame", label: "gactNextFrame" },
   { id: "prevFrame", label: "gactPrevFrame" },
+  { id: "nextLayer", label: "gactNextLayer" },
+  { id: "prevLayer", label: "gactPrevLayer" },
   { id: "openPalette", label: "gactPalette" },
   { id: "pickColor", label: "gactPick" },
 ];
@@ -75,6 +77,14 @@ export const GESTURES: GestureDef[] = [
     defaultAction: "redo",
     actions: NO_PICK,
     field: "gTwoFingerDoubleTap",
+  },
+  {
+    id: "twoFingerLongPress",
+    label: "gestureTwoFingerLongPress",
+    desc: "gestureTwoFingerLongPressDesc",
+    defaultAction: "nextLayer",
+    actions: ALL,
+    field: "gTwoFingerLongPress",
   },
   {
     id: "tripleTap",

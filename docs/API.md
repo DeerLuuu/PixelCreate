@@ -192,10 +192,11 @@ contentBounds(doc): Rect | null              // 所有内容的包围盒（智�
 
 ```ts
 type GestureId = "doubleTapMargin" | "doubleTapCanvas" | "twoFingerDoubleTap"
-  | "tripleTap" | "fourFinger" | "longPress";
+  | "twoFingerLongPress" | "tripleTap" | "fourFinger" | "longPress";
 type GestureActionId = "none" | "undo" | "redo" | "zoomIn" | "zoomOut" | "fitView"
   | "togglePlay" | "toggleOnion" | "toggleGrid" | "toggleSymmetry"
   | "toggleTimeline" | "framePreview" | "nextFrame" | "prevFrame"
+  | "nextLayer" | "prevLayer"
   | "openPalette" | "pickColor";
 
 const GESTURE_ACTIONS: Array<{ id: GestureActionId; label: string }>;
@@ -205,6 +206,11 @@ isActionAllowed(id, action): boolean     // 校验从磁盘读回的值
 ```
 
 设置面板由 `GESTURES` 自动生成（每个手势一个下拉），`Session.runGestureAction()` 执行；UI 级动作（时间轴 / 帧预览 / 调色板）通过 `pc-gesture` 事件交给 React 壳。
+
+**双指长按**（`twoFingerLongPress`，默认 `nextLayer`）：两指落下后保持不动 `prefs.longPressMs` 即触发；
+中点位移或指距变化超过 `max(8, prefs.fourFingerPx)` 视为平移/缩放并取消，第三/四指落下也会取消，
+触发后本次抬指不再计作双指双击（redo）。`Session.cycleLayer(±1)` 循环切换图层（优先跳过隐藏层），
+`Session.setLayer()` 会调用 `View.flashLayer(li)` 让切到的图层在画布上闪一下（`drawFlash()` 画在叠加层，不重合成）。
 
 ## 7. 撤销栈
 

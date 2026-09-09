@@ -2,10 +2,11 @@
  *  the session can import them without a cycle. */
 export type GestureId =
   | "doubleTapMargin" | "doubleTapCanvas" | "twoFingerDoubleTap"
-  | "tripleTap" | "fourFinger" | "longPress";
+  | "twoFingerLongPress" | "tripleTap" | "fourFinger" | "longPress";
 
 export type GestureActionId =
   | "none" | "undo" | "redo" | "zoomIn" | "zoomOut" | "fitView"
   | "togglePlay" | "toggleOnion" | "toggleGrid" | "toggleSymmetry"
   | "toggleTimeline" | "framePreview" | "nextFrame" | "prevFrame"
+  | "nextLayer" | "prevLayer"
   | "openPalette" | "pickColor";

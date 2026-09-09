@@ -354,6 +354,34 @@ export function testSession(): void {
     ok("gesture.every-action-known", GESTURE_ACTIONS.length >= 12 && GESTURES.every((g) => g.actions.every((a) => GESTURE_ACTIONS.some((x) => x.id === a))));
     ok("gesture.pick-only-where-sensible", isActionAllowed("longPress", "pickColor") && !isActionAllowed("doubleTapMargin", "pickColor"));
     ok("gesture.bad-id", !isActionAllowed("nope" as never, "undo"));
+    // two-finger long press: defaults to cycling layers
+    {
+      const g = GESTURES.find((x) => x.id === "twoFingerLongPress");
+      ok("gesture.two-finger-long-press", !!g && g.defaultAction === "nextLayer", g ? g.defaultAction : "missing");
+      ok("gesture.two-finger-long-press.actions",
+        isActionAllowed("twoFingerLongPress", "nextLayer") && isActionAllowed("twoFingerLongPress", "prevLayer"));
+      eq("gesture.two-finger-long-press.default", s.prefs.gTwoFingerLongPress, "nextLayer");
+      // cycleLayer walks the stack, wraps around and skips hidden layers
+      (globalThis as unknown as { localStorage: { clear(): void } }).localStorage.clear();
+      const c = new Session();
+      c.layerAdd();
+      c.layerAdd();
+      eq("layer.cycle.count", c.doc.layers.length, 3);
+      c.setLayer(0);
+      c.cycleLayer(1);
+      eq("layer.cycle.next", c.curLayer(), 1);
+      c.cycleLayer(-1);
+      eq("layer.cycle.prev", c.curLayer(), 0);
+      c.cycleLayer(-1);
+      eq("layer.cycle.wrap", c.curLayer(), 2);
+      c.toggleLayerVisible(1);
+      c.setLayer(0);
+      c.cycleLayer(1);
+      eq("layer.cycle.skips-hidden", c.curLayer(), 2);
+      c.toggleLayerVisible(1);
+      c.setLayer(0);
+    }
+
     // every gesture has a settings entry with matching options
     for (const g of GESTURES) {
       const def = SETTINGS.find((d) => d.path === gesturePath(g.id));

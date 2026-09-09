@@ -33,6 +33,8 @@ const UNLOCK_D = "M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6h2c0-1.66 1.34-3 3-3s3 
  *  four fingers settling, small enough that any deliberate slide arms it. */
 /** fallback when a caller has no session yet (never used in the app) */
 const FOUR_MOVE_PX_DEFAULT = 15;
+/** layer-switch flash duration in ms */
+const FLASH_MS = 420;
 
 /** Selection scale follows Aseprite's transform: free (non-integer) scale
  *  factor, anchored at the handle opposite the one being dragged, rasterised
@@ -101,6 +103,13 @@ export class View {
   private panLast: PxPoint | null = null;
   private selDrag: { kind: "rect" | "move" | "lasso"; x0: number; y0: number; x1: number; y1: number; before: Uint8ClampedArray | null; b: { x: number; y: number; w: number; h: number }; moved: boolean; sx: number; sy: number; mv?: MoveState | null; pts?: [number, number][]; dx?: number; dy?: number; cut?: boolean } | null = null;
   private longT: number | null = null;
+  /** two-finger long press: fires when both fingers stay still long enough */
+  private twoLongT: number | null = null;
+  private twoLongMid: { x: number; y: number } | null = null;
+  private twoLongFired = false;
+  /** layer-switch flash: layer index + start time, drawn in the overlay */
+  private flash: { li: number; t0: number } | null = null;
+  private flashRaf = 0;
   private pickAnchor: [number, number] | null = null;
   private pickMode = false;
   private pickLast: [number, number] | null = null;
@@ -506,6 +515,7 @@ export class View {
       ctx.restore();
     }
     this.drawSelTransform();
+    this.drawFlash(ctx);
     // floating selection content: pixels held above the layer during a drag
     const fg = this.selDrag;
     if (fg && fg.kind === "move" && fg.mv && fg.cut && fg.moved) {
@@ -785,6 +795,61 @@ export class View {
     ctx.restore();
   }
 
+  /** Pulse one layer for a moment (layer-switch feedback). The layer's pixels
+   *  flash white and fade out; an empty layer flashes its bounding frame so the
+   *  switch is visible even with nothing drawn on it. */
+  flashLayer(li: number): void {
+    if (li < 0 || li >= this.session.doc.layers.length) return;
+    this.flash = { li, t0: Date.now() };
+    this.stepFlash();
+  }
+  private stepFlash(): void {
+    if (this.flashRaf) return;
+    this.flashRaf = window.requestAnimationFrame(() => {
+      this.flashRaf = 0;
+      if (!this.flash) return;
+      if (Date.now() - this.flash.t0 >= FLASH_MS) {
+        this.flash = null;
+        this.drawOverlay();
+        return;
+      }
+      this.drawOverlay();
+      this.stepFlash();
+    });
+  }
+  /** the layer-switch pulse, drawn into the overlay (no composite work) */
+  private drawFlash(ctx: CanvasRenderingContext2D): void {
+    const f = this.flash;
+    if (!f) return;
+    const s = this.session;
+    const doc = s.doc;
+    const z = this.zoom;
+    const p = clamp((Date.now() - f.t0) / FLASH_MS, 0, 1);
+    const a = 1 - p; // fade out
+    const cel = doc.celAt(f.li, s.curFrame());
+    let any = false;
+    if (cel) {
+      for (let i = 3; i < cel.data.length; i += 4) if (cel.data[i] !== 0) { any = true; break; }
+    }
+    ctx.save();
+    if (any && cel) {
+      // white silhouette pulse: brightness(0) makes every opaque pixel black,
+      // invert(1) turns it white — alpha stays, so only the artwork flashes
+      ctx.globalAlpha = a * 0.9;
+      ctx.filter = "brightness(0) invert(1)";
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(comp.celToCanvas(cel), this.ox, this.oy, doc.w * z, doc.h * z);
+      ctx.filter = "none";
+      ctx.globalAlpha = 1;
+    }
+    // frame pulse: always visible, and marks the editable canvas edges
+    ctx.globalAlpha = 0.25 + 0.55 * a;
+    ctx.strokeStyle = "#7effd6";
+    ctx.lineWidth = any ? 2 : 3;
+    ctx.strokeRect(this.ox - 1, this.oy - 1, doc.w * z + 2, doc.h * z + 2);
+    ctx.restore();
+  }
+
   private startAnts(): void {
     if (this.antTimer) return;
     this.antTimer = window.setInterval(() => {
@@ -832,6 +897,30 @@ export class View {
     }
     this.pickAnchor = null;
   }
+  private cancelTwoLong(): void {
+    if (this.twoLongT !== null) {
+      window.clearTimeout(this.twoLongT);
+      this.twoLongT = null;
+    }
+    this.twoLongMid = null;
+  }
+  /** start the two-finger long-press timer from the current mid point */
+  private armTwoLong(): void {
+    this.cancelTwoLong();
+    const [a, b] = [...this.pointers.values()];
+    if (!a || !b) return;
+    const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+    this.twoLongMid = mid;
+    this.twoLongFired = false;
+    this.twoLongT = window.setTimeout(() => {
+      this.twoLongT = null;
+      // still two fingers down, no pinch/pan in the meantime
+      if (this.pointers.size !== 2 || this.pinchZoomed || !this.twoLongMid) return;
+      this.twoLongFired = true;
+      this.session.hapticTick("双指长按");
+      this.session.runGestureAction(this.session.prefs.gTwoFingerLongPress, { x: mid.x, y: mid.y });
+    }, this.session.prefs.longPressMs);
+  }
   private samplePickCell(x: number, y: number, strong: boolean): void {
     const c = this.session.sampleComposite(x, y);
     if (c) {
@@ -878,6 +967,7 @@ export class View {
       // must never latch pinchZoomed (it would silently block the preview).
       this.fourSeen = true;
       this.fourArmed = false;
+      this.cancelTwoLong();
       this.pinchBase = null;
       this.pinchZoomed = false;
       this.gestureHadTwo = false;
@@ -914,6 +1004,7 @@ export class View {
       }
       this.panLast = null;
       this.gestureMoved = false;
+      this.cancelTwoLong();
       this.pinchBase = null;
       this.pinchZoomed = false;
       this.gestureHadTwo = false;
@@ -943,6 +1034,7 @@ export class View {
       this.gestureHadTwo = true;
       this.pinchZoomed = false;
       this.twoTapMid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+      this.armTwoLong(); // two fingers held still = two-finger long press
       return;
     }
     // flush an unfinished gesture left by a lost pointerup (e.g. rapid bucket taps)
@@ -1089,6 +1181,13 @@ export class View {
       const [a, b] = [...this.pointers.values()];
       const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
       const dist = Math.max(1, Math.hypot(b.x - a.x, b.y - a.y));
+      // a pending two-finger long press dies as soon as the pair really moves
+      // (pan or pinch) — otherwise it would fire in the middle of a pan
+      if (this.twoLongT !== null && this.twoLongMid) {
+        const tol = Math.max(8, this.session.prefs.fourFingerPx || FOUR_MOVE_PX_DEFAULT);
+        if (Math.hypot(mx - this.twoLongMid.x, my - this.twoLongMid.y) > tol ||
+          Math.abs(dist - this.pinchBase.dist) > tol) this.cancelTwoLong();
+      }
       const k = dist / this.pinchBase.dist;
       const z = clamp(this.pinchBase.zoom * k, this.session.prefs.zoomMin, this.session.prefs.zoomMax);
       const sc = z / this.pinchBase.zoom;
@@ -1184,6 +1283,7 @@ export class View {
       this.drawOverlay();
     }
     if (this.pointers.size < 2) this.pinchBase = null;
+    if (this.pointers.size < 2) this.cancelTwoLong();
     if (this.pointers.size === 0) {
       if (this.longT !== null) {
         window.clearTimeout(this.longT);
@@ -1199,8 +1299,10 @@ export class View {
       const now = Date.now();
       // two-finger tap (no zoom): a double two-finger tap = redo
       const hadTwo = this.gestureHadTwo, pinchZoomed = this.pinchZoomed;
+      const firedTwoLong = this.twoLongFired;
       this.gestureHadTwo = false;
       this.pinchZoomed = false;
+      this.twoLongFired = false;
       if (this.fourSeen) {
         // four-finger gesture: it opened the all-frames preview as soon as
         // four fingers were down with >=2 of them sliding; the preview opens
@@ -1228,6 +1330,17 @@ export class View {
           if (fourAct === "framePreview" && this.onFramePreview) this.onFramePreview();
           else this.session.runGestureAction(fourAct, { x: pt.x, y: pt.y });
         }
+        return;
+      }
+      if (firedTwoLong) {
+        // the two-finger long press already ran its action while the fingers
+        // were down: swallow the lifts so they can never count as a tap / redo
+        this.twoTap = 0;
+        this.twoTapPt = null;
+        this.twoTapMid = null;
+        this.panLast = null;
+        this.gestureMoved = false;
+        this.cancelTwoLong();
         return;
       }
       if (hadTwo && !pinchZoomed && !this.stroke && !this.selDrag && !this.xf && this.twoTapMid) {
@@ -1369,6 +1482,8 @@ export class View {
 
   private onCancel(e: PointerEvent): void {
     this.pointers.delete(e.pointerId);
+    this.cancelTwoLong();
+    this.twoLongFired = false;
     this.gestureHadTwo = false;
     this.pinchZoomed = false;
     this.twoTapMid = null;

@@ -95,6 +95,8 @@ export interface Prefs {
   gDoubleTapMargin: GestureActionId;
   gDoubleTapCanvas: GestureActionId;
   gTwoFingerDoubleTap: GestureActionId;
+  /** two fingers held still → default: cycle to the next layer */
+  gTwoFingerLongPress: GestureActionId;
   gTripleTap: GestureActionId;
   gFourFinger: GestureActionId;
   gLongPress: GestureActionId;
@@ -368,6 +370,12 @@ export class Session {
       case "prevFrame":
         this.setFrame(this.curFrame() - 1);
         return true;
+      case "nextLayer":
+        this.cycleLayer(1);
+        return true;
+      case "prevLayer":
+        this.cycleLayer(-1);
+        return true;
       case "toggleTimeline":
       case "framePreview":
       case "openPalette":
@@ -616,6 +624,7 @@ export class Session {
       autoPanMargin: 34, autoPanSpeed: 3, zoomMin: 0.05, zoomMax: 32,
       haptic: true, hapticLen: 60,
       gDoubleTapMargin: "undo", gDoubleTapCanvas: "none", gTwoFingerDoubleTap: "redo",
+      gTwoFingerLongPress: "nextLayer",
       gTripleTap: "zoomIn", gFourFinger: "framePreview", gLongPress: "pickColor",
     };
     try {
@@ -1216,8 +1225,27 @@ export class Session {
     this.changed();
   }
   setLayer(li: number): void {
-    this.layerIdx = Math.max(0, Math.min(this.doc.layers.length - 1, li));
+    const n = Math.max(0, Math.min(this.doc.layers.length - 1, li));
+    const moved = n !== this.layerIdx;
+    this.layerIdx = n;
+    // visual confirmation on the canvas: the layer you switched to pulses
+    if (moved) this.view_?.flashLayer(n);
     this.changed();
+  }
+  /** cycle layers by ±1, skipping hidden ones when there is a choice */
+  cycleLayer(delta: number): boolean {
+    const n = this.doc.layers.length;
+    if (n < 2) return false;
+    const cur = this.curLayer();
+    for (let i = 1; i <= n; i++) {
+      const cand = ((cur + delta * i) % n + n) % n;
+      if (this.doc.layers[cand] && this.doc.layers[cand].visible) {
+        this.setLayer(cand);
+        return true;
+      }
+    }
+    this.setLayer(((cur + delta) % n + n) % n);
+    return true;
   }
   /** onion skin master switch (fine-grained options live in Settings) */
   toggleOnion(): void {
