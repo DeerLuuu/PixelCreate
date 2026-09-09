@@ -607,7 +607,9 @@ function HapticReport({ t }: { t: ReturnType<typeof makeT> }) {
     </div>
   );
 }
-/** one settings row, generated from its declaration in src/app/settings.ts */
+/** one settings row, generated from its declaration in src/app/settings.ts.
+ *  Every setting is its own card (label + control + description), so a
+ *  description can never be read as the next setting's label. */
 function SettingRow({ def, t }: { def: SettingDef; t: ReturnType<typeof makeT> }) {
   const v = SESSION.settingValue(def.path);
   const changed = !isDefault(SESSION, def);
@@ -616,63 +618,47 @@ function SettingRow({ def, t }: { def: SettingDef; t: ReturnType<typeof makeT> }
       <Icon id="i-undo" size={11} />
     </button>
   ) : null;
-  // a switch or a single number control sits on the SAME line as its label:
-  // stacking them wastes half the panel on wide screens
-  if (def.kind === "bool" || def.kind === "int") {
-    return (
-      <>
-        <div className="set-row">
-          <span className="set-label" title={t(def.label)}>{t(def.label)}{resetBtn}</span>
-          {def.kind === "bool" ? (
-            <button className={"chip" + (v ? " on" : "")} onClick={() => SESSION.setSetting(def.path, !v)}>{v ? "ON" : "OFF"}</button>
-          ) : (
-            <HoldAdjust dir="h" value={Number(v)} min={def.min ?? 0} max={def.max ?? 100} title={t(def.label)}
-              format={(n) => (def.unit ?? "") + n} reset={Number(def.reset ?? def.default)}
-              onChange={(n) => SESSION.setSetting(def.path, n)} />
-          )}
-        </div>
-        {def.desc && <div className="row-note">{t(def.desc)}</div>}
-      </>
-    );
-  }
+  const opts = def.options ?? [];
+  const asDrop = def.control === "dropdown" || (def.control !== "chips" && opts.length > 6);
+  const cur = opts.find((o) => o.value === v);
   return (
-    <>
-      <label className="rowlabel">
-        <span>{t(def.label)}</span>
-        {resetBtn}
-      </label>
-      {def.kind === "enum" && (() => {
-        const opts = def.options ?? [];
-        const asDrop = def.control === "dropdown" || (def.control !== "chips" && opts.length > 6);
-        if (!asDrop) {
-          return (
-            <div className="chips">
-              {opts.map((o) => (
-                <button key={o.value} className={"chip" + (v === o.value ? " on" : "")} onClick={() => SESSION.setSetting(def.path, o.value)}>{t(o.label)}</button>
-              ))}
-            </div>
-          );
-        }
-        const cur = opts.find((o) => o.value === v);
-        return (
-          <div className="row-actions set-drop">
-            <DropMenu
-              label={cur ? t(cur.label) : String(v)}
-              title={t(def.label)}
-              value={String(v)}
-              options={opts.map((o) => ({ id: o.value, label: t(o.label) }))}
-              onPick={(id) => SESSION.setSetting(def.path, id)}
-            />
-          </div>
-        );
-      })()}
+    <div className={"set-item" + (changed ? " changed" : "")} data-setting={def.path}>
+      {/* switch / single-number rows keep the label and the control on one line */}
+      <div className="set-line">
+        <span className="set-name" title={t(def.label)}>{t(def.label)}{resetBtn}</span>
+        {def.kind === "bool" && (
+          <button className={"chip" + (v ? " on" : "")} onClick={() => SESSION.setSetting(def.path, !v)}>{v ? "ON" : "OFF"}</button>
+        )}
+        {def.kind === "int" && (
+          <HoldAdjust dir="h" value={Number(v)} min={def.min ?? 0} max={def.max ?? 100} title={t(def.label)}
+            format={(n) => (def.unit ?? "") + n} reset={Number(def.reset ?? def.default)}
+            onChange={(n) => SESSION.setSetting(def.path, n)} />
+        )}
+      </div>
+      {def.kind === "enum" && (asDrop ? (
+        <div className="set-drop">
+          <DropMenu
+            label={cur ? t(cur.label) : String(v)}
+            title={t(def.label)}
+            value={String(v)}
+            options={opts.map((o) => ({ id: o.value, label: t(o.label) }))}
+            onPick={(id) => SESSION.setSetting(def.path, id)}
+          />
+        </div>
+      ) : (
+        <div className="chips">
+          {opts.map((o) => (
+            <button key={o.value} className={"chip" + (v === o.value ? " on" : "")} onClick={() => SESSION.setSetting(def.path, o.value)}>{t(o.label)}</button>
+          ))}
+        </div>
+      ))}
       {def.action && (
         <div className="row-actions">
           <Btn icon="i-star" label={t(def.action.label)} onClick={() => def.action!.run(SESSION)} />
         </div>
       )}
-      {def.desc && <div className="row-note">{t(def.desc)}</div>}
-    </>
+      {def.desc && <p className="set-desc">{t(def.desc)}</p>}
+    </div>
   );
 }
 
@@ -726,6 +712,7 @@ export function SettingsModal({ t, onClose }: { t: ReturnType<typeof makeT>; onC
               <div key={g.id} className="set-group">
                 <button type="button" className="set-grouphead" onClick={() => setFolded({ ...folded, [g.id]: open })}>
                   <span>{t(g.label)}</span>
+                  {items.some((d) => !isDefault(SESSION, d)) && <i className="set-dot" title={t("setChanged")} />}
                   <i className={"chev" + (open ? " open" : "")}>▾</i>
                 </button>
                 {open && items.map((d) => <SettingRow key={d.path} def={d} t={t} />)}

@@ -8,7 +8,7 @@ import { Icon } from "./base";
 import { TabBar } from "./tabs";
 
 /** keep in sync with android/AndroidManifest.xml versionName on every release */
-export const APP_VERSION = "1.0.7.7";
+export const APP_VERSION = "1.0.7.8";
 
 export type ClgKind = "add" | "imp" | "fix";
 export interface ClgItem { kind: ClgKind; zh: string; en: string }
@@ -17,6 +17,14 @@ export interface ClgVersion { v: string; date: string; items: ClgItem[] }
 const it = (kind: ClgKind, zh: string, en: string): ClgItem => ({ kind, zh, en });
 
 export const CHANGELOG: ClgVersion[] = [
+  {
+    v: "1.0.7.8",
+    date: "2026-09-08",
+    items: [
+      it("imp", "设置界面重排：每条设置独立成一张卡片（浅底 + 圆角 + 细边框），说明文字改成小号灰字并收在同一张卡片内，不会再被误读成下一条设置的标题", "Settings layout rework: every setting is its own card (subtle background, rounded corners, hairline border) and its description is small grey text inside that same card, so it can no longer be mistaken for the next setting's label"),
+      it("imp", "设置行标题统一为同一字号字重（原来开关/数字行是 13px 亮色、枚举行是 11px 暗色，看起来像两类东西）；分组标题右侧多了一个小圆点，表示该组里有改动过的设置", "Setting titles now share one size and weight (switches/numbers were 13px bright while enum rows were 11px dim, which made them look like different things); group headers show a small dot when that group contains changed settings"),
+    ],
+  },
   {
     v: "1.0.7.7",
     date: "2026-09-08",
