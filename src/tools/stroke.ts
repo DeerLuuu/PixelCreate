@@ -18,7 +18,9 @@ export class Stroke {
   readonly kind: ToolKind;
   readonly cel: Cel;
   readonly before: Uint8ClampedArray | null;
-  readonly mask: MaskFn | null;
+  /** selection mask; the view replaces it for redirected strokes so it follows
+   *  THIS canvas' selection (evaluated in the cel's own coordinates) */
+  mask: MaskFn | null;
   readonly sym: SymMode;
   readonly shapeSides: number;
   readonly fill: boolean;
@@ -58,6 +60,14 @@ export class Stroke {
   /** indexed mode: snap the paint colour (and a gradient's end colour) to the
    *  nearest palette entry. The view sets these from Session.paletteSnap. */
   snapColor: ((c: RGBA) => RGBA) | null = null;
+  /** redirected (reference) strokes: the source canvas is centred inside THIS
+   *  canvas, so a cell (x, y) here paints the source cell (x - refDx, y - refDy) */
+  refDx = 0;
+  refDy = 0;
+  /** geometry space: the canvas the user sees. It differs from the cel's own
+   *  document for a redirected stroke (symmetry / tiling follow THIS size). */
+  private gw = 0;
+  private gh = 0;
   /** bucket gradient: end colour (null = plain flat fill) and tile size in px */
   gradEnd: RGBA | null = null;
   gradBlock = 1;
@@ -103,6 +113,17 @@ export class Stroke {
     this.color = rgba(brush.color[0], brush.color[1], brush.color[2], a);
     this.size = Math.max(1, Math.round(brush.size));
     this.mask = doc.selectionActive() ? (x: number, y: number) => doc.selAt(x, y) === 1 : null;
+    this.gw = doc.w;
+    this.gh = doc.h;
+  }
+  /** the canvas the user is looking at (see gw/gh) */
+  setGeometry(w: number, h: number): void {
+    this.gw = w;
+    this.gh = h;
+  }
+  /** the cel the paint really lands in, in target coordinates */
+  private toTarget(x: number, y: number): [number, number] {
+    return [x - this.refDx, y - this.refDy];
   }
 
   /** bucket matching options (tolerance + gap closing) as one object */
@@ -118,11 +139,11 @@ export class Stroke {
   /** mirror-coordinate expansion for the current mode (shared with the
    *  selection tools so a symmetric selection matches a symmetric stroke) */
   private mirrorPts(x: number, y: number): Array<[number, number]> {
-    return mirrorCells(x, y, this.doc.w, this.doc.h, this.symAxis());
+    return mirrorCells(x, y, this.gw, this.gh, this.symAxis());
   }
 
   private markCell(x: number, y: number): void {
-    if (x < 0 || y < 0 || x >= this.doc.w || y >= this.doc.h) return;
+    if (x < 0 || y < 0 || x >= this.gw || y >= this.gh) return;
     const d = this.dty;
     if (!d) this.dty = { x0: x, y0: y, x1: x, y1: y };
     else {
@@ -137,8 +158,8 @@ export class Stroke {
   private markBox(b: { x0: number; y0: number; x1: number; y1: number } | null): void {
     if (!b) return;
     const cx = (v: number, n: number): number => Math.max(0, Math.min(n - 1, v));
-    this.markCell(cx(b.x0, this.doc.w), cx(b.y0, this.doc.h));
-    this.markCell(cx(b.x1, this.doc.w), cx(b.y1, this.doc.h));
+    this.markCell(cx(b.x0, this.gw), cx(b.y0, this.gh));
+    this.markCell(cx(b.x1, this.gw), cx(b.y1, this.gh));
   }
 
   /** Take the changed region since the previous call (null = nothing painted).
@@ -148,7 +169,7 @@ export class Stroke {
     if (this.dtyAll) {
       this.dtyAll = false;
       this.dty = null;
-      return { x: 0, y: 0, w: this.doc.w, h: this.doc.h };
+      return { x: 0, y: 0, w: this.gw, h: this.gh }; // dirty rects live here
     }
     const d = this.dty;
     this.dty = null;
@@ -158,7 +179,7 @@ export class Stroke {
 
   /** tiled mode: the wrapped copies of a cell (empty when tiling is off) */
   private wrapPts(x: number, y: number): Array<[number, number]> {
-    const w = this.doc.w, h = this.doc.h;
+    const w = this.gw, h = this.gh;
     if (!this.wrapX && !this.wrapY) return [[x, y]];
     const out: Array<[number, number]> = [];
     const xs = this.wrapX ? [x - w, x, x + w] : [x];
@@ -179,7 +200,8 @@ export class Stroke {
     for (const [mx, my] of this.mirrorPts(x, y)) {
       for (const [X, Y] of this.wrapPts(mx, my)) {
         this.markCell(X, Y);
-        if (this.color[3] === 0 ? eraseAt(this.cel, X, Y, this.mask) : paintAt(this.cel, X, Y, this.color, this.mask)) any = true;
+        const [tx, ty] = this.toTarget(X, Y);
+        if (this.color[3] === 0 ? eraseAt(this.cel, tx, ty, this.mask) : paintAt(this.cel, tx, ty, this.color, this.mask)) any = true;
       }
     }
     return any;
@@ -190,7 +212,8 @@ export class Stroke {
     for (const [mx, my] of this.mirrorPts(x, y)) {
       for (const [X, Y] of this.wrapPts(mx, my)) {
         this.markCell(X, Y);
-        if (eraseAt(this.cel, X, Y, this.mask)) any = true;
+        const [tx, ty] = this.toTarget(X, Y);
+        if (eraseAt(this.cel, tx, ty, this.mask)) any = true;
       }
     }
     return any;
@@ -231,19 +254,20 @@ export class Stroke {
         // gradient mode: the region is fixed by the seed, the drag only changes
         // the direction/length of the ramp (Aseprite-style), so it repaints
         // from the pristine snapshot on every move like a shape tool
+        const bx = x - this.refDx, by = y - this.refDy; // the cel is the source
         if (this.gradEnd) {
-          this.gradCells = floodRegion(this.cel, x, y, this.bucketGlobal, this.mask, this.fillOpts());
+          this.gradCells = floodRegion(this.cel, bx, by, this.bucketGlobal, this.mask, this.fillOpts());
           this.gradAxis = null;
           this.redrawGradient();
           break;
         }
         // contiguous (default) or global: every matching pixel in the layer
         if (this.color[3] === 0) {
-          if (this.bucketGlobal) globalErase(this.cel, x, y, this.mask, this.fillOpts());
-          else floodErase(this.cel, x, y, this.mask, this.fillOpts());
+          if (this.bucketGlobal) globalErase(this.cel, bx, by, this.mask, this.fillOpts());
+          else floodErase(this.cel, bx, by, this.mask, this.fillOpts());
         } else {
-          if (this.bucketGlobal) globalFill(this.cel, x, y, this.color, this.mask, this.fillOpts());
-          else floodFill(this.cel, x, y, this.color, this.mask, this.fillOpts());
+          if (this.bucketGlobal) globalFill(this.cel, bx, by, this.color, this.mask, this.fillOpts());
+          else floodFill(this.cel, bx, by, this.color, this.mask, this.fillOpts());
         }
         this.everPainted = true; // flood fill writes pixels directly
         this.dtyAll = true; // the filled region can be the whole layer
@@ -292,7 +316,12 @@ export class Stroke {
         // single-shot action and ignores movement)
         if (this.gradEnd && this.gradCells) {
           const s0 = this.start!;
-          this.gradAxis = { x0: s0[0], y0: s0[1], dx: x - s0[0], dy: y - s0[1] };
+          // the axis lives in the cel's (source) coordinates; the drag delta is
+          // the same in both spaces
+          this.gradAxis = {
+            x0: s0[0] - this.refDx, y0: s0[1] - this.refDy,
+            dx: x - s0[0], dy: y - s0[1],
+          };
           this.resetToBefore();
           this.redrawGradient();
         }
@@ -336,8 +365,10 @@ export class Stroke {
     for (const [ox, oy] of brushStamp(size, this.brushShape).cells) {
       for (const [mx, my] of this.mirrorPts(x + ox, y + oy)) {
         for (const [X, Y] of this.wrapPts(mx, my)) {
-          if (this.mask && !this.mask(X, Y)) continue;
-          out.push([X, Y]);
+          const [tx, ty] = this.toTarget(X, Y);
+          if (tx < 0 || ty < 0 || tx >= this.cel.w || ty >= this.cel.h) continue;
+          if (this.mask && !this.mask(tx, ty)) continue;
+          out.push([tx, ty]);
         }
       }
     }
@@ -357,7 +388,7 @@ export class Stroke {
       bytes[i * 4 + 3] = this.cel.data[p + 3];
     }
     for (const [X, Y] of cells) {
-      this.markCell(X, Y);
+      this.markCell(X + this.refDx, Y + this.refDy); // dirty rect lives here
       if (erase) { if (eraseAt(this.cel, X, Y, this.mask)) this.everPainted = true; }
       else if (paintAt(this.cel, X, Y, this.color, this.mask)) this.everPainted = true;
     }
@@ -467,7 +498,8 @@ export class Stroke {
       for (const [mx, my] of this.mirrorPts(px, py)) {
         for (const [X, Y] of this.wrapPts(mx, my)) {
           this.markCell(X, Y);
-          if (erase ? eraseAt(this.cel, X, Y, this.mask) : paintAt(this.cel, X, Y, this.color, this.mask)) this.everPainted = true;
+          const [tx, ty] = this.toTarget(X, Y);
+          if (erase ? eraseAt(this.cel, tx, ty, this.mask) : paintAt(this.cel, tx, ty, this.color, this.mask)) this.everPainted = true;
         }
       }
     };
@@ -542,7 +574,8 @@ export class Stroke {
       for (const [mx, my] of this.mirrorPts(px + dx, py + dy)) {
         for (const [X, Y] of this.wrapPts(mx, my)) {
           this.markCell(X, Y);
-          if (erase ? eraseAt(this.cel, X, Y, this.mask) : paintAt(this.cel, X, Y, this.color, this.mask)) this.everPainted = true;
+          const [tx, ty] = this.toTarget(X, Y);
+          if (erase ? eraseAt(this.cel, tx, ty, this.mask) : paintAt(this.cel, tx, ty, this.color, this.mask)) this.everPainted = true;
         }
       }
     }

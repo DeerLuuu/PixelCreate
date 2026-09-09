@@ -856,17 +856,22 @@ export class Session {
   /** where a stroke on layer `li` really lands: the layer of the referenced
    *  canvas this mirror shows (a bound layer, or the source's current one for a
    *  flattened reference), or null for a normal layer */
-  strokeTarget(li: number): { doc: Doc; li: number; fi: number; refId: string } | null {
+  strokeTarget(li: number): { doc: Doc; li: number; fi: number; refId: string; dx: number; dy: number } | null {
     const L = this.doc.layers[li];
     const e = this.entryOf(L?.ref);
     if (!L?.ref || !e) return null;
     const sli = this.refLayerIndex(e, L.refLayer);
     if (sli < 0) return null; // the mirrored layer no longer exists
+    const off = this.refOffset(li);
     return {
       doc: e.doc,
       li: sli,
       fi: Math.max(0, Math.min(e.doc.frames.length - 1, e.fi)),
       refId: e.id,
+      // the mirror is centred: a cell of THIS canvas maps to the source by
+      // subtracting this offset (see Stroke.refDx / refDy)
+      dx: off.ox,
+      dy: off.oy,
     };
   }
   /**

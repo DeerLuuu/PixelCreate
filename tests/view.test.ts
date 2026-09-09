@@ -260,6 +260,29 @@ export function testView(): void {
     ok("view.path.painted", pcel.data[pcel.idx(2, 2) + 3] === 255 && pcel.data[pcel.idx(12, 2) + 3] === 255 &&
       pcel.data[pcel.idx(12, 12) + 3] === 255, "px=" + [pcel.data[pcel.idx(2, 2) + 3], pcel.data[pcel.idx(12, 2) + 3]]);
 
+    // ---- editing a reference layer of a SMALLER canvas (end-to-end) ----
+    // The mirror is centred, so a tap at holder (30,30) must land on source
+    // (6,6) and come back to (30,30): the whole chain (view -> stroke redirect
+    // -> mirror sync) has to translate.
+    s.focusCanvas(0);
+    s.setLayer(0);
+    const ci = s.addCanvas(new Doc(16, 16, "C"));
+    s.focusCanvas(0);
+    ok("view.refsmall.add", s.referenceCanvas(ci));
+    const refLi = s.curLayer(); // referenceCanvas focuses the new mirror
+    s.setLayer(refLi);
+    s.setTool("pencil");
+    const q1 = sp(30, 30);
+    (view as unknown as { onDown(e: PointerEvent): void }).onDown(ev(q1.x, q1.y));
+    (view as unknown as { onUp(e: PointerEvent): void }).onUp(ev(q1.x, q1.y));
+    dom.flush();
+    const srcCel = s.docs[ci].doc.celAt(0, 0);
+    ok("view.refsmall.source-px", !!srcCel && srcCel.data[(6 * 16 + 6) * 4 + 3] === 255,
+      srcCel ? "a=" + srcCel.data[(6 * 16 + 6) * 4 + 3] : "no cel");
+    const mirCel = s.doc.celAt(refLi, 0);
+    ok("view.refsmall.mirror-px", !!mirCel && mirCel.data[(30 * 64 + 30) * 4 + 3] === 255,
+      mirCel ? "a=" + mirCel.data[(30 * 64 + 30) * 4 + 3] : "no cel");
+
     view.destroy();
   } finally {
     cmod.composeFrameWithOnion = origOnion;

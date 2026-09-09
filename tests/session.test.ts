@@ -5,7 +5,7 @@ import {
 import { GESTURES, GESTURE_ACTIONS, gesturePath, isActionAllowed } from "../src/app/gestures";
 import { CORE_TOOLS, isSymTool } from "../src/tools/registry";
 import { History } from "../src/engine/history";
-import { Doc } from "../src/engine/doc";
+import { Doc, Sel } from "../src/engine/doc";
 import { Stroke } from "../src/tools/stroke";
 import { scalarActions } from "../src/app/history-io";
 import * as historyFile from "../src/io/historyfile";
@@ -1269,6 +1269,67 @@ export async function testSession(): Promise<void> {
     eq("canvas.empty.add-again", [m.docs.length, m.docIdx, back], [1, 0, 0]);
     eq("canvas.empty.origin", [m.docs[0].x, m.docs[0].y], [0, 0]);
   }
+  // --- a reference to a SMALLER canvas: paint must land on the same pixel ---
+  // (the mirror is centred, so a cell of the holder maps to the source by
+  //  subtracting the offset — this used to write out of bounds / off by the
+  //  offset, which looked like "the reference layer cannot be edited")
+  {
+    (globalThis as unknown as { localStorage: { clear(): void } }).localStorage.clear();
+    const s = new Session();
+    s.doc.name = "A"; // 64x64
+    const bi = s.addCanvas(new Doc(16, 16, "B"));
+    const b = s.docs[bi].doc;
+    const bc = b.ensureCel(0, 0);
+    bc.data[(4 * 16 + 4) * 4 + 3] = 255; // a mark the mirror can show
+    s.focusCanvas(0);
+    ok("refOff.add", s.referenceCanvas(bi));
+    eq("refOff.offset", [s.refOffset(1).ox, s.refOffset(1).oy], [24, 24]);
+    const tgt = s.strokeTarget(1)!;
+    eq("refOff.target-offset", [tgt.dx, tgt.dy], [24, 24]);
+    // paint at holder (30,30): the source cell is (6,6)
+    const st = new Stroke(tgt.doc, tgt.li, tgt.fi, "pencil", { color: [255, 0, 0, 255], size: 1, alpha: 255, pressure: 1 }, false, "off");
+    st.refDx = tgt.dx; st.refDy = tgt.dy; st.setGeometry(s.doc.w, s.doc.h);
+    st.startAt(30, 30);
+    st.takeDirty();
+    st.commit(s.history, "tools.pencil");
+    s.repaintAll();
+    eq("refOff.source-px", b.celAt(0, 0)!.data[(6 * 16 + 6) * 4 + 3], 255);
+    eq("refOff.source-not-offset", b.celAt(0, 0)!.data[(4 * 16 + 4) * 4], 0);
+    eq("refOff.mirror-px", s.doc.celAt(1, 0)!.data[(30 * 64 + 30) * 4], 255);
+    eq("refOff.mirror-existing", s.doc.celAt(1, 0)!.data[(28 * 64 + 28) * 4 + 3], 255);
+    // a holder cell outside the source paints nothing at all
+    const st2 = new Stroke(tgt.doc, tgt.li, tgt.fi, "pencil", { color: [0, 255, 0, 255], size: 1, alpha: 255, pressure: 1 }, false, "off");
+    st2.refDx = tgt.dx; st2.refDy = tgt.dy; st2.setGeometry(s.doc.w, s.doc.h);
+    st2.startAt(2, 2);
+    st2.takeDirty();
+    eq("refOff.outside-no-step", st2.commit(s.history, "tools.pencil"), false);
+    // the bucket seeds in the source too
+    const bt = new Stroke(b, 0, 0, "bucket", { color: [0, 0, 255, 255], size: 1, alpha: 255, pressure: 1 }, false, "off");
+    bt.refDx = tgt.dx; bt.refDy = tgt.dy; bt.setGeometry(s.doc.w, s.doc.h);
+    bt.startAt(30, 30);
+    bt.takeDirty();
+    bt.commit(s.history, "tools.bucket");
+    s.repaintAll();
+    eq("refOff.bucket-source", b.celAt(0, 0)!.data[(6 * 16 + 6) * 4 + 2], 255);
+    eq("refOff.bucket-mirror", s.doc.celAt(1, 0)!.data[(30 * 64 + 30) * 4 + 2], 255);
+    // the holder's selection is mapped into the source
+    s.doc.sel = new Sel(64, 64);
+    s.doc.sel.set(30, 30, 1);
+    const st3 = new Stroke(tgt.doc, tgt.li, tgt.fi, "pencil", { color: [255, 255, 0, 255], size: 1, alpha: 255, pressure: 1 }, false, "off");
+    st3.refDx = tgt.dx; st3.refDy = tgt.dy; st3.setGeometry(s.doc.w, s.doc.h);
+    st3.mask = (sx, sy) => s.doc.sel!.get(sx + tgt.dx, sy + tgt.dy) === 1;
+    st3.startAt(30, 31); // outside the selection
+    st3.takeDirty();
+    eq("refOff.mask-blocks", st3.commit(s.history, "tools.pencil"), false);
+    const st4 = new Stroke(tgt.doc, tgt.li, tgt.fi, "pencil", { color: [255, 255, 0, 255], size: 1, alpha: 255, pressure: 1 }, false, "off");
+    st4.refDx = tgt.dx; st4.refDy = tgt.dy; st4.setGeometry(s.doc.w, s.doc.h);
+    st4.mask = (sx, sy) => s.doc.sel!.get(sx + tgt.dx, sy + tgt.dy) === 1;
+    st4.startAt(30, 30);
+    st4.takeDirty();
+    eq("refOff.mask-allows", st4.commit(s.history, "tools.pencil"), true);
+    eq("refOff.mask-px", b.celAt(0, 0)!.data[(6 * 16 + 6) * 4], 255);
+  }
+
   // --- indexed colour mode: painting snaps to the palette ---
   {
     (globalThis as unknown as { localStorage: { clear(): void } }).localStorage.clear();

@@ -178,7 +178,7 @@ export class View {
   private selDrag: { kind: "rect" | "move" | "lasso"; x0: number; y0: number; x1: number; y1: number; before: Uint8ClampedArray | null; b: { x: number; y: number; w: number; h: number }; moved: boolean; sx: number; sy: number; mv?: MoveState | null; pts?: [number, number][]; dx?: number; dy?: number; cut?: boolean } | null = null;
   private longT: number | null = null;
   /** freehand outline tool: collected path, filled with the current colour on release */
-  private outline: { pts: Array<[number, number]>; li: number; fi: number; before: Uint8ClampedArray | null } | null = null;
+  private outline: { pts: Array<[number, number]>; li: number; fi: number; before: Uint8ClampedArray | null; dx: number; dy: number } | null = null;
   /** pending multi-point path (polyline / curve): tap adds a point, tapping
    *  the last point finishes, tapping the one before removes it */
   private path: { st: Stroke; pts: Array<[number, number]>; smooth: boolean; cur: [number, number] | null } | null = null;
@@ -1714,6 +1714,7 @@ export class View {
         tool as never, s.brush(), s.layerLocked(), s.sym, s.shapeSides, s.shapeFill,
         s.symOx, s.symOy, s.symAng, s.symFour, s.prefs.bucketGlobal, s.brushShape, s.shapeFromCenter);
       this.stroke.pixelPerfect = s.pixelPerfect;
+      this.wireRedirect(this.stroke, tgt);
       // the bucket's colour tolerance / gap closing (similar-colour mode)
       this.stroke.fillTolerance = s.prefs.fillSimilar ? s.prefs.fillTolerance : 0;
       this.stroke.fillGaps = s.prefs.fillGaps;
@@ -2434,7 +2435,11 @@ export class View {
     const li = tgt ? tgt.li : s.curLayer();
     const fi = tgt ? tgt.fi : s.curFrame();
     const cel = doc.celAt(li, fi);
-    this.outline = { pts: [[pp.x, pp.y]], li, fi, before: cel ? new Uint8ClampedArray(cel.data) : null };
+    this.outline = {
+      pts: [[pp.x, pp.y]], li, fi,
+      before: cel ? new Uint8ClampedArray(cel.data) : null,
+      dx: tgt ? tgt.dx : 0, dy: tgt ? tgt.dy : 0,
+    };
     this.cursor = null;
     this.drawOverlay();
   }
@@ -2453,14 +2458,32 @@ export class View {
     this.drawOverlay();
   }
   // ---- multi-point path tools (polyline / curve) --------------------------
+  /**
+   * Point a redirected (reference) stroke at the source canvas: the mirror is
+   * CENTRED inside this canvas, so every cell has to be translated, the
+   * symmetry/tiling geometry is THIS canvas, and the selection mask is this
+   * canvas' selection mapped into the source.
+   */
+  private wireRedirect(st: Stroke, tgt: { dx: number; dy: number } | null): void {
+    if (!tgt) return;
+    st.refDx = tgt.dx;
+    st.refDy = tgt.dy;
+    st.setGeometry(this.session.doc.w, this.session.doc.h);
+    const sel = this.session.doc.sel;
+    if (sel && sel.hasAny()) {
+      st.mask = (sx: number, sy: number) => sel.get(sx + tgt.dx, sy + tgt.dy) === 1;
+    }
+  }
   private isPathTool(t: string): boolean {
     return t === "polyline" || t === "curve";
   }
   /** where a new path stroke would land (reference layers redirect) */
-  private pathTarget(): { doc: Doc; li: number; fi: number } {
+  private pathTarget(): { doc: Doc; li: number; fi: number; dx: number; dy: number } {
     const s = this.session;
     const tgt = s.strokeTarget(s.curLayer());
-    return tgt ? { doc: tgt.doc, li: tgt.li, fi: tgt.fi } : { doc: s.doc, li: s.curLayer(), fi: s.curFrame() };
+    return tgt
+      ? { doc: tgt.doc, li: tgt.li, fi: tgt.fi, dx: tgt.dx, dy: tgt.dy }
+      : { doc: s.doc, li: s.curLayer(), fi: s.curFrame(), dx: 0, dy: 0 };
   }
   /** commit (or drop) the pending path */
   private endPath(commit: boolean): void {
@@ -2508,6 +2531,7 @@ export class View {
         return;
       }
       st.snapColor = (c) => s.paletteSnap(c);
+      this.wireRedirect(st, tgt);
       const tm = s.prefs.tileMode;
       st.wrapX = tm === "row" || tm === "grid";
       st.wrapY = tm === "col" || tm === "grid";
@@ -2553,13 +2577,23 @@ export class View {
       return;
     }
     // polygonCells closes the path implicitly (last → first point), so a
-    // shape the user left open is closed automatically here
-    const ax: SymAxis = { on: s.sym !== "off", four: s.symFour, ox: s.symOx, oy: s.symOy, angDeg: s.symAng };
-    const mask = doc.selectionActive() ? (x: number, y: number) => doc.selAt(x, y) === 1 : null;
+    // shape the user left open is closed automatically here.
+    // A redirected (reference) fill works in the SOURCE canvas' coordinates:
+    // the collected path and the symmetry axis are translated by the mirror
+    // offset, and the mask follows this canvas' selection.
+    const pts = o.dx || o.dy ? o.pts.map(([x, y]) => [x - o.dx, y - o.dy] as [number, number]) : o.pts;
+    const ax: SymAxis = {
+      on: s.sym !== "off", four: s.symFour,
+      ox: s.symOx - o.dx, oy: s.symOy - o.dy, angDeg: s.symAng,
+    };
+    const holder = s.doc;
+    const mask = holder.selectionActive()
+      ? (x: number, y: number) => holder.selAt(x + o.dx, y + o.dy) === 1
+      : null;
     const color = s.paletteSnap(s.color); // indexed mode: palette colour
     const tm = s.prefs.tileMode;
     const wrap = { x: tm === "row" || tm === "grid", y: tm === "col" || tm === "grid" };
-    fillPolygon(cel, doc.w, doc.h, o.pts, color, mask, ax, wrap);
+    fillPolygon(cel, doc.w, doc.h, pts, color, mask, ax, wrap);
     const after = new Uint8ClampedArray(cel.data);
     // a fresh cel counts as changed; otherwise compare pixel by pixel
     const changed = o.before === null || after.some((v, i) => v !== o.before![i]);
