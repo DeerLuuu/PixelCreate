@@ -6,7 +6,7 @@
 // rebuild the composite while the finger is still down?).
 import { Session } from "../src/app/session";
 import { View } from "../src/render/view";
-import { Doc } from "../src/engine/doc";
+import { Doc, Sel } from "../src/engine/doc";
 import * as compositor from "../src/render/compositor";
 import { stubEnv } from "./session.test";
 import { ok } from "./common";
@@ -95,6 +95,11 @@ export function testView(): void {
     const src = s.docs[bi];
     ok("view.ref.painted-into-source", !!src.doc.celAt(src.li, src.fi)?.hasAnyOpaque());
     ok("view.ref.mirror-cel-exists", !!s.doc.celAt(li, 0));
+
+    // a selection on the SOURCE canvas is drawn on its reference layer only
+    src.doc.sel = new Sel(64, 64, true);
+    dom.flush();
+    ok("view.ref.source-selection-draws", true);
 
     // focusing the SOURCE canvas must not lose what was painted through the
     // reference layer (regression: the mirror used to overwrite it)

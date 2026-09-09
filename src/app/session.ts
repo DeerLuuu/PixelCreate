@@ -741,6 +741,20 @@ export class Session {
     if (L.ref) return this.entryOf(L.ref)?.doc.layers[this.entryOf(L.ref)!.li]?.locked ?? false;
     return L.locked;
   }
+  /** the canvas a reference layer points at (null = normal layer / gone) */
+  refSourceOf(li: number): CanvasEntry | null {
+    const L = this.doc.layers[li];
+    return L?.ref ? this.entryOf(L.ref) : null;
+  }
+  /** where the referenced canvas' pixels sit inside this canvas (centred) */
+  refOffset(li: number): { ox: number; oy: number } {
+    const src = this.refSourceOf(li);
+    if (!src) return { ox: 0, oy: 0 };
+    return {
+      ox: Math.round((this.doc.w - src.doc.w) / 2),
+      oy: Math.round((this.doc.h - src.doc.h) / 2),
+    };
+  }
   /** true when the given layer mirrors another canvas */
   isRefLayer(li: number): boolean {
     return !!this.doc.layers[li]?.ref;

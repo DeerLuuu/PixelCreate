@@ -87,6 +87,8 @@ export class View {
   private antTimer: number | null = null;
   /** cached selection tint layer (rebuilt only when the doc changes) */
   private selTint: HTMLCanvasElement | null = null;
+  /** tints of the SELECTIONS of referenced canvases, keyed by layer id */
+  private refSelTint = new Map<string, { sel: unknown; ver: number; cv: HTMLCanvasElement }>();
   private selTintBounds: { x: number; y: number; w: number; h: number } | null = null;
   /** reuses the module-level checker pattern instead of making a new 2x2 canvas */
   private static checker: HTMLCanvasElement | null = null;
@@ -607,6 +609,8 @@ export class View {
     if (!doc) return;
     const z = this.zoom;
     this.drawIsoGuide(ctx);
+    // selections of referenced canvases: only on their reference layer
+    this.drawRefSelections(ctx, z);
     // selection tint + ants
     if (doc.sel && doc.sel.hasAny()) {
       // the tint only depends on the mask, so it is cached on the mask version:
@@ -982,6 +986,61 @@ export class View {
   }
   /** freehand outline preview: the same trail as the lasso selection, plus a
    *  light preview of the region that will be filled (auto-closed to the start) */
+  /**
+   * A referenced canvas may have its own selection. Show it on the reference
+   * layer that mirrors it (faint violet tint + dashed frame), so it is clear
+   * which canvas it belongs to and it never masquerades as this canvas' own
+   * selection (which clips painting).
+   */
+  private drawRefSelections(ctx: CanvasRenderingContext2D, z: number): void {
+    const s = this.session;
+    const doc = s.doc;
+    if (!doc) return;
+    for (let li = 0; li < doc.layers.length; li++) {
+      const L = doc.layers[li];
+      if (!L?.ref || !L.visible) continue;
+      const src = s.refSourceOf(li);
+      if (!src || !src.doc.sel || !src.doc.sel.hasAny()) continue;
+      const { ox, oy } = s.refOffset(li);
+      // tint of the source mask, cached on its version
+      let e = this.refSelTint.get(L.id);
+      if (!e || e.sel !== src.doc.sel || e.ver !== src.doc.sel.ver ||
+        e.cv.width !== src.doc.w || e.cv.height !== src.doc.h) {
+        const cv = document.createElement("canvas");
+        cv.width = src.doc.w;
+        cv.height = src.doc.h;
+        const c = cv.getContext("2d")!;
+        const img = c.createImageData(src.doc.w, src.doc.h);
+        const m = src.doc.sel.mask;
+        for (let i = 0; i < m.length; i++) {
+          if (!m[i]) continue;
+          img.data[i * 4] = 190;
+          img.data[i * 4 + 1] = 130;
+          img.data[i * 4 + 2] = 255;
+          img.data[i * 4 + 3] = 70;
+        }
+        c.putImageData(img, 0, 0);
+        e = { sel: src.doc.sel, ver: src.doc.sel.ver, cv };
+        this.refSelTint.set(L.id, e);
+      }
+      ctx.save();
+      ctx.translate(this.ox + ox * z, this.oy + oy * z);
+      ctx.scale(z, z);
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(e.cv, 0, 0);
+      ctx.restore();
+      const b = src.doc.sel.bounds();
+      if (b) {
+        ctx.save();
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = "#be82ff";
+        ctx.setLineDash([8, 6]);
+        ctx.strokeRect(this.ox + (ox + b.x) * z, this.oy + (oy + b.y) * z, b.w * z, b.h * z);
+        ctx.restore();
+      }
+    }
+  }
+
   /** gradient drag indicator: a line from the anchor to the finger plus the
    *  two end ticks, so the direction/length of the ramp is obvious */
   private drawGradPreview(ctx: CanvasRenderingContext2D): void {

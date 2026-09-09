@@ -765,6 +765,15 @@ export async function testSession(): Promise<void> {
     const tgt = r.strokeTarget(r.curLayer());
     ok("ref.stroke-redirected", !!tgt && tgt.doc === r.docs[bIdx].doc && tgt.li === 0 && tgt.fi === 0);
     ok("ref.normal-layer-not-redirected", !r.strokeTarget(0));
+    // the view asks these to draw the source canvas' selection on its layer
+    eq("ref.source-of", r.refSourceOf(r.curLayer())?.id, r.docs[bIdx].id);
+    eq("ref.source-of-normal", r.refSourceOf(0), null);
+    eq("ref.offset-same-size", [r.refOffset(r.curLayer()).ox, r.refOffset(r.curLayer()).oy], [0, 0]);
+    // a smaller source canvas is mirrored centred, and so is its selection
+    r.focusCanvas(bIdx);
+    r.doc.w = 32; r.doc.h = 24;
+    r.focusCanvas(0);
+    eq("ref.offset-centred", [r.refOffset(r.curLayer()).ox, r.refOffset(r.curLayer()).oy], [16, 20]);
     // a canvas cannot reference itself, and cycles are refused
     r.focusCanvas(bIdx);
     ok("ref.self-refused", !r.referenceCanvas(bIdx));
