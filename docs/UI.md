@@ -415,7 +415,14 @@ python3 "<按 scripts/build-ui-demo.sh 里的片段生成 app2/www/ui-demo.html>
 
 - 入口 `src/ui/kit/demo.tsx`：一屏展示全部控件与变体、令牌色板、暗/浅主题切换按钮。
 - 演示页**不依赖 Session**（验证 kit 纯度）；图标用构建脚本从 `app2/www/index.html` 提取的 sprite。
-- 产物不入库：`.gitignore` 增加 `app2/www/ui-demo.html`、`app2/www/js/ui-demo.js`。
+- 产物不入库：`.gitignore` 已包含 `app2/www/ui-demo.html`、`app2/www/js/ui-demo.js`。
+- **打包 APK 前删掉这两个产物**：`make-apk.sh` 会把整个 `app2/www` 塞进 `assets/www`，
+  演示页包有 1MB 上下（压缩后约 200KB），不应该进发布包：
+
+  ```sh
+  rm -f app2/www/ui-demo.html app2/www/js/ui-demo.js   # 出包
+  sh scripts/build-ui-demo.sh                          # 出完包再按需重建
+  ```
 
 ---
 
