@@ -1,4 +1,5 @@
 import { Session } from "../src/app/session";
+import * as selOps from "../src/tools/select";
 import {
   SETTINGS, SETTING_GROUPS, settingsOfGroup, coerceSetting, exportSettings, importSettings, isDefault, resetSetting,
 } from "../src/app/settings";
@@ -1013,6 +1014,38 @@ export async function testSession(): Promise<void> {
       const side = c.snapPosition(down, base.x + base.doc.w + 6, base.y, 12);
       eq("canvas.snap.side-gap", side.x - (base.x + base.doc.w), 8);
     }
+  }
+
+  // --- ② 跨画布剪切/粘贴：在画布 A 剪切，切到画布 B 粘贴 ---
+  {
+    (globalThis as unknown as { localStorage: { clear(): void } }).localStorage.clear();
+    const s = new Session();
+    s.doc.name = "A";
+    const bi = s.addCanvas(new Doc(64, 64, "B"));
+    s.focusCanvas(0);
+    // 在 A 上画一个 4x4 方块并选中它，然后剪切
+    const celA = s.doc.ensureCel(0, 0);
+    for (let y = 0; y < 4; y++) for (let x = 0; x < 4; x++) {
+      const i = celA.idx(x, y);
+      celA.data[i] = 200; celA.data[i + 1] = 10; celA.data[i + 2] = 20; celA.data[i + 3] = 255;
+    }
+    s.doc.sel = new Sel(64, 64);
+    for (let y = 0; y < 4; y++) for (let x = 0; x < 4; x++) s.doc.sel.set(x, y, 1);
+    const clip = selOps.selOps.cut(s.doc, s.history, 0, 0);
+    ok("xcanvas.cut.clip", !!clip && clip.w === 4 && clip.h === 4, "clip=" + (clip ? clip.w + "x" + clip.h : "null"));
+    eq("xcanvas.cut.cleared", celA.data[0], 0);
+    // 切到画布 B 粘贴：应落在 B 的当前图层（B 还没有 cel，由 paste 创建）
+    s.focusCanvas(bi);
+    s.clip = clip;
+    ok("xcanvas.clip.shared", !!s.clip);
+    selOps.selOps.paste(s.doc, s.history, s.curLayer(), s.curFrame(), s.clip!);
+    const celB = s.doc.celAt(s.curLayer(), s.curFrame());
+    ok("xcanvas.paste.created", !!celB, "cel=" + !!celB);
+    // 粘贴的内容（居中放置）应能在 B 里找到该颜色
+    let found = 0;
+    if (celB) for (let i = 0; i < celB.data.length; i += 4) if (celB.data[i] === 200 && celB.data[i + 3] === 255) found++;
+    ok("xcanvas.paste.pixels", found >= 16, "found=" + found);
+    ok("xcanvas.paste.undoable", s.history.canUndo());
   }
 
   // --- reference layers are MIRRORED into their own cel (live preview) ---

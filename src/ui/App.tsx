@@ -11,7 +11,7 @@ import * as selOps from "../tools/select";
 import * as fxE from "../engine/effects";
 import * as compositor from "../render/compositor";
 import { HoldAdjust, ColorHoldChip } from "./hold";
-import { orbMetrics, palChipPos, chipBox, swatchHitsChip } from "./orb-layout";
+import { orbMetrics, palChipPos, chipBox, swatchHitsChip, ringLayout } from "./orb-layout";
 import { ReplayOverlay } from "./replay";
 import * as bridge from "../io/bridge";
 import { writeClipboardPng } from "../io/clipboard";
@@ -1332,20 +1332,24 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
       : isSelectTool(snap.tool) ? defOf(snap.tool)?.icon
       : defOf(snap.tool)?.icon) || "i-pencil";
 
-  const ringAt = (p0: { x: number; y: number }, i: number, n: number) => {
+  /** 展开后的落点：由 ringLayout 算出，保证同环/跨环都不重叠（PC 球更大时半径自动扩容） */
+  const ringSlots = (p0: { x: number; y: number }, n: number) => {
     const cx = p0.x + ORB / 2, cy = p0.y + ORB / 2;
-    const R1 = M.r1, R2 = M.r2;
     const dx = window.innerWidth - cx >= cx ? 1 : -1;
     const dy = window.innerHeight - cy >= cy ? 1 : -1;
     const deg = dx === 1 && dy === 1 ? [-6, 84] : dx === 1 && dy === -1 ? [-84, 6] : dx === -1 && dy === -1 ? [174, 264] : [96, 186];
-    const a0 = (deg[0] * Math.PI) / 180, a1 = (deg[1] * Math.PI) / 180;
-    const ringA = Math.ceil(n / 2);
-    const inA = i < ringA;
-    const pr = inA ? (ringA <= 1 ? 0 : i / (ringA - 1)) : (() => { const j = i - ringA; const cnt = n - ringA; return cnt <= 1 ? 0 : j / (cnt - 1); })();
-    const r = inA ? R1 : R2;
-    const ang = a0 + (a1 - a0) * pr;
-    return { x: cx + Math.cos(ang) * r, y: cy + Math.sin(ang) * r };
+    // ringLayout 在「0..span」上排布，再按象限旋转到实际方向
+    const base = ringLayout({
+      count: n, cx: 0, cy: 0, spanDeg: deg[1] - deg[0],
+      r1: M.r1, r2: M.r2, item: M.item, gap: 8,
+    });
+    const rot = (deg[0] * Math.PI) / 180;
+    return base.map((pt) => ({
+      x: cx + pt.x * Math.cos(rot) - pt.y * Math.sin(rot),
+      y: cy + pt.x * Math.sin(rot) + pt.y * Math.cos(rot),
+    }));
   };
+  const ringAt = (p0: { x: number; y: number }, i: number, n: number) => ringSlots(p0, n)[i] ?? { x: p0.x, y: p0.y };
 
   const renderBall = (
     which: OrbId,

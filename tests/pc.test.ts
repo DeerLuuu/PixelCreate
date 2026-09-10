@@ -2,7 +2,7 @@
 // "which environment am I in" rules behind the desktop extras.
 import { normalizePcMode, resolvePcMode } from "../src/io/pcmode";
 import { normalizeWheelDelta, wheelIntent, wheelZoomFactor } from "../src/render/wheel";
-import { orbMetrics } from "../src/ui/orb-layout";
+import { fanRadius, orbMetrics, ringLayout } from "../src/ui/orb-layout";
 import { cursorFor } from "../src/render/cursor";
 import { NUDGE_STEP, NUDGE_STEP_FAST, TOOL_KEYS, shortcutFor } from "../src/app/shortcuts";
 import { eq, ok } from "./common";
@@ -153,5 +153,36 @@ export function testPcMode(): void {
     // 内环半径必须大于主球半径，否则菜单项会压在球上
     ok("orb.touch.ring-clears-ball", t.r1 > t.orb, "r1=" + t.r1 + " orb=" + t.orb);
     ok("orb.pc.ring-clears-ball", pc.r1 > pc.orb, "r1=" + pc.r1 + " orb=" + pc.orb);
+  }
+
+  // ---- ④ 展开落点零重叠（纯函数）----
+  {
+    const item = 48, gap = 8;
+    const dist = (a: { x: number; y: number }, b: { x: number; y: number }) => Math.hypot(a.x - b.x, a.y - b.y);
+    // 同环相邻间距 ≥ 项直径 + 间隙
+    const inner = fanRadius(3, 90, item, gap, 103);
+    const step = (90 * Math.PI) / 180 / 2;
+    ok("ring.fan-radius.min", inner >= (item + gap) / (2 * Math.sin(step / 2)) - 1e-6, "r=" + inner);
+    // 项数越多，半径越大（否则必然重叠）
+    ok("ring.fan-radius.grows", fanRadius(5, 90, item, gap) > fanRadius(2, 90, item, gap));
+    // 单个项：半径只需容下自己
+    eq("ring.fan-radius.single", fanRadius(1, 90, item, gap), item);
+    // 两环布局：跨环与同环都不重叠
+    for (const n of [2, 3, 4, 5, 6, 7, 8, 9, 10, 12]) {
+      const pts = ringLayout({ count: n, cx: 0, cy: 0, spanDeg: 90, r1: 103, r2: 154, item, gap });
+      eq("ring.count." + n, pts.length, n);
+      let minD = Infinity;
+      for (let i = 0; i < pts.length; i++) {
+        for (let j = i + 1; j < pts.length; j++) minD = Math.min(minD, dist(pts[i], pts[j]));
+      }
+      ok("ring.no-overlap." + n, minD >= item + gap - 1e-6, "min=" + minD.toFixed(1) + " need=" + (item + gap));
+    }
+    // 触摸端的球更小：也不重叠
+    {
+      const pts = ringLayout({ count: 12, cx: 0, cy: 0, spanDeg: 90, r1: 86, r2: 128, item: 40, gap: 6 });
+      let minD = Infinity;
+      for (let i = 0; i < pts.length; i++) for (let j = i + 1; j < pts.length; j++) minD = Math.min(minD, dist(pts[i], pts[j]));
+      ok("ring.touch.no-overlap", minD >= 46, "min=" + minD.toFixed(1));
+    }
   }
 }
