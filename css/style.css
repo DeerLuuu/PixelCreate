@@ -1167,3 +1167,12 @@ html[data-pc] .cu-dlg{width:min(92vw,800px)}
   background:var(--surface-toast);border:1px solid var(--accent);box-shadow:var(--sh-1);max-width:92vw}
 .ui-edit-bar .ue-dot{width:8px;height:8px;border-radius:50%;background:var(--accent);flex:0 0 auto}
 .ui-edit-bar .ue-text{font-size:12px;color:var(--text-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* 拖动中的抬升反馈：跟手 + 阴影 + 放大 */
+.bar-slot.dragging{z-index:80;transition:none}
+.bar-slot.dragging > .btn,.bar-slot.dragging > .colorpair{box-shadow:var(--sh-2);transform:scale(1.1);border-color:var(--accent)}
+.bar-add{position:relative}
+.bar-add.has{border-style:solid}
+.bar-add-n{position:absolute;top:-6px;right:-6px;min-width:15px;height:15px;border-radius:999px;padding:0 3px;
+  background:var(--accent);color:var(--on-accent);font-size:9px;font-weight:800;line-height:15px;text-align:center}
+.orb-item.dragging{z-index:80;box-shadow:var(--sh-2);animation:none!important}
