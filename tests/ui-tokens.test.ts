@@ -35,6 +35,13 @@ const THEME_TOKENS = [
   "--accent-soft", "--accent-faint", "--accent-glow", "--on-accent",
   "--danger", "--danger-1", "--danger-2", "--danger-3", "--danger-4",
   "--link", "--mask",
+  // canvas chrome (orb / ring / dock / chips / zoom hud / tip) follows the theme
+  "--surface-orb", "--surface-orb-on", "--orb-fg", "--surface-item", "--surface-item-active",
+  "--surface-item-line", "--line-3", "--hud-bg", "--hud-bg-2", "--hud-bg-2-dim", "--hud-bg-3",
+  "--hud-bg-4", "--hud-tip", "--tip-fg", "--track-bg", "--swatch-line", "--ring-soft", "--sh-float",
+  "--dock-bg", "--dock-bg-open", "--dock-bg-armed", "--accent-2-glow",
+  "--grad-title-1", "--grad-title-2", "--grad-title-on-1", "--grad-title-on-2",
+  "--sym-text", "--sym-text-2", "--sym-bg-ro", "--sym-bg-on",
   "--set-item-bg", "--set-item-line", "--set-group-bg", "--set-head-bg",
   "--ctl-bg-soft", "--ctl-line-soft",
 ];
