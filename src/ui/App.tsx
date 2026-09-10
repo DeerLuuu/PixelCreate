@@ -1528,6 +1528,60 @@ function PalBalls({ x, y, onDone }: { x: number; y: number; onDone: () => void }
   // the source chip keeps its fixed slot (see palChipPos above)
   const { x: chipX, y: chipY } = chip;
   const label = mode === "palette" ? t("palModePalette") : mode === "doc" ? t("palModeDoc") : t("palModeRecent");
+  // dragging a colour ball onto the canvas bucket-fills there (one history step);
+  // a plain tap keeps the old behaviour (take the colour, close the fan)
+  const dragRef = useRef<{ id: number; sx: number; sy: number; c: [number, number, number, number]; moved: boolean } | null>(null);
+  const skipClick = useRef(false);
+  const tipT = useRef<number | null>(null);
+  const [ghost, setGhost] = useState<{ x: number; y: number; c: [number, number, number, number] } | null>(null);
+  const stopTip = () => {
+    if (tipT.current !== null) { window.clearTimeout(tipT.current); tipT.current = null; }
+    hideTip();
+  };
+  const DRAG_START = 8;   // px of travel before a press counts as a drag
+  const swatchDown = (ev: React.PointerEvent<HTMLButtonElement>, c: [number, number, number, number]) => {
+    skipClick.current = false;
+    try { ev.currentTarget.setPointerCapture(ev.pointerId); } catch { /* ignore */ }
+    dragRef.current = { id: ev.pointerId, sx: ev.clientX, sy: ev.clientY, c, moved: false };
+    // long press without moving explains the gesture (same delay as Btn's tip)
+    const title = rgbaToHex(c);
+    tipT.current = window.setTimeout(() => {
+      tipT.current = null;
+      showTip({ title, desc: t("palDragHint") });
+    }, 450);
+  };
+  const swatchMove = (ev: React.PointerEvent<HTMLButtonElement>) => {
+    const d = dragRef.current;
+    if (!d || d.id !== ev.pointerId) return;
+    if (!d.moved && Math.hypot(ev.clientX - d.sx, ev.clientY - d.sy) < DRAG_START) return;
+    if (!d.moved) { d.moved = true; stopTip(); }
+    setGhost({ x: ev.clientX, y: ev.clientY, c: d.c });
+  };
+  const swatchUp = (ev: React.PointerEvent<HTMLButtonElement>) => {
+    const d = dragRef.current;
+    dragRef.current = null;
+    stopTip();
+    try { ev.currentTarget.releasePointerCapture(ev.pointerId); } catch { /* ignore */ }
+    if (!d) return;
+    if (!d.moved) return;               // the click handler takes the tap
+    skipClick.current = true;           // …and the drag must not also fire it
+    setGhost(null);
+    const col: [number, number, number, number] = [d.c[0], d.c[1], d.c[2], 255];
+    const hit = SESSION.quickFill(ev.clientX, ev.clientY, col);
+    if (hit >= 0) {
+      SESSION.hapticTick("quick-fill", 0.9);
+      bridge.toast(t("palDropFill"));
+      onDone();
+    } else {
+      bridge.toast(t("palDropMiss"));
+    }
+  };
+  const swatchCancel = (ev: React.PointerEvent<HTMLButtonElement>) => {
+    dragRef.current = null;
+    stopTip();
+    setGhost(null);
+    try { ev.currentTarget.releasePointerCapture(ev.pointerId); } catch { /* ignore */ }
+  };
   return (
     <div className="radial-layer">
       {items.map((it) => {
@@ -1535,7 +1589,15 @@ function PalBalls({ x, y, onDone }: { x: number; y: number; onDone: () => void }
         const cur = c[0] === SESSION.color[0] && c[1] === SESSION.color[1] && c[2] === SESSION.color[2];
         return (
           <button key={"pb" + mode + it.i} className={"orb-item pal-c" + (cur ? " on" : "")} style={{ left: it.px, top: it.py, background: chipCss(c), "--st": (Math.min(it.i, 40) * 8) + "ms" } as unknown as React.CSSProperties} title={rgbaToHex(c)} onContextMenu={(e) => e.preventDefault()}
-            onClick={() => { SESSION.setFgColor([c[0], c[1], c[2], 255]); onDone(); }} />
+            onPointerDown={(ev) => swatchDown(ev, c)}
+            onPointerMove={swatchMove}
+            onPointerUp={swatchUp}
+            onPointerCancel={swatchCancel}
+            onClick={() => {
+              if (skipClick.current) { skipClick.current = false; return; }
+              SESSION.setFgColor([c[0], c[1], c[2], 255]);
+              onDone();
+            }} />
         );
       })}
       {!items.length && (
@@ -1544,6 +1606,7 @@ function PalBalls({ x, y, onDone }: { x: number; y: number; onDone: () => void }
           {mode === "doc" ? t("palEmptyDoc") : t("palEmptyRecent")}
         </div>
       )}
+      {ghost && <div className="pal-drag" style={{ left: ghost.x, top: ghost.y, background: chipCss(ghost.c) }} />}
       <button type="button" className="orb-modechip" data-guide="pal-mode-chip" style={{ left: chipX, top: chipY }} title={t("palModeTap")}
         onClick={(e) => { e.stopPropagation(); SESSION.cyclePalOrbMode(); }}>
         {label}

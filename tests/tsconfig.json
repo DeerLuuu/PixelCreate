@@ -19,6 +19,7 @@
     "../tests/ui-kit.test.tsx",
     "../tests/ui-tokens.test.ts",
     "../tests/fullscreen.test.ts",
+    "../tests/canvas-space.test.ts",
     "../tests/common.ts",
     "../tests/history.test.ts",
     "../tests/ops.test.ts",

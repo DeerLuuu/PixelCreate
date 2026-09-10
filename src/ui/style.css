@@ -507,6 +507,10 @@ input[type=range]{width:64px;height:22px;accent-color:var(--accent)}
 /* palette color swatches in the colour ball ring */
 .orb-item.pal-c{width:30px;height:30px;border-radius:50%;border:2px solid var(--mask);box-sizing:border-box;box-shadow:0 0 0 1px var(--ring-soft)}
 .orb-item.pal-c.on{outline:2px solid var(--accent);outline-offset:2px}
+/* a colour ball dragged out of the palette fan: follows the finger, released on
+   a canvas it bucket-fills there (see PalBalls / View.quickFill) */
+.pal-drag{position:fixed;z-index:38;width:34px;height:34px;margin:-17px 0 0 -17px;border-radius:50%;
+  border:2px solid var(--swatch-line);box-shadow:var(--sh-float);pointer-events:none}
 .orb-modechip{position:fixed;z-index:32;transform:translate(-50%,-50%);padding:4px 11px;border-radius:999px;
   background:var(--hud-bg-2);border:1px solid var(--line);color:var(--text);font-size:12px;font-weight:700;
   white-space:nowrap;box-shadow:var(--sh-1);touch-action:none}

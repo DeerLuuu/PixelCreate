@@ -307,6 +307,55 @@ export function testView(): void {
       cmod.composeFrameWithOnion = prevOnion;
     }
 
+    // ---- palette drag & drop: quickFill fills the canvas under the point ----
+    {
+      const s2 = new Session();
+      const host2 = {
+        clientWidth: 320, clientHeight: 240, style: {},
+        appendChild: () => undefined, replaceChildren: () => undefined,
+        getBoundingClientRect: () => ({ left: 0, top: 0, width: 320, height: 240 }),
+        addEventListener: () => undefined,
+        setPointerCapture: () => undefined, releasePointerCapture: () => undefined,
+      } as unknown as HTMLElement;
+      const v2 = new View(host2, s2);
+      s2.attachView(v2);
+      s2.doc.name = "A";
+      const bi = s2.addCanvas(new Doc(32, 32, "B"), { x: 200, y: 0 });
+      s2.focusCanvas(0);
+      v2.fit();
+      dom.flush();
+      /** screen point of pixel (x,y) of the focused canvas */
+      const at = (x: number, y: number) => ({ sx: v2.ox + (x + 0.5) * v2.zoom, sy: v2.oy + (y + 0.5) * v2.zoom });
+
+      const p0 = at(5, 5);
+      const red: [number, number, number, number] = [255, 0, 0, 255];
+      const undoBefore = s2.history.canUndo();
+      eq("view.quickfill.index", v2.quickFill(p0.sx, p0.sy, red), 0);
+      eq("view.quickfill.undo-before", undoBefore, false);   // fresh session
+      ok("view.quickfill.one-step", s2.history.canUndo());
+      const cel = s2.doc.celAt(s2.curLayer(), s2.curFrame());
+      eq("view.quickfill.painted", cel ? [cel.data[0], cel.data[1], cel.data[2], cel.data[3]] : null, red);
+
+      // out in empty space nothing happens (and no history step is added)
+      const before2 = s2.history.list().labels.length;
+      eq("view.quickfill.miss", v2.quickFill(v2.ox - 400, v2.oy - 400, red), -1);
+      eq("view.quickfill.miss-no-step", s2.history.list().labels.length, before2);
+
+      // dropping onto the OTHER canvas fills there and focuses it
+      const p1 = at(200 + 4, 4);
+      eq("view.quickfill.second.index", v2.quickFill(p1.sx, p1.sy, red), bi);
+      eq("view.quickfill.second.focused", s2.docIdx, bi);
+      const cel2 = s2.docs[bi].doc.celAt(s2.curLayer(), s2.curFrame());
+      eq("view.quickfill.second.painted", cel2 ? [cel2.data[0], cel2.data[1], cel2.data[2], cel2.data[3]] : null, red);
+
+      // undo restores the pixel
+      s2.undo();
+      const cel2b = s2.docs[bi].doc.celAt(s2.curLayer(), s2.curFrame());
+      eq("view.quickfill.undo", cel2b ? cel2b.data[3] : 0, 0);
+
+      v2.destroy();
+    }
+
     view.destroy();
   } finally {
     cmod.composeFrameWithOnion = origOnion;

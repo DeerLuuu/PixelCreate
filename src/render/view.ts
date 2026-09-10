@@ -1,6 +1,6 @@
 // Interactive viewport: composite drawing, pan/zoom gestures, tool strokes.
 import type { Doc } from "../engine/doc";
-import type { Rect } from "../engine/types";
+import type { RGBA, Rect} from "../engine/types";
 import { clampRect, screenRectOf, unionRect, tileOffsets, tileRect, type TileMode } from "./rect";
 import { Sel } from "../engine/doc";
 import * as comp from "./compositor";
@@ -13,6 +13,7 @@ import type { Session } from "../app/session";
 import type { GestureActionId } from "../app/gesture-ids";
 import { clamp } from "../engine/types";
 import { snapGapRect, type GapRect } from "../app/canvas-snap";
+import { canvasAtScreen as spaceCanvasAt, screenToCanvas } from "../app/canvas-space";
 import { hexToRgba } from "../engine/color";
 
 /** Is the composite canvas stale? `compRect === null` means "the whole canvas
@@ -405,19 +406,62 @@ export class View {
     return { x: Math.floor((sx - this.ox) / this.zoom), y: Math.floor((sy - this.oy) / this.zoom) };
   }
 
+  /** the canvases as plain rects (pure hit testing lives in app/canvas-space) */
+  private spaceRects(): Array<{ x: number; y: number; w: number; h: number }> {
+    return this.session.docs.map((e) => ({ x: e.x, y: e.y, w: e.doc.w, h: e.doc.h }));
+  }
+
   /** index of the canvas under a screen point (-1 = empty space). The focused
    *  document's coordinates are the view anchor, so its rect is 0,0..w,h. */
   canvasAtScreen(sx: number, sy: number): number {
+    return spaceCanvasAt(this.spaceRects(), this.session.docIdx, this.ox, this.oy, this.zoom, sx, sy);
+  }
+
+  /**
+   * One-shot bucket fill at a screen point — the palette fan's drag & drop.
+   *
+   * Runs the same tool wiring as a real tap (redirect through reference layers,
+   * selection mask, tolerance / gap closing, indexed colours, tiled wrap) but as
+   * a single down+commit, so it lands as one history step. Focuses the canvas
+   * under the point first when it is not the focused one. `clientX`/`clientY`
+   * are viewport coordinates (what pointer events carry).
+   *
+   * @returns the index of the canvas that was filled, or -1 (empty space /
+   *          locked layer / no canvas)
+   */
+  quickFill(clientX: number, clientY: number, color: RGBA): number {
     const s = this.session;
-    const focus = s.docs[s.docIdx];
-    if (!focus) return -1;
-    const px = (sx - this.ox) / this.zoom + focus.x;
-    const py = (sy - this.oy) / this.zoom + focus.y;
-    for (let i = s.docs.length - 1; i >= 0; i--) {
-      const e = s.docs[i];
-      if (px >= e.x && py >= e.y && px < e.x + e.doc.w && py < e.y + e.doc.h) return i;
+    // the same conversion the pointer path uses: client -> element -> logical
+    const r = this.host.getBoundingClientRect();
+    const pt = this.toLogical(clientX - r.left, clientY - r.top);
+    const hit = screenToCanvas(this.spaceRects(), s.docIdx, this.ox, this.oy, this.zoom, pt.x, pt.y);
+    if (!hit) return -1;
+    if (hit.index !== s.docIdx) s.focusCanvas(hit.index);
+    const e = s.docs[hit.index];
+    if (!e) return -1;
+    if (s.layerLocked()) { s.paintBlockedNote(); return -1; }
+    const tgt = s.strokeTarget(s.curLayer());
+    let st: Stroke;
+    try {
+      st = new Stroke(tgt ? tgt.doc : e.doc, tgt ? tgt.li : s.curLayer(), tgt ? tgt.fi : s.curFrame(),
+        "bucket", { ...s.brush(), color }, s.layerLocked(), s.sym, s.shapeSides, s.shapeFill,
+        s.symOx, s.symOy, s.symAng, s.symFour, s.prefs.bucketGlobal, s.brushShape, s.shapeFromCenter);
+    } catch {
+      s.paintBlockedNote();
+      return -1;
     }
-    return -1;
+    this.wireRedirect(st, tgt);
+    st.fillTolerance = s.prefs.fillSimilar ? s.prefs.fillTolerance : 0;
+    st.fillGaps = s.prefs.fillGaps;
+    st.snapColor = (c) => s.paletteSnap(c);
+    const tm = s.prefs.tileMode;
+    st.wrapX = tm === "row" || tm === "grid";
+    st.wrapY = tm === "col" || tm === "grid";
+    st.startAt(hit.x, hit.y);
+    const rec = st.commit(s.history, this.labelFor("bucket"));
+    s.repaint();
+    if (rec) s.changedUI();
+    return hit.index;
   }
 
   // ---------------------------------------------------------------- render

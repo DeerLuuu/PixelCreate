@@ -18,6 +18,7 @@ import { testI18n } from "./i18n.test";
 import { testUiKit } from "./ui-kit.test";
 import { testUiTokens } from "./ui-tokens.test";
 import { testFullscreen } from "./fullscreen.test";
+import { testCanvasSpace } from "./canvas-space.test";
 import { testExpr } from "./expr.test";
 import { testEffects } from "./effects.test";
 import { testView } from "./view.test";
@@ -70,6 +71,8 @@ async function main(): Promise<void> {
   testUiTokens();
   console.log("--- fullscreen ---");
   testFullscreen();
+  console.log("--- canvas space ---");
+  testCanvasSpace();
   finish();
 }
 

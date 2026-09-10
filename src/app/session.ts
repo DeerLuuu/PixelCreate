@@ -1114,6 +1114,15 @@ export class Session {
   }
 
   // ---------- canvas ----------
+  /**
+   * Quick fill at a screen point (palette fan drag & drop): the canvas under
+   * the point is focused and bucket-filled with `color` in one history step.
+   * @returns the canvas index that was filled, -1 when the point missed.
+   */
+  quickFill(sx: number, sy: number, color: RGBA): number {
+    return this.view_ ? this.view_.quickFill(sx, sy, color) : -1;
+  }
+
   repaint(): void {
     this.doc.pixelRev++;
     this.syncRefLayers();

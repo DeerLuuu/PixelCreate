@@ -645,6 +645,11 @@ onionGhosts(fi, frameCount, before, after, wrap): OnionGhost[]   // 由远及近
 
 ### 15.4 视口 `src/render/view.ts`
 
+其中 `quickFill(clientX, clientY, color) => number`（1.0.8.3 起）是调色球拖拽的入口：把 client 坐标换算成画布像素，
+必要时先 `focusCanvas()`，然后用与真实点击完全相同的工具装配（引用层重定向、选区遮罩、相似色容差、填充缝隙、
+索引色吸附、平铺环绕）执行一次「按下 + 提交」，因此只产生一条历史记录；返回被填充的画布下标，未落在画布上返回 `-1`。
+`Session.quickFill(x, y, color)` 是同一件事的会话层包装。
+
 ```ts
 class View {
   zoom: number; ox: number; oy: number;         // 视图变换（文档像素 → 屏幕，逻辑坐标）
@@ -948,6 +953,17 @@ view.fitAnimated(ms = 220) / animateTo(z, ox, oy, ms)  // 缓动适配（双击�
 | `ui/canvas.tsx` | `CanvasTitles`：画布标题栏（点按聚焦、拖动移动画布） |
 | `ui/preview.tsx` | `PreviewBox`：按 `SESSION.previews` 渲染多个预览框，每个绑定一张画布 |
 | `ui/base.tsx` | `ScrubNum` 支持算式与运算符浮条 |
+
+### 18.7b 画布空间命中测试 `app/canvas-space.ts`
+
+纯函数，视图变换以**聚焦画布**为锚点（它的矩形恒为 `0,0..w,h`），所以屏幕点要先换算成空间坐标：
+
+| 导出 | 签名 | 说明 |
+|---|---|---|
+| `canvasAtScreen` | `(docs, focusIndex, ox, oy, zoom, sx, sy) => number` | 屏幕点下的画布下标（`-1` = 空白；后画的在上，重叠时取后者） |
+| `screenToCanvas` | `(…) => { index, x, y } \| null` | 同上，并给出画布内的像素坐标（`0..w-1`） |
+
+`View.canvasAtScreen()` 与调色球拖拽都走这里，保证「这个点属于哪张画布」只有一份实现。
 
 ### 18.8 吸附设置
 
