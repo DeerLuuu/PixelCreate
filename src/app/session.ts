@@ -59,6 +59,12 @@ export interface Prefs {
   barHidden: string[];
   /** 每个浮动球的子项定制：{ order: string[]; hidden: string[] } */
   orbPrefs: Record<string, { order: string[]; hidden: string[] }>;
+  /** 工具栏 / 浮动球之间的互搬：额外的动作 id（注册表之外的用户搬运结果） */
+  barExtra: Record<string, string[]>;
+  orbExtra: Record<string, string[]>;
+  /** 存储区与装备槽的自定义位置（null = 自动：右侧/顶部居中 + 槽在其旁边） */
+  dockPos: { x: number; y: number } | null;
+  pieSlotPos: { x: number; y: number } | null;
   /** onion skin master switch */
   onionOn: boolean;
   /** loop-aware onion skin: ghosts wrap around the first/last frame and get
@@ -1288,7 +1294,7 @@ export class Session {
     const p: Prefs = {
       lang: "zh", theme: "dark", pcMode: "auto", gridMode: "off", gridSize: 1, magZoom: 12, loupe: true,
       pieItem: 58, pieRadius: 0, keymap: {},
-      layout: { ...DEFAULT_LAYOUT }, barOrder: [], barHidden: [], orbPrefs: {},
+      layout: { ...DEFAULT_LAYOUT }, barOrder: [], barHidden: [], orbPrefs: {}, dockPos: null, pieSlotPos: null, barExtra: {}, orbExtra: {},
       onionOn: false, onionBefore: 1, onionAfter: 0, onionAlpha: 55, onionTint: true, onionWrap: true,
       autosave: true, autosaveMin: 5, recordHistory: true, newFrameCopy: false, railSwap: true, previewBg: "white", previewGray: false, tileMode: "off", tlH: 200, tlHv: 2,
       immersive: true, safeArea: true, safeExtra: 0,
@@ -1323,6 +1329,26 @@ export class Session {
       if (typeof saved.pieItem === "number") p.pieItem = Math.max(36, Math.min(96, Math.round(saved.pieItem)));
       if (typeof saved.pieRadius === "number") p.pieRadius = Math.max(0, Math.min(520, Math.round(saved.pieRadius)));
       p.layout = normalizeLayout(saved.layout);
+      const pos = (v: unknown): { x: number; y: number } | null => {
+        if (!v || typeof v !== "object") return null;
+        const o = v as { x?: unknown; y?: unknown };
+        if (typeof o.x !== "number" || typeof o.y !== "number") return null;
+        return { x: Math.round(o.x), y: Math.round(o.y) };
+      };
+      const idList = (v: unknown): string[] =>
+        Array.isArray(v) ? v.filter((x): x is string => typeof x === "string").slice(0, 64) : [];
+      if (saved.barExtra && typeof saved.barExtra === "object") {
+        const be: Record<string, string[]> = {};
+        for (const [k, v] of Object.entries(saved.barExtra as Record<string, unknown>)) be[k] = idList(v);
+        p.barExtra = be;
+      }
+      if (saved.orbExtra && typeof saved.orbExtra === "object") {
+        const oe: Record<string, string[]> = {};
+        for (const [k, v] of Object.entries(saved.orbExtra as Record<string, unknown>)) oe[k] = idList(v);
+        p.orbExtra = oe;
+      }
+      p.dockPos = pos(saved.dockPos);
+      p.pieSlotPos = pos(saved.pieSlotPos);
       if (Array.isArray(saved.barOrder)) p.barOrder = saved.barOrder.filter((x: unknown): x is string => typeof x === "string").slice(0, 64);
       if (Array.isArray(saved.barHidden)) p.barHidden = saved.barHidden.filter((x: unknown): x is string => typeof x === "string").slice(0, 64);
       if (saved.orbPrefs && typeof saved.orbPrefs === "object") {
@@ -3268,11 +3294,79 @@ export class Session {
     this.scheduleSavePrefs();
     this.changedUI();
   }
+  // ---------- 动作注册表（工具/浮动球/工具栏共用一套 id，便于互搬）----------
+  private registry: Record<string, { icon: string; label: string; run: () => void }> = {};
+  /** UI 每次渲染后把「当前可用的动作」登记进来（含各自的执行闭包） */
+  registerActions(map: Record<string, { icon: string; label: string; run: () => void }>): void {
+    this.registry = { ...this.registry, ...map };
+  }
+  actionById(id: string): { icon: string; label: string; run: () => void } | null {
+    return this.registry[id] ?? null;
+  }
+  /** 某条栏（top/bar）额外挂上去的动作 id */
+  barExtras(section: string): string[] {
+    return (this.prefs.barExtra[section] ?? []).filter((id) => !!this.registry[id]);
+  }
+  /** 把动作放到工具栏（并从它原来所在的浮动球里隐藏） */
+  moveActionToBar(section: string, id: string, fromBall?: string): void {
+    const cur = this.prefs.barExtra[section] ?? [];
+    if (cur.indexOf(id) < 0) this.prefs.barExtra = { ...this.prefs.barExtra, [section]: [...cur, id] };
+    if (fromBall) this.hideOrbId(fromBall, id);
+    this.scheduleSavePrefs();
+    this.changedUI();
+  }
+  removeBarExtra(section: string, id: string): void {
+    const cur = this.prefs.barExtra[section] ?? [];
+    if (cur.indexOf(id) < 0) return;
+    this.prefs.barExtra = { ...this.prefs.barExtra, [section]: cur.filter((x) => x !== id) };
+    this.scheduleSavePrefs();
+    this.changedUI();
+  }
+  /** 某个浮动球额外挂上去的动作 id */
+  orbExtras(ball: string): string[] {
+    return (this.prefs.orbExtra[ball] ?? []).filter((id) => !!this.registry[id]);
+  }
+  moveActionToOrb(ball: string, id: string, fromSection?: string): void {
+    const cur = this.prefs.orbExtra[ball] ?? [];
+    if (cur.indexOf(id) < 0) this.prefs.orbExtra = { ...this.prefs.orbExtra, [ball]: [...cur, id] };
+    if (fromSection) this.removeBarExtra(fromSection, id);
+    this.scheduleSavePrefs();
+    this.changedUI();
+  }
+  removeOrbExtra(ball: string, id: string): void {
+    const cur = this.prefs.orbExtra[ball] ?? [];
+    if (cur.indexOf(id) < 0) return;
+    this.prefs.orbExtra = { ...this.prefs.orbExtra, [ball]: cur.filter((x) => x !== id) };
+    this.scheduleSavePrefs();
+    this.changedUI();
+  }
+  /** 把某个球里的 id 标记为隐藏（搬走时用） */
+  private hideOrbId(ball: string, id: string): void {
+    const p = this.orbPref(ball);
+    if (p.hidden.indexOf(id) >= 0) return;
+    this.setOrbPref(ball, { order: p.order, hidden: [...p.hidden, id] });
+  }
+
+  /** 存储区 / 装备槽的位置（null = 自动） */
+  setDockPos(p: { x: number; y: number } | null): void {
+    this.prefs.dockPos = p;
+    this.scheduleSavePrefs();
+    this.changedUI();
+  }
+  setPieSlotPos(p: { x: number; y: number } | null): void {
+    this.prefs.pieSlotPos = p;
+    this.scheduleSavePrefs();
+    this.changedUI();
+  }
   resetAllUi(): void {
     this.prefs.layout = { ...DEFAULT_LAYOUT };
     this.prefs.barOrder = [];
     this.prefs.barHidden = [];
     this.prefs.orbPrefs = {};
+    this.prefs.dockPos = null;
+    this.prefs.pieSlotPos = null;
+    this.prefs.barExtra = {};
+    this.prefs.orbExtra = {};
     this.scheduleSavePrefs();
     this.changed();
   }

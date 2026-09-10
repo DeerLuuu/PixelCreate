@@ -59,6 +59,48 @@ export function testUibar(): void {
     eq("uibar.visible-count", visibleCount(all, ["undo", "save"]), all.length - 2);
   }
 
+  // ---- 动作注册表 + 互搬 + 位置 ----
+  {
+    const s = new Session();
+    const ran: string[] = [];
+    s.registerActions({
+      "fx.glow": { icon: "i-star", label: "Glow", run: () => { ran.push("glow"); } },
+      "sel.invert": { icon: "i-sel-invert", label: "Invert", run: () => { ran.push("invert"); } },
+    });
+    eq("uibar.registry.find", s.actionById("fx.glow")?.label, "Glow");
+    eq("uibar.registry.missing", s.actionById("nope"), null);
+    s.actionById("fx.glow")?.run();
+    eq("uibar.registry.run", ran, ["glow"]);
+    // 浮动球 → 工具栏（同时把它从原球里隐藏）
+    s.registerOrbCatalog("fx", [{ id: "fx.glow", label: "Glow" }]);
+    s.moveActionToBar("top", "fx.glow", "fx");
+    eq("uibar.move.to-bar", s.barExtras("top"), ["fx.glow"]);
+    eq("uibar.move.hidden-in-orb", s.isOrbItemHidden("fx", "fx.glow"), true);
+    eq("uibar.move.orb-item-gone", s.orbItems([{ id: "fx.glow" }, { id: "fx.gray" }], "fx").map((i) => i.id), ["fx.gray"]);
+    // 重复搬运不会加两条
+    s.moveActionToBar("top", "fx.glow", "fx");
+    eq("uibar.move.idempotent", s.barExtras("top"), ["fx.glow"]);
+    // 注册表里没有的 id 不显示
+    s.moveActionToBar("top", "ghost");
+    eq("uibar.move.unknown-hidden", s.barExtras("top"), ["fx.glow"]);
+    s.removeBarExtra("top", "fx.glow");
+    eq("uibar.move.bar-removed", s.barExtras("top"), []);
+    // 工具栏 → 浮动球（同时从工具栏移除）
+    s.moveActionToBar("bar", "sel.invert");
+    s.moveActionToOrb("sel", "sel.invert", "bar");
+    eq("uibar.move.to-orb", s.orbExtras("sel"), ["sel.invert"]);
+    eq("uibar.move.bar-cleared", s.barExtras("bar"), []);
+    s.removeOrbExtra("sel", "sel.invert");
+    eq("uibar.move.orb-removed", s.orbExtras("sel"), []);
+    // 位置：可设可清
+    s.setDockPos({ x: 40, y: 90 });
+    s.setPieSlotPos({ x: 200, y: 300 });
+    eq("uibar.pos.set", [s.prefs.dockPos, s.prefs.pieSlotPos], [{ x: 40, y: 90 }, { x: 200, y: 300 }]);
+    s.resetAllUi();
+    eq("uibar.pos.reset", [s.prefs.dockPos, s.prefs.pieSlotPos], [null, null]);
+    eq("uibar.reset.extras", [s.prefs.barExtra, s.prefs.orbExtra], [{}, {}]);
+  }
+
   // ---- 直接拖动：落点判定（栏内按坐标、圆环按最近槽位）----
   {
     const centers = [10, 50, 90, 130];

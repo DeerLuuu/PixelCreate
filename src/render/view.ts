@@ -299,6 +299,7 @@ export class View {
   /** 滚轮：缩放（以光标为锚点）/ Shift 横向 / Alt 纵向；只在 PC 模式生效 */
   private onWheel(e: WheelEvent): void {
     if (!isPc() || this.pointers.size > 0) return;
+    if (this.session.uiEdit) return;   // 编辑界面时不缩放画布
     e.preventDefault();
     const r = this.host.getBoundingClientRect();
     const pt = this.toLogical(e.clientX - r.left, e.clientY - r.top);
@@ -1931,6 +1932,8 @@ export class View {
     const doc = s.doc;
     // 点画布＝Delete 键重新作用于选区内容（而不是上次点的标题 / 图层 / 帧）
     s.setDelTarget("selection");
+    // 「编辑界面」模式：画布完全不接受操作（拖动排序时不会误画）
+    if (s.uiEdit) return;
     // ⑦ 画布调整模式：按下即接管，拖动四条边/四个角改尺寸（不绘制、不选择）
     if (s.resizeModeOn) {
       const hit = this.resizeHit(pt);

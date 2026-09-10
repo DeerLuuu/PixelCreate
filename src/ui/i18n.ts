@@ -72,6 +72,12 @@ const zh: Dict = {
   customise: "界面定制", cuHint: "也可以在界面上直接拖：打开「编辑界面」后拖动按钮调顺序、点 × 隐藏。",
   uiEditOn: "编辑界面", uiEditHint: "拖动按钮调顺序 · 拖出工具栏＝隐藏 · 点 × 隐藏 · 点 + 放回",
   cuDroppedOut: "已隐藏（点 + 可以放回来）",
+  cuMovedToBar: "已搬到工具栏", cuMovedToOrb: "已搬到浮动球",
+  cuDock: "存储区与装备槽", cuTitles: "画布标题栏", cuBallPick: "选择浮动球",
+  cuFromOrb: "从浮动球搬来的", cuFromBar: "从工具栏搬来的", cuResetPos: "存储区/装备槽位置复位",
+  cuPosSaved: "位置已保存（「界面定制 → 全部恢复默认」可还原）", cuPosReset: "存储区与装备槽：位置已复位",
+  cuDragPos: "拖动存储区 / 装备槽本身可以改它们的位置",
+
 
   uiEditDone: "完成", uiEditStart: "在界面上直接拖动排序", cuPalNote2: "",
   cuAddBack: "放回隐藏的按钮", cuHiddenTitle: "已隐藏", cuNoneHidden: "没有被隐藏的按钮",
@@ -334,6 +340,12 @@ const en: Dict = {
   customise: "Customise UI", cuHint: "You can drag directly in the UI too: turn on Edit UI, drag buttons to reorder and click the x to hide.",
   uiEditOn: "Edit UI", uiEditHint: "Drag to reorder · drag out of the bar to hide · click x to hide · click + to bring one back",
   cuDroppedOut: "Hidden (use + to bring it back)",
+  cuMovedToBar: "Moved to the toolbar", cuMovedToOrb: "Moved to the floating ball",
+  cuDock: "Storage + equip slot", cuTitles: "Canvas titles", cuBallPick: "Pick a ball",
+  cuFromOrb: "moved in from a ball", cuFromBar: "moved in from the toolbar", cuResetPos: "Reset storage/slot position",
+  cuPosSaved: "Position saved (reset everything from Customise UI)", cuPosReset: "Storage and equip slot moved back to auto",
+  cuDragPos: "Drag the storage area or the equip slot itself to move it",
+
 
   uiEditDone: "Done", uiEditStart: "Drag to reorder directly in the UI", cuPalNote2: "",
   cuAddBack: "Bring a hidden button back", cuHiddenTitle: "Hidden", cuNoneHidden: "Nothing is hidden",

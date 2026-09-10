@@ -9,10 +9,10 @@ import { useKitPcMode } from "./kit";
 import { Dialog } from "./kit";
 
 /** keep in sync with android/AndroidManifest.xml versionName on every release */
-export const APP_VERSION = "1.0.9.4";
+export const APP_VERSION = "1.0.9.5";
 /** build stamp shown next to the version (support/debug: identifies the exact
  *  package a user is running when the version number itself does not change) */
-export const BUILD_TAG = "ba1aa4f";
+export const BUILD_TAG = "pending";
 
 export type ClgKind = "add" | "imp" | "fix";
 export interface ClgItem { kind: ClgKind; zh: string; en: string }
@@ -21,6 +21,15 @@ export interface ClgVersion { v: string; date: string; items: ClgItem[] }
 const it = (kind: ClgKind, zh: string, en: string): ClgItem => ({ kind, zh, en });
 
 export const CHANGELOG: ClgVersion[] = [
+  {
+    v: "1.0.9.5",
+    date: "2026-09-10",
+    items: [
+      it("add", "**浮动球的功能可以放进工具栏，工具栏的按钮也能放进浮动球**：进入「编辑界面」后，把圆环上的子项拖到顶栏/底栏上松手——它就成了那两个栏里的按钮（同时从原球里移除）；反过来把工具栏的按钮拖到某个浮动球上松手，它就进了那个球的圆环。两边都能继续排序、隐藏，也可以在「界面定制」面板里各自复位。", "**Ball entries can be moved onto the toolbars, and toolbar buttons onto a ball**: in Edit UI mode, drag a ring entry onto the top or bottom bar to make it a button there (it leaves the ball), or drag a toolbar button onto a ball to add it to that ball's ring. Both stay reorderable and hideable, and each can be reset from the Customise UI panel."),
+      it("add", "**存储区与装备槽的位置可以自己摆**：编辑界面模式下直接拖动存储区本身或装备槽本身即可移动（自动保存、限制在屏幕内），交互热区会跟着实际位置走；「界面定制」里有「存储区/装备槽位置复位」。顺带修好了竖屏下装备槽看不见的问题（它以前只在电脑模式渲染）。", "**The storage area and the equip slot can be placed anywhere**: in Edit UI mode just drag the storage area or the equip slot itself (saved automatically, kept on screen) and the drop zone follows their real position; Customise UI has a reset for both. This also fixes the equip slot being invisible in portrait layouts (it used to render in PC mode only)."),
+      it("fix", "细节修复：编辑界面模式下**画布完全不响应操作**（不会误画、误缩放）；点「+」弹出的被隐藏按钮面板改成**屏幕正中的浮层**（以前贴在顶栏下方，会被别的面板挡住）；「交换前景/背景色」和「对称」两个按钮换成真正的 SVG 图标（之前用的 ⇄ / ⇋ 字符在部分设备字体里显示不出来）；界面定制面板改成与设置面板一致的 kit 行样式（分页用 Segmented、开关用 Switch、小按钮用 mini Btn）。", "Fixes: while editing the UI the **canvas no longer responds at all** (no accidental painting or zooming); the hidden-button picker opened by + is now a **centred overlay** (it used to sit under the top bar and get covered); the swap-colours and symmetry buttons now use real SVG icons (the old ⇄ / ⇋ characters were missing from some device fonts); and the Customise UI panel now uses the same kit rows as Settings (Segmented tabs, Switch toggles, mini buttons)."),
+    ],
+  },
   {
     v: "1.0.9.4",
     date: "2026-09-10",

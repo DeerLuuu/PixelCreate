@@ -33,9 +33,9 @@ export const TOPBAR_ACTIONS: UIAction[] = [
 /** the global (tool-independent) buttons of the bottom control bar */
 export const CBAR_ACTIONS: UIAction[] = [
   { id: "colors", icon: "", label: "fgActive", guide: "btn-colors" },   // the colour pair is its own chip
-  { id: "swap", icon: "", label: "swapColors", guide: "btn-swap" },
+  { id: "swap", icon: "i-swap", label: "swapColors", guide: "btn-swap" },
   { id: "adjust", icon: "i-adjust", label: "adjust", guide: "btn-adjust" },
-  { id: "symmetry", icon: "", label: "sym.off", guide: "btn-sym" },   // glyph label (⇋ / ·)
+  { id: "symmetry", icon: "i-sym", label: "sym.off", guide: "btn-sym" },
   { id: "frameprev", icon: "i-frameprev", label: "framePreview", guide: "btn-frameprev" },
 ];
 

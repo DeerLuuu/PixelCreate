@@ -762,8 +762,8 @@ function useBarDrag(opts: {
   enabled: boolean;
   /** 容器矩形；松手点落在它外面（留一点余量）＝ 拖出去丢掉 */
   bounds: () => { left: number; top: number; right: number; bottom: number } | null;
-  /** 拖出栏外时调用（默认动作：隐藏该按钮） */
-  onDropOut?: (id: string) => void;
+  /** 拖出栏外时调用（默认动作：隐藏该按钮；落在浮动球上＝搬过去） */
+  onDropOut?: (id: string, ev: React.PointerEvent) => void;
 }) {
   const [state, setState] = useState<{ id: string; dx: number; dy: number } | null>(null);
   /** 抬手时被吞掉的那次点击（拖动结束时不要触发按钮功能） */
@@ -801,11 +801,54 @@ function useBarDrag(opts: {
     const b = opts.bounds();
     if (b && opts.onDropOut &&
         (e.clientX < b.left - 24 || e.clientX > b.right + 24 || e.clientY < b.top - 24 || e.clientY > b.bottom + 24)) {
-      opts.onDropOut(d.id);
+      opts.onDropOut(d.id, e);
     }
     return true;
   };
   return { onDown, onMove, onUp, state, swallow };
+}
+
+/**
+ * 松手点落在哪块「别的地方」上：工具栏（top/bar）或某个浮动球。
+ * 用于把浮动球的功能搬到工具栏、把工具栏按钮搬到浮动球。
+ */
+function dropSurfaceAt(x: number, y: number): { kind: "bar"; section: string } | { kind: "orb"; ball: string } | null {
+  if (typeof document === "undefined" || typeof document.elementFromPoint !== "function") return null;
+  const el = document.elementFromPoint(x, y) as HTMLElement | null;
+  if (!el) return null;
+  const bar = el.closest("[data-drop-bar]") as HTMLElement | null;
+  if (bar) return { kind: "bar", section: bar.dataset.dropBar || "top" };
+  const orb = el.closest("[data-orb-ball]") as HTMLElement | null;
+  if (orb) return { kind: "orb", ball: orb.dataset.orbBall || "main" };
+  return null;
+}
+
+/** 被隐藏按钮的选择面板：屏幕正中的浮层（以前贴在顶栏下方，会被别的面板挡住） */
+function HiddenPicker({ t, items, onPick, onClose, title }: {
+  t: ReturnType<typeof makeT>;
+  items: Array<{ id: string; icon: string; label: string }>;
+  onPick: (id: string) => void;
+  onClose: () => void;
+  title?: string;
+}) {
+  return (
+    <>
+      <div className="picker-back" onPointerDown={onClose} />
+      <div className="picker" data-guide="hidden-picker">
+        <div className="picker-title">{title ?? t("cuHiddenTitle")}</div>
+        {items.length === 0 && <div className="row-note">{t("cuNoneHidden")}</div>}
+        <div className="picker-grid">
+          {items.map((it) => (
+            <button key={it.id} className="picker-cell" onClick={() => onPick(it.id)} title={it.label}>
+              <Icon id={it.icon || "i-more"} size={16} />
+              <span>{it.label}</span>
+            </button>
+          ))}
+        </div>
+        <div className="picker-foot"><Btn label={t("close")} onClick={onClose} /></div>
+      </div>
+    </>
+  );
 }
 
 function TopBar({
@@ -831,7 +874,17 @@ function TopBar({
     centers: () => Array.from(barRef.current?.querySelectorAll<HTMLElement>("[data-bar-id]") ?? [])
       .map((el) => { const r = el.getBoundingClientRect(); return r.left + r.width / 2; }),
     bounds: () => barRef.current?.getBoundingClientRect() ?? null,
-    onDropOut: (id) => {
+    onDropOut: (id, ev) => {
+      // 落在某个浮动球上＝把这个功能搬进那个球；否则只是隐藏
+      const surf = dropSurfaceAt(ev.clientX, ev.clientY);
+      const known = all.some((a) => a.id === id);
+      if (surf && surf.kind === "orb") {
+        SESSION.moveActionToOrb(surf.ball, id, known ? "top" : undefined);
+        SESSION.registerActions({ [id]: { icon: SESSION.actionById(id)?.icon ?? "i-more", label: SESSION.actionById(id)?.label ?? id, run: SESSION.actionById(id)?.run ?? (() => undefined) } });
+        bridge.toast(t("cuMovedToOrb"));
+        return;
+      }
+      if (!known) { SESSION.removeBarExtra("top", id); return; }
       if (!SESSION.toggleBarAction(all, id)) { bridge.toast(t("cuKeepOne")); return; }
       bridge.toast(t("cuDroppedOut"));
     },
@@ -842,7 +895,7 @@ function TopBar({
   // itself a history step, so it can be brought back from there
   const hist = snap.canUndo || snap.canRedo;
   return (
-    <header className="topbar" ref={barRef} onPointerMove={drag.onMove} onPointerUp={drag.onUp} onPointerCancel={drag.onUp}>
+    <header className="topbar" data-drop-bar="top" ref={barRef} onPointerMove={drag.onMove} onPointerUp={drag.onUp} onPointerCancel={drag.onUp}>
       {/* 按钮来自 uibar 注册表：顺序与显隐可以在这里直接拖动修改（编辑界面模式），
           也可以在「界面定制」面板里改。第一个按钮固定在左，其余靠右（与以前一致）。 */}
       {SESSION.layoutOn("top") && SHOWN.map((a, i) => {
@@ -882,21 +935,33 @@ function TopBar({
           </span>
         );
       })}
+      {/* 从浮动球搬过来的动作 */}
+      {SESSION.barExtras("top").map((id) => {
+        const a = SESSION.actionById(id);
+        if (!a) return null;
+        return (
+          <span key={"x" + id} data-bar-id={id} className={"bar-slot extra" + (drag.state?.id === id ? " dragging" : "")}
+            style={drag.state?.id === id ? { transform: "translate(" + drag.state.dx + "px," + drag.state.dy + "px)" } : undefined}
+            onPointerDown={edit ? drag.onDown(id, SHOWN.length + SESSION.barExtras("top").indexOf(id)) : undefined}>
+            <Btn icon={a.icon} title={a.label} onClick={() => { if (!drag.swallow.current) a.run(); else drag.swallow.current = false; }} />
+            {edit && (
+              <button className="bar-x" title={t("cuHide")}
+                onClick={(e) => { e.stopPropagation(); SESSION.removeBarExtra("top", id); }}>
+                <Icon id="i-x" size={10} />
+              </button>
+            )}
+          </span>
+        );
+      })}
       {edit && (
         <button className={"bar-add" + (HIDDEN.length ? " has" : "")} title={t("cuAddBack")} onClick={() => setAddOpen((v) => !v)}>
           <Icon id="i-plus" size={14} />{HIDDEN.length > 0 && <span className="bar-add-n">{HIDDEN.length}</span>}
         </button>
       )}
       {edit && addOpen && (
-        <div className="bar-addmenu">
-          <div className="bar-addtitle">{t("cuHiddenTitle")}</div>
-          {HIDDEN.length === 0 && <div className="row-note">{t("cuNoneHidden")}</div>}
-          {HIDDEN.map((a) => (
-            <button key={a.id} className="menuitem" onClick={() => { SESSION.toggleBarAction(TOPBAR_ACTIONS, a.id); setAddOpen(false); }}>
-              <Icon id={a.icon || "i-more"} size={14} /><span>{t(a.label)}</span>
-            </button>
-          ))}
-        </div>
+        <HiddenPicker t={t} items={HIDDEN.map((a) => ({ id: a.id, icon: a.icon, label: t(a.label) }))}
+          onPick={(id) => { SESSION.toggleBarAction(TOPBAR_ACTIONS, id); setAddOpen(false); }}
+          onClose={() => setAddOpen(false)} />
       )}
     </header>
   );
@@ -1110,7 +1175,13 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
     dockClear();
     dockT.current = window.setTimeout(() => { dockT.current = null; setDockOpen(false); setDockHover(null); }, ms);
   };
-  const inDockZone = (x: number, y: number): boolean => (landD ? y <= 64 : x >= window.innerWidth - 64);
+  /** 交互热区：跟随存储区的**实际**位置（自定义位置后也准），留 40px 余量 */
+  const inDockZone = (x: number, y: number): boolean => {
+    const r = dockWrap.current?.getBoundingClientRect();
+    if (!r) return landD ? y <= 64 : x >= window.innerWidth - 64;
+    const M = 40;
+    return x >= r.left - M && x <= r.right + M && y >= r.top - M && y <= r.bottom + M;
+  };
   /** true when the pointer is over the actual dock panel (parking only works here) */
   const overDockPanel = (x: number, y: number): boolean => {
     const el = dockWrap.current;
@@ -1653,13 +1724,18 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
       : isSelectTool(snap.tool) ? defOf(snap.tool)?.icon
       : defOf(snap.tool)?.icon) || "i-pencil";
 
-  // 把每个球的条目目录登记到 Session，界面定制面板据此列清单
+  // 把每个球的条目目录 + 动作闭包登记到 Session：界面定制面板据此列清单，
+  // 工具栏与浮动球之间互相搬运也靠这套 id
   useEffect(() => {
-    SESSION.registerOrbCatalog("main", mainItems.map((it) => ({ id: it.id, label: it.label })));
-    SESSION.registerOrbCatalog("sel", selItems.map((it) => ({ id: it.id, label: it.label })));
-    SESSION.registerOrbCatalog("fx", fxItems.map((it) => ({ id: it.id, label: it.label })));
-    SESSION.registerOrbCatalog("canv", canvItems.map((it) => ({ id: it.id, label: it.label })));
+    const map: Record<string, { icon: string; label: string; run: () => void }> = {};
+    const plain = (items: Item[]): Array<{ id: string; label: string }> =>
+      items.map((it) => { map[it.id] = { icon: it.icon, label: it.label, run: it.act }; return { id: it.id, label: it.label }; });
+    SESSION.registerOrbCatalog("main", plain(mainItems));
+    SESSION.registerOrbCatalog("sel", plain(selItems));
+    SESSION.registerOrbCatalog("fx", plain(fxItems));
+    SESSION.registerOrbCatalog("canv", plain(canvItems));
     SESSION.registerOrbCatalog("pal", []);
+    SESSION.registerActions(map);
   });
 
   /** 饼菜单里显示哪些项：就是被装备那个球的子项（PC 模式已经全部铺开的版本） */
@@ -1792,6 +1868,7 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
   ) => (
     <button
       key={which}
+      data-orb-ball={which}
       className={"orb" + (isOpen ? " open" : "") + (which !== "main" ? " sub" : "")}
       style={{ left: p.x, top: p.y }}
       data-guide={"orb-" + which}
@@ -1864,6 +1941,12 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
     </button>
   );
 
+  /** 从工具栏搬进来的动作：追加到该球圆环的末尾（也能排序/隐藏） */
+  const ringExtras = (ball: OrbId): Item[] => SESSION.orbExtras(ball).map((id) => {
+    const a = SESSION.actionById(id);
+    return a ? { id, icon: a.icon, label: a.label, act: a.run } : null;
+  }).filter((x): x is Item => !!x);
+
   const ring = (p0: { x: number; y: number }, items: Item[], ball?: OrbId) => {
     const edit = SESSION.uiEdit && !!ball;
     const cx = p0.x + ORB / 2, cy = p0.y + ORB / 2;
@@ -1895,6 +1978,13 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
         window.removeEventListener("pointercancel", done);
         setRingDrag(null);
         if (!moved) return;
+        // 松手落在工具栏上＝把这个功能搬进工具栏（并从本球里隐藏）
+        const surf = dropSurfaceAt(ev.clientX, ev.clientY);
+        if (surf && surf.kind === "bar") {
+          SESSION.moveActionToBar(surf.section, id, ball);
+          bridge.toast(t("cuMovedToBar"));
+          return;
+        }
         // 拖到圆环外太远＝丢掉（隐藏），与工具栏的「拖出去」一致
         const far = Math.hypot(ev.clientX - cx, ev.clientY - cy);
         if (far > R * 1.7 && SESSION.toggleOrbItem(all, ball!, id)) bridge.toast(t("cuDroppedOut"));
@@ -2052,12 +2142,37 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
       })}
       {/* 装备槽：在存储区**边上**的独立一格；把一个浮动球拖进来就装备它（只装备一个）。
           点一下槽＝把球取出放回屏幕。按住 F 发动它的快捷圆盘。 */}
-      {pcMode && (
-        <div ref={pieSlotRef} className={"pie-slot" + (pieEquip ? " on" : "") + (slotArmed ? " armed" : "")}
+      {(
+        <div ref={pieSlotRef} className={"pie-slot" + (pieEquip ? " on" : "") + (slotArmed ? " armed" : "") + (SESSION.uiEdit ? " editing" : "")}
           data-guide="pie-equip"
+          style={SESSION.prefs.pieSlotPos ? { left: SESSION.prefs.pieSlotPos.x, top: SESSION.prefs.pieSlotPos.y, right: "auto" } : undefined}
           title={pieEquip ? t("pieEquipDesc") + " · " + ballLabel(pieEquip) + "\n" + t("pieUnequipHint") : t("pieEquip")}
-          onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); }}
+          onPointerDown={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            if (!SESSION.uiEdit) return;
+            const r = pieSlotRef.current?.getBoundingClientRect();
+            if (!r) return;
+            const dx = e.clientX - r.left, dy = e.clientY - r.top;
+            let moved = false;
+            const move = (ev: PointerEvent) => {
+              moved = true;
+              const x = Math.max(4, Math.min(window.innerWidth - r.width - 4, ev.clientX - dx));
+              const y = Math.max(4, Math.min(window.innerHeight - r.height - 4, ev.clientY - dy));
+              SESSION.setPieSlotPos({ x, y });
+            };
+            const up = () => {
+              window.removeEventListener("pointermove", move);
+              window.removeEventListener("pointerup", up);
+              window.removeEventListener("pointercancel", up);
+              if (moved) bridge.toast(t("cuPosSaved"));
+            };
+            window.addEventListener("pointermove", move);
+            window.addEventListener("pointerup", up);
+            window.addEventListener("pointercancel", up);
+          }}
           onClick={() => {
+            if (SESSION.uiEdit) return;               // 编辑模式下只负责拖动位置
             if (!pieEquip) { bridge.toast(t("pieEquipDrop")); return; }
             unequipBall({ x: window.innerWidth - 120, y: window.innerHeight / 2 });
           }}>
@@ -2119,10 +2234,34 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
       })()}
 
       {(pcMode || docked.length > 0 || dockOpen) && (
-        <div ref={dockWrap} className={"bdock" + (landD ? " horiz" : "") + (dockOpen ? " open" : "") + (dockArmed ? " armed" : "")}
+        <div ref={dockWrap} className={"bdock" + (landD ? " horiz" : "") + (dockOpen ? " open" : "") + (dockArmed ? " armed" : "")
+          + (SESSION.uiEdit ? " editing" : "")}
+          data-guide="orb-dock"
+          style={SESSION.prefs.dockPos ? { left: SESSION.prefs.dockPos.x, top: SESSION.prefs.dockPos.y, right: "auto" } : undefined}
           onPointerDown={(e) => {
             e.preventDefault();
             dockClear();
+            // 编辑界面模式：拖存储区本身＝改它的位置（不再是停靠/取出）
+            if (SESSION.uiEdit) {
+              const r = dockWrap.current?.getBoundingClientRect();
+              if (!r) return;
+              const dx = e.clientX - r.left, dy = e.clientY - r.top;
+              const move = (ev: PointerEvent) => {
+                const x = Math.max(4, Math.min(window.innerWidth - r.width - 4, ev.clientX - dx));
+                const y = Math.max(4, Math.min(window.innerHeight - r.height - 4, ev.clientY - dy));
+                SESSION.setDockPos({ x, y });
+              };
+              const up = () => {
+                window.removeEventListener("pointermove", move);
+                window.removeEventListener("pointerup", up);
+                window.removeEventListener("pointercancel", up);
+                bridge.toast(t("cuPosSaved"));
+              };
+              window.addEventListener("pointermove", move);
+              window.addEventListener("pointerup", up);
+              window.addEventListener("pointercancel", up);
+              return;
+            }
             setDockOpen(true);
             setDockHover(-1);
             dockDown.current = { x: e.clientX, y: e.clientY };
@@ -2188,14 +2327,14 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
         <div className="radial-back" onPointerDown={closeRadials} />
       )}
       {open && lockBtn("main", pos.x, pos.y)}
-      <Keep on={open} el={open ? ring(pos, SESSION.orbItems(mainItems, "main"), "main") : null} />
-      <Keep on={!!sel && sel.open} el={sel && sel.open ? ring({ x: sel.x, y: sel.y }, SESSION.orbItems(selItems, "sel"), "sel") : null} />
+      <Keep on={open} el={open ? ring(pos, [...SESSION.orbItems(mainItems, "main"), ...ringExtras("main")], "main") : null} />
+      <Keep on={!!sel && sel.open} el={sel && sel.open ? ring({ x: sel.x, y: sel.y }, [...SESSION.orbItems(selItems, "sel"), ...ringExtras("sel")], "sel") : null} />
       {sel && sel.open && lockBtn("sel", sel.x, sel.y)}
       <Keep on={pal.open} el={pal.open ? <PalBalls x={pal.x} y={pal.y} onDone={() => setPal({ ...pal, open: false })} /> : null} />
       {pal.open && lockBtn("pal", pal.x, pal.y)}
-      <Keep on={fx.open} el={fx.open ? ring({ x: fx.x, y: fx.y }, SESSION.orbItems(fxItems, "fx"), "fx") : null} />
+      <Keep on={fx.open} el={fx.open ? ring({ x: fx.x, y: fx.y }, [...SESSION.orbItems(fxItems, "fx"), ...ringExtras("fx")], "fx") : null} />
       {fx.open && lockBtn("fx", fx.x, fx.y)}
-      <Keep on={canv.open} el={canv.open ? ring({ x: canv.x, y: canv.y }, SESSION.orbItems(canvItems, "canv"), "canv") : null} />
+      <Keep on={canv.open} el={canv.open ? ring({ x: canv.x, y: canv.y }, [...SESSION.orbItems(canvItems, "canv"), ...ringExtras("canv")], "canv") : null} />
       {canv.open && lockBtn("canv", canv.x, canv.y)}
       <Keep on={tileDlg} el={tileDlg ? (
         <>
@@ -2323,7 +2462,6 @@ function PalBalls({ x, y, onDone }: { x: number; y: number; onDone: () => void }
 
 
 
-const SYM_GLYPH: Record<string, string> = { off: "·", on: "⇋" };
 /** gradient-step chip label: rgb = smooth, otherwise N×N blocks */
 function gradLabel(m: "rgb" | "2" | "4" | "8"): string {
   return m === "rgb" ? "RGB" : m + "\u00d7" + m;
@@ -2345,14 +2483,22 @@ function ControlBar({ t, snap, onPanel, onAdjust, onFramePrev }: { t: ReturnType
     centers: () => Array.from(rowRef.current?.querySelectorAll<HTMLElement>("[data-bar-id]") ?? [])
       .map((el) => { const r = el.getBoundingClientRect(); return land ? r.top + r.height / 2 : r.left + r.width / 2; }),
     bounds: () => rowRef.current?.getBoundingClientRect() ?? null,
-    onDropOut: (id) => {
+    onDropOut: (id, ev) => {
+      const surf = dropSurfaceAt(ev.clientX, ev.clientY);
+      const known = CBAR_ACTIONS.some((a) => a.id === id);
+      if (surf && surf.kind === "orb") {
+        SESSION.moveActionToOrb(surf.ball, id, known ? "bar" : undefined);
+        bridge.toast(t("cuMovedToOrb"));
+        return;
+      }
+      if (!known) { SESSION.removeBarExtra("bar", id); return; }
       if (!SESSION.toggleBarAction(CBAR_ACTIONS, id)) { bridge.toast(t("cuKeepOne")); return; }
       bridge.toast(t("cuDroppedOut"));
     },
   });
   return (
     <section className={"ctrlbar" + (land ? " land" : "")}>
-      <div className="cb-row" ref={rowRef} onPointerMove={drag.onMove} onPointerUp={drag.onUp} onPointerCancel={drag.onUp}>
+      <div className="cb-row" data-drop-bar="bar" ref={rowRef} onPointerMove={drag.onMove} onPointerUp={drag.onUp} onPointerCancel={drag.onUp}>
         {/* 全局按钮来自 uibar 注册表（顺序/显隐可定制，编辑模式下可直接拖动）；
             滑杆区是随工具变化的，保持自动 */}
         {cShown.map((a, i) => {
@@ -2385,13 +2531,13 @@ function ControlBar({ t, snap, onPanel, onAdjust, onFramePrev }: { t: ReturnType
             );
           }
           if (a.id === "swap") {
-            return slot(<Btn label="\u21c4" className="swap-color" title={t("swapColors")} onClick={() => { if (!drag.swallow.current) SESSION.swapColors(); else drag.swallow.current = false; }} guide={a.guide} />);
+            return slot(<Btn icon={a.icon} className="swap-color" title={t("swapColors")} onClick={() => { if (!drag.swallow.current) SESSION.swapColors(); else drag.swallow.current = false; }} guide={a.guide} />);
           }
           if (a.id === "adjust") {
             return slot(<Btn icon={a.icon} onClick={onAdjust} title={t("adjust")} guide={a.guide} />);
           }
           if (a.id === "symmetry") {
-            return slot(<Btn label={SYM_GLYPH[sym]} active={sym !== "off"} title={t(symKey[sym])} desc={bd(snap.lang, "sym")}
+            return slot(<Btn icon={a.icon} active={sym !== "off"} title={t(symKey[sym])} desc={bd(snap.lang, "sym")}
               guide={a.guide} onClick={() => { const m = SESSION.cycleSym(); bridge.toast(t(symKey[m])); }} />);
           }
           if (a.id === "frameprev") {
@@ -2399,21 +2545,32 @@ function ControlBar({ t, snap, onPanel, onAdjust, onFramePrev }: { t: ReturnType
           }
           return null;
         })}
+        {SESSION.barExtras("bar").map((id) => {
+          const a = SESSION.actionById(id);
+          if (!a) return null;
+          return (
+            <span key={"x" + id} data-bar-id={id} className={"bar-slot extra" + (drag.state?.id === id ? " dragging" : "")}
+              style={drag.state?.id === id ? { transform: "translate(" + drag.state.dx + "px," + drag.state.dy + "px)" } : undefined}
+              onPointerDown={edit ? drag.onDown(id, cShown.length + SESSION.barExtras("bar").indexOf(id)) : undefined}>
+              <Btn icon={a.icon} title={a.label} onClick={() => { if (!drag.swallow.current) a.run(); else drag.swallow.current = false; }} />
+              {edit && (
+                <button className="bar-x" title={t("cuHide")}
+                  onClick={(e) => { e.stopPropagation(); SESSION.removeBarExtra("bar", id); }}>
+                  <Icon id="i-x" size={10} />
+                </button>
+              )}
+            </span>
+          );
+        })}
         {edit && (
           <button className={"bar-add" + (cHidden.length ? " has" : "")} title={t("cuAddBack")} onClick={() => setAddOpen((v) => !v)}>
             <Icon id="i-plus" size={14} />{cHidden.length > 0 && <span className="bar-add-n">{cHidden.length}</span>}
           </button>
         )}
         {edit && addOpen && (
-          <div className="bar-addmenu">
-            <div className="bar-addtitle">{t("cuHiddenTitle")}</div>
-            {cHidden.length === 0 && <div className="row-note">{t("cuNoneHidden")}</div>}
-            {cHidden.map((a) => (
-              <button key={a.id} className="menuitem" onClick={() => { SESSION.toggleBarAction(CBAR_ACTIONS, a.id); setAddOpen(false); }}>
-                <Icon id={a.icon || "i-more"} size={14} /><span>{t(a.label)}</span>
-              </button>
-            ))}
-          </div>
+          <HiddenPicker t={t} items={cHidden.map((a) => ({ id: a.id, icon: a.icon, label: t(a.label) }))}
+            onPick={(id) => { SESSION.toggleBarAction(CBAR_ACTIONS, id); setAddOpen(false); }}
+            onClose={() => setAddOpen(false)} />
         )}
       </div>
       <div className="cb-sliders">

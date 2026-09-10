@@ -1079,7 +1079,11 @@ export function CustomiseModal({ t, onClose }: { t: ReturnType<typeof makeT>; on
         <Btn label={t("uiEditStart")} icon="i-grid" className="primary"
           onClick={() => { SESSION.setUiEdit(true); onClose(); }} />
       </div>}
-      footer={<><Btn label={t("cuResetAll")} onClick={() => { SESSION.resetAllUi(); redraw(); }} /><Btn label={t("close")} onClick={onClose} className="primary" /></>}>
+      footer={<>
+        <Btn label={t("cuResetSection")} icon="i-undo" onClick={() => { SESSION.setDockPos(null); SESSION.setPieSlotPos(null); bridge.toast(t("cuPosReset")); redraw(); }} />
+        <Btn label={t("cuResetAll")} onClick={() => { SESSION.resetAllUi(); redraw(); }} />
+        <Btn label={t("close")} onClick={onClose} className="primary" />
+      </>}>
       <div className={pc ? "cu-split" : ""}>
         <div className={pc ? "cu-cats" : "cu-tabs"}>
           {(["layout", "bar", "orbs"] as const).map((k) => (
@@ -1089,6 +1093,9 @@ export function CustomiseModal({ t, onClose }: { t: ReturnType<typeof makeT>; on
           ))}
         </div>
         <div className={pc ? "cu-pane" : ""}>
+          {tab === "layout" && (SESSION.prefs.dockPos || SESSION.prefs.pieSlotPos) && (
+            <div className="row-note"><Icon id="i-size" size={14} /> {t("cuDragPos")}</div>
+          )}
           {tab === "layout" && LAYOUT_KEYS.map((k) => (
             <div key={k} className="cu-row">
               <span className="cu-label">{en ? layoutLabels[k].en : layoutLabels[k].zh}
