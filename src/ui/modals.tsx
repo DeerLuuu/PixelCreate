@@ -1002,116 +1002,163 @@ function keyActionLabel(action: string, en: boolean): string {
 }
 
 /**
- * 界面定制：布局 / 工具栏 / 浮动球 三个分页。
- * 所有改动都写进 prefs（layout / barOrder / barHidden / orbPrefs），随设置持久化。
- * 顺序用 ↑↓ 按钮调整（触摸和鼠标都能用），显隐用眼睛按钮；每个分页都能单独重置。
+ * 界面定制。
+ *
+ * 结构重做过：左边是「哪里」（布局 / 顶栏 / 底栏 / 五个浮动球 / 未使用），
+ * 右边是那一处的**小方块清单** —— 一眼看清这块地方有什么、什么被藏起来了。
+ * 点方块＝显示/隐藏；顺序请打开「编辑界面」后直接在界面上拖动。
+ * 被藏起来的一切都收在「未使用」里，点一下就能放回原位，不会丢。
  */
 export function CustomiseModal({ t, onClose }: { t: ReturnType<typeof makeT>; onClose: () => void }) {
   const en = SESSION.prefs.lang === "en";
   const pc = useKitPcMode();
-  const [tab, setTab] = useState<"layout" | "bar" | "orbs">("layout");
-  const [ball, setBall] = useState<string>("main");
+  const [where, setWhere] = useState<string>("layout");
   const [, bump] = useState(0);
   const redraw = () => bump((n) => n + 1);
 
-  const layoutLabels: Record<string, { zh: string; en: string; descZh: string; descEn: string }> = {
-    top: { zh: "顶栏", en: "Top bar", descZh: "菜单 / 撤销 / 保存 / 时间轴这些按钮", descEn: "Menu, undo, redo, save, timeline, fullscreen" },
-    bar: { zh: "底部控制栏", en: "Bottom bar", descZh: "颜色对、笔刷大小与随工具变化的滑杆", descEn: "Colour pair, brush size and the tool sliders" },
-    timeline: { zh: "时间轴", en: "Timeline", descZh: "帧与图层的矩阵（顶栏按钮也能开关）", descEn: "Frame and layer matrix (the top bar button toggles it too)" },
-    dock: { zh: "浮动球存储区与装备槽", en: "Ball storage + equip slot", descZh: "右侧（横屏顶部）的停靠区与快捷圆盘装备槽", descEn: "The dock at the right edge (top in landscape) and the pie equip slot" },
-    orbs: { zh: "浮动球", en: "Floating balls", descZh: "五个浮动球本身", descEn: "The five floating balls themselves" },
-    titles: { zh: "画布标题栏", en: "Canvas titles", descZh: "每张画布上方的标题条", descEn: "The title bar above each canvas" },
+  const layoutText: Record<string, { label: string; hint: string }> = {
+    top: { label: t("cuTopBar"), hint: en ? "Menu, undo, redo, save, timeline, fullscreen" : "菜单 / 撤销 / 保存 / 时间轴等" },
+    bar: { label: t("cuBottomBar"), hint: en ? "Colour pair, brush size and the tool sliders" : "颜色对、笔刷大小与随工具的滑杆" },
+    timeline: { label: t("timelineShow"), hint: en ? "Frame and layer matrix" : "帧与图层矩阵" },
+    dock: { label: t("cuDock"), hint: en ? "Storage area and the equip slot" : "停靠区与快捷圆盘装备槽" },
+    orbs: { label: t("cuTabOrbs"), hint: en ? "The five floating balls" : "五个浮动球本身" },
+    titles: { label: t("cuTitles"), hint: en ? "Title bar above each canvas" : "每张画布上方的标题条" },
   };
 
-  const reorderRow = (label: string, sub: string | undefined, hidden: boolean, i: number, n: number,
-    onUp: () => void, onDown: () => void, onToggle: () => void) => (
-    <div key={label + i} className={"cu-row" + (hidden ? " hidden" : "")}>
-      <span className="cu-label">{label}{sub ? <em className="cu-sub">{sub}</em> : null}</span>
-      <button className="cu-btn" disabled={i === 0} onClick={() => { onUp(); redraw(); }} title={t("cuUp")}><Icon id="i-up" size={14} /></button>
-      <button className="cu-btn" disabled={i === n - 1} onClick={() => { onDown(); redraw(); }} title={t("cuDown")}><Icon id="i-down" size={14} /></button>
-      <button className={"cu-btn" + (hidden ? " off" : "")} onClick={() => { onToggle(); redraw(); }}
-        title={hidden ? t("cuShow") : t("cuHide")}><Icon id={hidden ? "i-eyeoff" : "i-eye"} size={14} /></button>
-    </div>
+  /** 一个小方块：图标 + 名字；藏起来时变暗并显示 ⊕（点它放回来） */
+  const tile = (key: string, icon: string, label: string, hidden: boolean, onToggle: () => void, extra?: string) => (
+    <button key={key} className={"cu-tile" + (hidden ? " off" : "")} onClick={onToggle} title={hidden ? t("cuShow") : t("cuHide")}>
+      <span className="cu-tile-icon"><Icon id={icon || "i-more"} size={18} /></span>
+      <span className="cu-tile-label">{label}</span>
+      {extra ? <span className="cu-tile-extra">{extra}</span> : null}
+      <span className="cu-tile-eye"><Icon id={hidden ? "i-plus" : "i-eye"} size={11} /></span>
+    </button>
   );
 
-  const barSection = (all: typeof TOPBAR_ACTIONS, key: string) => {
+  const barTiles = (all: typeof TOPBAR_ACTIONS, section: string) => {
     const order = fullOrder(all, SESSION.prefs.barOrder);
     const items = order.map((id) => all.find((a) => a.id === id)).filter((a): a is typeof all[number] => !!a);
     return (
-      <div className="cu-block" key={key}>
-        <div className="cu-btitle">{key === "top" ? t("cuTopBar") : t("cuBottomBar")}</div>
-        {items.map((a, i) => reorderRow(t(a.label), SESSION.prefs.barHidden.indexOf(a.id) >= 0 ? t("cuHidden") : undefined,
-          SESSION.prefs.barHidden.indexOf(a.id) >= 0, i, items.length,
-          () => SESSION.moveBarAction(all, a.id, -1),
-          () => SESSION.moveBarAction(all, a.id, 1),
-          () => { if (!SESSION.toggleBarAction(all, a.id)) bridge.toast(t("cuKeepOne")); }))}
-        <div className="cu-actions"><Btn label={t("cuResetSection")} onClick={() => { SESSION.resetBar(all); redraw(); }} /></div>
+      <div className="cu-tiles">
+        {items.map((a) => tile(a.id, a.icon, t(a.label), SESSION.isBarHidden(a.id),
+          () => { if (!SESSION.toggleBarAction(all, a.id)) bridge.toast(t("cuKeepOne")); redraw(); }))}
+        {SESSION.barExtras(section).map((id) => {
+          const a = SESSION.actionById(id);
+          if (!a) return null;
+          return tile("x" + id, a.icon, a.label, false, () => { SESSION.removeBarExtra(section, id); redraw(); }, t("cuFromOrbShort"));
+        })}
       </div>
     );
   };
 
-  const orbSection = () => {
+  const orbTiles = (ball: string) => {
+    if (ball === "pal") return <div className="row-note">{t("cuPalNote")}</div>;
     const all = pieAllItems(ball);
     const order = fullOrder(all, SESSION.orbPref(ball).order);
     const items = order.map((id) => all.find((a) => a.id === id)).filter((a): a is typeof all[number] => !!a);
     return (
-      <div className="cu-block">
-        <div className="cu-tabs">
-          {ORB_IDS.map((b) => (
-            <button key={b} className={"cu-tab" + (b === ball ? " on" : "")} onClick={() => setBall(b)}>{ballLabelOf(b, t)}</button>
-          ))}
-        </div>
-        {ball === "pal" && <div className="row-note">{t("cuPalNote")}</div>}
-        {items.map((a, i) => reorderRow(a.label, SESSION.isOrbItemHidden(ball, a.id) ? t("cuHidden") : undefined,
-          SESSION.isOrbItemHidden(ball, a.id), i, items.length,
-          () => SESSION.moveOrbItem(all, ball, a.id, -1),
-          () => SESSION.moveOrbItem(all, ball, a.id, 1),
-          () => { if (!SESSION.toggleOrbItem(all, ball, a.id)) bridge.toast(t("cuKeepOne")); }))}
-        <div className="cu-actions"><Btn label={t("cuResetSection")} onClick={() => { SESSION.resetOrb(ball); redraw(); }} /></div>
+      <div className="cu-tiles">
+        {items.map((a) => tile(ball + a.id, "", a.label, SESSION.isOrbItemHidden(ball, a.id),
+          () => { if (!SESSION.toggleOrbItem(all, ball, a.id)) bridge.toast(t("cuKeepOne")); redraw(); }))}
+        {SESSION.orbExtras(ball).map((id) => {
+          const a = SESSION.actionById(id);
+          if (!a) return null;
+          return tile("x" + id, a.icon, a.label, false, () => { SESSION.removeOrbExtra(ball, id); redraw(); }, t("cuFromBarShort"));
+        })}
       </div>
     );
   };
 
+  const unusedTiles = () => {
+    const rows: Array<{ key: string; icon: string; label: string; back: () => void; from: string }> = [];
+    for (const a of TOPBAR_ACTIONS) {
+      if (SESSION.isBarHidden(a.id)) rows.push({ key: "t" + a.id, icon: a.icon, label: t(a.label), from: t("cuTopBar"), back: () => SESSION.toggleBarAction(TOPBAR_ACTIONS, a.id) });
+    }
+    for (const a of CBAR_ACTIONS) {
+      if (SESSION.isBarHidden(a.id)) rows.push({ key: "b" + a.id, icon: a.icon, label: t(a.label), from: t("cuBottomBar"), back: () => SESSION.toggleBarAction(CBAR_ACTIONS, a.id) });
+    }
+    for (const ball of ORB_IDS) {
+      for (const item of SESSION.orbCatalogOf(ball)) {
+        if (SESSION.isOrbItemHidden(ball, item.id)) {
+          rows.push({
+            key: ball + item.id, icon: SESSION.actionById(item.id)?.icon ?? "", label: item.label, from: ballLabelOf(ball, t),
+            back: () => SESSION.toggleOrbItem(SESSION.orbCatalogOf(ball), ball, item.id),
+          });
+        }
+      }
+    }
+    if (!rows.length) return <div className="row-note">{t("cuNoneHidden")}</div>;
+    return (
+      <div className="cu-tiles">
+        {rows.map((r) => (
+          <button key={r.key} className="cu-tile off" title={t("cuShow")}
+            onClick={() => { r.back(); bridge.toast(t("cuPutBack")); redraw(); }}>
+            <span className="cu-tile-icon"><Icon id={r.icon || "i-more"} size={18} /></span>
+            <span className="cu-tile-label">{r.label}</span>
+            <span className="cu-tile-extra">{r.from}</span>
+            <span className="cu-tile-eye"><Icon id="i-plus" size={11} /></span>
+          </button>
+        ))}
+      </div>
+    );
+  };
+
+  const cat = (id: string, label: string) => (
+    <button key={id} className={"cu-cat" + (id === where ? " on" : "")} onClick={() => setWhere(id)}>{label}</button>
+  );
+  const section = where.startsWith("orb:") ? where.slice(4) : "";
+  const title = where === "layout" ? t("cuTabLayout")
+    : where === "top" ? t("cuTopBar")
+      : where === "bar" ? t("cuBottomBar")
+        : where === "unused" ? t("cuUnused") : ballLabelOf(section, t);
+
   return (
     <Dialog title={t("customise")} onClose={onClose} className={"cu-dlg" + (pc ? " cu-dlg-pc" : "")} bodyClass="cu-body"
       extra={<div className="cu-entry">
-        <div className="row-note">{t("cuHint")}</div>
+        <span className="row-note cu-hintline">{t("cuHint")}</span>
         <Btn label={t("uiEditStart")} icon="i-grid" className="primary"
           onClick={() => { SESSION.setUiEdit(true); onClose(); }} />
       </div>}
       footer={<>
-        <Btn label={t("cuResetSection")} icon="i-undo" onClick={() => { SESSION.setDockPos(null); SESSION.setPieSlotPos(null); bridge.toast(t("cuPosReset")); redraw(); }} />
         <Btn label={t("cuResetAll")} onClick={() => { SESSION.resetAllUi(); redraw(); }} />
         <Btn label={t("close")} onClick={onClose} className="primary" />
       </>}>
       <div className={pc ? "cu-split" : ""}>
-        <div className={pc ? "cu-cats" : "cu-tabs"}>
-          {(["layout", "bar", "orbs"] as const).map((k) => (
-            <button key={k} className={(pc ? "cu-cat" : "cu-tab") + (k === tab ? " on" : "")} onClick={() => setTab(k)}>
-              {k === "layout" ? t("cuTabLayout") : k === "bar" ? t("cuTabBar") : t("cuTabOrbs")}
-            </button>
-          ))}
+        <div className={pc ? "cu-cats" : "cu-catrow"}>
+          {cat("layout", t("cuTabLayout"))}
+          {cat("top", t("cuTopBar"))}
+          {cat("bar", t("cuBottomBar"))}
+          {ORB_IDS.map((b) => cat("orb:" + b, ballLabelOf(b, t)))}
+          {cat("unused", t("cuUnused"))}
         </div>
-        <div className={pc ? "cu-pane" : ""}>
-          {tab === "layout" && (SESSION.prefs.dockPos || SESSION.prefs.pieSlotPos) && (
-            <div className="row-note"><Icon id="i-size" size={14} /> {t("cuDragPos")}</div>
-          )}
-          {tab === "layout" && LAYOUT_KEYS.map((k) => (
-            <div key={k} className="cu-row">
-              <span className="cu-label">{en ? layoutLabels[k].en : layoutLabels[k].zh}
-                <em className="cu-sub">{en ? layoutLabels[k].descEn : layoutLabels[k].descZh}</em></span>
-              <button className={"cu-btn" + (SESSION.layoutOn(k) ? "" : " off")}
-                onClick={() => { SESSION.setLayout(k, !SESSION.layoutOn(k)); redraw(); }}
-                title={SESSION.layoutOn(k) ? t("cuHide") : t("cuShow")}>
-                <Icon id={SESSION.layoutOn(k) ? "i-eye" : "i-eyeoff"} size={14} />
-              </button>
+        <div className="cu-pane">
+          <div className="cu-head">
+            <span className="cu-head-title">{title}</span>
+            <span className="cu-head-hint">{t(where === "layout" ? "cuLayoutHint" : where === "unused" ? "cuUnusedHint" : "cuOrderHint")}</span>
+          </div>
+          {where === "layout" && LAYOUT_KEYS.map((k) => (
+            <div className="cu-line" key={k}>
+              <div className="cu-line-main">
+                <span className="cu-name">{layoutText[k].label}</span>
+                <span className="cu-hint">{layoutText[k].hint}</span>
+              </div>
+              <RowActions><Switch checked={SESSION.layoutOn(k)} label={layoutText[k].label}
+                onChange={(v) => { SESSION.setLayout(k, v); redraw(); }} /></RowActions>
             </div>
           ))}
-          {tab === "layout" && (
-            <div className="cu-actions"><Btn label={t("cuResetSection")} onClick={() => { SESSION.resetLayout(); redraw(); }} /></div>
-          )}
-          {tab === "bar" && <>{barSection(TOPBAR_ACTIONS, "top")}{barSection(CBAR_ACTIONS, "bar")}</>}
-          {tab === "orbs" && orbSection()}
+          {where === "top" && barTiles(TOPBAR_ACTIONS, "top")}
+          {where === "bar" && barTiles(CBAR_ACTIONS, "bar")}
+          {section && orbTiles(section)}
+          {where === "unused" && unusedTiles()}
+          <div className="cu-actions">
+            {where === "layout" && <>
+              <Btn label={t("cuResetPos")} className="mini" onClick={() => { SESSION.setDockPos(null); SESSION.setPieSlotPos(null); bridge.toast(t("cuPosReset")); redraw(); }} />
+              <Btn label={t("cuResetSection")} className="mini" onClick={() => { SESSION.resetLayout(); redraw(); }} />
+            </>}
+            {where === "top" && <Btn label={t("cuResetSection")} className="mini" onClick={() => { SESSION.resetBar(TOPBAR_ACTIONS); redraw(); }} />}
+            {where === "bar" && <Btn label={t("cuResetSection")} className="mini" onClick={() => { SESSION.resetBar(CBAR_ACTIONS); redraw(); }} />}
+            {section && <Btn label={t("cuResetSection")} className="mini" onClick={() => { SESSION.resetOrb(section); redraw(); }} />}
+          </div>
         </div>
       </div>
     </Dialog>

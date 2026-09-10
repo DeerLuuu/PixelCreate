@@ -2211,7 +2211,7 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
                 return (
                   <span key={"piec" + i}
                     className={"pie-item" + (i === foc ? " on" : "")}
-                    style={{ left: p0.x, top: p0.y, width: item, height: item, background: chipCss(c) } as React.CSSProperties} />
+                    style={{ left: p0.x, top: p0.y, width: M.palItem, height: M.palItem, background: chipCss(c) } as React.CSSProperties} />
                 );
               })
               : items.map((it, i) => {
@@ -2380,14 +2380,14 @@ function PalBalls({ x, y, onDone }: { x: number; y: number; onDone: () => void }
   const chipArea = chipBox(chip.x, chip.y);
   // neat lattice: regular grid clipped to an annulus sector (R0..R1 inside the quadrant)
   // pack tightly around the floater: candidates sorted by distance, take only what the palette needs
-  const G = M.fanGap, R0 = M.fanR0, RMAX = 340;
+  const G = M.fanGap, R0 = M.fanR0, RMAX = M.fanRMax;
   const cand: Array<{ du: number; dv: number; r: number }> = [];
   for (let i = 0; (i + 0.5) * G <= RMAX; i++) {
     for (let j = 0; (j + 0.5) * G <= RMAX; j++) {
       const du = (i + 0.5) * G, dv = (j + 0.5) * G;
       const r = Math.hypot(du, dv);
       if (r < R0 || r > RMAX) continue;
-      if (swatchHitsChip(cx + sx * du, cy + sy * dv, chipArea, M.item)) continue; // keep the chip slot clear
+      if (swatchHitsChip(cx + sx * du, cy + sy * dv, chipArea, M.palItem)) continue; // keep the chip slot clear
       cand.push({ du, dv, r });
     }
   }

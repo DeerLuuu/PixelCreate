@@ -64,6 +64,10 @@ export interface OrbMetrics {
   /** 调色球扇形的格距与起始半径 */
   fanGap: number;
   fanR0: number;
+  /** 调色球扇形里色球的直径（移动端比环形子球小，扇形才不占地方） */
+  palItem: number;
+  /** 扇形排布的最大半径 */
+  fanRMax: number;
   /** 主球半径（色板胶囊避让用） */
   floaterR: number;
 }
@@ -78,9 +82,15 @@ export interface OrbMetrics {
 export function orbMetrics(pc: boolean): OrbMetrics {
   const item = pc ? 48 : ORB_SIZE;
   const floaterR = pc ? 31 : FLOATER_R;
+  // 调色球扇形：桌面端保持大尺寸（好点），移动端保持紧凑 —— 手机上色球太多时
+  // 扇形会铺满半个屏幕，所以色球比环形子球小一圈、格距也更密。
+  const palItem = pc ? 48 : 32;
+  const fanGap = palItem + (pc ? 12 : 6);
+  const fanR0 = floaterR + palItem / 2 + (pc ? 10 : 6);
+  const fanRMax = pc ? 340 : 280;
   return pc
-    ? { orb: 62, item, r1: 103, r2: 154, fanGap: item + 12, fanR0: floaterR + item / 2 + 10, floaterR }
-    : { orb: 52, item, r1: 86, r2: 128, fanGap: item + 12, fanR0: floaterR + item / 2 + 10, floaterR };
+    ? { orb: 62, item, floaterR, palItem, fanGap, fanR0, fanRMax, r1: 103, r2: 154 }
+    : { orb: 52, item, floaterR, palItem, fanGap, fanR0, fanRMax, r1: 86, r2: 128 };
 }
 
 /** 扇形排布：给定环上项数、扇形张角与项直径，返回「不重叠」所需的最小半径 */

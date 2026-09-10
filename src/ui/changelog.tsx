@@ -9,10 +9,10 @@ import { useKitPcMode } from "./kit";
 import { Dialog } from "./kit";
 
 /** keep in sync with android/AndroidManifest.xml versionName on every release */
-export const APP_VERSION = "1.0.9.6";
+export const APP_VERSION = "1.0.9.7";
 /** build stamp shown next to the version (support/debug: identifies the exact
  *  package a user is running when the version number itself does not change) */
-export const BUILD_TAG = "7dc0274";
+export const BUILD_TAG = "pending";
 
 export type ClgKind = "add" | "imp" | "fix";
 export interface ClgItem { kind: ClgKind; zh: string; en: string }
@@ -21,6 +21,14 @@ export interface ClgVersion { v: string; date: string; items: ClgItem[] }
 const it = (kind: ClgKind, zh: string, en: string): ClgItem => ({ kind, zh, en });
 
 export const CHANGELOG: ClgVersion[] = [
+  {
+    v: "1.0.9.7",
+    date: "2026-09-10",
+    items: [
+      it("imp", "色板扇形不再在手机上占掉半个屏幕：色球尺寸与间距分开成两套——桌面模式保持大尺寸（48px、间距宽、好点），移动模式恢复紧凑（32px、间距更密、最大铺开半径也更小）。", "The palette fan no longer eats half the screen on a phone: chip size and spacing are now two separate sets — desktop keeps the big comfortable version (48px, wide spacing) while touch goes back to a compact one (32px, tighter spacing and a smaller maximum spread)."),
+      it("imp", "「界面定制」面板整个重做：左边是「哪里」（布局 / 顶栏 / 底栏 / 五个浮动球 / **未使用**），右边是那一处的小方块清单——一个方块一个功能，点什么就显示或隐藏什么，一眼就能看清「这块地方有什么、哪些被藏了」；被藏起来的东西全部收进「未使用」，点一下放回原位，不会丢。顺序仍然推荐在界面上直接拖（打开「编辑界面」）。", "The Customise UI panel has been rebuilt: the left side asks “where” (Layout / Top bar / Bottom bar / the five balls / **Not in use**) and the right side shows that place as a grid of tiles — one tile per action, tap to show or hide, so you can see at a glance what lives there and what is hidden. Everything hidden is collected under “Not in use” and can be put back with one tap, so nothing gets lost. Reordering is still done by dragging directly in the UI (turn on Edit UI)."),
+    ],
+  },
   {
     v: "1.0.9.6",
     date: "2026-09-10",

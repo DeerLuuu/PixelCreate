@@ -209,6 +209,13 @@ export function testPcMode(): void {
     ok("orb.pc.rings-apart", pc.r2 - pc.r1 > t.r2 - t.r1, "gap " + (t.r2 - t.r1) + " -> " + (pc.r2 - pc.r1));
     // 调色球扇形格距更松、主球避让半径同步放大
     ok("orb.pc.fan-gap", pc.fanGap > t.fanGap && pc.fanR0 > t.fanR0);
+    // 调色球扇形：桌面端大、移动端紧凑（手机上铺满半屏是不可接受的）
+    ok("orb.pal.desktop-big", pc.palItem >= 44 && pc.fanGap >= 56, pc.palItem + "/" + pc.fanGap);
+    ok("orb.pal.touch-compact", t.palItem <= 34 && t.fanGap <= 40 && t.fanR0 <= 50,
+      t.palItem + "/" + t.fanGap + "/" + t.fanR0);
+    ok("orb.pal.touch-smaller-than-ring", t.palItem < t.item, t.palItem + " vs " + t.item);
+    ok("orb.pal.desktop-equals-ring", pc.palItem === pc.item, pc.palItem + " vs " + pc.item);
+    ok("orb.pal.radius-cap", t.fanRMax < pc.fanRMax, t.fanRMax + " vs " + pc.fanRMax);
     ok("orb.pc.floater", pc.floaterR > t.floaterR, "floater " + t.floaterR + " -> " + pc.floaterR);
     // 内环半径必须大于主球半径，否则菜单项会压在球上
     ok("orb.touch.ring-clears-ball", t.r1 > t.orb, "r1=" + t.r1 + " orb=" + t.orb);
