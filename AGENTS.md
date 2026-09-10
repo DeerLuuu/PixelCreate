@@ -60,7 +60,7 @@ cd /root/pcbuild/app/tests && ../../node_modules/.bin/tsc -p tsconfig.json && no
 # 重建 Web 包（仓库路径含中文，必须在 ASCII 目录构建后回拷；见 §6.4）
 cd /root/pcbuild/buildsrc && cp -r /root/pcbuild/app/src/. . \
   && ../node_modules/.bin/esbuild main.tsx --bundle --format=iife --platform=browser --target=es2019 \
-     --define:process.env.NODE_ENV='"production"' --outfile=out-app.js --log-level=warning \
+     --define:process.env.NODE_ENV='"production"' --minify --outfile=out-app.js --log-level=warning \
   && cp out-app.js "<repo>/app2/www/js/app.js" && cp ui/style.css "<repo>/app2/www/css/style.css"
 
 # 出包（重打包 + 签名 + 校验 + 拷贝）
@@ -182,13 +182,19 @@ cd /root/pcbuild/app/tests && ../../node_modules/.bin/tsc -p tsconfig.json && no
 ```sh
 cd /root/pcbuild/buildsrc && cp -r /root/pcbuild/app/src/. .
 ../node_modules/.bin/esbuild main.tsx --bundle --format=iife --platform=browser --target=es2019 \
-  --define:process.env.NODE_ENV='"production"' --outfile=out-app.js --log-level=warning
+  --define:process.env.NODE_ENV='"production"' --minify --outfile=out-app.js --log-level=warning
 cp out-app.js "<repo>/app2/www/js/app.js"
 cp ui/style.css "<repo>/app2/www/css/style.css"
 ```
 
+- **默认带 `--minify`**（1.2MB → 约 730KB，Pages 上 gzip 后约 180KB）；`scripts/build-web.sh` 用 `MINIFY=0` 关闭，
+  仅在需要可读堆栈时使用。仓库、APK、Pages 三处必须是**同一份产物**，否则 md5 校验会对不上。
 - 仓库路径含中文：esbuild 的输出目录必须在 ASCII 路径（`buildsrc` 内构建后回拷），否则报 `mkdir /root: read-only file system` 之类的错。
 - esbuild 默认把非 ASCII 转义成 `\uXXXX`，所以 `grep 中文` 查不到属正常；用 `grep -a "u9707u52a8"` 或直接搜英文标识符验证。
+- **压缩后标识符会被改名**：验证包内是否含某功能时搜**字符串字面量**（类名 `pal-drag`、i18n 键 `palDragHint`、
+  版本号 `1.0.8.4`、`aria-modal` 等），别搜函数名（`holdAllowed` 这类会被压掉）。
+- `app2/www/js/telemetry.js` 只在本地上报（localhost / 127.0.0.1 / 局域网 IP / `*.local`），
+  Pages 与 APK（`file://`）里完全静默，避免线上站点出现 `/log` 404。
 
 ### 6.5 打包 + 签名（一条命令）
 

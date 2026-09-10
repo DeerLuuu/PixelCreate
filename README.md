@@ -110,7 +110,10 @@ toolchain/       开发辅助脚本（devserver 静态服务、make-icon 图标�
 
 - `main` 上的 `.github/workflows/pages.yml`（源文件在 `master` 的 `web/pages.yml`）会在推送后
   自动发布到 Pages；仓库 Settings → Pages → Source 需选 **GitHub Actions**。
-- 构建命令与本地一致（`scripts/build-web.sh`），产物与 APK 里那份 `app.js` 完全相同。
+- 构建命令与本地一致（`scripts/build-web.sh`，默认 `--minify`：1.2MB → 约 730KB，Pages 上 gzip 后约 180KB）；
+  仓库、APK、Pages 三处用的是**同一份产物**，改完源码三处一起更新。
+- `app2/www/js/telemetry.js` 只在本地 devserver 上报（localhost / 127.0.0.1 / 局域网 IP / `*.local`），
+  在 Pages 与 APK（`file://`）里完全静默。
 
 ---
 
