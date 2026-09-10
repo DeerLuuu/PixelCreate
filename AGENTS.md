@@ -250,5 +250,6 @@ java -jar /root/pk/apksigner.jar verify --print-certs /sdcard/Download/PixelCraf
 |---|---|
 | [`README.md`](README.md) | 项目概览、功能清单、快速开始、目录结构与架构要点 |
 | [`docs/API.md`](docs/API.md) | 全部模块的 API 接口文档（签名 / 参数 / 返回值 / 用法）与扩展指南（新增工具 / 设置 / 导出格式 / 引导步骤） |
+| [`docs/UI.md`](docs/UI.md) | **UI 规范**：设计令牌（尺寸/主题色/固定色）、`src/ui/kit` 控件 API、迁移清单、组件与令牌测试约定、演示页 |
 | [`docs/COMPARISON.md`](docs/COMPARISON.md) | 与 Aseprite / Resprite 的对比、痛点复盘与优先级（含最新进展表） |
 | `AGENTS.md`（本文件） | AI 代理约定：环境、命令、架构、工程约定、出包 runbook、已知缺口 |
