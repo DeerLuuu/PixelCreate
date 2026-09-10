@@ -1567,6 +1567,45 @@ export async function testSession(): Promise<void> {
     }
   }
 
+  // --- 悬停读数合帧（PC 鼠标密集移动时不能逐像素重渲染）---
+  {
+    const d = new Session();
+    const g = globalThis as unknown as { window: Record<string, unknown> };
+    const prev = g.window.requestAnimationFrame;
+    let rafCb: (() => void) | null = null;
+    g.window.requestAnimationFrame = (cb: () => void) => { rafCb = cb; return 1; };
+    try {
+      let n = 0;
+      d.subscribe(() => { n++; });
+      d.setHover({ x: 5, y: 5, color: null });
+      d.setHover({ x: 6, y: 5, color: null });
+      d.setHover({ x: 7, y: 5, color: null });
+      eq("hover.throttle.deferred", n, 0);
+      eq("hover.throttle.pending", d.hover, null);
+      rafCb?.();
+      eq("hover.throttle.one-notify", n, 1);
+      eq("hover.throttle.latest", d.hover?.x, 7);
+      // 同一像素重复上报不再通知
+      d.setHover({ x: 7, y: 5, color: null });
+      eq("hover.throttle.same-pixel", n, 1);
+      // 离开画布（null）通知一次，并且只通知一次
+      d.setHover(null);
+      rafCb?.();
+      eq("hover.throttle.leave", [n, d.hover], [2, null]);
+      d.setHover(null);
+      eq("hover.throttle.leave-again", n, 2);
+      // 颜色变化也要通知（同一像素换色）
+      d.setHover({ x: 3, y: 3, color: [1, 2, 3, 255] });
+      rafCb?.();
+      d.setHover({ x: 3, y: 3, color: [9, 9, 9, 255] });
+      rafCb?.();
+      eq("hover.throttle.colour-change", [n, d.hover?.color?.[0]], [4, 9]);
+    } finally {
+      if (prev === undefined) delete g.window.requestAnimationFrame;
+      else g.window.requestAnimationFrame = prev;
+    }
+  }
+
   // --- 自定义快捷键：绑定 / 冲突 / 恢复 / 读档 ---
   {
     const d = new Session();

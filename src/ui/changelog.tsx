@@ -9,10 +9,10 @@ import { useKitPcMode } from "./kit";
 import { Dialog } from "./kit";
 
 /** keep in sync with android/AndroidManifest.xml versionName on every release */
-export const APP_VERSION = "1.0.9.3";
+export const APP_VERSION = "1.0.9.4";
 /** build stamp shown next to the version (support/debug: identifies the exact
  *  package a user is running when the version number itself does not change) */
-export const BUILD_TAG = "204005b";
+export const BUILD_TAG = "pending";
 
 export type ClgKind = "add" | "imp" | "fix";
 export interface ClgItem { kind: ClgKind; zh: string; en: string }
@@ -21,6 +21,14 @@ export interface ClgVersion { v: string; date: string; items: ClgItem[] }
 const it = (kind: ClgKind, zh: string, en: string): ClgItem => ({ kind, zh, en });
 
 export const CHANGELOG: ClgVersion[] = [
+  {
+    v: "1.0.9.4",
+    date: "2026-09-10",
+    items: [
+      it("imp", "拖动排序更好用了：按住按钮时它会**跟着鼠标走**并微微抬起（放大 + 阴影），越过邻居就换位；**直接把按钮拖出工具栏松手＝隐藏**（浮动球的子项拖离圆环同理），隐藏后工具栏末尾的 + 会显示隐藏数量，点开就能放回来。整条工具栏和圆盘在编辑模式下的反馈都更明显（虚线框、× 角标、抬起阴影）。", "Reordering feels much better now: the button you grab **follows the pointer** and lifts a little (scaled up with a shadow) while passing a neighbour swaps it into place; **dragging a button out of the bar and releasing hides it** (same for a floating-ball entry dragged away from its ring), and the + at the end of the bar shows how many are hidden so you can bring them back. Edit mode is visibly obvious throughout — dashed outlines, x badges and a lifted shadow."),
+      it("imp", "手感与性能的小优化：电脑模式下鼠标划过画布时的坐标/颜色读数改成**每帧最多更新一次**（以前每换一个像素就让整个界面重绘一次，鼠标快速划过时会明显掉帧）；浮动球被隐藏的按钮计数、编辑模式的提示条也更清楚。", "Small feel-and-speed polish: the pixel/colour readout under the mouse now updates **at most once per frame** in PC mode (it used to re-render the whole interface for every pixel crossed, which stuttered when sweeping the mouse quickly), and the hidden-button count plus the edit-mode hint bar are clearer."),
+    ],
+  },
   {
     v: "1.0.9.2",
     date: "2026-09-10",

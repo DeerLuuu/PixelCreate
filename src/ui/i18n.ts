@@ -70,7 +70,9 @@ const zh: Dict = {
   dropHint: "松开鼠标即可打开这个文件（.pxc / PNG / GIF）", pasteEmpty: "剪贴板里没有可用图像", pasteFromSystem: "已从系统剪贴板粘贴",
   pasteAsLayer: "已粘贴为新图层", pasteAsCanvas: "已粘贴为新画布", pasteFrames: "已粘贴到选中的每一帧",
   customise: "界面定制", cuHint: "也可以在界面上直接拖：打开「编辑界面」后拖动按钮调顺序、点 × 隐藏。",
-  uiEditOn: "编辑界面", uiEditHint: "拖动按钮调顺序 · 点 × 隐藏 · 点 + 放回隐藏的按钮",
+  uiEditOn: "编辑界面", uiEditHint: "拖动按钮调顺序 · 拖出工具栏＝隐藏 · 点 × 隐藏 · 点 + 放回",
+  cuDroppedOut: "已隐藏（点 + 可以放回来）",
+
   uiEditDone: "完成", uiEditStart: "在界面上直接拖动排序", cuPalNote2: "",
   cuAddBack: "放回隐藏的按钮", cuHiddenTitle: "已隐藏", cuNoneHidden: "没有被隐藏的按钮",
 
@@ -330,7 +332,9 @@ const en: Dict = {
   dropHint: "Drop the file to open it (.pxc / PNG / GIF)", pasteEmpty: "No image in the clipboard", pasteFromSystem: "Pasted from the system clipboard",
   pasteAsLayer: "Pasted as a new layer", pasteAsCanvas: "Pasted as a new canvas", pasteFrames: "Pasted into every picked frame",
   customise: "Customise UI", cuHint: "You can drag directly in the UI too: turn on Edit UI, drag buttons to reorder and click the x to hide.",
-  uiEditOn: "Edit UI", uiEditHint: "Drag a button to reorder · click x to hide · click + to bring hidden ones back",
+  uiEditOn: "Edit UI", uiEditHint: "Drag to reorder · drag out of the bar to hide · click x to hide · click + to bring one back",
+  cuDroppedOut: "Hidden (use + to bring it back)",
+
   uiEditDone: "Done", uiEditStart: "Drag to reorder directly in the UI", cuPalNote2: "",
   cuAddBack: "Bring a hidden button back", cuHiddenTitle: "Hidden", cuNoneHidden: "Nothing is hidden",
 

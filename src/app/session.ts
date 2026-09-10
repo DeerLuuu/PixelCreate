@@ -820,14 +820,41 @@ export class Session {
   }
   /** PC：鼠标下的像素与颜色（状态栏读数用；null = 不在画布上） */
   hover: { x: number; y: number; color: RGBA | null } | null = null;
+  /** 待合帧的悬停读数（PC 上鼠标移动密集，不能每个像素都惊动 React） */
+  private hoverPending: { x: number; y: number; color: RGBA | null } | null = null;
+  private hoverRaf = 0;
+  private hoverSame(a: { x: number; y: number; color: RGBA | null } | null, b: { x: number; y: number; color: RGBA | null } | null): boolean {
+    if (!a || !b) return a === b;
+    if (a.x !== b.x || a.y !== b.y) return false;
+    if (!a.color !== !b.color) return false;
+    if (!a.color || !b.color) return true;
+    return a.color[0] === b.color[0] && a.color[1] === b.color[1] && a.color[2] === b.color[2];
+  }
+  /**
+   * 发布悬停读数。同一个像素的重复上报会直接丢掉；不同像素之间用 rAF 合并成
+   * 每帧最多一次通知 —— 鼠标快速划过时不再逐像素重渲染整个界面。
+   */
   setHover(h: { x: number; y: number; color: RGBA | null } | null): void {
-    const cur = this.hover;
-    if (h === null && cur === null) return;
-    if (h && cur && cur.x === h.x && cur.y === h.y
-      && (!cur.color === !h.color)
-      && (!cur.color || (h.color && cur.color[0] === h.color[0] && cur.color[1] === h.color[1] && cur.color[2] === h.color[2]))) return;
-    this.hover = h;
-    this.changedUI();
+    if (this.hoverSame(h, this.hover) && this.hoverRaf === 0) return;
+    if (this.hoverSame(h, this.hoverPending) && this.hoverRaf !== 0) return;
+    this.hoverPending = h;
+    if (this.hoverRaf !== 0) return;
+    const w = typeof window === "undefined" ? null : window;
+    if (!w || typeof w.requestAnimationFrame !== "function") {
+      // 无 rAF 环境（测试/老浏览器）：同步通知
+      this.hover = this.hoverPending;
+      this.hoverPending = null;
+      this.changedUI();
+      return;
+    }
+    this.hoverRaf = w.requestAnimationFrame(() => {
+      this.hoverRaf = 0;
+      const v = this.hoverPending;
+      this.hoverPending = null;
+      if (this.hoverSame(v, this.hover)) return;
+      this.hover = v;
+      this.changedUI();
+    });
   }
 
   /** 另一个颜色槽的颜色（右键绘制用；当前用前景色时就是背景色） */

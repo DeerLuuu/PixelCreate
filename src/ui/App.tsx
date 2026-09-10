@@ -747,8 +747,11 @@ function bd(lang: string, key: keyof typeof B_DESC): string {
 }
 
 /**
- * 「编辑界面」模式下的直接拖动排序：按住某个按钮拖动，越过邻居中点就实时换位
- * （即时反馈，不需要额外的落点指示器）。移动超过 6px 才算拖动，抬手时吞掉那次点击。
+ * 「编辑界面」模式下的直接拖动排序。
+ *
+ * 手感要点：按住后按钮**跟着指针走**（translate + 抬起的阴影/放大），越过邻居中点
+ * 就实时换位；**拖出工具栏范围松手＝隐藏**（可随时用 + 放回）；移动超过 6px 才算
+ * 拖动，抬手时吞掉那次点击，避免拖完顺手触发按钮功能。
  */
 function useBarDrag(opts: {
   /** 把 id 移动若干步（负数 = 往前） */
@@ -757,32 +760,52 @@ function useBarDrag(opts: {
   centers: () => number[];
   axis: "x" | "y";
   enabled: boolean;
+  /** 容器矩形；松手点落在它外面（留一点余量）＝ 拖出去丢掉 */
+  bounds: () => { left: number; top: number; right: number; bottom: number } | null;
+  /** 拖出栏外时调用（默认动作：隐藏该按钮） */
+  onDropOut?: (id: string) => void;
 }) {
-  const drag = useRef<{ id: string; index: number; last: number; moved: boolean } | null>(null);
+  const [state, setState] = useState<{ id: string; dx: number; dy: number } | null>(null);
+  /** 抬手时被吞掉的那次点击（拖动结束时不要触发按钮功能） */
+  const swallow = useRef(false);
+  const drag = useRef<{ id: string; index: number; sx: number; sy: number; moved: boolean } | null>(null);
   const onDown = (id: string, index: number) => (e: React.PointerEvent) => {
     if (!opts.enabled) return;
-    drag.current = { id, index, last: opts.axis === "x" ? e.clientX : e.clientY, moved: false };
+    try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); } catch { /* ignore */ }
+    drag.current = { id, index, sx: e.clientX, sy: e.clientY, moved: false };
   };
   const onMove = (e: React.PointerEvent) => {
     const d = drag.current;
     if (!d || !opts.enabled) return;
-    const pos = opts.axis === "x" ? e.clientX : e.clientY;
-    if (!d.moved && Math.abs(pos - d.last) < 6) return;
+    const dx = e.clientX - d.sx, dy = e.clientY - d.sy;
+    if (!d.moved && Math.hypot(dx, dy) < 6) return;
     d.moved = true;
-    d.last = pos;
-    const centers = opts.centers();
-    const at = dropIndexAt(centers, pos);
+    setState({ id: d.id, dx, dy });
+    const pos = opts.axis === "x" ? e.clientX : e.clientY;
+    const at = dropIndexAt(opts.centers(), pos);
     if (at < 0 || at === d.index) return;
     opts.onMove(d.id, stepsBetween(d.index, at));
     d.index = at;
+    // 换位后基准点跟着走，按钮不会因为重新布局而跳开
+    d.sx = e.clientX - dx;
+    d.sy = e.clientY - dy;
   };
-  const onUp = (): boolean => {
-    const moved = !!drag.current?.moved;
+  const onUp = (e: React.PointerEvent) => {
+    const d = drag.current;
     drag.current = null;
-    return moved;
+    setState(null);
+    if (!d) return false;
+    if (!d.moved) return false;
+    swallow.current = true;
+    // 拖出栏外＝丢掉（隐藏）
+    const b = opts.bounds();
+    if (b && opts.onDropOut &&
+        (e.clientX < b.left - 24 || e.clientX > b.right + 24 || e.clientY < b.top - 24 || e.clientY > b.bottom + 24)) {
+      opts.onDropOut(d.id);
+    }
+    return true;
   };
-  const swallow = useRef(false);
-  return { onDown, onMove, onUp, dragging: () => !!drag.current?.moved, swallow };
+  return { onDown, onMove, onUp, state, swallow };
 }
 
 function TopBar({
@@ -800,7 +823,6 @@ function TopBar({
   const SHOWN = orderedActions(all, SESSION.prefs.barOrder, SESSION.prefs.barHidden);
   const HIDDEN = all.filter((a) => SESSION.prefs.barHidden.indexOf(a.id) >= 0);
   const [addOpen, setAddOpen] = useState(false);
-  const swallow = useRef(false);
   const barRef = useRef<HTMLElement | null>(null);
   const drag = useBarDrag({
     enabled: edit,
@@ -808,6 +830,11 @@ function TopBar({
     onMove: (id, delta) => SESSION.moveBarAction(all, id, delta),
     centers: () => Array.from(barRef.current?.querySelectorAll<HTMLElement>("[data-bar-id]") ?? [])
       .map((el) => { const r = el.getBoundingClientRect(); return r.left + r.width / 2; }),
+    bounds: () => barRef.current?.getBoundingClientRect() ?? null,
+    onDropOut: (id) => {
+      if (!SESSION.toggleBarAction(all, id)) { bridge.toast(t("cuKeepOne")); return; }
+      bridge.toast(t("cuDroppedOut"));
+    },
   });
   const [fsOn, setFsOn] = useState(isFullscreen);
   useEffect(() => (fsShow ? watchFullscreen(setFsOn) : undefined), [fsShow]);
@@ -815,7 +842,7 @@ function TopBar({
   // itself a history step, so it can be brought back from there
   const hist = snap.canUndo || snap.canRedo;
   return (
-    <header className="topbar" ref={barRef} onPointerMove={drag.onMove} onPointerUp={() => { if (drag.onUp()) swallow.current = true; }}>
+    <header className="topbar" ref={barRef} onPointerMove={drag.onMove} onPointerUp={drag.onUp} onPointerCancel={drag.onUp}>
       {/* 按钮来自 uibar 注册表：顺序与显隐可以在这里直接拖动修改（编辑界面模式），
           也可以在「界面定制」面板里改。第一个按钮固定在左，其余靠右（与以前一致）。 */}
       {SESSION.layoutOn("top") && SHOWN.map((a, i) => {
@@ -835,15 +862,17 @@ function TopBar({
           : t(a.label);
         const icon = a.id === "fullscreen" ? fullscreenIcon(fsOn) : a.icon;
         const btn = a.id === "menu" || a.id === "history"
-          ? <Btn icon={icon} onClick={() => { if (!swallow.current) act(); else swallow.current = false; }} title={title}
+          ? <Btn icon={icon} onClick={() => { if (!drag.swallow.current) act(); else drag.swallow.current = false; }} title={title}
             desc={bd(snap.lang, a.desc as "menu")} className={disabled ? "off" : ""} guide={a.guide} />
-          : <Btn icon={icon} onClick={() => { if (!swallow.current) act(); else swallow.current = false; }} title={title}
+          : <Btn icon={icon} onClick={() => { if (!drag.swallow.current) act(); else drag.swallow.current = false; }} title={title}
             desc={a.desc ? bd(snap.lang, a.desc as "undo") : undefined}
             active={a.id === "timeline" ? (tlOn && !noCanvas) : undefined}
             className={disabled ? "off" : ""} guide={a.guide} />;
         if (!edit) return <span key={a.id} data-bar-id={a.id} className="bar-slot">{btn}</span>;
         return (
-          <span key={a.id} data-bar-id={a.id} className="bar-slot editing"
+          <span key={a.id} data-bar-id={a.id}
+            className={"bar-slot editing" + (drag.state?.id === a.id ? " dragging" : "")}
+            style={drag.state?.id === a.id ? { transform: "translate(" + drag.state.dx + "px," + drag.state.dy + "px)" } : undefined}
             onPointerDown={drag.onDown(a.id, i)}>
             {btn}
             <button className="bar-x" title={t("cuHide")}
@@ -854,7 +883,9 @@ function TopBar({
         );
       })}
       {edit && (
-        <button className="bar-add" title={t("cuAddBack")} onClick={() => setAddOpen((v) => !v)}><Icon id="i-plus" size={14} /></button>
+        <button className={"bar-add" + (HIDDEN.length ? " has" : "")} title={t("cuAddBack")} onClick={() => setAddOpen((v) => !v)}>
+          <Icon id="i-plus" size={14} />{HIDDEN.length > 0 && <span className="bar-add-n">{HIDDEN.length}</span>}
+        </button>
       )}
       {edit && addOpen && (
         <div className="bar-addmenu">
@@ -1311,6 +1342,8 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
     } catch { return null; }
   };
   const [pieEquip, setPieEquip] = useState<OrbId | null>(loadPie);
+  /** 编辑模式下拖动中的圆环子项（跟手位移） */
+  const [ringDrag, setRingDrag] = useState<{ id: string; dx: number; dy: number } | null>(null);
   /** 拖动中的球是否正悬在装备槽上（松手即装备） */
   const slotRef = useRef<OrbId | null>(null);
   const [slotArmed, setSlotArmed] = useState(false);
@@ -1834,24 +1867,37 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
   const ring = (p0: { x: number; y: number }, items: Item[], ball?: OrbId) => {
     const edit = SESSION.uiEdit && !!ball;
     const cx = p0.x + ORB / 2, cy = p0.y + ORB / 2;
-    /** 编辑模式：把拖动中的球拖到圆环的某个槽位就换到那里 */
+    const R = M.r2;
+    /** 编辑模式：拖动子项沿圆环换位；拖离圆环（>1.7R）松手＝隐藏 */
     const dragRing = (id: string, index: number, n: number) => (e: React.PointerEvent) => {
       e.preventDefault();
       e.stopPropagation();
       try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); } catch { /* ignore */ }
       let cur = index;
+      let moved = false;
+      const sx = e.clientX, sy = e.clientY;
       // 用完整目录（含被隐藏项）做移动，隐藏项的位置因此不会被打乱
       const all = SESSION.orbCatalogOf(ball!);
+      setRingDrag({ id, dx: 0, dy: 0 });
       const onWinMove = (ev: PointerEvent) => {
+        const dx = ev.clientX - sx, dy = ev.clientY - sy;
+        if (!moved && Math.hypot(dx, dy) < 6) return;
+        moved = true;
+        setRingDrag({ id, dx, dy });
         const at = nearestSlotIndex(ev.clientX, ev.clientY, cx, cy, n);
         if (at < 0 || at === cur) return;
         SESSION.moveOrbItem(all, ball!, id, stepsBetween(cur, at));
         cur = at;
       };
-      const done = () => {
+      const done = (ev: PointerEvent) => {
         window.removeEventListener("pointermove", onWinMove);
         window.removeEventListener("pointerup", done);
         window.removeEventListener("pointercancel", done);
+        setRingDrag(null);
+        if (!moved) return;
+        // 拖到圆环外太远＝丢掉（隐藏），与工具栏的「拖出去」一致
+        const far = Math.hypot(ev.clientX - cx, ev.clientY - cy);
+        if (far > R * 1.7 && SESSION.toggleOrbItem(all, ball!, id)) bridge.toast(t("cuDroppedOut"));
       };
       window.addEventListener("pointermove", onWinMove);
       window.addEventListener("pointerup", done);
@@ -1866,8 +1912,11 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
             key={it.id + i}
             data-guide={it.guide}
             data-orb-id={it.id}
-            className={"orb-item" + (it.active ? " on" : "") + (edit ? " editing" : "")}
-            style={{ left: pt.x, top: pt.y, "--st": (i * 16) + "ms" } as unknown as React.CSSProperties}
+            className={"orb-item" + (it.active ? " on" : "") + (edit ? " editing" : "") + (ringDrag?.id === it.id ? " dragging" : "")}
+            style={{
+              left: pt.x, top: pt.y, "--st": (i * 16) + "ms",
+              ...(ringDrag?.id === it.id ? { transform: "translate(-50%,-50%) translate(" + ringDrag.dx + "px," + ringDrag.dy + "px)" } : {}),
+            } as unknown as React.CSSProperties}
             title={edit ? t("uiEditHint") : (it.desc || it.label)}
             onClick={() => { if (!edit) it.act(); }}
             onPointerDown={edit ? dragRing(it.id, i, items.length) : startTip(it.label, it.desc)}
@@ -2286,7 +2335,6 @@ function ControlBar({ t, snap, onPanel, onAdjust, onFramePrev }: { t: ReturnType
   const symKey = { off: "sym.off", on: "sym.on" } as const;
   const edit = SESSION.uiEdit;
   const [addOpen, setAddOpen] = useState(false);
-  const swallow = useRef(false);
   const rowRef = useRef<HTMLDivElement | null>(null);
   const cShown = orderedActions(CBAR_ACTIONS, SESSION.prefs.barOrder, SESSION.prefs.barHidden);
   const cHidden = CBAR_ACTIONS.filter((a) => SESSION.prefs.barHidden.indexOf(a.id) >= 0);
@@ -2296,15 +2344,22 @@ function ControlBar({ t, snap, onPanel, onAdjust, onFramePrev }: { t: ReturnType
     onMove: (id, delta) => SESSION.moveBarAction(CBAR_ACTIONS, id, delta),
     centers: () => Array.from(rowRef.current?.querySelectorAll<HTMLElement>("[data-bar-id]") ?? [])
       .map((el) => { const r = el.getBoundingClientRect(); return land ? r.top + r.height / 2 : r.left + r.width / 2; }),
+    bounds: () => rowRef.current?.getBoundingClientRect() ?? null,
+    onDropOut: (id) => {
+      if (!SESSION.toggleBarAction(CBAR_ACTIONS, id)) { bridge.toast(t("cuKeepOne")); return; }
+      bridge.toast(t("cuDroppedOut"));
+    },
   });
   return (
     <section className={"ctrlbar" + (land ? " land" : "")}>
-      <div className="cb-row" ref={rowRef} onPointerMove={drag.onMove} onPointerUp={() => { if (drag.onUp()) swallow.current = true; }}>
+      <div className="cb-row" ref={rowRef} onPointerMove={drag.onMove} onPointerUp={drag.onUp} onPointerCancel={drag.onUp}>
         {/* 全局按钮来自 uibar 注册表（顺序/显隐可定制，编辑模式下可直接拖动）；
             滑杆区是随工具变化的，保持自动 */}
         {cShown.map((a, i) => {
           const slot = (node: React.ReactNode): React.ReactNode => (
-            <span key={a.id} data-bar-id={a.id} className="bar-slot"
+            <span key={a.id} data-bar-id={a.id}
+              className={"bar-slot" + (drag.state?.id === a.id ? " dragging" : "")}
+              style={drag.state?.id === a.id ? { transform: "translate(" + drag.state.dx + "px," + drag.state.dy + "px)" } : undefined}
               onPointerDown={drag.onDown(a.id, i)}>
               {node}
               {edit && (
@@ -2330,7 +2385,7 @@ function ControlBar({ t, snap, onPanel, onAdjust, onFramePrev }: { t: ReturnType
             );
           }
           if (a.id === "swap") {
-            return slot(<Btn label="\u21c4" className="swap-color" title={t("swapColors")} onClick={() => { if (!swallow.current) SESSION.swapColors(); else swallow.current = false; }} guide={a.guide} />);
+            return slot(<Btn label="\u21c4" className="swap-color" title={t("swapColors")} onClick={() => { if (!drag.swallow.current) SESSION.swapColors(); else drag.swallow.current = false; }} guide={a.guide} />);
           }
           if (a.id === "adjust") {
             return slot(<Btn icon={a.icon} onClick={onAdjust} title={t("adjust")} guide={a.guide} />);
@@ -2345,7 +2400,9 @@ function ControlBar({ t, snap, onPanel, onAdjust, onFramePrev }: { t: ReturnType
           return null;
         })}
         {edit && (
-          <button className="bar-add" title={t("cuAddBack")} onClick={() => setAddOpen((v) => !v)}><Icon id="i-plus" size={14} /></button>
+          <button className={"bar-add" + (cHidden.length ? " has" : "")} title={t("cuAddBack")} onClick={() => setAddOpen((v) => !v)}>
+            <Icon id="i-plus" size={14} />{cHidden.length > 0 && <span className="bar-add-n">{cHidden.length}</span>}
+          </button>
         )}
         {edit && addOpen && (
           <div className="bar-addmenu">
