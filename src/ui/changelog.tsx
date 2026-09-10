@@ -9,10 +9,10 @@ import { useKitPcMode } from "./kit";
 import { Dialog } from "./kit";
 
 /** keep in sync with android/AndroidManifest.xml versionName on every release */
-export const APP_VERSION = "1.0.9.5";
+export const APP_VERSION = "1.0.9.6";
 /** build stamp shown next to the version (support/debug: identifies the exact
  *  package a user is running when the version number itself does not change) */
-export const BUILD_TAG = "9c8b87a";
+export const BUILD_TAG = "pending";
 
 export type ClgKind = "add" | "imp" | "fix";
 export interface ClgItem { kind: ClgKind; zh: string; en: string }
@@ -21,6 +21,13 @@ export interface ClgVersion { v: string; date: string; items: ClgItem[] }
 const it = (kind: ClgKind, zh: string, en: string): ClgItem => ({ kind, zh, en });
 
 export const CHANGELOG: ClgVersion[] = [
+  {
+    v: "1.0.9.6",
+    date: "2026-09-10",
+    items: [
+      it("fix", "修掉「手机上却用了电脑模式的布局」：自动判定以前只看媒体查询，而部分 Android 浏览器/WebView（以及带触控笔的设备）会谎报「有鼠标、能悬停」，于是浮动球被放大到桌面尺寸、工具也不再分页。现在判定会同时参考**真实输入**——设备有触摸点、或者你用手指/笔操作过，就按触屏处理；真的收到鼠标事件才切到电脑模式（触屏笔记本插上鼠标后照样会自动切过去）。另外修好了「在设置里切换电脑模式后，浮动球要等重启才变」的问题：现在改完立即生效。如果你之前手动开过电脑模式，可以在设置 → 显示与取色 → 电脑模式里改回「自动」。", "Fixed “a phone using the desktop layout”: auto mode only looked at the media queries, and some Android browsers/WebViews (and devices with a stylus) falsely claim “has a mouse, can hover”, which blew the floating balls up to desktop size and stopped paging the tools. Detection now also uses **real input**: a device that advertises touch points, or that has been used with a finger or pen, counts as touch, and only an actual mouse event switches the desktop extras on (a touch-screen laptop still switches over as soon as you move its mouse). Also fixed the settings toggle not taking effect until a restart — the floating balls now follow immediately. If you had forced PC mode on, set it back to “auto” in Settings -> Display & Colour -> PC mode."),
+    ],
+  },
   {
     v: "1.0.9.5",
     date: "2026-09-10",

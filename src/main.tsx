@@ -12,6 +12,8 @@ applyTheme(SESSION.prefs.theme);
 // desktop extras (wheel zoom / hover / shortcuts) follow the pointer, not the UA
 setHoverTipsEnabled(applyPcMode(pcModeOf(SESSION.prefs)));
 watchPcCapabilities(() => pcModeOf(SESSION.prefs), setHoverTipsEnabled);
+// 设置里切换「电脑模式」后，界面层（浮动球尺寸/排布等）也要立刻跟上
+SESSION.subscribe(() => setHoverTipsEnabled(applyPcMode(pcModeOf(SESSION.prefs))));
 const host = document.getElementById("root");
 if (!host) throw new Error("no #root");
 createRoot(host).render(<App />);

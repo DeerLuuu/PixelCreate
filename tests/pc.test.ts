@@ -1,6 +1,6 @@
 // PC mode detection (src/io/pcmode.ts) — the pure decision plus the
 // "which environment am I in" rules behind the desktop extras.
-import { normalizePcMode, resolvePcMode } from "../src/io/pcmode";
+import { inputHints, normalizePcMode, notePointerType, resolvePcMode } from "../src/io/pcmode";
 import { normalizeWheelDelta, wheelIntent, wheelZoomFactor } from "../src/render/wheel";
 import { fanRadius, orbMetrics, ringLayout } from "../src/ui/orb-layout";
 import { cursorFor } from "../src/render/cursor";
@@ -16,6 +16,31 @@ export function testPcMode(): void {
   eq("pc.auto.touch", resolvePcMode("auto", false, false), false);
   // touch-screen laptops report both: hover+fine wins, the user can force it off
   eq("pc.auto.hybrid", resolvePcMode("auto", true, true), true);
+
+  // ---- 真实输入证据：手机的 WebView 会谎报 hover/fine，必须靠事件纠正 ----
+  // Android WebView 常见组合：媒体查询说「有鼠标」，但设备有触摸点
+  eq("pc.hint.touchpoints-veto", resolvePcMode("auto", true, true, { touchPoints: 5 }), false);
+  eq("pc.hint.touch-seen-veto", resolvePcMode("auto", true, true, { seenTouch: true }), false);
+  // 一旦真的收到鼠标事件，就是 PC（也压过触摸点）
+  eq("pc.hint.mouse-wins", resolvePcMode("auto", false, false, { seenMouse: true }), true);
+  eq("pc.hint.mouse-beats-touch", resolvePcMode("auto", false, false, { seenMouse: true, seenTouch: true, touchPoints: 5 }), true);
+  // 纯桌面（无触摸点）仍然按媒体查询走
+  eq("pc.hint.desktop", resolvePcMode("auto", true, true, { touchPoints: 0 }), true);
+  eq("pc.hint.desktop-coarse", resolvePcMode("auto", false, false, { touchPoints: 0 }), false);
+  // 强制开关不受证据影响
+  eq("pc.hint.forced-on", resolvePcMode("on", false, false, { seenTouch: true, touchPoints: 9 }), true);
+  eq("pc.hint.forced-off", resolvePcMode("off", true, true, { seenMouse: true }), false);
+  // 事件记录：鼠标粘住，触摸/笔只作为否决证据
+  {
+    notePointerType("touch");
+    eq("pc.note.touch", inputHints().seenTouch, true);
+    eq("pc.note.mouse-not-yet", inputHints().seenMouse, false);
+    notePointerType("mouse");
+    eq("pc.note.mouse", inputHints().seenMouse, true);
+    notePointerType("pen");
+    eq("pc.note.pen-is-touch", inputHints().seenTouch, true);
+    eq("pc.note.mouse-sticky", inputHints().seenMouse, true);
+  }
   // a stylus-only device: fine pointer but no hover -> not a PC by default
   eq("pc.auto.pen-only", resolvePcMode("auto", true, false), false);
   eq("pc.auto.coarse-with-hover", resolvePcMode("auto", false, true), false);

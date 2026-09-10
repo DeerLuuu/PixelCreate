@@ -811,14 +811,17 @@ unbindChord(action, keymap) / overrides(keymap)
 
 | 导出 | 说明 |
 |---|---|
-| `resolvePcMode(mode, finePointer, hover)` | 纯函数（有测试）：`auto` 需要「精细指针 **且** 支持悬停」，`on` / `off` 无视检测 |
+| `resolvePcMode(mode, finePointer, hover, hints?)` | 纯函数（有测试）：`auto` 下先看真实输入证据（`seenMouse` 粘住为真 → PC；`seenTouch` 或 `navigator.maxTouchPoints > 0` → 触屏），都没有才用媒体查询的「精细指针 **且** 支持悬停」；`on` / `off` 无视一切检测 |
 | `normalizePcMode(v)` | 把存储/导入的值规范成 `auto` |
 | `pointerCapabilities()` | 读 `(pointer: fine)` 与 `(hover: hover)` 两个媒体查询 |
 | `applyPcMode(mode)` / `isPc()` | 写 / 读 `<html data-pc>`；`applyPcMode` 返回解析后的状态 |
-| `watchPcCapabilities(getMode, cb?)` | 指针能力变化（插鼠标、切换平板模式）时重算 |
+| `watchPcCapabilities(getMode, cb?)` | 指针能力变化（插鼠标、切换平板模式）**以及第一个真实指针事件**时重算：手机 WebView 常谎报 `hover: hover`，第一次触摸把它钉在触屏模式，第一次鼠标移动又会切回桌面模式 |
+| `notePointerType(t)` / `inputHints()` | 记录 / 读取输入证据（`mouse` 粘住、`touch`·`pen` 只作否决证据） |
 | `pcModeOf(prefs)` | 从 `Prefs.pcMode` 取值（`session.ts` 新增字段，默认 `auto`） |
 
-设置项：`display.pcMode`（自动 / 强制开 / 强制关），启动时由 `main.tsx` 应用。
+设置项：`display.pcMode`（自动 / 强制开 / 强制关），启动时由 `main.tsx` 应用；
+改设置后 `main.tsx` 会通过 `SESSION.subscribe` 重新把结果推给界面层（`setKitPcMode`），
+所以浮动球尺寸 / 排布 / 悬停提示会立刻跟着切。
 
 ### 16.1c 全屏 `src/io/fullscreen.ts`
 
