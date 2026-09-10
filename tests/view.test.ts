@@ -634,6 +634,59 @@ export function testView(): void {
       v4.destroy();
     }
 
+    // ---- ⑦ 画布调整模式：拖边改尺寸，内容按「对边固定」锚定 ----
+    {
+      const s6 = new Session();
+      const host6 = {
+        clientWidth: 320, clientHeight: 240, style: {},
+        appendChild: () => undefined, replaceChildren: () => undefined,
+        getBoundingClientRect: () => ({ left: 0, top: 0, width: 320, height: 240 }),
+        addEventListener: () => undefined,
+        setPointerCapture: () => undefined, releasePointerCapture: () => undefined,
+      } as unknown as HTMLElement;
+      const v6 = new View(host6, s6);
+      s6.attachView(v6);
+      s6.doc.name = "R";
+      v6.fit();
+      dom.flush();
+      const w0 = s6.doc.w, h0 = s6.doc.h;
+      const cel6 = s6.doc.ensureCel(0, 0)!;
+      const k6 = cel6.idx(4, 4);
+      cel6.data[k6] = 255; cel6.data[k6 + 3] = 255;
+      const dn6 = (x: number, y: number): void => { (v6 as unknown as { onDown(e: PointerEvent): void }).onDown(ev(x, y)); dom.flush(); };
+      const mv6 = (x: number, y: number): void => { (v6 as unknown as { onMove(e: PointerEvent): void }).onMove(ev(x, y)); dom.flush(); };
+      const up6 = (x: number, y: number): void => { (v6 as unknown as { onUp(e: PointerEvent): void }).onUp(ev(x, y)); dom.flush(); };
+      s6.setResizeMode(true);
+      ok("view.resize.mode-on", s6.resizeModeOn);
+      const z6 = v6.zoom;
+      // 拖右边 +4 画布像素：宽度 +4，高度不变，内容左对齐（红点仍在 (4,4)）
+      const rx = v6.ox + w0 * z6, ry = v6.oy + h0 * z6 / 2;
+      dn6(rx, ry); mv6(rx + 4 * z6, ry); up6(rx + 4 * z6, ry);
+      eq("view.resize.width", s6.doc.w, w0 + 4);
+      eq("view.resize.height", s6.doc.h, h0);
+      eq("view.resize.keeps-left", s6.doc.celAt(0, 0)!.data[s6.doc.celAt(0, 0)!.idx(4, 4) + 3], 255);
+      // 在右边也点一个像素：拖左边时「右边固定」，它应当只跟着新宽度移动
+      const celB = s6.doc.celAt(0, 0)!;
+      const kR = celB.idx(s6.doc.w - 3, 4);
+      celB.data[kR] = 255; celB.data[kR + 3] = 255;
+      const wBefore = s6.doc.w;
+      const lx = v6.ox, ly = v6.oy + h0 * z6 / 2;
+      dn6(lx, ly); mv6(lx + 6 * z6, ly); up6(lx + 6 * z6, ly);
+      eq("view.resize.width-left", s6.doc.w, wBefore - 6);
+      // 右边内容锚定：还在「距右边 3 像素」的位置；左边被裁掉的像素不再存在
+      const celC = s6.doc.celAt(0, 0)!;
+      eq("view.resize.anchored-right", celC.data[celC.idx(s6.doc.w - 3, 4) + 3], 255);
+      eq("view.resize.cropped-left", celC.data[celC.idx(4, 4) + 3], 0);
+      // 关掉模式：画布内的拖动恢复成绘制（不再改尺寸）
+      s6.setResizeMode(false);
+      s6.setTool("pencil");
+      const inside6 = { x: v6.ox + 2.5 * z6, y: v6.oy + 2.5 * z6 };
+      const wBefore6 = s6.doc.w;
+      dn6(inside6.x, inside6.y); mv6(inside6.x + 3 * z6, inside6.y); up6(inside6.x + 3 * z6, inside6.y);
+      eq("view.resize.no-resize-when-off", s6.doc.w, wBefore6);
+      v6.destroy();
+    }
+
     view.destroy();
   } finally {
     cmod.composeFrameWithOnion = origOnion;
