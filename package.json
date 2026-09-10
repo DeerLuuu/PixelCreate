@@ -6,7 +6,8 @@
   "scripts": {
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "sh scripts/run-tests.sh",
-    "build": "sh scripts/build-web.sh"
+    "build": "sh scripts/build-web.sh",
+    "demo": "sh scripts/build-ui-demo.sh"
   },
   "devDependencies": {
     "@types/react": "^18.3.0",

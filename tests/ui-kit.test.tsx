@@ -9,6 +9,7 @@ import { eq, ok } from "./common";
 import { Dialog } from "../src/ui/kit/Dialog";
 import { Row, RowActions, ChipGroup, Segmented, Switch, NumberField, ColorField } from "../src/ui/kit/Form";
 import { Icon, Btn } from "../src/ui/kit/primitives";
+import { Demo } from "../src/ui/kit/demo";
 
 declare const require: (m: string) => any;
 declare const __dirname: string;
@@ -111,6 +112,15 @@ export function testUiKit(): void {
   ok("ui.btn", btn.indexOf('class="btn active danger"') >= 0 && btn.indexOf('aria-label="保存"') >= 0 && btn.indexOf('data-guide="btn-save"') >= 0);
   ok("ui.icon", html(<Icon id="i-x" size={16} />).indexOf('width="16"') >= 0);
 
+  // ------------------------------------------------------------- demo page
+  // the demo exercises every component at once; rendering it here also proves
+  // it never touches the DOM at import time (it mounts only in a browser)
+  const demo = html(<Demo />);
+  for (const probe of ["PixelCraft UI Kit", "ChipGroup", "NumberField", "令牌色板", "Dialog"]) {
+    ok("ui.demo." + probe, demo.indexOf(probe) >= 0);
+  }
+  ok("ui.demo.sections", (demo.match(/demo-h/g) || []).length >= 6);
+
   // --------------------------------------------------------- kit purity
   // docs/UI.md §1.1: kit files may only import react / react-dom / engine/expr
   const kitDir = path.resolve(__dirname, "../../../src/ui/kit");
@@ -123,6 +133,7 @@ export function testUiKit(): void {
     for (const m of src.matchAll(/from\s+["']([^"']+)["']/g)) {
       const mod = m[1];
       const okMod = mod === "react" || mod === "react-dom" || mod === "react-dom/server"
+        || mod === "react-dom/client"
         || mod.indexOf("./") === 0 || mod === "../../engine/expr" || mod === "../tooltip";
       if (!okMod || banned.test('from "' + mod + '"')) offenders.push(f + " -> " + mod);
     }

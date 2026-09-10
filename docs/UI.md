@@ -366,6 +366,9 @@ import { Dialog } from "../kit";
 
 > 事件交互不引入 jsdom：把「点击后发生什么」收敛到纯函数或用 props 直接验证。
 
+当前套件规模：`tests/ui-kit.test.tsx`（组件契约 + kit 纯度）、`tests/ui-tokens.test.ts`（令牌契约）；
+两者由 `tests/run-tests.ts` 调用，`tests/tsconfig.json` 需 `jsx: react-jsx`。
+
 ### 5.2 令牌规范测试（`tests/ui-tokens.test.ts`）
 
 静态解析 `src/ui/style.css`（与 `tests/i18n.test.ts` 同样的读文件方式）：
@@ -392,6 +395,16 @@ import { Dialog } from "../kit";
 sh scripts/build-ui-demo.sh          # esbuild → app2/www/ui-demo.html + app2/www/js/ui-demo.js（均 gitignore）
 node toolchain/devserver.js          # 端口 8090
 # 浏览器打开 http://127.0.0.1:8090/ui-demo.html
+```
+
+容器内（仓库路径含中文，esbuild 无法直接读该路径）改用 ASCII 构建目录，与 §6.4 同理：
+
+```sh
+cd /root/pcbuild/buildsrc && cp -r /root/pcbuild/app/src/. .
+../node_modules/.bin/esbuild ui/kit/demo.tsx --bundle --format=iife --platform=browser \
+  --target=es2019 --define:process.env.NODE_ENV='"development"' --outfile=ui-demo.js --log-level=warning
+cp ui-demo.js "<repo>/app2/www/js/ui-demo.js" && cp ui/style.css "<repo>/app2/www/css/style.css"
+python3 "<按 scripts/build-ui-demo.sh 里的片段生成 app2/www/ui-demo.html>"
 ```
 
 - 入口 `src/ui/kit/demo.tsx`：一屏展示全部控件与变体、令牌色板、暗/浅主题切换按钮。

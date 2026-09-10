@@ -5,6 +5,8 @@
 # ---- generated web bundles (built from src/) ----
 app2/www/css/style.css
 app2/www/js/app.js
+app2/www/js/ui-demo.js
+app2/www/ui-demo.html
 
 # ---- scratch / local temp ----
 /_scratch/

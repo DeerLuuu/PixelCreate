@@ -69,6 +69,7 @@ src/
 ├─ render/      view（视口 / 手势 / 渲染）、compositor（合成）、rect（脏矩形工具）、onion（洋葱皮布局）
 ├─ io/          bridge（原生桥接）、exporters、gifread、project（.pxc）、autosave、clipboard
 └─ ui/          React 界面：App、timeline、modals、changelog、guide(+demo/layout)、hold、preview、i18n、style.css
+   └─ ui/kit/    UI 控件库：Dialog、Form（Row/ChipGroup/Segmented/Switch/NumberField/ColorField）、primitives、scrub、令牌与演示页
 tests/          引擎与逻辑测试（无 DOM 依赖，node 直接跑）
 android/        自研 APK 工程（AndroidManifest + MainActivity + 图标）
 app2/www/       PWA 产物（index.html + 构建后的 app.js/style.css）
@@ -77,7 +78,7 @@ toolchain/       开发辅助脚本（devserver 静态服务、make-icon 图标�
 
 ### 架构要点
 
-- **引擎层零 DOM**：`engine/`、`app/`、`tools/` 全部可在 Node 下测试（392 项测试跑在纯数据上）。
+- **引擎层零 DOM**：`engine/`、`app/`、`tools/` 全部可在 Node 下测试（1108 项测试跑在纯数据上，含 UI 控件与令牌契约）。
 - **声明式注册表**：设置项写在 `src/app/settings.ts`，引导步骤写在 `src/app/guide.ts`；新增功能 = 一条声明 + i18n 文案，界面自动生成。
 - **增量渲染**：笔迹只重合成/重绘改动区域（`Rect` + `composeRectInto` + `celToCanvasRect`），一帧一次绘制（rAF 合并）。
 - **撤销栈**：`history.pushPixels`（像素）/ `pushStruct`（结构快照）/ `record`（标量前后值）三类，所有破坏性操作都可单步撤销。
@@ -90,6 +91,7 @@ toolchain/       开发辅助脚本（devserver 静态服务、make-icon 图标�
 | 文档 | 内容 |
 |---|---|
 | [`docs/API.md`](docs/API.md) | 各模块 API 接口文档（函数签名、参数、返回值、用法示例） |
+| [`docs/UI.md`](docs/UI.md) | UI 规范：设计令牌、`src/ui/kit` 控件 API 与 DOM 契约、迁移清单、测试与演示页约定 |
 | [`docs/COMPARISON.md`](docs/COMPARISON.md) | 与 Aseprite / Resprite 的功能对比与改进优先级 |
 | [`AGENTS.md`](AGENTS.md) | AI 代理约定：环境与命令、架构要点、工程约定（版本号/提交/文档同步）、导出 APK 完整 runbook、已知缺口 |
 

@@ -27,6 +27,7 @@
 17. [UI 层与事件契约 `ui/`](#17-ui-层与事件契约)
 18. [多画布空间 / 新工具与特效（1.0.7.11 追加）](#18-多画布空间--新工具与特效)
 19. [扩展指南](#19-扩展指南)
+20. [UI 控件库 `ui/kit/`](#20-ui-控件库-uikit)
 
 ---
 
@@ -964,7 +965,69 @@ view.fitAnimated(ms = 220) / animateTo(z, ox, oy, ms)  // 缓动适配（双击�
 ### 测试
 
 ```bash
-npm test        # 392 项：引擎 / 选区 / 历史 / 播放 / 设置 / 引导 / 渲染 / 导出 / 返回手势
+npm test        # 1108 项：引擎 / 选区 / 历史 / 播放 / 设置 / 引导 / 渲染 / 导出 / 返回手势 / UI 控件与令牌
 ```
 
 新增纯逻辑（算法、布局、解析、决策）时，优先抽成无 DOM 依赖的函数再补一条 `tests/*.test.ts` 断言——这是本项目保持可回归的主要手段。
+
+
+---
+
+## 20. UI 控件库 `ui/kit/`
+
+> 规范见 [`docs/UI.md`](UI.md)：令牌表、控件 DOM 契约、迁移与测试约定。本节只列接口。
+> 依赖边界：`ui/kit/**` 只允许 import `react` / `react-dom` / `../tooltip` / `../../engine/expr` 与同目录模块，
+> **不得**引用 `singleton`(Session)、`i18n`、`app/`、`io/`（由 `tests/ui-kit.test.tsx` 强制）。
+
+### 20.1 `ui/kit/Dialog.tsx`
+
+```ts
+interface DialogProps {
+  title?: React.ReactNode;        // 头部标题；纯字符串时自动作为 aria-label
+  onClose?: () => void;           // 遮罩点击 / × 按钮 / Esc
+  children?: React.ReactNode;     // 正文（.dlg-body）
+  footer?: React.ReactNode;       // 页脚（.dlg-foot）；省略则不渲染页脚
+  top?: React.ReactNode;          // 头部与正文之间（历史模式说明、引用模式选择）
+  extra?: React.ReactNode;        // 正文与页脚之间（回放按钮行）
+  className?: string;             // 追加到 .dlg（fxdlg / tile-dlg / clg-dlg / dlg-top …）
+  bodyClass?: string;             // 追加到 .dlg-body（col / hist-body / fp-grid …）
+  bodyStyle?: React.CSSProperties;
+  bodyProps?: React.HTMLAttributes<HTMLDivElement>;  // 正文的额外 DOM 属性（帧预览的双指缩放）
+  guide?: string;                 // 引导锚点 → data-guide
+  closeBtn?: boolean;             // 默认 true（无 onClose 时不渲染）
+  maskClose?: boolean;            // 默认 true
+  escClose?: boolean;             // 默认 true
+  closeLabel?: string;            // × 的 aria-label（默认 "close"）
+  label?: string;                 // title 非字符串时的 aria-label
+}
+```
+
+渲染 `<div class="dlg-mask">` + `<div class="dlg" role="dialog" aria-modal="true">`（fragment，不负责挂载/卸载；
+进出场动画由调用方套 `<Keep on={…} el={<Dialog …/>} />`）。DOM 顺序：head → top → body → extra → foot。
+
+### 20.2 `ui/kit/Form.tsx`
+
+| 组件 | 签名要点 | 渲染 |
+|---|---|---|
+| `Row` | `{ label?, hint?, className?, children? }` | `<label class="rowlabel">` + children + 可选 `<div class="row-note">` |
+| `RowActions` | `{ className?, children? }` | `<div class="row-actions">` |
+| `ChipGroup<T>` | `{ value: T, options: ChipOption<T>[], onChange, className? }`，`ChipOption = { id, label, guide?, hidden? }` | `<div class="chips">` + `.chip[.on]` |
+| `Segmented<T>` | 同上 | `<div class="tabs">` + `.tab[.on]` |
+| `Switch` | `{ checked, onChange, label?, disabled? }` | `<button class="sw[.on]" role="switch" aria-checked>` |
+| `NumberField` | `ScrubNumProps & { label?, hint? }` | `Row` + `ScrubNum` |
+| `ColorField` | `{ value, onChange, label?, hint? }` | `Row` + `<input type="color">` + `.set-hex` |
+
+`ChipGroup`/`Segmented` 的 `T` 用 `NoInfer` 从 `value` 推断：`value` 传联合类型的 state，
+选项数组直接写字面量即可；条件项用 `hidden: !cond`（调用点 `.filter()` 会把 `T` 拓宽成 `string`）。
+
+### 20.3 `ui/kit/primitives.tsx` / `ui/kit/scrub.tsx`
+
+`Icon`、`Btn`、`Keep`、`Overlay`、`TipHost`、`useBlankTap`、`useLandscape`、`ScrubNum`（同既有签名；
+`ScrubNum` 新增可选 `padTitle`，由 `ui/base.tsx` 注入译文）。`ui/base.tsx` 继续导出全部这些名字，
+并额外提供 `useSession()` 与带译文的 `ScrubNum` 包装。
+
+### 20.4 设计令牌与主题
+
+`style.css` 顶部 `:root` 定义尺寸令牌与主题色/固定色令牌，`[data-theme="light"]` 覆盖全部主题色令牌；
+`io/theme.ts` 的 `applyTheme(mode)` / `themeMode(v)` 写 `<html data-theme>` 与 `<meta name="theme-color">`，
+设置项为 `display.theme`（`Prefs.theme`，默认 `dark`）。
