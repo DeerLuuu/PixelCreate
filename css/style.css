@@ -1078,18 +1078,19 @@ html[data-pc] .sc-dlg{width:min(92vw,760px)}
 .row-note.warn{color:var(--danger);font-weight:600}
 
 /* ---- 存储区边上的「装备槽」+ 饼菜单（Pie，仅 PC）---- */
-.pie-slot{position:fixed;right:80px;top:50%;transform:translateY(-50%);z-index:34;
+.pie-slot{position:fixed;right:8px;top:calc(50% + 85px);z-index:34;
   width:38px;height:38px;border-radius:12px;display:flex;align-items:center;justify-content:center;
   background:var(--surface-item);border:1px dashed var(--line);color:var(--dim-2);
   cursor:pointer;user-select:none;-webkit-user-select:none;touch-action:none;transition:transform .1s,background .12s,border-color .12s}
 .pie-slot:hover{background:var(--surface-item-active)}
 .pie-slot.on{border-style:solid;border-color:var(--accent);color:var(--text)}
-.pie-slot.armed{border-color:var(--accent);background:var(--accent-soft);transform:translateY(-50%) scale(1.14)}
+.pie-slot.armed{border-color:var(--accent);background:var(--accent-soft);transform:scale(1.14)}
 .pie-slot-plus{font-size:18px;font-weight:700;line-height:1}
 .pie-slot-key{position:absolute;right:-3px;bottom:-4px;font-size:9px;font-weight:800;line-height:1;padding:2px 3px;border-radius:5px;
   background:var(--accent);color:var(--on-accent)}
-.bdock.horiz ~ .pie-slot{right:auto;top:6px;left:calc(50% + 152px);transform:none}
-@media (max-width:520px){.pie-slot{right:74px}}
+/* 横屏时存储区在顶部居中：装备槽挪到它正下方，仍然贴同一侧 */
+.bdock.horiz ~ .pie-slot{right:auto;top:72px;left:calc(50% - 19px)}
+@media (max-width:520px){.pie-slot{right:8px}}
 
 .pie-layer{position:fixed;inset:0;z-index:var(--z-pop);cursor:none;background:var(--pie-mask);animation:pieIn .12s ease both}
 @keyframes pieIn{from{opacity:0}to{opacity:1}}
