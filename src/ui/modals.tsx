@@ -21,6 +21,7 @@ import { detectInsets } from "../io/safearea";
 import type { RefImg } from "./refimg";
 import { Dialog, Row, RowActions, NumberField, ColorField, ChipGroup, Segmented, Switch, useKitPcMode } from "./kit";
 import { SHORTCUT_SHEET } from "../app/shortcuts";
+import { REBINDABLE, chordForAction, chordLabel, chordOf, isOverridden, overrides } from "../app/keymap";
 
 export type ModalId = "menu" | "changelog" | "newdoc" | "newproject" | "export" | "adjust" | "settings" | "frame" | "framePrev" | "size" | "sheet" | "history" | "canvasRef" | "shortcuts" | null;
 export type SizeMode = "canvas" | "sprite";
@@ -105,7 +106,7 @@ export function PalettePanel({ t, onClose }: { t: ReturnType<typeof makeT>; onCl
           }} />
         </RowActions>
         <RowActions>
-          <Btn icon="i-palette" label={t("indexedMode")} active={SESSION.prefs.indexed}
+          <Btn icon="i-indexed" label={t("indexedMode")} active={SESSION.prefs.indexed}
             title={t(SESSION.prefs.indexed ? "indexedOn" : "indexedOff")}
             onClick={() => SESSION.setIndexed(!SESSION.prefs.indexed)} guide="pal-indexed" />
           {SESSION.prefs.indexed && (
@@ -874,16 +875,105 @@ export function histName(label: string, t: ReturnType<typeof makeT>, lang: strin
  * vocabulary (the touch-only gestures are listed on the mobile side, where the
  * sheet also opens from the main menu). Content lives in app/shortcuts.ts.
  */
+/**
+ * Shortcut cheat sheet + rebinding: every rebindable row has an edit button —
+ * click it (or the chord) and press the new combination. Esc cancels,
+ * Backspace/Delete restores the default, a chord already used by another action
+ * is refused with a note. Overrides live in `prefs.keymap`.
+ */
 export function ShortcutHelpModal({ t, onClose }: { t: ReturnType<typeof makeT>; onClose: () => void }) {
   const en = SESSION.prefs.lang === "en";
   const pc = useKitPcMode();
   const [pick, setPick] = useState(0);
+  const [capture, setCapture] = useState<string | null>(null);
+  const [, bump] = useState(0);
   const groups = SHORTCUT_SHEET;
   const g = groups[Math.min(pick, groups.length - 1)];
+  const keymap = SESSION.prefs.keymap;
+  const anyOverride = overrides(keymap).length > 0;
+
+  // 捕获新按键：Esc 取消、Backspace/Delete 恢复默认，其余组合键保存
+  useEffect(() => {
+    if (!capture) return;
+    const onKey = (e: KeyboardEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.key === "Escape") { setCapture(null); return; }
+      if (e.key === "Backspace" || e.key === "Delete") {
+        SESSION.resetKey(capture);
+        setCapture(null);
+        bump((n) => n + 1);
+        return;
+      }
+      const chord = chordOf({ key: e.key, ctrlKey: e.ctrlKey, metaKey: e.metaKey, altKey: e.altKey, shiftKey: e.shiftKey });
+      if (!chord) return;                     // modifier only: keep waiting
+      const clash = SESSION.bindKey(capture, chord);
+      if (clash) {
+        bridge.toast(t("scClash") + " " + keyActionLabel(clash, en));
+        return;                               // stay in capture mode
+      }
+      setCapture(null);
+      bump((n) => n + 1);
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [capture, en]);
+
+  /** 面板里显示某动作当前生效的组合键 */
+  const labelOf = (action: string): string => {
+    const chord = chordForAction(action, keymap);
+    return chord ? chordLabel(chord) : "";
+  };
+  const overridden = (action: string): boolean => isOverridden(action, keymap);
+  const canRebind = (it: { action?: string }): boolean => !!it.action && REBINDABLE.indexOf(it.action) >= 0;
+
+  const row = (it: typeof g.items[number], k: string) => {
+    const rebindable = canRebind(it);
+    const action = it.action ?? "";
+    const capturing = capture === action;
+    return (
+      <div key={k} className={"sc-row" + (capturing ? " capturing" : "")}>
+        {rebindable ? (
+          <button className={"sc-keys sc-keybtn" + (capturing ? " capturing" : "") + (overridden(action) ? " custom" : "")}
+            data-guide={"sc-key-" + action}
+            title={capturing ? t("scPressKey") : t("scRebind")}
+            onClick={() => setCapture(capturing ? null : action)}>
+            {capturing ? t("scPressKey") : labelOf(action)}
+          </button>
+        ) : (
+          <kbd className="sc-keys">{it.keys}</kbd>
+        )}
+        <span className="sc-desc">{en ? it.en : it.zh}</span>
+        {rebindable && overridden(action) && (
+          <button className="sc-reset" title={t("scResetOne")} onClick={() => { SESSION.resetKey(action); bump((n) => n + 1); }}>
+            <Icon id="i-undo" size={14} />
+          </button>
+        )}
+      </div>
+    );
+  };
+  const list = (
+    <>
+      {pc
+        ? g.items.map((it, i) => row(it, "pc" + i))
+        : groups.map((grp) => (
+          <div key={grp.en} className="sc-group">
+            <div className="sc-gtitle">{en ? grp.en : grp.zh}</div>
+            {grp.items.map((it, i) => row(it, grp.en + i))}
+          </div>
+        ))}
+    </>
+  );
   return (
     <Dialog title={t("shortcutHelp")} onClose={onClose} className={"sc-dlg" + (pc ? " sc-dlg-pc" : "")} bodyClass="sc-body"
       extra={<div className="row-note">{t("shortcutHelpHint")}</div>}
-      footer={<Btn label={t("close")} onClick={onClose} />}>
+      footer={
+        <>
+          {anyOverride && <Btn label={t("scResetAll")} onClick={() => { SESSION.resetAllKeys(); bump((n) => n + 1); }} />}
+          <Btn label={t("close")} onClick={onClose} />
+        </>
+      }>
       {pc ? (
         <div className="sc-split">
           <div className="sc-cats">
@@ -891,26 +981,22 @@ export function ShortcutHelpModal({ t, onClose }: { t: ReturnType<typeof makeT>;
               <button key={grp.en} className={"sc-cat" + (i === pick ? " on" : "")} onClick={() => setPick(i)}>{en ? grp.en : grp.zh}</button>
             ))}
           </div>
-          <div className="sc-pane">
-            {g.items.map((it) => (
-              <div key={it.keys} className="sc-row"><kbd className="sc-keys">{it.keys}</kbd><span className="sc-desc">{en ? it.en : it.zh}</span></div>
-            ))}
-          </div>
+          <div className="sc-pane">{list}</div>
         </div>
       ) : (
-        <div className="sc-flat">
-          {groups.map((grp) => (
-            <div key={grp.en} className="sc-group">
-              <div className="sc-gtitle">{en ? grp.en : grp.zh}</div>
-              {grp.items.map((it) => (
-                <div key={it.keys} className="sc-row"><kbd className="sc-keys">{it.keys}</kbd><span className="sc-desc">{en ? it.en : it.zh}</span></div>
-              ))}
-            </div>
-          ))}
-        </div>
+        <div className="sc-flat">{list}</div>
       )}
     </Dialog>
   );
+}
+
+/** 冲突提示里显示的动作名 */
+function keyActionLabel(action: string, en: boolean): string {
+  if (action === "pieLaunch") return en ? "quick pie" : "快捷圆盘";
+  for (const g of SHORTCUT_SHEET) {
+    for (const it of g.items) if (it.action === action) return en ? it.en : it.zh;
+  }
+  return action;
 }
 
 export function HistoryModal({ t, snap, onClose, onReplay }: { t: ReturnType<typeof makeT>; snap: Snapshot; onClose: () => void; onReplay: () => void }) {

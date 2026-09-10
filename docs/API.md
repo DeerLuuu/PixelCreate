@@ -779,6 +779,24 @@ yieldToUI(): Promise<void>            // 逐帧循环里让出事件循环
 `encodeGIF` 的调色板映射用 5bit 色立方的**洪水填充查找表**（32768 格全部有值），
 每像素 O(1)；旧实现表命中后仍然完整扫描调色板，百万像素就是上亿次比较。
 
+### 16.1b1a 自定义快捷键 `app/keymap.ts`
+
+```ts
+type Keymap = Record<string, string>          // action -> "ctrl+shift+z"
+REBINDABLE: readonly string[]                 // 可改键的动作（无 payload 的那些）
+chordOf(e): string | null                     // 事件 -> 组合键字符串（修饰键单独按返回 null）
+chordLabel(chord): string                      // "ctrl+arrowleft" -> "Ctrl+←"
+defaultChordOf(action): string | null          // 默认键取自 SHORTCUT_SHEET 的 probe
+chordForAction(action, keymap): string | null  // 现在生效的键（自定义优先）
+actionForChord(chord, keymap): string | null   // 这个组合键归谁
+bindChord(action, chord, keymap)               // 成功返回新 map，冲突返回 { ok:false, clash }
+unbindChord(action, keymap) / overrides(keymap)
+```
+`shortcutFor(e, typing, keymap?)` 会先查自定义绑定；**被改走的动作，它的默认键同时失效**
+（默认键只是兜底）。用户的覆盖存在 `prefs.keymap`，随设置一起持久化。
+
+`pieLaunch`（按住发动快捷圆盘，默认 `f`）也在同一张表里，因此可以在同一个面板里改键。
+
 ### 16.1b1b 快捷键一览 `SHORTCUT_SHEET`
 
 `src/app/shortcuts.ts` 里除了 `shortcutFor`，还导出面板数据 `SHORTCUT_SHEET`

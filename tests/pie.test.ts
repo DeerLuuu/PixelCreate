@@ -66,7 +66,11 @@ export function testPie(): void {
     }
   }
 
-  // F 键必须还没被占用（工具键里没有 f），否则「发动键」会跟工具切换打架
+  // F 键不能同时是工具键（否则「发动键」会跟工具切换打架）：它现在是
+  // pieLaunch 的默认键，可以在快捷键面板里改
   ok("pie.key.free", !Object.prototype.hasOwnProperty.call(TOOL_KEYS, "f"));
-  eq("pie.key.no-shortcut", shortcutFor({ key: "f" }), null);
+  eq("pie.key.launch-default", shortcutFor({ key: "f" })?.action, "pieLaunch");
+  // 改键后默认键失效、新组合生效
+  eq("pie.key.launch-rebound-old", shortcutFor({ key: "f" }, false, { pieLaunch: "ctrl+p" }), null);
+  eq("pie.key.launch-rebound-new", shortcutFor({ key: "p", ctrlKey: true }, false, { pieLaunch: "ctrl+p" })?.action, "pieLaunch");
 }

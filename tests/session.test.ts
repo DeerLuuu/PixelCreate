@@ -1567,6 +1567,33 @@ export async function testSession(): Promise<void> {
     }
   }
 
+  // --- 自定义快捷键：绑定 / 冲突 / 恢复 / 读档 ---
+  {
+    const d = new Session();
+    eq("keymap.session.empty", d.prefs.keymap, {});
+    eq("keymap.session.key-of", d.keyOf("save"), "ctrl+s");
+    // 绑定成功
+    eq("keymap.session.bind-ok", d.bindKey("save", "ctrl+p"), null);
+    eq("keymap.session.bound", d.keyOf("save"), "ctrl+p");
+    // 冲突：ctrl+p 已被 save 占用
+    eq("keymap.session.bind-clash", d.bindKey("undo", "ctrl+p"), "save");
+    eq("keymap.session.clash-kept", d.keyOf("undo"), "ctrl+z");
+    // 单个恢复 / 全部恢复
+    d.resetKey("save");
+    eq("keymap.session.reset-one", d.keyOf("save"), "ctrl+s");
+    d.bindKey("undo", "ctrl+u");
+    d.bindKey("copy", "ctrl+shift+c");
+    eq("keymap.session.two-overrides", Object.keys(d.prefs.keymap).sort(), ["copy", "undo"]);
+    d.resetAllKeys();
+    eq("keymap.session.reset-all", d.prefs.keymap, {});
+    // 非可改键动作被拒绝（工具键与方向键微移）
+    eq("keymap.session.tool-refused", d.bindKey("tool", "ctrl+t"), "tool");
+    eq("keymap.session.nudge-refused", d.bindKey("nudge", "alt+n"), "nudge");
+    // 快捷圆盘发动键也能改
+    d.bindKey("pieLaunch", "ctrl+space");
+    eq("keymap.session.pie-key", d.keyOf("pieLaunch"), "ctrl+space");
+  }
+
   // --- 快捷圆盘的两个设置项（尺寸 / 半径）---
   {
     const d = new Session();

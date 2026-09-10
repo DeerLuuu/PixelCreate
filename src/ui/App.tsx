@@ -13,6 +13,7 @@ import * as compositor from "../render/compositor";
 import { HoldAdjust, ColorHoldChip } from "./hold";
 import { orbMetrics, palChipPos, chipBox, swatchHitsChip, ringLayout } from "./orb-layout";
 import { pieFocusIndex, pieRadiusFor, pieSlots } from "./pie-layout";
+import { chordForAction, chordOf } from "../app/keymap";
 import { ReplayOverlay } from "./replay";
 import * as bridge from "../io/bridge";
 import { writeClipboardPng } from "../io/clipboard";
@@ -162,7 +163,7 @@ export function App() {
         key: e.key, code: e.code,
         ctrlKey: e.ctrlKey || e.metaKey, metaKey: e.metaKey,
         shiftKey: e.shiftKey, altKey: e.altKey,
-      }, typing);
+      }, typing, SESSION.prefs.keymap);
       if (!hit) return;
       const v = SESSION.view;
       switch (hit.action) {
@@ -1245,16 +1246,16 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
       { icon: "i-dupe", label: t("sel.copy"), act: () => { const c = selOps.selOps.copy(d, li, fi); SESSION.clip = c; if (c) void writeClipboardPng(compositor.celToCanvas(c)).then((ok) => bridge.toast(ok ? t("sysCopy") : t("copied"))); } },
       { icon: "i-cut", label: t("sel.cut"), act: () => { const c = selOps.selOps.cut(d, SESSION.history, li, fi); SESSION.clip = c; if (c) { repaintChanged(); void writeClipboardPng(compositor.celToCanvas(c)).then((ok) => bridge.toast(ok ? t("sysCopy") : t("cut"))); } } },
       { icon: "i-paste", label: t("sel.paste"), act: () => { if (SESSION.clip) { selOps.selOps.paste(d, SESSION.history, li, fi, SESSION.clip); repaintChanged(); bridge.toast(t("pasted")); } else bridge.toast(t("noSel")); } },
-      { icon: "i-layers", label: t("pasteAsLayerBall"), desc: t("pasteAsLayerBallDesc"), act: () => { void pasteClipboard("layer"); } },
-      { icon: "i-canvas", label: t("pasteAsCanvasBall"), desc: t("pasteAsCanvasBallDesc"), act: () => { void pasteClipboard("canvas"); } },
+      { icon: "i-paste-layer", label: t("pasteAsLayerBall"), desc: t("pasteAsLayerBallDesc"), act: () => { void pasteClipboard("layer"); } },
+      { icon: "i-paste-canvas", label: t("pasteAsCanvasBall"), desc: t("pasteAsCanvasBallDesc"), act: () => { void pasteClipboard("canvas"); } },
     ]),
   ];
   const selPage2: Item[] = [
     { icon: "", label: "\u2039", act: () => setSelSub(null), guide: "sel-back" },
     { icon: "i-fliph", label: t("sel.fliph"), act: () => { selOps.selOps.flip(d, SESSION.history, li, fi, true); repaintChanged(); } },
     { icon: "i-flipv", label: t("sel.flipv"), act: () => { selOps.selOps.flip(d, SESSION.history, li, fi, false); repaintChanged(); } },
-    { icon: "i-plus", label: t("sel.grow"), act: () => SESSION.maskOp("sel.grow", () => selOps.growSelection(d, 1)) },
-    { icon: "i-minus", label: t("sel.shrink"), act: () => SESSION.maskOp("sel.shrink", () => selOps.shrinkSelection(d, 1)) },
+    { icon: "i-sel-grow", label: t("sel.grow"), act: () => SESSION.maskOp("sel.grow", () => selOps.growSelection(d, 1)) },
+    { icon: "i-sel-shrink", label: t("sel.shrink"), act: () => SESSION.maskOp("sel.shrink", () => selOps.shrinkSelection(d, 1)) },
     { icon: "i-fx-o1", label: t("sel.outline"), act: () => { selOps.outlineSelected(d, SESSION.history, li, fi, SESSION.color); repaintChanged(); } },
     { icon: "i-fx-crop", label: t("selCrop"), desc: t("selCropDesc"), act: () => { if (SESSION.cropToSelection()) repaintChanged(); } },
     { icon: "i-sel-del", label: t("sel.delete"), act: () => { SESSION.deleteSelection(); } },
@@ -1461,7 +1462,7 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
       })();
     } },
     { icon: "i-size", label: t("resizeTitle"), desc: t("canvasResizeDesc"), act: () => { closeCanv(); onCanvasSize(); } },
-    { icon: "i-size", label: t("canvasResizeMode"), desc: t("canvasResizeModeDesc"), active: SESSION.resizeModeOn, act: () => { closeCanv(); SESSION.toggleResizeMode(); } },
+    { icon: "i-resize-mode", label: t("canvasResizeMode"), desc: t("canvasResizeModeDesc"), active: SESSION.resizeModeOn, act: () => { closeCanv(); SESSION.toggleResizeMode(); } },
     { icon: SESSION.isCanvasLocked() ? "i-pin" : "i-pin-off", label: t(SESSION.isCanvasLocked() ? "canvasUnlock" : "canvasLock"), desc: t("canvasLockDesc"), act: () => { closeCanv(); SESSION.toggleCanvasLock(); }, guide: "canv-lock" },
     { icon: "i-x", label: t("canvasClose"), desc: t("canvasCloseDesc"), act: () => {
       closeCanv();
@@ -1554,11 +1555,15 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
       const cx = window.innerWidth / 2, cy = window.innerHeight / 2;
       return pieFocusIndex(x, y, cx, cy, Math.max(1, pieCount(ball)), radiusFor(pieCount(ball)));
     };
+    const launchChord = () => chordForAction("pieLaunch", SESSION.prefs.keymap) ?? "f";
+    const isLaunch = (e: KeyboardEvent): boolean => chordOf({
+      key: e.key, ctrlKey: e.ctrlKey, metaKey: e.metaKey, altKey: e.altKey, shiftKey: e.shiftKey,
+    }) === launchChord();
     const onDown = (e: KeyboardEvent) => {
       const open = pieRef.current;
       if (open) {
         // 饼打开时吞掉其它按键，别让工具键/快捷键在背后生效
-        if (e.key !== "f" && e.key !== "F") e.stopPropagation();
+        if (!isLaunch(e)) e.stopPropagation();
         if (e.key === "Escape") {
           e.preventDefault();
           e.stopPropagation();
@@ -1566,8 +1571,7 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
         }
         return;
       }
-      if (e.key !== "f" && e.key !== "F") return;
-      if (e.ctrlKey || e.altKey || e.metaKey) return;
+      if (!isLaunch(e)) return;
       if (isTyping(e.target)) return;
       if (!pieEquip) {
         bridge.toast(t("pieNeedEquip"));
@@ -1581,7 +1585,7 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
     };
     const onUp = (e: KeyboardEvent) => {
       const open = pieRef.current;
-      if (!open || (e.key !== "f" && e.key !== "F")) return;
+      if (!open || !isLaunch(e)) return;
       e.preventDefault();
       e.stopPropagation();
       setPie(null);

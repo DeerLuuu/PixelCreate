@@ -22,6 +22,7 @@ import { isShapeTool, nextSym, SYM_ANGLES } from "../tools/registry";
 import type { View } from "../render/view";
 import * as selM from "../tools/select";
 import { pasteRaw } from "../tools/select";
+import { bindChord, chordForAction, unbindChord } from "./keymap";
 import { mirrorMaskInPlace } from "../engine/symmetry";
 import { adjustPixel, type HslAdj } from "../engine/adjust";
 import { type LoopMode, nextLoopMode, nextPlayFrame, startPlayDir, startPlayFrame } from "./playback";
@@ -45,6 +46,8 @@ export interface Prefs {
   pieItem: number;
   /** 快捷圆盘半径（px，0 = 按屏幕与子球数量自动适配） */
   pieRadius: number;
+  /** 自定义快捷键：action -> chord（"ctrl+shift+z"）；空 = 全部用默认 */
+  keymap: Record<string, string>;
   /** onion skin master switch */
   onionOn: boolean;
   /** loop-aware onion skin: ghosts wrap around the first/last frame and get
@@ -1246,7 +1249,7 @@ export class Session {
   private loadPrefs(): Prefs {
     const p: Prefs = {
       lang: "zh", theme: "dark", pcMode: "auto", gridMode: "off", gridSize: 1, magZoom: 12, loupe: true,
-      pieItem: 58, pieRadius: 0,
+      pieItem: 58, pieRadius: 0, keymap: {},
       onionOn: false, onionBefore: 1, onionAfter: 0, onionAlpha: 55, onionTint: true, onionWrap: true,
       autosave: true, autosaveMin: 5, recordHistory: true, newFrameCopy: false, railSwap: true, previewBg: "white", previewGray: false, tileMode: "off", tlH: 200, tlHv: 2,
       immersive: true, safeArea: true, safeExtra: 0,
@@ -1280,6 +1283,13 @@ export class Session {
       if (typeof saved.loupe === "boolean") p.loupe = saved.loupe;
       if (typeof saved.pieItem === "number") p.pieItem = Math.max(36, Math.min(96, Math.round(saved.pieItem)));
       if (typeof saved.pieRadius === "number") p.pieRadius = Math.max(0, Math.min(520, Math.round(saved.pieRadius)));
+      if (saved.keymap && typeof saved.keymap === "object") {
+        const km: Record<string, string> = {};
+        for (const [k, v] of Object.entries(saved.keymap as Record<string, unknown>)) {
+          if (typeof v === "string" && v.length <= 24) km[k] = v;
+        }
+        p.keymap = km;
+      }
       // onion: migrate the old 0/1/2 tri-state into the fine-grained prefs
       if (saved.onion === 1) { p.onionOn = true; p.onionBefore = 1; p.onionAfter = 0; }
       else if (saved.onion === 2) { p.onionOn = true; p.onionBefore = 1; p.onionAfter = 1; }
@@ -3115,6 +3125,33 @@ export class Session {
     if (b.w === doc.w && b.h === doc.h && b.x === 0 && b.y === 0) return false;
     this.struct("crop-sel", () => ops.resizeDocCanvas(doc, b.w, b.h, -b.x, -b.y));
     return true;
+  }
+
+  // ---------- 自定义快捷键（设置面板直接改 prefs.keymap）----------
+  /** 绑定一个动作到某个组合键；冲突时返回占用的动作名 */
+  bindKey(action: string, chord: string): string | null {
+    const r = bindChord(action, chord, this.prefs.keymap);
+    if (r.ok === false) return r.clash || action;
+    this.prefs.keymap = r.keymap;
+    this.scheduleSavePrefs();
+    this.changedUI();
+    return null;
+  }
+  /** 恢复某个动作的默认按键 */
+  resetKey(action: string): void {
+    this.prefs.keymap = unbindChord(action, this.prefs.keymap);
+    this.scheduleSavePrefs();
+    this.changedUI();
+  }
+  /** 全部恢复默认 */
+  resetAllKeys(): void {
+    this.prefs.keymap = {};
+    this.scheduleSavePrefs();
+    this.changedUI();
+  }
+  /** 现在生效的组合键（自定义优先，否则默认） */
+  keyOf(action: string): string | null {
+    return chordForAction(action, this.prefs.keymap);
   }
 
   // ---------- ⑦ 画布调整模式（直接拖四条边/四个角改画布大小）----------

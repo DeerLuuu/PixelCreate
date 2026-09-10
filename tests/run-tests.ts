@@ -23,6 +23,8 @@ import { testColorDrag } from "./color-drag.test";
 import { testPcMode } from "./pc.test";
 import { testScrub } from "./scrub.test";
 import { testPie } from "./pie.test";
+import { testIcons } from "./icons.test";
+import { testKeymap } from "./keymap.test";
 import { testExpr } from "./expr.test";
 import { testEffects } from "./effects.test";
 import { testView } from "./view.test";
@@ -85,6 +87,10 @@ async function main(): Promise<void> {
   testScrub();
   console.log("--- pie ---");
   testPie();
+  console.log("--- icons ---");
+  testIcons();
+  console.log("--- keymap ---");
+  testKeymap();
   finish();
 }
 

@@ -131,7 +131,7 @@ toolchain/       开发辅助脚本（devserver 静态服务、make-icon 图标�
   多个浮动球可同时展开且互不挤动（锁定的球保持原位）、
   悬停即时提示与随工具光标、画布坐标与颜色读数、全套快捷键（Ctrl+Z/Shift+Z/S/C/V/X、Delete、Esc、+ - 0、
   Ctrl+左右切帧、Ctrl+上下切图层、方向键微移选区、Tab 专注模式、字母键切工具）、拖放文件打开、Ctrl+C/V 系统剪贴板、
-  悬停滚轮调值、**设置与更新日志左右分栏**、浮动球全展开+可锁定、按钮 40px 等桌面化尺寸；触屏快捷手势在该模式下关闭。
+  悬停滚轮调值、**Ctrl+F1 快捷键一览（点按键即可改键，冲突会提示，可全部恢复默认）**、**设置与更新日志左右分栏**、浮动球全展开+可锁定、按钮 40px 等桌面化尺寸；触屏快捷手势在该模式下关闭。
 - **全屏**：网页 / PWA 打开时顶部工具栏末尾多一个全屏按钮（进入 / 退出全屏，随 `fullscreenchange` 同步状态）；APK 里由原生壳隐藏系统栏，该按钮不渲染。
 - **Android**：`android/java/com/pixelcraft/app/MainActivity.java` 是单文件 WebView 壳，加载 `assets/www`；`window.__pc_back()` 决定返回键行为（先关层，再二次确认退出）。
 - **网页 / PWA**：`app2/www/manifest.webmanifest` 提供安装信息；无 service worker，离线使用请安装 APK。

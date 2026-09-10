@@ -7,6 +7,7 @@ export type ShortcutAction =
   | "undo" | "redo" | "save" | "openFile" | "newDoc" | "exportFile"
   | "copy" | "cut" | "paste" | "delete" | "escape"
   | "pasteLayer" | "pasteCanvas" | "swapColors" | "shortcutHelp" | "resizeMode"
+  | "pieLaunch"
   | "framePrev" | "frameNext" | "layerPrev" | "layerNext"
   | "zoomIn" | "zoomOut" | "fit" | "toggleUI"
   | "tool" | "nudge";
@@ -61,7 +62,42 @@ export interface ShortcutKey {
  * @param typing true while a text field / contenteditable has focus: then only
  *               the Ctrl/Cmd chords that never insert text are honoured
  */
-export function shortcutFor(e: ShortcutKey, typing = false): ShortcutHit | null {
+export function shortcutFor(e: ShortcutKey, typing = false, keymap?: Record<string, string>): ShortcutHit | null {
+  // user overrides first: a rebound chord fires its action, and the action's
+  // OLD chord stops working (the default is only a fallback)
+  if (keymap && Object.keys(keymap).length) {
+    const chord = chordStringFor(e);
+    if (chord) {
+      for (const action of Object.keys(keymap)) {
+        if (keymap[action] === chord && !MOD_PAYLOAD_ACTIONS.has(action)) return { action: action as ShortcutAction };
+      }
+      const dflt = builtinShortcutFor(e, typing);
+      if (dflt && keymap[dflt.action] && keymap[dflt.action] !== chord) return null;
+      return dflt;
+    }
+  }
+  return builtinShortcutFor(e, typing);
+}
+
+/** actions whose hit carries a payload and therefore keeps its fixed key */
+const MOD_PAYLOAD_ACTIONS = new Set(["tool", "nudge"]);
+
+/** the chord an event represents (mirrors app/keymap.ts to avoid a cycle) */
+function chordStringFor(e: ShortcutKey): string | null {
+  const key = e.key;
+  if (!key) return null;
+  if (/^(Shift|Control|Alt|Meta|CapsLock|Dead)$/.test(key)) return null;
+  let k = key === " " ? "space" : key === "+" ? "=" : key === "_" ? "-" : key.length === 1 ? key.toLowerCase() : key.toLowerCase();
+  const parts: string[] = [];
+  if (e.ctrlKey || e.metaKey) parts.push("ctrl");
+  if (e.altKey) parts.push("alt");
+  if (e.shiftKey) parts.push("shift");
+  parts.push(k);
+  return parts.join("+");
+}
+
+/** the built-in mapping (no user overrides applied) */
+function builtinShortcutFor(e: ShortcutKey, typing = false): ShortcutHit | null {
   const mod = !!(e.ctrlKey || e.metaKey);
   const key = e.key;
   const lower = key.length === 1 ? key.toLowerCase() : key;
@@ -98,6 +134,8 @@ export function shortcutFor(e: ShortcutKey, typing = false): ShortcutHit | null 
   if (key === "-" || key === "_") return { action: "zoomOut" };
   if (key === "0") return { action: "fit" };
   if (key === "Tab") return { action: "toggleUI" };
+  // 按住 F 发动快捷圆盘（默认键；可以在快捷键面板里改，改完这条自动失效）
+  if (lower === "f" && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey) return { action: "pieLaunch" };
   if (lower === "x" && !e.shiftKey) return { action: "swapColors" };
   const arrow = ARROWS[key];
   if (arrow) {
@@ -136,6 +174,7 @@ export const SHORTCUT_SHEET: SheetGroup[] = [
   {
     zh: "编辑", en: "Edit",
     items: [
+      { keys: "Ctrl+S", zh: "保存工程", en: "Save the project", probe: { key: "s", ctrlKey: true }, action: "save" },
       { keys: "Ctrl+Z", zh: "撤销", en: "Undo", probe: { key: "z", ctrlKey: true }, action: "undo" },
       { keys: "Ctrl+Shift+Z / Ctrl+Y", zh: "重做", en: "Redo", probe: { key: "z", ctrlKey: true, shiftKey: true }, action: "redo" },
       { keys: "Ctrl+C", zh: "复制选区", en: "Copy selection", probe: { key: "c", ctrlKey: true }, action: "copy" },
@@ -158,7 +197,8 @@ export const SHORTCUT_SHEET: SheetGroup[] = [
       { keys: "Shift+滚轮 / Alt+滚轮", zh: "左右 / 上下平移", en: "Pan sideways / vertically", mouse: true },
       { keys: "左键在画布外拖动", zh: "平移视图", en: "Pan the view", mouse: true },
       { keys: "方向键", zh: "平移视图（有选区时改为微移选区）", en: "Pan the view (nudges the selection when there is one)", probe: { key: "ArrowLeft" }, action: "nudge" },
-      { keys: "+ / -", zh: "放大 / 缩小", en: "Zoom in / out", probe: { key: "+" }, action: "zoomIn" },
+      { keys: "=", zh: "放大（+ 或 = 都行）", en: "Zoom in (+ or =)", probe: { key: "+" }, action: "zoomIn" },
+      { keys: "-", zh: "缩小", en: "Zoom out", probe: { key: "-" }, action: "zoomOut" },
       { keys: "0", zh: "适配画布", en: "Fit the canvas", probe: { key: "0" }, action: "fit" },
       { keys: "Tab", zh: "隐藏界面（专注画画）", en: "Hide the interface (focus mode)", probe: { key: "Tab" }, action: "toggleUI" },
       { keys: "中键", zh: "点哪张画布就聚焦并适配它", en: "Focus and fit the canvas under the cursor", mouse: true },
@@ -167,8 +207,10 @@ export const SHORTCUT_SHEET: SheetGroup[] = [
   {
     zh: "帧与图层", en: "Frames & layers",
     items: [
-      { keys: "Ctrl+← / Ctrl+→", zh: "上一帧 / 下一帧", en: "Previous / next frame", probe: { key: "ArrowLeft", ctrlKey: true }, action: "framePrev" },
-      { keys: "Ctrl+↑ / Ctrl+↓", zh: "上一个 / 下一个图层", en: "Previous / next layer", probe: { key: "ArrowUp", ctrlKey: true }, action: "layerPrev" },
+      { keys: "Ctrl+←", zh: "上一帧", en: "Previous frame", probe: { key: "ArrowLeft", ctrlKey: true }, action: "framePrev" },
+      { keys: "Ctrl+→", zh: "下一帧", en: "Next frame", probe: { key: "ArrowRight", ctrlKey: true }, action: "frameNext" },
+      { keys: "Ctrl+↑", zh: "上一个图层", en: "Previous layer", probe: { key: "ArrowUp", ctrlKey: true }, action: "layerPrev" },
+      { keys: "Ctrl+↓", zh: "下一个图层", en: "Next layer", probe: { key: "ArrowDown", ctrlKey: true }, action: "layerNext" },
       { keys: "Shift+左键点帧", zh: "区间选中（到上一个选中帧为止）", en: "Range-select frames back to the last picked one", mouse: true },
       { keys: "左键拖动帧 / 图层", zh: "直接拖动排序（不用长按）", en: "Drag to reorder (no long press needed)", mouse: true },
       { keys: "双击名称", zh: "重命名图层 / 帧 / 画布", en: "Rename a layer / frame / canvas", mouse: true },
@@ -185,7 +227,7 @@ export const SHORTCUT_SHEET: SheetGroup[] = [
       { keys: "悬停滚轮", zh: "在数字框 / 长按按钮上调值", en: "Adjust a number field or hold-button", mouse: true },
       { keys: "Ctrl+F1", zh: "打开这份快捷键一览", en: "Open this cheat sheet", probe: { key: "F1", ctrlKey: true }, action: "shortcutHelp" },
       { keys: "Ctrl+R", zh: "画布调整模式（拖四条边改尺寸）", en: "Resize mode (drag the canvas edges)", probe: { key: "r", ctrlKey: true }, action: "resizeMode" },
-      { keys: "按住 F", zh: "发动快捷圆盘（先装备一个球）", en: "Launch the quick pie (equip a ball first)", mouse: true },
+      { keys: "按住 F", zh: "发动快捷圆盘（先装备一个球）", en: "Launch the quick pie (equip a ball first)", probe: { key: "f" }, action: "pieLaunch" },
       { keys: "B / E / G / I / L / R / O / M / W / Q", zh: "铅笔 / 橡皮 / 油漆桶 / 取色 / 直线 / 矩形 / 椭圆 / 选区 / 魔棒 / 套索", en: "Pencil / eraser / bucket / picker / line / rect / ellipse / marquee / wand / lasso", probe: { key: "b" }, action: "tool" },
     ],
   },
