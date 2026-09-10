@@ -1073,3 +1073,6 @@ html[data-pc] .sc-dlg{width:min(92vw,760px)}
   font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;color:var(--text);text-align:center}
 .sc-desc{flex:1 1 auto;font-size:13px;line-height:1.45;color:var(--text)}
 @media (max-width:560px){html[data-pc] .sc-dlg{width:94vw}}
+
+/* 导出尺寸提示：超预算时标红（见 ExportModal） */
+.row-note.warn{color:var(--danger);font-weight:600}
