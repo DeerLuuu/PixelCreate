@@ -14,6 +14,8 @@ import type { GestureActionId } from "../app/gesture-ids";
 import { clamp } from "../engine/types";
 import { snapGapRect, type GapRect } from "../app/canvas-snap";
 import { canvasAtScreen as spaceCanvasAt, screenToCanvas } from "../app/canvas-space";
+import { wheelIntent } from "./wheel";
+import { isPc } from "../io/pcmode";
 import { hexToRgba } from "../engine/color";
 
 /** Is the composite canvas stale? `compRect === null` means "the whole canvas
@@ -176,6 +178,12 @@ export class View {
   private pinchBase: { mx: number; my: number; dist: number; ox: number; oy: number; zoom: number } | null = null;
   private stroke: Stroke | null = null;
   private panLast: PxPoint | null = null;
+  /** PC 输入：空格键按下（空格+左键拖动＝平移） */
+  private spaceDown = false;
+  /** PC 输入：中键拖动平移中 */
+  private mousePan = false;
+  /** PC 输入：这一笔用另一个颜色槽（右键绘制） */
+  private altPaint = false;
   private selDrag: { kind: "rect" | "move" | "lasso"; x0: number; y0: number; x1: number; y1: number; before: Uint8ClampedArray | null; b: { x: number; y: number; w: number; h: number }; moved: boolean; sx: number; sy: number; mv?: MoveState | null; pts?: [number, number][]; dx?: number; dy?: number; cut?: boolean } | null = null;
   private longT: number | null = null;
   /** freehand outline tool: collected path, filled with the current colour on release */
@@ -266,8 +274,44 @@ export class View {
     this.anim = 0;
     if (this.raf) window.cancelAnimationFrame(this.raf);
     this.raf = 0;
+    window.removeEventListener("keydown", this.onSpaceKey);
+    window.removeEventListener("keyup", this.onSpaceKey);
     this.host.replaceChildren();
   }
+
+  /** 滚轮：缩放（以光标为锚点）/ Shift 横向 / Alt 纵向；只在 PC 模式生效 */
+  private onWheel(e: WheelEvent): void {
+    if (!isPc() || this.pointers.size > 0) return;
+    e.preventDefault();
+    const r = this.host.getBoundingClientRect();
+    const pt = this.toLogical(e.clientX - r.left, e.clientY - r.top);
+    const it = wheelIntent(e);
+    if (it.kind === "pan") this.panBy(it.dx, it.dy);
+    else this.zoomAt(this.zoom * it.factor, pt.x, pt.y);
+  }
+
+  /** 平移视图（滚轮 / 中键 / 空格拖动共用） */
+  private panBy(dx: number, dy: number): void {
+    this.ox += dx;
+    this.oy += dy;
+    this.clampView();
+    this.refresh(false);
+  }
+
+  /** 空格键按下＝临时抓手：空格+左键拖动平移（PC 模式） */
+  private onSpaceKey = (e: KeyboardEvent): void => {
+    if (!isPc()) return;
+    if (e.code !== "Space" && e.key !== " ") return;
+    const t = e.target as HTMLElement | null;
+    const typing = !!t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable);
+    const down = e.type === "keydown";
+    if (typing) return;
+    if (down && t && t.tagName === "BUTTON") return;   // 空格仍然激活聚焦的按钮
+    if (this.spaceDown === down) return;
+    this.spaceDown = down;
+    if (this.pointers.size === 0) this.host.style.cursor = down ? "grab" : "";
+    if (down) e.preventDefault();
+  };
 
   // ---------------------------------------------------------------- sizing
   resize(): void {
@@ -1476,6 +1520,10 @@ export class View {
         this.drawOverlay();
       }
     });
+    // ---- PC（鼠标 / 触控板）：滚轮缩放、Shift 横向、Alt 纵向，空格或中键拖动平移
+    host.addEventListener("wheel", (e) => this.onWheel(e), { passive: false });
+    window.addEventListener("keydown", this.onSpaceKey);
+    window.addEventListener("keyup", this.onSpaceKey);
   }
 
   private evPt(e: PointerEvent): PxPoint {
@@ -1566,6 +1614,19 @@ export class View {
       this.host.setPointerCapture && this.host.setPointerCapture(e.pointerId);
     } catch { /* ignore */ }
     const pt = this.evPt(e);
+    // ---- PC 鼠标：中键 / 空格+左键 = 平移，右键 = 用另一个颜色槽绘制
+    this.altPaint = false;
+    if (e.pointerType === "mouse") {
+      if (e.button === 1 || (e.button === 0 && this.spaceDown)) {
+        this.mousePan = true;
+        this.panLast = pt;
+        this.host.style.cursor = "grabbing";
+        return;
+      }
+      this.mousePan = false;
+      this.altPaint = e.button === 2;
+      if (this.altPaint) this.pointers.set(e.pointerId, pt);
+    }
     this.pointers.set(e.pointerId, pt);
     // remember each finger's touchdown point — a finger counts as "sliding"
     // from its OWN start — and freeze the view state as soon as the first
@@ -1754,8 +1815,10 @@ export class View {
       // canvas' history, so undo works right here)
       const tgt = s.strokeTarget(s.curLayer());
       this.strokeRedirected = !!tgt;
+      // 右键＝另一个颜色槽（默认就是背景色），其余工具行为完全一致
+      const brush = this.altPaint ? { ...s.brush(), color: s.secondaryColor() } : s.brush();
       this.stroke = new Stroke(tgt ? tgt.doc : doc, tgt ? tgt.li : s.curLayer(), tgt ? tgt.fi : s.curFrame(),
-        tool as never, s.brush(), s.layerLocked(), s.sym, s.shapeSides, s.shapeFill,
+        tool as never, brush, s.layerLocked(), s.sym, s.shapeSides, s.shapeFill,
         s.symOx, s.symOy, s.symAng, s.symFour, s.prefs.bucketGlobal, s.brushShape, s.shapeFromCenter);
       this.stroke.pixelPerfect = s.pixelPerfect;
       this.wireRedirect(this.stroke, tgt);
@@ -1896,6 +1959,7 @@ export class View {
       this.clampView();
       this.panLast = pt;
       this.refresh(false);
+      if (this.mousePan) { this.mousePan = false; this.panLast = null; this.host.style.cursor = this.spaceDown ? "grab" : ""; }
       return;
     }
     if (this.xf) {

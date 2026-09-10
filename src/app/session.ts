@@ -799,6 +799,11 @@ export class Session {
   curFrame(): number {
     return Math.max(0, Math.min(this.doc.frames.length - 1, this.frameIdx));
   }
+  /** 另一个颜色槽的颜色（右键绘制用；当前用前景色时就是背景色） */
+  secondaryColor(): RGBA {
+    return this.colorTarget === "bg" ? this.fg : this.bg;
+  }
+
   brush(): BrushState {
     return { color: this.color, size: this.brushSize, alpha: this.color[3], pressure: 1 };
   }

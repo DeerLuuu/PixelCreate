@@ -645,6 +645,17 @@ onionGhosts(fi, frameCount, before, after, wrap): OnionGhost[]   // 由远及近
 
 ### 15.4 视口 `src/render/view.ts`
 
+PC（鼠标）输入层在 `View` 内新增：
+
+| 输入 | 行为 |
+|---|---|
+| 滚轮 | 缩放（以光标为锚点）；`Shift+滚轮` 横向平移、`Alt+滚轮` 纵向平移。意图判定是纯函数 `render/wheel.ts` 的 `wheelIntent(e)` / `wheelZoomFactor(deltaY, deltaMode)`（指数曲线、归一化 `deltaMode`） |
+| 中键拖动 / 空格+左键拖动 | 平移视图（`panBy`），不动像素；光标变 `grab`/`grabbing` |
+| 右键 | 用**另一个颜色槽**绘制（默认即背景色，`Session.secondaryColor()`），工具与左键完全一致 |
+| 空格键 | 由 `View.onSpaceKey` 监听（输入框内不生效、按钮上仍保留空格的激活行为） |
+
+以上都在 `isPc()` 为真时启用（见 §16.1b2；`applyPcMode("off")` 时滚轮事件完全不处理）。
+
 其中 `quickFill(clientX, clientY, color) => number`（1.0.8.3 起）是调色球拖拽的入口：把 client 坐标换算成画布像素，
 必要时先 `focusCanvas()`，然后用与真实点击完全相同的工具装配（引用层重定向、选区遮罩、相似色容差、填充缝隙、
 索引色吸附、平铺环绕）执行一次「按下 + 提交」，因此只产生一条历史记录；返回被填充的画布下标，未落在画布上返回 `-1`。

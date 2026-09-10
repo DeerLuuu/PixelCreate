@@ -9,6 +9,7 @@ import { View } from "../src/render/view";
 import { Doc, Sel } from "../src/engine/doc";
 import * as compositor from "../src/render/compositor";
 import { stubEnv } from "./session.test";
+import { applyPcMode } from "../src/io/pcmode";
 import { eq, ok } from "./common";
 
 interface Stub { flush: () => void }
@@ -354,6 +355,79 @@ export function testView(): void {
       eq("view.quickfill.undo", cel2b ? cel2b.data[3] : 0, 0);
 
       v2.destroy();
+    }
+
+    // ---- PC 输入层：滚轮缩放 / 中键平移 / 右键用另一个色槽绘制 ----
+    {
+      const s3 = new Session();
+      const handlers: Record<string, Array<(e: unknown) => void>> = {};
+      const st3 = {
+        clientWidth: 320, clientHeight: 240, style: {} as Record<string, string>,
+        appendChild: () => undefined, replaceChildren: () => undefined,
+        getBoundingClientRect: () => ({ left: 0, top: 0, width: 320, height: 240 }),
+        setPointerCapture: () => undefined, releasePointerCapture: () => undefined,
+        addEventListener: (t: string, cb: (e: unknown) => void) => { (handlers[t] ||= []).push(cb); },
+      } as unknown as HTMLElement;
+      const v3 = new View(st3, s3);
+      s3.attachView(v3);
+      s3.doc.name = "PC";
+      v3.fit();
+      dom.flush();
+      const fire = (t: string, e: unknown): void => { for (const cb of handlers[t] || []) cb(e); };
+      const ev = (o: Record<string, unknown>): never => ({ preventDefault() { /* stub */ }, stopPropagation() { /* stub */ }, pointerId: 1, pointerType: "mouse", isPrimary: true, buttons: 0, ...o } as never);
+
+      // PC 模式打开前滚轮不生效
+      applyPcMode("off");
+      const z0 = v3.zoom;
+      fire("wheel", ev({ deltaY: -100, deltaMode: 0, clientX: 160, clientY: 120 }));
+      eq("view.pc.wheel.off", v3.zoom, z0);
+
+      applyPcMode("on");
+      fire("wheel", ev({ deltaY: -100, deltaMode: 0, clientX: 160, clientY: 120 }));
+      ok("view.pc.wheel.zoom-in", v3.zoom > z0, "zoom=" + v3.zoom + " was " + z0);
+      const zIn = v3.zoom;
+      fire("wheel", ev({ deltaY: 100, deltaMode: 0, clientX: 160, clientY: 120 }));
+      ok("view.pc.wheel.zoom-out", v3.zoom < zIn);
+
+      // Shift / Alt 滚轮＝平移，不改缩放
+      const zKeep = v3.zoom, oxBefore = v3.ox, oyBefore = v3.oy;
+      fire("wheel", ev({ deltaY: 60, deltaMode: 0, shiftKey: true, clientX: 160, clientY: 120 }));
+      eq("view.pc.wheel.shift-zoom", v3.zoom, zKeep);
+      ok("view.pc.wheel.shift-pans", v3.ox !== oxBefore, "ox=" + v3.ox);
+      fire("wheel", ev({ deltaY: 60, deltaMode: 0, altKey: true, clientX: 160, clientY: 120 }));
+      ok("view.pc.wheel.alt-pans-y", v3.oy !== oyBefore, "oy=" + v3.oy);
+
+      // 中键拖动＝平移（不动像素）
+      const ox2 = v3.ox, oy2 = v3.oy;
+      const celBefore = s3.doc.celAt(s3.curLayer(), s3.curFrame());
+      fire("pointerdown", ev({ button: 1, buttons: 4, clientX: 100, clientY: 100 }));
+      fire("pointermove", ev({ button: 1, buttons: 4, clientX: 130, clientY: 120 }));
+      fire("pointerup", ev({ button: 1, clientX: 130, clientY: 120 }));
+      eq("view.pc.middle-pan", [v3.ox - ox2, v3.oy - oy2], [30, 20]);
+      eq("view.pc.middle-pan.no-paint", s3.doc.celAt(s3.curLayer(), s3.curFrame()), celBefore);
+
+      // 右键＝另一个颜色槽（当前前景色绘制时就是背景色）
+      s3.setFgColor([10, 20, 30, 255]);
+      s3.bg = [200, 100, 50, 255];
+      const alt: [number, number, number, number] = s3.secondaryColor() as [number, number, number, number];
+      eq("view.pc.secondary-is-bg", alt, [200, 100, 50, 255]);
+      // 落在画布内（视图可能居中留白，必须用变换换算成屏幕坐标）
+      const inside = { clientX: v3.ox + 5.5 * v3.zoom, clientY: v3.oy + 5.5 * v3.zoom };
+      fire("pointerdown", ev({ button: 2, buttons: 2, ...inside }));
+      fire("pointerup", ev({ button: 2, ...inside }));
+      const cel3 = s3.doc.celAt(s3.curLayer(), s3.curFrame());
+      const off = (5 * s3.doc.w + 5) * 4;   // 落笔在 (5,5)
+      const got = cel3 ? [cel3.data[off], cel3.data[off + 1], cel3.data[off + 2], cel3.data[off + 3]] : null;
+      eq("view.pc.right.paints-bg", got, [200, 100, 50, 255]);
+      // 左键仍然用前景色（换一个远处的像素，避免被判成双击）
+      const far = { clientX: v3.ox + 20.5 * v3.zoom, clientY: v3.oy + 20.5 * v3.zoom };
+      fire("pointerdown", ev({ button: 0, buttons: 1, ...far }));
+      fire("pointerup", ev({ button: 0, ...far }));
+      const cel4 = s3.doc.celAt(s3.curLayer(), s3.curFrame());
+      const off2 = (20 * s3.doc.w + 20) * 4;
+      eq("view.pc.left.paints-fg", cel4 ? [cel4.data[off2], cel4.data[off2 + 1], cel4.data[off2 + 2]] : null, [10, 20, 30]);
+
+      v3.destroy();
     }
 
     view.destroy();
