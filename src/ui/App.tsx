@@ -22,7 +22,7 @@ import { TimelineBar } from "./timeline";
 import { PreviewBox } from "./preview";
 import { RefImageBox } from "./refimg";
 import type { RefImg } from "./refimg";
-import { PalettePanel, MenuModal, SizeModal, SheetModal, NewDocModal, ExportModal, AdjustModal, SettingsModal, FrameModal, FramePreviewModal, CanvasRefModal, HistoryModal, histName, importFlow, saveProject } from "./modals";
+import { PalettePanel, MenuModal, SizeModal, SheetModal, NewDocModal, ExportModal, AdjustModal, SettingsModal, FrameModal, FramePreviewModal, CanvasRefModal, HistoryModal, histName, importFlow, saveProject, openFileBytes } from "./modals";
 import { FxParamDialog, fxDefaults, type FxRun, type FxVals } from "./fxparam";
 import { CanvasTitles } from "./canvas";
 import { ChangelogModal, changelogNeedsShow } from "./changelog";
@@ -102,6 +102,39 @@ export function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // PC：把文件拖到窗口里直接打开（.pxc / PNG / GIF），拖动时显示提示层
+  const [dropHint, setDropHint] = useState(false);
+  useEffect(() => {
+    let depth = 0;
+    const hasFile = (e: DragEvent): boolean => !!e.dataTransfer && Array.from(e.dataTransfer.types || []).includes("Files");
+    const onOver = (e: DragEvent) => { if (!hasFile(e)) return; e.preventDefault(); if (e.dataTransfer) e.dataTransfer.dropEffect = "copy"; };
+    const onEnter = (e: DragEvent) => { if (!hasFile(e)) return; e.preventDefault(); depth++; setDropHint(true); };
+    const onLeave = () => { depth = Math.max(0, depth - 1); if (!depth) setDropHint(false); };
+    const onDrop = (e: DragEvent) => {
+      if (!hasFile(e)) return;
+      e.preventDefault();
+      depth = 0; setDropHint(false);
+      const file = e.dataTransfer?.files?.[0];
+      if (!file) return;
+      void (async () => {
+        try {
+          const buf = new Uint8Array(await file.arrayBuffer());
+          await openFileBytes(file.name, buf, "new", file.type || "");
+        } catch { bridge.toast(makeT(SESSION.prefs.lang as Lang)("importFail")); }
+      })();
+    };
+    window.addEventListener("dragover", onOver);
+    window.addEventListener("dragenter", onEnter);
+    window.addEventListener("dragleave", onLeave);
+    window.addEventListener("drop", onDrop);
+    return () => {
+      window.removeEventListener("dragover", onOver);
+      window.removeEventListener("dragenter", onEnter);
+      window.removeEventListener("dragleave", onLeave);
+      window.removeEventListener("drop", onDrop);
+    };
+  }, []);
+
   // PC 键盘快捷键（全部动作集中在这里，映射表在 app/shortcuts.ts 里是纯函数）
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -119,6 +152,48 @@ export function App() {
         case "undo": e.preventDefault(); SESSION.undo(); break;
         case "redo": e.preventDefault(); SESSION.redo(); break;
         case "save": e.preventDefault(); void saveProject(); break;
+        case "copy": {
+          e.preventDefault();
+          const d0 = SESSION.doc, li0 = SESSION.curLayer(), fi0 = SESSION.curFrame();
+          const clip = selOps.selOps.copy(d0, li0, fi0);
+          SESSION.clip = clip;
+          if (clip) void writeClipboardPng(compositor.celToCanvas(clip)).then((ok) => bridge.toast(ok ? makeT(SESSION.prefs.lang as Lang)("sysCopy") : makeT(SESSION.prefs.lang as Lang)("copied")));
+          break;
+        }
+        case "paste": {
+          e.preventDefault();
+          const d1 = SESSION.doc, li1 = SESSION.curLayer(), fi1 = SESSION.curFrame();
+          void (async () => {
+            const t = makeT(SESSION.prefs.lang as Lang);
+            // 优先用系统剪贴板里的图片，取不到再退回应用内剪切板
+            let clip = SESSION.clip;
+            let fromSystem = false;
+            try {
+              const items = await navigator.clipboard?.read?.();
+              for (const it of items ?? []) {
+                const type = it.types.find((x) => x.startsWith("image/"));
+                if (!type) continue;
+                const blob = await it.getType(type);
+                const bmp = await createImageBitmap(blob);
+                const cv = document.createElement("canvas");
+                cv.width = bmp.width; cv.height = bmp.height;
+                const cx = cv.getContext("2d");
+                if (!cx) continue;
+                cx.drawImage(bmp, 0, 0);
+                const px = cx.getImageData(0, 0, bmp.width, bmp.height).data;
+                clip = { w: bmp.width, h: bmp.height, data: px } as unknown as typeof clip;
+                fromSystem = true;
+                break;
+              }
+            } catch { /* 浏览器可能拒绝读取剪贴板 */ }
+            if (!clip) { bridge.toast(t("pasteEmpty")); return; }
+            selOps.selOps.paste(d1, SESSION.history, li1, fi1, clip);
+            SESSION.clip = clip;
+            SESSION.repaint();
+            bridge.toast(t(fromSystem ? "pasteFromSystem" : "sel.paste"));
+          })();
+          break;
+        }
         case "delete": e.preventDefault(); SESSION.deleteSelection(); break;
         case "escape": if (SESSION.doc.sel?.hasAny()) { SESSION.doc.sel.clear(); SESSION.repaint(); } break;
         case "zoomIn": e.preventDefault(); if (v) { v.zoomAt(v.zoom * 1.25, v.vpW() / 2, v.vpH() / 2); SESSION.changedUI(); } break;
@@ -552,6 +627,9 @@ export function App() {
             <div className="row-note cfm-msg">{confirmQ.msg}</div>
           </Dialog>
         </div>
+      )}
+      {dropHint && (
+        <div className="drop-hint"><span>{t("dropHint")}</span></div>
       )}
       <TipHost />
     </div>

@@ -233,29 +233,47 @@ function addAsLayer(w: number, h: number, px: Uint8ClampedArray, name: string): 
   return true;
 }
 async function openFlow(mode: "new" | "layer"): Promise<void> {
-  const t = makeT(SESSION.prefs.lang);
   const f = await bridge.openFile("*/*");
   if (!f) return;
+  await openFileBytes(f.name || "", f.bytes, mode, f.mime || "");
+}
+
+/** 打开一份「已经拿到字节」的文件（文件选择框与窗口拖放共用） */
+export async function openFileBytes(name: string, bytes: Uint8Array, mode: "new" | "layer" = "new", mime = ""): Promise<boolean> {
+  const t = makeT(SESSION.prefs.lang);
+  const f = { name, bytes, mime };
   const ext = (f.name || "").split(".").pop()?.toLowerCase();
   const isGif = ext === "gif" || isGifHeader(f.bytes);
   if (!isGif && (ext === "pxc" || f.name.toLowerCase().endsWith(".pxc") || ext === "json")) {
-    if (mode !== "new") { bridge.toast(t("importFail")); return; }
+    if (mode !== "new") { bridge.toast(t("importFail")); return false; }
     const txt = new TextDecoder().decode(f.bytes);
-    if (await SESSION.loadProjectText(txt)) bridge.toast(t("docLoaded")); else bridge.toast(t("importFail"));
-    return;
+    const ok = await SESSION.loadProjectText(txt);
+    bridge.toast(ok ? t("docLoaded") : t("importFail"));
+    return ok;
   }
   if (isGif) {
     const gif = tryReadGif(f.bytes);
     if (gif) {
-      if (mode === "new") { if (await SESSION.replaceDoc(docFromGifFrames(gif.w, gif.h, gif.frames, gif.delays, f.name))) bridge.toast(t("importOk") + " " + gif.frames.length + "f"); }
-      else { if (!addAsLayer(gif.w, gif.h, gif.frames[0] as unknown as Uint8ClampedArray, f.name)) bridge.toast(t("importFail") + " (size)"); else bridge.toast(t("importOk")); }
-      return;
+      if (mode === "new") {
+        const ok = await SESSION.replaceDoc(docFromGifFrames(gif.w, gif.h, gif.frames, gif.delays, f.name));
+        bridge.toast(ok ? t("importOk") + " " + gif.frames.length + "f" : t("importFail"));
+        return ok;
+      }
+      const asLayer = addAsLayer(gif.w, gif.h, gif.frames[0] as unknown as Uint8ClampedArray, f.name);
+      bridge.toast(asLayer ? t("importOk") : t("importFail") + " (size)");
+      return asLayer;
     }
   }
   const still = await decodeStill(f.bytes, f.mime || "image/png");
-  if (!still) { bridge.toast(t("importFail")); return; }
-  if (mode === "layer") { if (!addAsLayer(still.w, still.h, still.px, f.name)) bridge.toast(t("importFail") + " (size)"); else bridge.toast(t("importOk")); }
-  else { if (await SESSION.replaceDoc(docFromPixels(still.w, still.h, still.px, f.name))) bridge.toast(t("importOk")); }
+  if (!still) { bridge.toast(t("importFail")); return false; }
+  if (mode === "layer") {
+    const ok = addAsLayer(still.w, still.h, still.px, f.name);
+    bridge.toast(ok ? t("importOk") : t("importFail") + " (size)");
+    return ok;
+  }
+  const ok = await SESSION.replaceDoc(docFromPixels(still.w, still.h, still.px, f.name));
+  bridge.toast(ok ? t("importOk") : t("importFail"));
+  return ok;
 }
 export function importFlow(): Promise<void> { return openFlow("new"); }
 function importLayerFlow(): Promise<void> { return openFlow("layer"); }

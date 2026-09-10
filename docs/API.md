@@ -708,6 +708,17 @@ b64FromBytes(bytes): string; bytesFromB64(b64): Uint8Array
 震动统一走 `Session.hapticTick(tag, scale = 1)`：受设置 `gesture.haptic` 开关控制，脉冲长度取 `prefs.hapticLen`（30 / 60 / 100ms，默认 60；部分机型 30ms 以下无感）。
 `Session.runGestureAction()` 会为除 `pickColor`（取色时逐像素自行震动）之外的每个手势先发一次脉冲。
 
+### 16.1b0 PC 拖放与剪贴板
+
+- **拖放打开**：`App.tsx` 监听窗口的 `dragover/dragenter/dragleave/drop`，拖动中显示 `.drop-hint` 提示层，
+  松手后用 `File.arrayBuffer()` 取字节并交给 `modals.tsx` 新导出的 **`openFileBytes(name, bytes, mode, mime)`**
+  ——它与「打开」文件选择框走的是同一套逻辑（`.pxc` 工程 / GIF 多帧 / PNG 等静图、或导入为图层）。
+  `openFlow()` 现在只是 `bridge.openFile()` + `openFileBytes()` 的薄包装。
+- **剪贴板**：`Ctrl+C` 把选区复制成 `Cel` 并写进系统剪贴板（`io/clipboard.ts` 的 `writeClipboardPng`）；
+  `Ctrl+V` **优先读系统剪贴板**（`navigator.clipboard.read()` → `image/*` → `createImageBitmap` →
+  `ImageData` → 合成 `Cel`），取不到再回退到应用内剪贴板（`SESSION.clip`），最后调用
+  `selOps.paste()` 落到当前图层/帧并记一条历史。浏览器可能因权限拒绝读取，此时给 toast 提示。
+
 ### 16.1b1 键盘快捷键 `src/app/shortcuts.ts`
 
 PC 模式的键位映射是纯函数 `shortcutFor(key, typing)`，宿主（`App.tsx` 的一个全局 keydown 监听）把它翻译成
