@@ -17,6 +17,7 @@ import { testBack } from "./back.test";
 import { testI18n } from "./i18n.test";
 import { testUiKit } from "./ui-kit.test";
 import { testUiTokens } from "./ui-tokens.test";
+import { testFullscreen } from "./fullscreen.test";
 import { testExpr } from "./expr.test";
 import { testEffects } from "./effects.test";
 import { testView } from "./view.test";
@@ -67,6 +68,8 @@ async function main(): Promise<void> {
   testUiKit();
   console.log("--- ui tokens ---");
   testUiTokens();
+  console.log("--- fullscreen ---");
+  testFullscreen();
   finish();
 }
 

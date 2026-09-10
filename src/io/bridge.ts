@@ -16,6 +16,17 @@ declare global {
   }
 }
 
+/** true when the page runs inside the Android WebView shell (the APK), false
+ *  in a real browser tab or an installed PWA. Used to hide chrome the native
+ *  shell already provides (e.g. the fullscreen toggle). */
+export function isNativeShell(): boolean {
+  try {
+    return typeof window !== "undefined" && !!window.PixelBridge;
+  } catch {
+    return false;
+  }
+}
+
 /** window insets in CSS px; falls back to the CSS env() safe-area values, so
  *  the browser build and ROMs without the native probe still work. */
 export function insets(): { top: number; bottom: number; left: number; right: number } {

@@ -26,6 +26,7 @@ import { FxParamDialog, fxDefaults, type FxRun, type FxVals } from "./fxparam";
 import { CanvasTitles } from "./canvas";
 import { ChangelogModal, changelogNeedsShow } from "./changelog";
 import { watchSafeArea } from "../io/safearea";
+import { fullscreenIcon, fullscreenToggleVisible, isFullscreen, toggleFullscreen, watchFullscreen } from "../io/fullscreen";
 import { GUIDE, bootOverlay, guideStepsFor, type GuideAction, type GuideStep } from "../app/guide";
 import { GuideOverlay, simulateTap } from "./guide";
 import type { ModalId, SizeMode, SheetData } from "./modals";
@@ -517,6 +518,7 @@ export function App() {
 /** short function descriptions shown by the global long-press tooltip */
 const B_DESC = {
   menu: { zh: "打开主功能菜单（新建 / 打开 / 导入导出 / 设置）", en: "Open the main menu" },
+  full: { zh: "进入 / 退出全屏（只在浏览器打开时出现，软件版由系统栏自动隐藏）", en: "Enter / leave fullscreen (only shown in the browser; the app builds hide the system bars themselves)" },
   undo: { zh: "撤销上一步操作", en: "Undo the last action" },
   save: { zh: "把整个工程（含所有画布）保存为 .pxc 文件", en: "Save the whole project (every canvas) as a .pxc file" },
   redo: { zh: "重做已撤销的操作", en: "Redo the undone action" },
@@ -555,6 +557,11 @@ function TopBar({
   t: ReturnType<typeof makeT>; snap: Snapshot; tlOn: boolean; noCanvas: boolean; onToggleTl: () => void; onMenu: () => void; onHistory: () => void; onSave: () => void;
 }) {
   const off = (fn: () => void) => (noCanvas ? () => { /* no canvas open */ } : fn);
+  // the browser build gets a fullscreen toggle; the APK shell already hides the
+  // system bars itself, so there the button is not rendered at all
+  const [fsShow] = useState(() => fullscreenToggleVisible());
+  const [fsOn, setFsOn] = useState(isFullscreen);
+  useEffect(() => (fsShow ? watchFullscreen(setFsOn) : undefined), [fsShow]);
   // undo/redo stay live on the empty-space screen: closing the LAST canvas is
   // itself a history step, so it can be brought back from there
   const hist = snap.canUndo || snap.canRedo;
@@ -567,6 +574,10 @@ function TopBar({
       <Btn icon="i-redo" onClick={() => SESSION.redo()} title={t("redo")} desc={bd(snap.lang, "redo")} className={snap.canRedo ? "" : "off"} guide="btn-redo" />
       <Btn icon="i-save" onClick={off(onSave)} title={t("save")} desc={bd(snap.lang, "save")} className={noCanvas ? "off" : ""} guide="btn-save" />
       <Btn icon="i-timeline" onClick={off(onToggleTl)} active={tlOn && !noCanvas} title={t(tlOn ? "timelineHide" : "timelineShow")} className={noCanvas ? "off" : ""} guide="btn-timeline" />
+      {fsShow && (
+        <Btn icon={fullscreenIcon(fsOn)} onClick={() => { void toggleFullscreen(); }}
+          title={t(fsOn ? "exitFullscreen" : "fullscreen")} desc={bd(snap.lang, "full")} guide="btn-fullscreen" />
+      )}
     </header>
   );
 }

@@ -692,6 +692,24 @@ b64FromBytes(bytes): string; bytesFromB64(b64): Uint8Array
 震动统一走 `Session.hapticTick(tag, scale = 1)`：受设置 `gesture.haptic` 开关控制，脉冲长度取 `prefs.hapticLen`（30 / 60 / 100ms，默认 60；部分机型 30ms 以下无感）。
 `Session.runGestureAction()` 会为除 `pickColor`（取色时逐像素自行震动）之外的每个手势先发一次脉冲。
 
+### 16.1c 全屏 `src/io/fullscreen.ts`
+
+浏览器会话（网页 / 已安装 PWA）下的全屏开关；APK 里由原生壳 `setImmersive` 负责隐藏系统栏，
+因此**不渲染**这个按钮。
+
+| 导出 | 签名 | 说明 |
+|---|---|---|
+| `showFullscreenToggle` | `(nativeShell: boolean, supported: boolean) => boolean` | 纯函数：只有「非原生壳 **且** 浏览器支持元素级全屏」时才显示按钮 |
+| `fullscreenIcon` | `(on: boolean) => string` | 纯函数：`i-full` / `i-full-exit` |
+| `fullscreenSupported` | `() => boolean` | 含 `webkit*` 前缀探测；iPhone Safari 无元素级全屏 → false |
+| `fullscreenElement` / `isFullscreen` | `() => Element \| null` / `() => boolean` | 兼容 `webkitFullscreenElement` |
+| `fullscreenToggleVisible` | `() => boolean` | `showFullscreenToggle(isNativeShell(), fullscreenSupported())` |
+| `requestFullscreen` / `exitFullscreen` / `toggleFullscreen` | `() => Promise<void>` / `Promise<void>` / `Promise<boolean>` | 需要在用户手势里调用；失败静默 |
+| `watchFullscreen` | `(cb: (on: boolean) => void) => () => void` | 监听 `fullscreenchange`（含 webkit 前缀），返回取消订阅 |
+
+`src/io/bridge.ts` 另导出 `isNativeShell()`：`window.PixelBridge` 存在即为 APK 壳（由
+`MainActivity` 注入），网页端为 `false`。
+
 ### 16.1b 全面屏 / 安全区 `src/io/safearea.ts`
 
 ```ts

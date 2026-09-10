@@ -99,6 +99,7 @@ toolchain/       开发辅助脚本（devserver 静态服务、make-icon 图标�
 
 ## 5. 平台说明
 
+- **全屏**：网页 / PWA 打开时顶部工具栏末尾多一个全屏按钮（进入 / 退出全屏，随 `fullscreenchange` 同步状态）；APK 里由原生壳隐藏系统栏，该按钮不渲染。
 - **Android**：`android/java/com/pixelcraft/app/MainActivity.java` 是单文件 WebView 壳，加载 `assets/www`；`window.__pc_back()` 决定返回键行为（先关层，再二次确认退出）。
 - **网页 / PWA**：`app2/www/manifest.webmanifest` 提供安装信息；无 service worker，离线使用请安装 APK。
 - **文件读写**：Android 走 SAF（`ACTION_CREATE_DOCUMENT` / `ACTION_OPEN_DOCUMENT`），网页走浏览器下载与文件选择。

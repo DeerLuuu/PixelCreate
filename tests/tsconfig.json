@@ -18,6 +18,7 @@
     "../tests/run-tests.ts",
     "../tests/ui-kit.test.tsx",
     "../tests/ui-tokens.test.ts",
+    "../tests/fullscreen.test.ts",
     "../tests/common.ts",
     "../tests/history.test.ts",
     "../tests/ops.test.ts",
