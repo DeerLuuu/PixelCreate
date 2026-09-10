@@ -8,10 +8,10 @@ import { TabBar } from "./tabs";
 import { Dialog } from "./kit";
 
 /** keep in sync with android/AndroidManifest.xml versionName on every release */
-export const APP_VERSION = "1.0.8.1";
+export const APP_VERSION = "1.0.8.2";
 /** build stamp shown next to the version (support/debug: identifies the exact
  *  package a user is running when the version number itself does not change) */
-export const BUILD_TAG = "ee4b75";
+export const BUILD_TAG = "f74bbf";
 
 export type ClgKind = "add" | "imp" | "fix";
 export interface ClgItem { kind: ClgKind; zh: string; en: string }
@@ -20,6 +20,16 @@ export interface ClgVersion { v: string; date: string; items: ClgItem[] }
 const it = (kind: ClgKind, zh: string, en: string): ClgItem => ({ kind, zh, en });
 
 export const CHANGELOG: ClgVersion[] = [
+  {
+    v: "1.0.8.2",
+    date: "2026-09-10",
+    items: [
+      it("fix", "修复引导（新手教程）被其它浮层挡住：样式表里有一行残缺的选择器把引导层的整条规则吃掉了，导致引导层没有定位与层级，弹窗、浮动球、提示气泡、Toast 都能压在它上面。现在引导层提到了应用最高层（高于确认框、长按提示、Toast、过程回放），聚光灯与说明卡片不会再被任何界面元素遮挡。", "Fixed the onboarding tour being covered by other overlays: a stray selector fragment in the stylesheet swallowed the whole guide-layer rule, so the layer had no positioning or stacking order and dialogs, floating balls, tooltips and toasts could all paint over it. The tour layer now sits above everything else in the app (above confirm prompts, long-press tooltips, toasts and replay), so neither the spotlight nor the card can be covered."),
+      it("fix", "聚光灯高亮框里的控件现在可以真正点到：引导层自身不再拦截触摸，只由遮罩（没有高亮框的步骤）与说明卡片接管，因此需要你自己动手的那几步可以直接操作被高亮的按钮；此前高亮框那层会把点按吃掉。", "Controls inside the spotlight can now really be tapped: the tour layer itself no longer captures touches — only the backdrop (for steps without a highlight) and the card do — so the steps that ask you to try something yourself work directly on the highlighted button, which previously swallowed the tap."),
+      it("fix", "安装新版本时不再「更新日志与引导打架」：更新日志会先显示，等你关掉它之后引导才开始；全新安装仍然会先等第一张画布出现，再开始引导。此前两层同时弹出，引导会把更新日志挡住，等于看不了也关不掉。", "Installing a new version no longer makes the release notes and the tour fight: the notes are shown first and the tour only starts once you close them, while a fresh install still waits for the first canvas to appear before starting. Previously both appeared at once and the tour covered the notes, so they could neither be read nor dismissed."),
+      it("fix", "引导进行中按返回键会直接退出引导，而不是先去点被引导遮住的弹窗（那个弹窗本来就点不到）。", "Pressing back during the tour now leaves the tour instead of clicking a dialog hidden behind it, which could not be reached anyway."),
+    ],
+  },
   {
     v: "1.0.8.1",
     date: "2026-09-10",
