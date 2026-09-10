@@ -44,6 +44,7 @@
 | ✅ 跨画布拖选区**实时预览**落点幽灵 + 目标画布虚线框 | `View.dropTargetOf` + `drawOverlay` |
 | ✅ 色板小球与环形子球**同尺寸**；PC 球里隐藏复制/剪切/粘贴（有快捷键） | `orb-layout.ts`、`App.tsx` 的 `selItems` |
 | ✅ PC 模式**多个浮动球同时展开**且不拦截画布操作（Esc 收球） | `App.tsx`（`!pcMode` 才渲染 `.radial-back`） |
+| ✅ **快捷圆盘 + 装备槽**（Blender 式，按住 `F`）：装备槽、圆盘、圆盘尺寸/半径设置**全部只在电脑模式存在**——移动端没有键盘发动不了它，渲染它只是白占画面 | `App.tsx`（装备槽的 `pcMode &&` 门槛、`hiddenById` 里的 `pcMode && pieEquip === id`）、`src/app/settings.ts`（`display.pieItem/pieRadius` 的 `visible`）、`src/ui/pie-layout.ts` |
 
 ## 二、还没做的（按优先级）
 

@@ -1020,7 +1020,9 @@ export function CustomiseModal({ t, onClose }: { t: ReturnType<typeof makeT>; on
     top: { label: t("cuTopBar"), hint: en ? "Menu, undo, redo, save, timeline, fullscreen" : "菜单 / 撤销 / 保存 / 时间轴等" },
     bar: { label: t("cuBottomBar"), hint: en ? "Colour pair, brush size and the tool sliders" : "颜色对、笔刷大小与随工具的滑杆" },
     timeline: { label: t("timelineShow"), hint: en ? "Frame and layer matrix" : "帧与图层矩阵" },
-    dock: { label: t("cuDock"), hint: en ? "Storage area and the equip slot" : "停靠区与快捷圆盘装备槽" },
+    dock: { label: t("cuDock"), hint: pc
+      ? (en ? "Storage area and the equip slot" : "停靠区与快捷圆盘装备槽")
+      : (en ? "Where docked floating balls live" : "浮动球的停靠存储区") },
     orbs: { label: t("cuTabOrbs"), hint: en ? "The five floating balls" : "五个浮动球本身" },
     titles: { label: t("cuTitles"), hint: en ? "Title bar above each canvas" : "每张画布上方的标题条" },
   };
@@ -1103,9 +1105,14 @@ export function CustomiseModal({ t, onClose }: { t: ReturnType<typeof makeT>; on
     );
   };
 
-  const cat = (id: string, label: string) => (
-    <button key={id} className={"cu-cat" + (id === where ? " on" : "")} onClick={() => setWhere(id)}>{label}</button>
-  );
+  /** 类别导航的条目：PC 与移动端共用同一份列表，只是换个呈现方式 */
+  const cats: Array<{ id: string; label: string }> = [
+    { id: "layout", label: t("cuTabLayout") },
+    { id: "top", label: t("cuTopBar") },
+    { id: "bar", label: t("cuBottomBar") },
+    ...ORB_IDS.map((b) => ({ id: "orb:" + b, label: ballLabelOf(b, t) })),
+    { id: "unused", label: t("cuUnused") },
+  ];
   const section = where.startsWith("orb:") ? where.slice(4) : "";
   const title = where === "layout" ? t("cuTabLayout")
     : where === "top" ? t("cuTopBar")
@@ -1113,7 +1120,7 @@ export function CustomiseModal({ t, onClose }: { t: ReturnType<typeof makeT>; on
         : where === "unused" ? t("cuUnused") : ballLabelOf(section, t);
 
   return (
-    <Dialog title={t("customise")} onClose={onClose} className={"cu-dlg" + (pc ? " cu-dlg-pc" : "")} bodyClass="cu-body"
+    <Dialog title={t("customise")} onClose={onClose} className="cu-dlg" bodyClass="cu-body"
       extra={<div className="cu-entry">
         <span className="row-note cu-hintline">{t("cuHint")}</span>
         <Btn label={t("uiEditStart")} icon="i-grid" className="primary"
@@ -1123,14 +1130,19 @@ export function CustomiseModal({ t, onClose }: { t: ReturnType<typeof makeT>; on
         <Btn label={t("cuResetAll")} onClick={() => { SESSION.resetAllUi(); redraw(); }} />
         <Btn label={t("close")} onClick={onClose} className="primary" />
       </>}>
-      <div className={pc ? "cu-split" : ""}>
-        <div className={pc ? "cu-cats" : "cu-catrow"}>
-          {cat("layout", t("cuTabLayout"))}
-          {cat("top", t("cuTopBar"))}
-          {cat("bar", t("cuBottomBar"))}
-          {ORB_IDS.map((b) => cat("orb:" + b, ballLabelOf(b, t)))}
-          {cat("unused", t("cuUnused"))}
-        </div>
+      <div className={pc ? "cu-split" : "cu-flat"}>
+        {/* 类别导航：PC＝左侧竖列（和设置面板同一套 .set-cat 外观），
+            移动端＝项目通用的 chip 行（kit 的 ChipGroup，同调色板包 / 符号面板） */}
+        {pc ? (
+          <div className="cu-cats">
+            {cats.map((c) => (
+              <button key={c.id} type="button" className={"cu-cat" + (where === c.id ? " on" : "")}
+                onClick={() => setWhere(c.id)}>{c.label}</button>
+            ))}
+          </div>
+        ) : (
+          <ChipGroup value={where} onChange={setWhere} options={cats} />
+        )}
         <div className="cu-pane">
           <div className="cu-head">
             <span className="cu-head-title">{title}</span>

@@ -192,6 +192,18 @@ const hover = useHoverTip({ title: t("brushSize"), desc: bd(snap.lang, "brush"),
 | `ScrubNum` | `input` + `.calcpad` | 拖动 / 算式 |
 | `TabBar` / `DropMenu` | `.tabbar*` / `.dropmenu*` | 见 `tabs.tsx` |
 
+### 2.7b 面板类别导航（左侧「哪里」）
+
+设置面板、快捷键一览、界面定制三个面板的类别导航**只准有一套外观**：
+
+| 场景 | 结构 | 说明 |
+|---|---|---|
+| PC（≥ 宽屏 + `data-pc`） | `.set-split` / `.set-cats` / `.set-cat[ on]` + `.set-pane` | 竖直列表，透明底、选中用 `--accent`。界面定制复用同一条规则（`.cu-split/.cu-cats/.cu-cat` 是它的别名，写在 `.set-*` 那一行上，**不要另写一份声明**） |
+| 移动端 | `<ChipGroup>`（`.chips > .chip[ on]`） | 横向可换行的标签行，与调色板包 / 符号面板同一形态；不要用裸 `<button>`（既没样式也没命中态，会跟项目其它地方格格不入） |
+
+左侧列表与右侧内容区各自滚动：这两个面板的 `.dlg-body` 是 `overflow:hidden`，所以两栏都要
+`flex:1 1 auto;min-height:0` + 自己的 `overflow-y:auto`（见 `.cu-split/.cu-pane`、`.sc-split/.sc-pane`）。
+
 ### 2.8 可访问性底线（本次范围内）
 
 - 弹窗：`role="dialog"` + `aria-modal` + `aria-label`，Esc 关闭。

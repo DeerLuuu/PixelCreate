@@ -11,7 +11,7 @@ import { GESTURES, GESTURE_ACTIONS, gesturePath } from "./gestures";
 import * as bridge from "../io/bridge";
 import { applySafeArea } from "../io/safearea";
 import { applyTheme } from "../io/theme";
-import { applyPcMode, pcModeOf } from "../io/pcmode";
+import { applyPcMode, pcModeOf, pcModeOn } from "../io/pcmode";
 
 export type SettingValue = boolean | number | string;
 export type SettingKind = "bool" | "int" | "enum" | "color";
@@ -530,13 +530,15 @@ const defs: SettingDef[] = [
     after: (s) => { applyPcMode(pcModeOf(s.prefs)); },
   },
   {
-    // 快捷圆盘（PC）：子球多大、离屏幕中心多远
+    // 快捷圆盘（**仅电脑模式**：装备槽与发动键都只在 PC 存在，移动端不显示这两项）
     path: "display.pieItem", field: "pieItem", kind: "int", group: "display",
     label: "pieItemLabel", desc: "pieItemDesc", default: 58, min: 36, max: 96, unit: "px", reset: 58, refresh: "none",
+    visible: (s) => pcModeOn(s.prefs.pcMode),
   },
   {
     path: "display.pieRadius", field: "pieRadius", kind: "int", group: "display",
     label: "pieRadiusLabel", desc: "pieRadiusDesc", default: 0, min: 0, max: 520, unit: "px", reset: 0, refresh: "none",
+    visible: (s) => pcModeOn(s.prefs.pcMode),
   },
   {
     path: "display.previewBg", field: "previewBg", kind: "enum", group: "display",

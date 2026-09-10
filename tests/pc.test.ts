@@ -5,8 +5,15 @@ import { normalizeWheelDelta, wheelIntent, wheelZoomFactor } from "../src/render
 import { fanRadius, orbMetrics, ringLayout } from "../src/ui/orb-layout";
 import { cursorFor } from "../src/render/cursor";
 import { NUDGE_STEP, NUDGE_STEP_FAST, SHORTCUT_SHEET, TOOL_KEYS, shortcutFor } from "../src/app/shortcuts";
+import { settingsOfGroup } from "../src/app/settings";
+import { Session } from "../src/app/session";
 import { eq, ok } from "./common";
 import { CORE_TOOLS, SHAPE_TOOLS, SELECT_TOOLS } from "../src/tools/registry";
+
+declare const require: (m: string) => any;
+declare const __dirname: string;
+const fs = require("fs");
+const path = require("path");
 
 const CORE_IDS: Set<string> = new Set<string>([...CORE_TOOLS, ...SHAPE_TOOLS, ...SELECT_TOOLS].map((t) => t.id as string));
 
@@ -251,5 +258,29 @@ export function testPcMode(): void {
       for (let i = 0; i < pts.length; i++) for (let j = i + 1; j < pts.length; j++) minD = Math.min(minD, dist(pts[i], pts[j]));
       ok("ring.touch.no-overlap", minD >= 46, "min=" + minD.toFixed(1));
     }
+  }
+
+  // ---- 装备槽 / 快捷圆盘是电脑模式专属，手机端连入口都不该有 ----
+  // 手机上既没有发动键（键盘），也没有鼠标，留着装备槽只是白占画面。
+  {
+    const s = new Session();
+    // pcModeOn 在无 window 的测试环境里读不到媒体查询，所以只用强制值断言（确定性的）
+    s.prefs.pcMode = "on";
+    const onPaths = settingsOfGroup(s, "display").map((d) => d.path);
+    ok("pc.pie-settings.on", onPaths.indexOf("display.pieItem") >= 0 && onPaths.indexOf("display.pieRadius") >= 0,
+      onPaths.filter((p) => p.indexOf("pie") >= 0).join(","));
+    s.prefs.pcMode = "off";
+    eq("pc.pie-settings.off", settingsOfGroup(s, "display").map((d) => d.path).filter((p) => p.indexOf("display.pie") === 0), []);
+  }
+
+  // 渲染侧的两条门槛写在 App.tsx 里（没有 DOM 可查，静态确认它们还在）：
+  //   1. 装备槽只在 pcMode 下渲染；
+  //   2. 非 PC 下「已装备」的球必须照常算在屏幕上，否则它既不在槽里也不在屏幕上，
+  //      等于凭空消失。
+  {
+    const app = fs.readFileSync(path.resolve(__dirname, "../../../src/ui/App.tsx"), "utf8");
+    const at = app.indexOf('className={"pie-slot"');
+    ok("pc.equip-slot.pc-only", at > 0 && app.slice(Math.max(0, at - 160), at).indexOf("pcMode && (") >= 0, "idx=" + at);
+    ok("pc.equip-slot.visible-in-touch", app.indexOf("pcMode && pieEquip === id") >= 0);
   }
 }

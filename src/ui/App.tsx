@@ -1248,8 +1248,10 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
     else if (id === "sel") setSel((g) => ({ x: np.x, y: np.y, open: false }));
     else setFx({ x: np.x, y: np.y, open: false });
   };
-  /** 球是否已经不在屏幕上（停靠进存储区，或装进了装备槽） */
-  const hiddenById = (id: BallId): boolean => dockedById(id) || pieEquip === id;
+  /** 球是否已经不在屏幕上（停靠进存储区，或装进了装备槽）。
+      装备槽只在电脑模式渲染，所以移动端一律当「没装备」——否则装备过的球
+      既不在槽里也不在屏幕上，等于凭空消失（装备状态留着，回电脑模式自动恢复） */
+  const hiddenById = (id: BallId): boolean => dockedById(id) || (pcMode && pieEquip === id);
 
   const popDock = (idx: number, at?: { x: number; y: number }) => {
     const d = docked[idx];
@@ -2052,7 +2054,7 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
         SESSION.hapticTick("工具栏", 0.7);
         setOpen(true);
       })}
-      <Keep on={!!sel && pieEquip !== "sel"} el={sel ? renderBall("sel", { x: sel.x, y: sel.y }, "i-select", sel.open, t("sel.active"), bd(snap.lang, "selBall"), () => {
+      <Keep on={!!sel && !(pcMode && pieEquip === "sel")} el={sel ? renderBall("sel", { x: sel.x, y: sel.y }, "i-select", sel.open, t("sel.active"), bd(snap.lang, "selBall"), () => {
         if (!pcMode) { setOpen(false); setSub(null); }
         if (!sel.open && !lockOf("main")) {   // ② 锁定的球不被别人挤走
           const np = clearRingOf({ x: sel.x, y: sel.y }, pos);
@@ -2140,9 +2142,10 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
         setCanvSub(null);
         setCanv({ ...canv, open: !canv.open });
       })}
-      {/* 装备槽：在存储区**边上**的独立一格；把一个浮动球拖进来就装备它（只装备一个）。
-          点一下槽＝把球取出放回屏幕。按住 F 发动它的快捷圆盘。 */}
-      {(
+      {/* 装备槽：**仅电脑模式**（移动端没有键盘，发不动圆盘，留着只是白占地方）。
+          PC 下它是存储区**边上**的独立一格；把浮动球拖进来就装备它（只装备一个），
+          点一下槽＝把球取出放回屏幕，按住 F 发动它的快捷圆盘。 */}
+      {pcMode && (
         <div ref={pieSlotRef} className={"pie-slot" + (pieEquip ? " on" : "") + (slotArmed ? " armed" : "") + (SESSION.uiEdit ? " editing" : "")}
           data-guide="pie-equip"
           style={SESSION.prefs.pieSlotPos ? { left: SESSION.prefs.pieSlotPos.x, top: SESSION.prefs.pieSlotPos.y, right: "auto" } : undefined}
