@@ -236,6 +236,17 @@ input[type=range]{width:64px;height:22px;accent-color:var(--accent)}
   max-height:min(86vh, calc(100vh - var(--sat) - var(--sab) - 16px));box-shadow:var(--sh-4)}
 .dlg-head{display:flex;align-items:center;gap:8px;padding:13px 16px;border-bottom:1px solid var(--line);font-weight:700}
 .dlg-body{padding:12px 16px;overflow-y:auto}
+/* ⑭ 菜单/弹窗滚动条鬼畜：PC 下停用菜单错峰入场动画（hover 时不再重排），
+   并预留滚动条槽位，避免滚动条出现/消失导致宽度跳动 */
+html[data-pc] .dlg-body{scrollbar-gutter:stable}
+html[data-pc] .dlg-body.col .menuitem{animation:none}
+html[data-pc] .menuitem{transition:background .12s ease}
+html[data-pc] .menuitem:hover{background:var(--bg4)}
+html[data-pc] .btn:hover{background:var(--bg3);color:var(--text)}
+html[data-pc] .chip:hover{background:var(--bg4)}
+html[data-pc] .tab:hover,.html[data-pc] .tabbar-tab:hover{color:var(--text)}
+html[data-pc] .set-grouphead:hover{background:var(--bg3)}
+html[data-pc] .hist-row:hover{background:var(--bg3)}
 .dlg-body.col{display:flex;flex-direction:column;gap:6px}
 .dlg-foot{display:flex;gap:8px;padding:12px 16px;border-top:1px solid var(--line);justify-content:flex-end}
 .menuitem{width:100%;justify-content:flex-start;background:var(--bg3);padding:10px 12px;border-radius:10px;color:var(--text);display:flex;align-items:center;gap:8px}
@@ -268,6 +279,8 @@ input[type=range]{width:64px;height:22px;accent-color:var(--accent)}
 /* canvas color indicator (current selected color box) */
 .view-canvas{position:absolute;inset:0}
 /* PC 光标：按工具/状态切换（data-cursor 由 View.syncCursor 写入） */
+/* 右键绘制时要彻底压掉浏览器的右键手势（拖拽/选择/系统菜单） */
+html[data-pc] .view-canvas{touch-action:none;user-select:none;-webkit-user-select:none;overscroll-behavior:contain}
 html[data-pc] .view-canvas[data-cursor="draw"]{cursor:crosshair}
 html[data-pc] .view-canvas[data-cursor="move"]{cursor:default}
 html[data-pc] .view-canvas[data-cursor="grab"]{cursor:grab}
@@ -891,6 +904,7 @@ input:-webkit-autofill{-webkit-box-shadow:0 0 0 1000px var(--input-bg) inset;-we
 .sym-chiprow .sym-chip.on{border-color:var(--sym-strong);background:var(--sym-bg-on);color:var(--sym-text)}
 /* all-frames preview (PPT-like, scrollable) */
 .dlg-frame-preview{width:min(92vw,660px);max-height:78vh;display:flex;flex-direction:column}
+html[data-pc] .dlg-frame-preview{width:60vw;max-height:84vh}
 .dlg-frame-preview .fp-grid{overflow-y:auto;display:flex;flex-wrap:wrap;gap:10px;padding:12px;align-content:flex-start}
 .fp-cell.col{flex-direction:column;gap:4px;padding:8px 8px}
 .dlg-canvasref{width:min(94vw,740px)}
