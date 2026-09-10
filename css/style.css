@@ -105,7 +105,35 @@ html[data-pc]{
   --fs-3:13px; --fs-4:14px; --fs-5:15px;
   --ctl-h:40px;
 }
-html[data-pc] body{font-size:15px;line-height:1.5}
+html[data-pc] body{font-size:var(--fs-5);line-height:1.5}
+
+/* ---------- PC 桌面化：更大的可点区域、更松的行距 ---------- */
+html[data-pc]{--barh:48px}
+html[data-pc] .btn{min-width:40px;min-height:40px;padding:6px 10px;border-radius:var(--r-4);font-size:var(--fs-4)}
+html[data-pc] .btn.small{min-width:32px;min-height:32px;width:32px;height:32px}
+html[data-pc] .btn.mini{min-width:28px;min-height:28px;width:28px;height:28px}
+html[data-pc] .btn.rail{width:44px;height:44px;border-radius:var(--r-5)}
+html[data-pc] .chip{padding:8px 14px;border-radius:var(--r-4);font-size:var(--fs-4)}
+html[data-pc] .chips{gap:8px}
+html[data-pc] .tab{padding:9px 0;font-size:var(--fs-4)}
+html[data-pc] .tabbar-tab{padding:7px 14px;font-size:var(--fs-4)}
+html[data-pc] .dropmenu-btn{padding:7px 11px;font-size:var(--fs-4)}
+html[data-pc] .menuitem{padding:11px 13px;border-radius:var(--r-4)}
+html[data-pc] .dlg{width:min(92vw,440px);border-radius:var(--r-6)}
+html[data-pc] .dlg-head{padding:15px 18px;font-size:var(--fs-5)}
+html[data-pc] .dlg-body{padding:14px 18px}
+html[data-pc] .dlg-foot{padding:14px 18px;gap:10px}
+html[data-pc] .rowlabel{font-size:var(--fs-3);margin:10px 0 4px}
+html[data-pc] .row-note{font-size:var(--fs-3);line-height:1.6}
+html[data-pc] .set-item{padding:11px 12px;gap:9px}
+html[data-pc] .set-name{font-size:var(--fs-4)}
+html[data-pc] .set-desc{font-size:var(--fs-3);line-height:1.6}
+html[data-pc] .panel{width:min(88vw,400px)}
+html[data-pc] .panel-body{padding:12px}
+html[data-pc] .ctrlbar{gap:16px}
+html[data-pc] .zoom-hud .zoom-pct{font-size:var(--fs-4);padding:6px 10px}
+html[data-pc] .colorchip{width:38px;height:38px}
+html[data-pc] .topbar .title{font-size:var(--fs-5)}
 
 /* ============================================================
    2/5  base — 重置与通用元素
@@ -303,6 +331,15 @@ html[data-pc] .view-canvas[data-cursor="pick"]{cursor:url("data:image/svg+xml;ut
   background:var(--surface-item);border:1.5px solid var(--surface-item-line);color:var(--text-2);display:flex;align-items:center;justify-content:center;
   box-shadow:var(--sh-1);touch-action:none}
 .orb-item.on{background:var(--accent);border-color:var(--on-accent)}
+/* PC：浮动球整体放大 1.2×（半径/格距在 orbMetrics() 里同步放大） */
+html[data-pc] .orb{width:62px;height:62px}
+html[data-pc] .orb-item{width:48px;height:48px}
+/* 展开锁定按钮：只在球展开时出现，叠在主球右上角 */
+.orb-lock{position:fixed;z-index:33;width:26px;height:26px;border-radius:50%;padding:0;
+  background:var(--surface-item);border:1px solid var(--surface-item-line);color:var(--text-3);
+  display:flex;align-items:center;justify-content:center;box-shadow:var(--sh-1);pointer-events:auto}
+.orb-lock.on{background:var(--accent);border-color:var(--on-accent);color:var(--on-accent)}
+.orb-lock:active{background:var(--surface-item-active)}
 .orb-item:active{background:var(--surface-item-active)}
 
 /* hold-to-adjust buttons + floating bar */
