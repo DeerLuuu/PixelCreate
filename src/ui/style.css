@@ -27,7 +27,7 @@
   --text-2:#dfe3f0; --text-3:#cfd5e6; --text-4:#e7ebf4;
   --dim-2:#9aa3bd; --dim-3:#8a90a6; --dim-4:#7b8299; --disabled:#565b6b;
   --input-bg:#232834; --input-line:#3a4055; --input-text:#e9edf7;
-  --surface-card:#1d2129; --surface-pop:#20242f; --surface-toast:#2a2d3a;
+  --surface-card:#1d2129; --surface-pop:#20242f; --surface-toast:#2a2d3a; --pie-mask:rgba(8,10,16,.55);
   --surface-anchor:#232736; --surface-anchor-on:#2c3a66; --anchor-dot:#59607a;
   --accent:#5aa2f0; --accent-2:#5f83e8; --accent-3:#4f7cf7; --accent-4:#7fb0ff;
   --accent-soft:rgba(90,162,240,.32); --accent-faint:rgba(90,162,240,.07); --accent-glow:rgba(90,162,240,.5);
@@ -71,7 +71,7 @@
   --text-2:#3c4250; --text-3:#4b5262; --text-4:#2e333f;
   --dim-2:#6b7284; --dim-3:#7b8294; --dim-4:#98a0af; --disabled:#b4bac6;
   --input-bg:#fff; --input-line:#c3c9d6; --input-text:#22262f;
-  --surface-card:#fff; --surface-pop:#fff; --surface-toast:#2f3442;
+  --surface-card:#fff; --surface-pop:#fff; --surface-toast:#2f3442; --pie-mask:rgba(240,242,248,.62);
   --surface-anchor:#eef1f7; --surface-anchor-on:#dbe6fb; --anchor-dot:#b6bcc8;
   --accent:#2f6fd0; --accent-2:#4a7fe0; --accent-3:#2f6fd0; --accent-4:#6f9de8;
   --accent-soft:rgba(47,111,208,.28); --accent-faint:rgba(47,111,208,.08); --accent-glow:rgba(47,111,208,.4);
@@ -1076,3 +1076,31 @@ html[data-pc] .sc-dlg{width:min(92vw,760px)}
 
 /* 导出尺寸提示：超预算时标红（见 ExportModal） */
 .row-note.warn{color:var(--danger);font-weight:600}
+
+/* ---- 浮动球存储区里的「装备槽」+ 饼菜单（Pie，仅 PC）---- */
+.bdock .bd-equip{width:30px;height:30px;border-radius:9px;flex:0 0 auto;display:flex;align-items:center;justify-content:center;
+  background:var(--surface-item);border:1px dashed var(--line);color:var(--dim-2);font-size:13px;font-weight:700;position:relative}
+.bdock .bd-equip.on{border-style:solid;border-color:var(--accent);color:var(--text)}
+.bdock .bd-equip.on::after{content:"F";position:absolute;right:-2px;bottom:-3px;font-size:9px;line-height:1;padding:1px 2px;
+  border-radius:4px;background:var(--accent);color:var(--on-accent);font-weight:800}
+.bdock .bd-equip:hover{background:var(--surface-item-active)}
+.bdock .bd-pick{display:flex;flex-wrap:wrap;gap:4px;justify-content:center;padding-top:2px;border-top:1px solid var(--ctl-line-soft)}
+.bdock .bd-pick button{width:26px;height:26px;border-radius:8px;background:var(--surface-item);border:1px solid transparent;
+  color:var(--text-3);display:flex;align-items:center;justify-content:center}
+.bdock .bd-pick button.on{border-color:var(--accent);color:var(--text)}
+.bdock .bd-pick button:hover{background:var(--surface-item-active)}
+.bdock.horiz .bd-pick{border-top:0;border-left:1px solid var(--ctl-line-soft);padding:0 0 0 4px}
+
+.pie-layer{position:fixed;inset:0;z-index:var(--z-pop);cursor:none;background:var(--pie-mask);animation:pieIn .12s ease both}
+@keyframes pieIn{from{opacity:0}to{opacity:1}}
+.pie-line{position:absolute;inset:0;pointer-events:none}
+.pie-item{position:fixed;width:48px;height:48px;border-radius:50%;transform:translate(-50%,-50%);
+  background:var(--surface-item);border:1px solid var(--ctl-line-soft);color:var(--text-3);
+  display:flex;align-items:center;justify-content:center;pointer-events:none;transition:transform .08s ease,background .08s}
+.pie-item.on{background:var(--accent);border-color:var(--on-accent);color:var(--on-accent);transform:translate(-50%,-50%) scale(1.18)}
+.pie-centre{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);text-align:center;pointer-events:none;max-width:40vw}
+.pie-title{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim);margin-bottom:4px}
+.pie-focus{font-size:15px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pie-hint{position:fixed;left:50%;bottom:26px;transform:translateX(-50%);font-size:12px;color:var(--dim);
+  background:var(--surface-toast);padding:6px 12px;border-radius:999px;pointer-events:none}
+.pie-empty{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);font-size:13px;color:var(--text-2);text-align:center;max-width:60vw}

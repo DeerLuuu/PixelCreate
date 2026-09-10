@@ -34,7 +34,7 @@ const THEME_TOKENS = [
   "--accent", "--accent-2", "--accent-3", "--accent-4",
   "--accent-soft", "--accent-faint", "--accent-glow", "--on-accent",
   "--danger", "--danger-1", "--danger-2", "--danger-3", "--danger-4",
-  "--link", "--mask",
+  "--link", "--mask", "--pie-mask",
   // canvas chrome (orb / ring / dock / chips / zoom hud / tip) follows the theme
   "--surface-orb", "--surface-orb-on", "--orb-fg", "--surface-item", "--surface-item-active",
   "--surface-item-line", "--line-3", "--hud-bg", "--hud-bg-2", "--hud-bg-2-dim", "--hud-bg-3",

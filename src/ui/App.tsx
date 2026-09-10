@@ -12,6 +12,7 @@ import * as fxE from "../engine/effects";
 import * as compositor from "../render/compositor";
 import { HoldAdjust, ColorHoldChip } from "./hold";
 import { orbMetrics, palChipPos, chipBox, swatchHitsChip, ringLayout } from "./orb-layout";
+import { pieFocusIndex, pieRadius, pieSlots } from "./pie-layout";
 import { ReplayOverlay } from "./replay";
 import * as bridge from "../io/bridge";
 import { writeClipboardPng } from "../io/clipboard";
@@ -1003,6 +1004,9 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
     setDockHover(null);
   };
   const iconOfBall = (id: BallId): string => id === "main" ? "i-pencil" : id === "pal" ? "i-palette" : id === "canv" ? "i-canvas" : "i-star";
+  /** 球的显示名（装备槽、饼菜单标题用） */
+  const ballLabel = (id: OrbId): string =>
+    id === "main" ? t("menu") : id === "sel" ? t("sel.active") : id === "pal" ? t("palette") : id === "fx" ? t("fxOrb") : t("canvasOrb");
 
   // rotation / resize: keep every floating ball inside the viewport
   useEffect(() => {
@@ -1130,6 +1134,29 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
   };
 
   type Item = { icon: string; label: string; act: () => void; active?: boolean; desc?: string; guide?: string };
+
+  // ---------- 装备槽 + 饼菜单（Blender 式，仅 PC）----------
+  // 存储区边的槽里可以「装备」一个球；按住发动键（默认 F）时，这个球的所有
+  // 子项会以圆环铺在屏幕中间并隐藏鼠标，鼠标指向哪一项就聚焦哪一项，
+  // 松开按键激活聚焦项（中间是死区，松手即取消）。
+  const pieKey = "pc.pie.ball";
+  const loadPie = (): OrbId | null => {
+    try {
+      const v = localStorage.getItem(pieKey);
+      return v === "main" || v === "sel" || v === "pal" || v === "fx" || v === "canv" ? v : null;
+    } catch { return null; }
+  };
+  const [pieEquip, setPieEquip] = useState<OrbId | null>(loadPie);
+  const [piePick, setPiePick] = useState(false);
+  /** open pie: which ball's items are shown and which one the pointer focuses */
+  const [pie, setPie] = useState<{ ball: OrbId; focus: number; cancelled: boolean } | null>(null);
+  const pieRef = useRef<{ ball: OrbId; focus: number; cancelled: boolean } | null>(null);
+  pieRef.current = pie;
+  /** 最近一次鼠标位置：饼打开的那一瞬先用它决定聚焦项 */
+  const lastMouse = useRef({ x: 0, y: 0 });
+  useEffect(() => {
+    try { if (pieEquip) localStorage.setItem(pieKey, pieEquip); else localStorage.removeItem(pieKey); } catch { /* ignore */ }
+  }, [pieEquip]);
   const tipT = useRef<number | null>(null);
   const tipO = useRef<{ x: number; y: number } | null>(null);
   const stopTip = () => {
@@ -1427,6 +1454,15 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
       : isSelectTool(snap.tool) ? defOf(snap.tool)?.icon
       : defOf(snap.tool)?.icon) || "i-pencil";
 
+  /** 饼菜单里显示哪些项：就是被装备那个球的子项（PC 模式已经全部铺开的版本） */
+  const pieItemsFor = (ball: OrbId): Item[] => {
+    if (ball === "main") return mainItems.filter((it) => !it.guide || (it.guide !== "tool-back" && it.guide !== "tool-shape-group" && it.guide !== "tool-select-group"));
+    if (ball === "sel") return selItems;
+    if (ball === "fx") return fxItems;
+    if (ball === "canv") return canvItems.filter((it) => it.guide !== "canv-back");
+    return [];
+  };
+
   /** 展开后的落点：由 ringLayout 算出，保证同环/跨环都不重叠（PC 球更大时半径自动扩容） */
   const ringSlots = (p0: { x: number; y: number }, n: number) => {
     const cx = p0.x + ORB / 2, cy = p0.y + ORB / 2;
@@ -1445,6 +1481,87 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
     }));
   };
   const ringAt = (p0: { x: number; y: number }, i: number, n: number) => ringSlots(p0, n)[i] ?? { x: p0.x, y: p0.y };
+
+  // ---------- 饼菜单：按住发动键 → 圆环布置 → 松手激活 ----------
+  /** 被装备球在饼里的条目（色板球是「颜色」，单独处理） */
+  const pieEntries = (ball: OrbId): Item[] => pieItemsFor(ball);
+  const pieColours = (ball: OrbId): Array<[number, number, number, number]> =>
+    ball === "pal" ? SESSION.palOrbColors().slice(0, 24) : [];
+  const pieCount = (ball: OrbId): number => (ball === "pal" ? pieColours(ball).length : pieEntries(ball).length);
+
+  // 按住发动键期间：跟随鼠标方向聚焦；松开时执行；Esc 取消
+  useEffect(() => {
+    if (!pcMode) return;
+    const isTyping = (t: EventTarget | null): boolean => {
+      const el = t as HTMLElement | null;
+      return !!el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable);
+    };
+    const focusAt = (x: number, y: number, ball: OrbId): number => {
+      const cx = window.innerWidth / 2, cy = window.innerHeight / 2;
+      return pieFocusIndex(x, y, cx, cy, Math.max(1, pieCount(ball)), pieRadius(window.innerWidth, window.innerHeight));
+    };
+    const onDown = (e: KeyboardEvent) => {
+      const open = pieRef.current;
+      if (open) {
+        // 饼打开时吞掉其它按键，别让工具键/快捷键在背后生效
+        if (e.key !== "f" && e.key !== "F") e.stopPropagation();
+        if (e.key === "Escape") {
+          e.preventDefault();
+          e.stopPropagation();
+          setPie({ ...open, cancelled: true, focus: -1 });
+        }
+        return;
+      }
+      if (e.key !== "f" && e.key !== "F") return;
+      if (e.ctrlKey || e.altKey || e.metaKey) return;
+      if (isTyping(e.target)) return;
+      if (!pieEquip) {
+        bridge.toast(t("pieNeedEquip"));
+        return;
+      }
+      e.preventDefault();
+      e.stopPropagation();
+      setPie({ ball: pieEquip, focus: -1, cancelled: false });
+      // 让指针当前位置立刻决定聚焦项（不必先动一下鼠标）
+      setPie((g) => (g ? { ...g, focus: focusAt(lastMouse.current.x, lastMouse.current.y, g.ball) } : g));
+    };
+    const onUp = (e: KeyboardEvent) => {
+      const open = pieRef.current;
+      if (!open || (e.key !== "f" && e.key !== "F")) return;
+      e.preventDefault();
+      e.stopPropagation();
+      setPie(null);
+      if (open.cancelled) return;
+      const i = open.focus;
+      if (i < 0) return;
+      const ball = open.ball;
+      if (ball === "pal") {
+        const cols = pieColours(ball);
+        const c = cols[Math.min(i, cols.length - 1)];
+        if (c) { SESSION.setFgColor([c[0], c[1], c[2], 255]); SESSION.hapticTick("饼菜单", 0.7); }
+        return;
+      }
+      const list = pieEntries(ball);
+      const it = list[Math.min(i, list.length - 1)];
+      if (it) { SESSION.hapticTick("饼菜单", 0.7); it.act(); }
+    };
+    const onMove = (e: MouseEvent) => {
+      lastMouse.current = { x: e.clientX, y: e.clientY };
+      const open = pieRef.current;
+      if (!open) return;
+      const i = focusAt(e.clientX, e.clientY, open.ball);
+      if (i !== open.focus) setPie({ ...open, focus: i });
+    };
+    window.addEventListener("keydown", onDown, true);
+    window.addEventListener("keyup", onUp, true);
+    window.addEventListener("mousemove", onMove, true);
+    return () => {
+      window.removeEventListener("keydown", onDown, true);
+      window.removeEventListener("keyup", onUp, true);
+      window.removeEventListener("mousemove", onMove, true);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pcMode, pieEquip, pieItemsFor]);
 
   const renderBall = (
     which: OrbId,
@@ -1649,7 +1766,57 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
         setCanvSub(null);
         setCanv({ ...canv, open: !canv.open });
       })}
-      {(docked.length > 0 || dockOpen) && (
+      {pie && (() => {
+        const ball = pie.ball;
+        const cols = pieColours(ball);
+        const items = pieEntries(ball);
+        const n = Math.max(1, ball === "pal" ? cols.length : items.length);
+        const cx = window.innerWidth / 2, cy = window.innerHeight / 2;
+        const R = pieRadius(window.innerWidth, window.innerHeight);
+        const slots = pieSlots(n, cx, cy, R);
+        const foc = pie.focus;
+        const label = foc >= 0
+          ? (ball === "pal" ? rgbaToHex(cols[Math.min(foc, cols.length - 1)] ?? [0, 0, 0, 255]) : (items[Math.min(foc, items.length - 1)]?.label ?? ""))
+          : "";
+        return (
+          <div className="pie-layer" data-guide="pie-layer"
+            onContextMenu={(e) => e.preventDefault()}
+            onPointerDown={(e) => e.preventDefault()}>
+            {foc >= 0 && (
+              <svg className="pie-line" width="100%" height="100%">
+                <line x1={cx} y1={cy} x2={slots[foc]?.x} y2={slots[foc]?.y}
+                  stroke="var(--accent)" strokeWidth="1.5" strokeDasharray="5 5" opacity="0.8" />
+              </svg>
+            )}
+            {ball === "pal"
+              ? cols.map((c, i) => {
+                const p0 = slots[i];
+                return (
+                  <span key={"piec" + i}
+                    className={"pie-item" + (i === foc ? " on" : "")}
+                    style={{ left: p0.x, top: p0.y, background: chipCss(c) } as React.CSSProperties} />
+                );
+              })
+              : items.map((it, i) => {
+                const p0 = slots[i];
+                return (
+                  <span key={"pie" + i + it.label}
+                    className={"pie-item" + (i === foc ? " on" : "")}
+                    style={{ left: p0.x, top: p0.y } as React.CSSProperties}>
+                    <Icon id={it.icon || "i-more"} size={18} />
+                  </span>
+                );
+              })}
+            <div className="pie-centre">
+              <div className="pie-title">{t("pieTitle")} · {ballLabel(ball)}</div>
+              <div className="pie-focus">{label || t("pieNoFocus")}</div>
+            </div>
+            <div className="pie-hint">{t("pieHint")}</div>
+          </div>
+        );
+      })()}
+
+      {(pcMode || docked.length > 0 || dockOpen) && (
         <div ref={dockWrap} className={"bdock" + (landD ? " horiz" : "") + (dockOpen ? " open" : "") + (dockArmed ? " armed" : "")}
           onPointerDown={(e) => {
             e.preventDefault();
@@ -1713,6 +1880,28 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
               <Icon id={d.id === "main" ? baseIcon : iconOfBall(d.id)} size={15} />
             </span>
           ))}
+          {/* 装备槽：按住 F 发动这个球的饼菜单（PC 专属，只装备一个） */}
+          {pcMode && (
+            <span className={"bd-equip" + (pieEquip ? " on" : "")} data-guide="pie-equip"
+              title={pieEquip ? t("pieEquipDesc") + " · " + ballLabel(pieEquip) : t("pieEquip")}
+              onPointerDown={(e) => { e.stopPropagation(); e.preventDefault(); setDockOpen(true); setPiePick((v) => !v); }}
+              onPointerUp={(e) => e.stopPropagation()}>
+              {pieEquip ? <Icon id={iconOfBall(pieEquip as BallId)} size={15} /> : "+"}
+            </span>
+          )}
+          {pcMode && piePick && (
+            <span className="bd-pick" onPointerDown={(e) => e.stopPropagation()} onPointerUp={(e) => e.stopPropagation()}>
+              {(["main", "sel", "pal", "fx", "canv"] as OrbId[]).map((id) => (
+                <button key={id} className={pieEquip === id ? "on" : ""} title={ballLabel(id)}
+                  onClick={() => { setPieEquip(id); setPiePick(false); }}>
+                  <Icon id={iconOfBall(id as BallId)} size={14} />
+                </button>
+              ))}
+              <button title={t("pieUnequip")} onClick={() => { setPieEquip(null); setPiePick(false); }}>
+                <Icon id="i-x" size={14} />
+              </button>
+            </span>
+          )}
         </div>
       )}
       {!pcMode && (open || (sel && sel.open) || pal.open || fx.open || canv.open) && (

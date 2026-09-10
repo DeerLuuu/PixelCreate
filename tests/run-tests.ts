@@ -22,6 +22,7 @@ import { testCanvasSpace } from "./canvas-space.test";
 import { testColorDrag } from "./color-drag.test";
 import { testPcMode } from "./pc.test";
 import { testScrub } from "./scrub.test";
+import { testPie } from "./pie.test";
 import { testExpr } from "./expr.test";
 import { testEffects } from "./effects.test";
 import { testView } from "./view.test";
@@ -82,6 +83,8 @@ async function main(): Promise<void> {
   testPcMode();
   console.log("--- scrub ---");
   testScrub();
+  console.log("--- pie ---");
+  testPie();
   finish();
 }
 
