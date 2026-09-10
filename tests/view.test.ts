@@ -447,6 +447,54 @@ export function testView(): void {
       const off2 = (20 * s3.doc.w + 20) * 4;
       eq("view.pc.left.paints-fg", cel4 ? [cel4.data[off2], cel4.data[off2 + 1], cel4.data[off2 + 2]] : null, [10, 20, 30]);
 
+      // ---- 空格长按（鼠标不动）＝交换前景/背景色；鼠标一动就取消，回到平移 ----
+      {
+        type SpacePriv = {
+          onSpaceKey(e: KeyboardEvent): void;
+          spaceHoldT: number | null;
+          spaceSwapped: boolean;
+          swapColorsByHold(): void;
+        };
+        const sp = v3 as unknown as SpacePriv;
+        const key = (type: string): KeyboardEvent => ({
+          code: "Space", key: " ", type, target: null,
+          preventDefault: () => undefined,
+        } as unknown as KeyboardEvent);
+        const fg0 = [s3.fg[0], s3.fg[1], s3.fg[2], s3.fg[3]];
+        const bg0 = [s3.bg[0], s3.bg[1], s3.bg[2], s3.bg[3]];
+        // 按下空格：计时器待命；抬手取消（没有换色）
+        sp.onSpaceKey(key("keydown"));
+        ok("view.pc.space-hold.armed", sp.spaceHoldT !== null);
+        sp.onSpaceKey(key("keyup"));
+        ok("view.pc.space-hold.disarmed", sp.spaceHoldT === null);
+        eq("view.pc.space-hold.no-swap-on-tap", [s3.fg[0], s3.fg[1], s3.fg[2], s3.fg[3]], fg0);
+        // 按住到点（这里直接触发到点的动作）：前景/背景互换，且同一次长按只换一次
+        sp.onSpaceKey(key("keydown"));
+        sp.swapColorsByHold();
+        eq("view.pc.space-hold.swaps-fg", [s3.fg[0], s3.fg[1], s3.fg[2], s3.fg[3]], bg0);
+        eq("view.pc.space-hold.swaps-bg", [s3.bg[0], s3.bg[1], s3.bg[2], s3.bg[3]], fg0);
+        const fgOnce = [s3.fg[0], s3.fg[1], s3.fg[2], s3.fg[3]];
+        sp.swapColorsByHold();
+        eq("view.pc.space-hold.once-per-hold", [s3.fg[0], s3.fg[1], s3.fg[2], s3.fg[3]], fgOnce);
+        sp.onSpaceKey(key("keyup"));
+        // 鼠标没动（阈值内抖动）不取消
+        sp.onSpaceKey(key("keydown"));
+        fire("pointermove", ev({ button: 0, clientX: 100, clientY: 100 }));
+        fire("pointermove", ev({ button: 0, clientX: 102, clientY: 101 }));
+        ok("view.pc.space-hold.jitter-keeps-armed", sp.spaceHoldT !== null);
+        // 超过 6px＝平移意图，取消交换
+        fire("pointermove", ev({ button: 0, clientX: 140, clientY: 100 }));
+        ok("view.pc.space-hold.cancelled-by-move", sp.spaceHoldT === null);
+        ok("view.pc.space-hold.still-pans", sp.spaceHoldT === null && !!((v3 as unknown as { spaceDown: boolean }).spaceDown));
+        // 空格按住时按下鼠标（要平移）同样取消
+        sp.onSpaceKey(key("keyup"));
+        sp.onSpaceKey(key("keydown"));
+        fire("pointerdown", ev({ button: 0, buttons: 1, clientX: 100, clientY: 100 }));
+        fire("pointerup", ev({ button: 0, clientX: 100, clientY: 100 }));
+        ok("view.pc.space-hold.cancelled-by-click", sp.spaceHoldT === null);
+        sp.onSpaceKey(key("keyup"));
+      }
+
       v3.destroy();
     }
 
