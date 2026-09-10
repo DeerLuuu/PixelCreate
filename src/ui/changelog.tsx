@@ -9,10 +9,10 @@ import { useKitPcMode } from "./kit";
 import { Dialog } from "./kit";
 
 /** keep in sync with android/AndroidManifest.xml versionName on every release */
-export const APP_VERSION = "1.0.8.5";
+export const APP_VERSION = "1.0.8.6";
 /** build stamp shown next to the version (support/debug: identifies the exact
  *  package a user is running when the version number itself does not change) */
-export const BUILD_TAG = "60aee2";
+export const BUILD_TAG = "ea6d33";
 
 export type ClgKind = "add" | "imp" | "fix";
 export interface ClgItem { kind: ClgKind; zh: string; en: string }
@@ -21,6 +21,17 @@ export interface ClgVersion { v: string; date: string; items: ClgItem[] }
 const it = (kind: ClgKind, zh: string, en: string): ClgItem => ({ kind, zh, en });
 
 export const CHANGELOG: ClgVersion[] = [
+  {
+    v: "1.0.8.6",
+    date: "2026-09-10",
+    items: [
+      it("add", "选区可以直接搬到别的画布上：把选区内容拖起来（PC 用鼠标、手机上用手指都一样），拖到另一张画布上松手，像素就搬过去了——源画布留下空洞并记一条历史，目标画布自动聚焦、落点顶左按边缘裁剪，目标图层锁定时整个动作作废并把像素放回。配套的键盘操作也补齐了：Ctrl+X 剪切、Ctrl+V 粘贴（可以先在画布 1 剪切、切到画布 2 再粘贴）。", "Selections can now be moved onto another canvas: pick up the selection content (mouse or finger, both work) and release it over a different canvas to move the pixels there. The source keeps the hole with one history step, the target canvas is focused, the dropped corner is clipped at the canvas edge, and a locked target layer aborts the whole move and puts the pixels back. The matching keyboard actions are there too: Ctrl+X cuts and Ctrl+V pastes (cut on canvas 1, switch to canvas 2, paste)."),
+      it("imp", "浮动球在电脑模式下继续加强：带第二页的球（工具球、选区球）不再翻页，一次把全部选项铺开；展开后的排布重新算过，任何数量都不会互相压住；每个球（主球 / 选区 / 取色 / 魔法 / 画布）的展开锁定都补上了；鼠标划得再快也不会中途脱离拖动；鼠标扫过菜单时那一下诡异的横向纵向滚动条与抽搐也修好了，同时给按钮加上了悬停反馈。", "More PC work on the floating orbs: balls with a second page (tools, selection) no longer page — every option is laid out at once; the expanded layout is recomputed so no amount of entries overlap; every ball (main / selection / palette / magic / canvas) now has its expand-lock; dragging a ball fast no longer loses the drag; and the weird horizontal/vertical scrollbar twitch when the mouse sweeps across a menu is fixed, with proper hover feedback on buttons."),
+      it("add", "电脑模式补齐键盘与鼠标：Ctrl+左右切换前后帧、Ctrl+上下切换图层、Alt+单击某个像素立刻取色；按住空格不动＝交换前景/背景色（鼠标一动就恢复正常，仍然是空格+左键拖动平移）；鼠标中键点画布＝聚焦并适配那张画布（不再用于平移）；右键用背景色绘制，并且不再弹出浏览器右键菜单。", "Filling in the rest of the desktop vocabulary: Ctrl+Left/Right switches frames, Ctrl+Up/Down switches layers and Alt+click picks the colour under the pixel. Holding Space still swaps the foreground and background colours while the mouse stays put (move it and Space goes back to being the pan modifier). The middle button now focuses and fits the canvas under it instead of panning, and the right button paints with the background colour without triggering the browser context menu."),
+      it("add", "鼠标滚轮也能调值了：悬停在「按住拖动的按钮」或数字输入框上直接滚滚轮就增减数值，不用先按住再拖。", "The mouse wheel adjusts values now: hover a hold-to-drag button or a number field and scroll to change it, no press-and-drag needed."),
+      it("imp", "设置界面在电脑模式下改成左右布局（搜索框仍在最上方，左边选类别、右边调该项设置），更新日志也改成左边竖排版本列表、点哪版看哪版；「预览所有帧」面板加宽到屏幕的 60%，内容自动换行铺满，不再挤成一条。", "Settings switch to a two-column desktop layout (search stays on top, categories on the left, the selected category on the right) and the changelog lists versions vertically on the left with the release notes on the right. The all-frames preview panel now takes 60% of the screen with content flowing and wrapping instead of squeezing into a strip."),
+    ],
+  },
   {
     v: "1.0.8.5",
     date: "2026-09-10",

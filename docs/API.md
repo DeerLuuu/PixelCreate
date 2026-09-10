@@ -1065,7 +1065,7 @@ CSS 侧对应 `html[data-pc] .orb{62px}` 与 `html[data-pc] .orb-item{48px}`。
 
 `View.canvasAtScreen()` 与调色球拖拽都走这里，保证「这个点属于哪张画布」只有一份实现。
 
-**跨画布移动选区**（1.0.8.5 起，PC 与触屏都支持）：`View.onUp` 收尾时若发现
+**跨画布移动选区**（1.0.8.6 起，PC 与触屏都支持）：`View.onUp` 收尾时若发现
 「正在拖动的浮动选区块（`selDrag.kind === "move"` 且已 `floatCut`）松手点落在**别的**画布上」，
 就走 `View.dropSelDragToCanvas()`：源画布留下空洞并记一条 `sel.move` 历史（`floatCut` 已经挖掉了像素），
 再 `focusCanvas()` 到目标画布并用 `floatDropInto()` 落笔（同一屏幕位置，落点顶左越界按边缘裁剪）。
