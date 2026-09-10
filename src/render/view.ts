@@ -187,6 +187,8 @@ export class View {
   private mousePan = false;
   /** PC 输入：这一笔用另一个颜色槽（右键绘制） */
   private altPaint = false;
+  /** last logical pointer position (the cross-canvas drop preview needs it) */
+  private lastPt: PxPoint | null = null;
   private selDrag: { kind: "rect" | "move" | "lasso"; x0: number; y0: number; x1: number; y1: number; before: Uint8ClampedArray | null; b: { x: number; y: number; w: number; h: number }; moved: boolean; sx: number; sy: number; mv?: MoveState | null; pts?: [number, number][]; dx?: number; dy?: number; cut?: boolean } | null = null;
   private longT: number | null = null;
   /** freehand outline tool: collected path, filled with the current colour on release */
@@ -904,6 +906,43 @@ export class View {
         }
       }
       ctx.restore();
+      // ① 拖到别的画布上时：实时把内容画在那个位置（半透明幽灵），并给目标画布
+      //    描一圈虚线，松手前就看得到落点
+      const drop = fg.mv ? this.dropTargetOf({ mv: fg.mv, dx: fg.dx, dy: fg.dy }) : null;
+      if (drop) {
+        const dstE = this.session.docs[drop.index];
+        const focusE = this.session.docs[this.session.docIdx];
+        if (dstE && focusE) {
+          const zz2 = Math.max(1, z);
+          const ox = this.ox, oy = this.oy;
+          ctx.save();
+          ctx.beginPath();
+          ctx.rect(ox + (dstE.x - focusE.x) * z, oy + (dstE.y - focusE.y) * z, dstE.doc.w * z, dstE.doc.h * z);
+          ctx.clip();
+          ctx.globalAlpha = 0.72;
+          for (let y = 0; y < content.h; y++) {
+            for (let x = 0; x < content.w; x++) {
+              const si = content.idx(x, y);
+              const a = content.data[si + 3];
+              if (a === 0) continue;
+              ctx.globalAlpha = (a / 255) * 0.72;
+              ctx.fillStyle = "rgb(" + content.data[si] + "," + content.data[si + 1] + "," + content.data[si + 2] + ")";
+              ctx.fillRect(
+                ox + (dstE.x - focusE.x + drop.x + x) * z,
+                oy + (dstE.y - focusE.y + drop.y + y) * z, zz2, zz2);
+            }
+          }
+          ctx.restore();
+          // dashed frame around the target canvas
+          ctx.save();
+          ctx.strokeStyle = "#63f5c5";
+          ctx.lineWidth = 2;
+          ctx.setLineDash([8, 6]);
+          ctx.strokeRect(ox + (dstE.x - focusE.x) * z - 1, oy + (dstE.y - focusE.y) * z - 1,
+            dstE.doc.w * z + 2, dstE.doc.h * z + 2);
+          ctx.restore();
+        }
+      }
     }
     // floating rotate/scale content: pixels rasterised off-layer during a transform
     const xfg = this.xf;
@@ -1638,6 +1677,7 @@ export class View {
 
   private onDown(e: PointerEvent): void {
     e.preventDefault();
+    this.lastPt = this.evPt(e);
     try {
       this.host.setPointerCapture && this.host.setPointerCapture(e.pointerId);
     } catch { /* ignore */ }
@@ -1893,6 +1933,7 @@ export class View {
 
   private onMove(e: PointerEvent): void {
     const pt = this.evPt(e);
+    this.lastPt = pt;
     const wasDown = this.pointers.has(e.pointerId);
     if (wasDown) this.pointers.set(e.pointerId, pt);
     // Alt 按住＝取色模式：光标跟着换成吸管（鼠标没有别的提示手段）
@@ -2873,6 +2914,27 @@ export class View {
       if (firstCut) this.session.repaint();
       else this.drawOverlay();
     }
+  }
+
+  /**
+   * Where a floating selection drag would land right now: the canvas under the
+   * pointer (null when that is still the source canvas). Used for the LIVE
+   * preview while dragging and for the drop itself, so both agree pixel for
+   * pixel. `x`/`y` are the clip's top-left inside the target canvas.
+   */
+  private dropTargetOf(g: { mv: MoveState; dx?: number; dy?: number }): { index: number; x: number; y: number } | null {
+    const s = this.session;
+    const pt = this.lastPt;
+    if (!pt) return null;
+    const hit = screenToCanvas(this.spaceRects(), s.docIdx, this.ox, this.oy, this.zoom, pt.x, pt.y);
+    if (!hit || hit.index === s.docIdx) return null;
+    const srcE = s.docs[s.docIdx], dstE = s.docs[hit.index];
+    if (!srcE || !dstE) return null;
+    return {
+      index: hit.index,
+      x: g.mv.ox + (g.dx || 0) + srcE.x - dstE.x,
+      y: g.mv.oy + (g.dy || 0) + srcE.y - dstE.y,
+    };
   }
 
   /**

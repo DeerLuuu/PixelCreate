@@ -4,7 +4,8 @@
 // the interesting part — which chord means what, and when a chord must be
 // ignored (typing in a field, modifier-only presses) — stays testable.
 export type ShortcutAction =
-  | "undo" | "redo" | "save" | "copy" | "cut" | "paste" | "delete" | "escape"
+  | "undo" | "redo" | "save" | "openFile" | "newDoc" | "exportFile"
+  | "copy" | "cut" | "paste" | "delete" | "escape"
   | "pasteLayer" | "pasteCanvas" | "swapColors" | "shortcutHelp"
   | "framePrev" | "frameNext" | "layerPrev" | "layerNext"
   | "zoomIn" | "zoomOut" | "fit" | "toggleUI"
@@ -74,6 +75,9 @@ export function shortcutFor(e: ShortcutKey, typing = false): ShortcutHit | null 
       case "z": return { action: e.shiftKey ? "redo" : "undo" };
       case "y": return { action: "redo" };
       case "s": return { action: "save" };
+      case "o": return { action: "openFile" };
+      case "n": return { action: "newDoc" };
+      case "e": return { action: "exportFile" };
       case "c": return { action: "copy" };
       case "x": return { action: "cut" };
       case "v": return { action: e.shiftKey ? "pasteLayer" : "paste" };
@@ -139,7 +143,10 @@ export const SHORTCUT_SHEET: SheetGroup[] = [
       { keys: "Ctrl+Shift+V", zh: "粘贴为新图层", en: "Paste as a new layer", probe: { key: "v", ctrlKey: true, shiftKey: true }, action: "pasteLayer" },
       { keys: "Ctrl+Alt+V", zh: "粘贴为新画布", en: "Paste as a new canvas", probe: { key: "v", ctrlKey: true, altKey: true }, action: "pasteCanvas" },
       { keys: "Delete / Backspace", zh: "删除（选区内容 / 当前图层 / 选中帧 / 选中画布）", en: "Delete (selection pixels / layer / frames / canvas)", probe: { key: "Delete" }, action: "delete" },
-      { keys: "Esc", zh: "取消选区", en: "Drop the selection", probe: { key: "Escape" }, action: "escape" },
+      { keys: "Esc", zh: "取消选区（有球展开时先收球）", en: "Drop the selection (closes open orbs first)", probe: { key: "Escape" }, action: "escape" },
+      { keys: "Ctrl+O", zh: "打开文件 / 导入图片", en: "Open a file / import an image", probe: { key: "o", ctrlKey: true }, action: "openFile" },
+      { keys: "Ctrl+N", zh: "新建画布", en: "New canvas", probe: { key: "n", ctrlKey: true }, action: "newDoc" },
+      { keys: "Ctrl+E", zh: "导出图片", en: "Export an image", probe: { key: "e", ctrlKey: true }, action: "exportFile" },
     ],
   },
   {

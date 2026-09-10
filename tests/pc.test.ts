@@ -4,7 +4,7 @@ import { normalizePcMode, resolvePcMode } from "../src/io/pcmode";
 import { normalizeWheelDelta, wheelIntent, wheelZoomFactor } from "../src/render/wheel";
 import { fanRadius, orbMetrics, ringLayout } from "../src/ui/orb-layout";
 import { cursorFor } from "../src/render/cursor";
-import { NUDGE_STEP, NUDGE_STEP_FAST, TOOL_KEYS, shortcutFor } from "../src/app/shortcuts";
+import { NUDGE_STEP, NUDGE_STEP_FAST, SHORTCUT_SHEET, TOOL_KEYS, shortcutFor } from "../src/app/shortcuts";
 import { eq, ok } from "./common";
 import { CORE_TOOLS, SHAPE_TOOLS, SELECT_TOOLS } from "../src/tools/registry";
 
@@ -77,9 +77,42 @@ export function testPcMode(): void {
     eq("cursor.picking-mode", cursorFor({ tool: "pencil", locked: false, picking: true }), "pick");
   }
 
+  // ---- ⑭ 快捷键一览面板（Ctrl+F1）与真实映射必须一致 ----
+  {
+    let rows = 0;
+    for (const g of SHORTCUT_SHEET) {
+      for (const it of g.items) {
+        if (!it.probe || !it.action) continue;
+        rows++;
+        const hit = shortcutFor(it.probe);
+        eq("sheet." + it.keys, hit ? hit.action : null, it.action);
+      }
+    }
+    ok("sheet.rows", rows >= 15, "rows=" + rows);
+    // 面板里不能出现重复的按键
+    const keys = SHORTCUT_SHEET.flatMap((g) => g.items.filter((i) => i.probe).map((i) => i.keys));
+    eq("sheet.keys-unique", keys.length, new Set(keys).size);
+    // 面板本身要有入口
+    eq("sheet.open-chord", shortcutFor({ key: "F1", ctrlKey: true })?.action, "shortcutHelp");
+    // 每个工具键都在面板里出现过（B / E / G / I / L / R / O / M / W / Q）
+    const sheetText = JSON.stringify(SHORTCUT_SHEET);
+    for (const k of Object.keys(TOOL_KEYS)) ok("sheet.tool-key." + k, sheetText.indexOf(k.toUpperCase()) >= 0);
+  }
+
   // ---- 键盘快捷键映射（纯函数）----
   {
     const K = (key: string, mods: Record<string, boolean> = {}) => shortcutFor({ key, ...mods });
+    // ⑮ 粘贴的新花样 / ③ X 交换颜色 / ㉑ 文件快捷键
+    eq("kbd.paste-layer", K("v", { ctrlKey: true, shiftKey: true })?.action, "pasteLayer");
+    eq("kbd.paste-canvas", K("v", { ctrlKey: true, altKey: true })?.action, "pasteCanvas");
+    eq("kbd.paste-plain", K("v", { ctrlKey: true })?.action, "paste");
+    eq("kbd.swap-colors", K("x")?.action, "swapColors");
+    eq("kbd.open-file", K("o", { ctrlKey: true })?.action, "openFile");
+    eq("kbd.new-doc", K("n", { ctrlKey: true })?.action, "newDoc");
+    eq("kbd.export-file", K("e", { ctrlKey: true })?.action, "exportFile");
+    // 输入框里单键不生效，但 Ctrl 组合照旧
+    eq("kbd.typing-x", shortcutFor({ key: "x" }, true), null);
+    eq("kbd.typing-ctrl-v", shortcutFor({ key: "v", ctrlKey: true }, true)?.action, "paste");
     eq("key.undo", K("z", { ctrlKey: true })?.action, "undo");
     eq("key.redo.shift", K("Z", { ctrlKey: true, shiftKey: true })?.action, "redo");
     eq("key.redo.y", K("y", { ctrlKey: true })?.action, "redo");

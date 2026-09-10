@@ -23,7 +23,7 @@ import { TimelineBar } from "./timeline";
 import { PreviewBox } from "./preview";
 import { RefImageBox } from "./refimg";
 import type { RefImg } from "./refimg";
-import { PalettePanel, MenuModal, SizeModal, SheetModal, NewDocModal, ExportModal, AdjustModal, SettingsModal, FrameModal, FramePreviewModal, CanvasRefModal, HistoryModal, ShortcutHelpModal, histName, importFlow, saveProject, openFileBytes } from "./modals";
+import { PalettePanel, openFlow, MenuModal, SizeModal, SheetModal, NewDocModal, ExportModal, AdjustModal, SettingsModal, FrameModal, FramePreviewModal, CanvasRefModal, HistoryModal, ShortcutHelpModal, histName, importFlow, saveProject, openFileBytes } from "./modals";
 import { FxParamDialog, fxDefaults, type FxRun, type FxVals } from "./fxparam";
 import { CanvasTitles } from "./canvas";
 import { ChangelogModal, changelogNeedsShow } from "./changelog";
@@ -48,7 +48,13 @@ export function App() {
       const el = t as HTMLElement | null;
       return !!el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable);
     };
-    const onCtx = (e: Event) => { e.preventDefault(); e.stopPropagation(); };
+    // text fields keep the NATIVE menu (copy / paste / spelling); everywhere else
+    // the browser menu is swallowed so a right-click can paint with the other slot
+    const onCtx = (e: Event) => {
+      if (isEditable(e.target)) return;
+      e.preventDefault();
+      e.stopPropagation();
+    };
     // 右键相关的浏览器手势（拖拽/中键自动滚动/辅助点击菜单）全部拦掉
     const onAux = (e: Event) => { const m = e as MouseEvent; if (m.button === 1 || m.button === 2) e.preventDefault(); };
     const onDragEnd = (e: Event) => e.preventDefault();
@@ -69,6 +75,8 @@ export function App() {
   }, []);
   const [panel, setPanel] = useState<PanelId>(null);
   const [modal, setModal] = useState<ModalId>(null);
+  /** PC 模式（跟随 kit 的标记）：快捷键、手势拦截、桌面布局都看它 */
+  const pcMode = useKitPcMode();
   // frame duration dialog: a frame index, or "batch" for the picked frames
   const [frameDlgIdx, setFrameDlgIdx] = useState<number | "batch" | null>(null);
   const [tlOn, setTlOn] = useState(false); // timeline starts hidden
@@ -198,6 +206,9 @@ export function App() {
         case "toggleUI": e.preventDefault(); setUiHidden((on) => !on); break;
         case "tool": e.preventDefault(); SESSION.setTool(hit.tool as ToolId); break;
         case "swapColors": e.preventDefault(); SESSION.swapColors(); break;
+        case "openFile": e.preventDefault(); void openFlow("new"); break;
+        case "newDoc": e.preventDefault(); setModal("newdoc"); break;
+        case "exportFile": e.preventDefault(); setModal("export"); break;
         case "shortcutHelp": e.preventDefault(); setModal("shortcuts"); break;
         case "nudge": {
           e.preventDefault();
@@ -212,6 +223,44 @@ export function App() {
     return () => window.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // ⑫ PC 模式：拦掉浏览器自带手势 —— 双指横滑＝前进/后退、触控板橡皮筋回弹、
+  // 右键长按拖动、Safari 触控板捏合。真正可滚动的区域（弹窗、时间轴、列表）照常滚动，
+  // Ctrl+滚轮留给浏览器缩放（画布自己的滚轮缩放由 View 处理）。
+  useEffect(() => {
+    if (!pcMode) return;
+    const canScroll = (el: Element | null, dx: number, dy: number): boolean => {
+      for (let n = el as HTMLElement | null; n && n !== document.body && n !== document.documentElement; n = n.parentElement) {
+        const st = window.getComputedStyle(n);
+        const vertical = Math.abs(dy) >= Math.abs(dx);
+        if (vertical && /auto|scroll/.test(st.overflowY) && n.scrollHeight > n.clientHeight + 1) return true;
+        if (!vertical && /auto|scroll/.test(st.overflowX) && n.scrollWidth > n.clientWidth + 1) return true;
+        if (/auto|scroll/.test(st.overflowX) && /auto|scroll/.test(st.overflowY) &&
+            n.scrollHeight > n.clientHeight + 1 && n.scrollWidth > n.clientWidth + 1) return true;
+      }
+      return false;
+    };
+    const onWheel = (e: WheelEvent) => {
+      if (e.ctrlKey) return;                       // browser zoom stays available
+      if (e.defaultPrevented) return;              // the canvas already handled it
+      if (canScroll(e.target as Element, e.deltaX, e.deltaY)) return;
+      e.preventDefault();                          // no history swipe / overscroll
+    };
+    const onDown = (e: PointerEvent) => { if (e.button === 2) e.preventDefault(); };
+    const onGesture = (e: Event) => e.preventDefault();
+    document.addEventListener("wheel", onWheel, { capture: true, passive: false });
+    document.addEventListener("pointerdown", onDown, true);
+    document.addEventListener("gesturestart", onGesture, true);
+    document.addEventListener("gesturechange", onGesture, true);
+    document.addEventListener("gestureend", onGesture, true);
+    return () => {
+      document.removeEventListener("wheel", onWheel, true);
+      document.removeEventListener("pointerdown", onDown, true);
+      document.removeEventListener("gesturestart", onGesture, true);
+      document.removeEventListener("gesturechange", onGesture, true);
+      document.removeEventListener("gestureend", onGesture, true);
+    };
+  }, [pcMode]);
 
   // onboarding: first run shows everything, a later release only shows the NEW
   // steps (those whose ids were never recorded), and only once per launch

@@ -233,7 +233,7 @@ function addAsLayer(w: number, h: number, px: Uint8ClampedArray, name: string): 
   });
   return true;
 }
-async function openFlow(mode: "new" | "layer"): Promise<void> {
+export async function openFlow(mode: "new" | "layer"): Promise<void> {
   const f = await bridge.openFile("*/*");
   if (!f) return;
   await openFileBytes(f.name || "", f.bytes, mode, f.mime || "");
