@@ -603,6 +603,16 @@ html[data-pc] .orb-item{width:48px;height:48px}
 .orb-modechip.orb-modeempty{font-weight:500;color:var(--dim);background:var(--hud-bg-2-dim)}
 /* settings dialog: groups generated from the declaration table */
 .set-search{display:flex;gap:6px;align-items:center;margin-bottom:8px}
+/* ⑮ PC：设置左右布局（搜索与导入导出留在上方，左类别右设置） */
+.set-split{display:flex;gap:14px;align-items:flex-start;min-height:0}
+.set-cats{width:150px;flex:0 0 auto;display:flex;flex-direction:column;gap:2px;position:sticky;top:0}
+.set-cat{display:flex;align-items:center;gap:6px;padding:8px 10px;border:0;border-radius:var(--r-3);
+  background:transparent;color:var(--text-3);font:inherit;font-size:var(--fs-4);text-align:left;cursor:pointer}
+.set-cat:hover{background:var(--bg3)}
+.set-cat.on{background:var(--accent);color:var(--on-accent);font-weight:700}
+.set-pane{flex:1 1 auto;min-width:0}
+html[data-pc] .dlg[data-guide="dlg-settings"]{width:min(92vw,860px)}
+html[data-pc] .set-pane .set-group:first-child .set-grouphead{border-top-left-radius:var(--r-3);border-top-right-radius:var(--r-3)}
 .set-search input{flex:1;min-width:0;background:var(--bg3);border:1px solid var(--line);border-radius:9px;
   color:var(--fg);font-family:inherit;font-size:13px;padding:7px 10px}
 .set-search input:focus{outline:none;border-color:var(--accent)}
@@ -788,6 +798,16 @@ html[data-pc] .orb-item{width:48px;height:48px}
 .bdock .bd-item.on{background:var(--accent);color:var(--on-accent);border-color:var(--on-accent);transform:scale(1.14)}
 /* fixed-size panel: the version list and the notes pane scroll independently */
 .clg-dlg{width:min(94vw,460px);height:min(78vh,560px)}
+/* ⑯ PC：更新日志左右布局（左版本竖列，右内容） */
+html[data-pc] .clg-dlg{width:min(92vw,760px);height:min(82vh,620px)}
+html[data-pc] .clg-dlg-pc .dlg-body{flex-direction:row;gap:14px}
+html[data-pc] .clg-vers{width:168px;flex:0 0 auto;display:flex;flex-direction:column;gap:2px;overflow-y:auto;padding-right:2px}
+html[data-pc] .clg-veritem{display:flex;align-items:baseline;gap:8px;padding:7px 10px;border:0;border-radius:var(--r-3);
+  background:transparent;color:var(--text-3);font:inherit;font-size:var(--fs-4);text-align:left;cursor:pointer}
+html[data-pc] .clg-veritem:hover{background:var(--bg3)}
+html[data-pc] .clg-veritem.on{background:var(--accent);color:var(--on-accent);font-weight:700}
+html[data-pc] .clg-veritem-v{font-weight:700}
+html[data-pc] .clg-veritem-d{font-size:var(--fs-2);opacity:.7;margin-left:auto}
 .clg-dlg .dlg-body{display:flex;flex-direction:column;gap:10px;flex:1 1 auto;min-height:0;max-height:none;overflow:hidden}
 .clg-tabs{margin:0}
 .clg-tabs .tabbar-tabs{background:var(--bg3)}
