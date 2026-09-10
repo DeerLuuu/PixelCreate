@@ -9,10 +9,10 @@ import { useKitPcMode } from "./kit";
 import { Dialog } from "./kit";
 
 /** keep in sync with android/AndroidManifest.xml versionName on every release */
-export const APP_VERSION = "1.0.8.6";
+export const APP_VERSION = "1.0.8.7";
 /** build stamp shown next to the version (support/debug: identifies the exact
  *  package a user is running when the version number itself does not change) */
-export const BUILD_TAG = "ea6d33";
+export const BUILD_TAG = "fc0adde";
 
 export type ClgKind = "add" | "imp" | "fix";
 export interface ClgItem { kind: ClgKind; zh: string; en: string }
@@ -21,6 +21,17 @@ export interface ClgVersion { v: string; date: string; items: ClgItem[] }
 const it = (kind: ClgKind, zh: string, en: string): ClgItem => ({ kind, zh, en });
 
 export const CHANGELOG: ClgVersion[] = [
+  {
+    v: "1.0.8.7",
+    date: "2026-09-10",
+    items: [
+      it("fix", "修好了三个用起来才发现的问题：①Ctrl+V 不生效——从系统剪贴板读到的图片以前被当成了普通数据，粘贴时直接报错并被吞掉，现在一律转成真正的图像数据，失败也会明确提示；②鼠标滚轮调值会「一跳到底」（1 直接跳到 64）——一格滚轮现在只走一步，不管浏览器把它拆成多少个事件，手机上的数字框长按滑动也按同样的速度换算，不再轻轻一滑就飞走；③右键按住再滑动的浏览器手势（以及双指横滑前进后退、触控板的橡皮筋回弹）现在都被拦掉了，弹窗和列表该滚还是能滚。", "Three things that only showed up in real use are fixed: Ctrl+V did nothing because an image read from the system clipboard was treated as plain data and the paste threw silently — it is now converted into real image data, and any failure says so out loud. The mouse wheel used to slam a value from 1 straight to 64 because every wheel EVENT moved one step (one notch arrives as dozens of events) — a notch is now one step, and the drag-to-scrub on number fields uses the same rate, so a light flick no longer flies across the field. And the browser's own right-button drag gesture, two-finger sideways swipe (back/forward) and trackpad rubber-banding are all swallowed now, while dialogs and lists still scroll normally."),
+      it("add", "电脑模式的键盘与鼠标又补齐一批：空格按住＝临时用背景色画（松开回到前景色）、X 或调色区按钮交换前景/背景、Alt 按住指针立刻变吸管、Ctrl+O 打开、Ctrl+N 新建画布、Ctrl+E 导出、Ctrl+Shift+V 粘成新图层、Ctrl+Alt+V 粘成新画布（手机端这两项是选区球里的两个子球）、Ctrl+F1 打开「快捷键一览」面板（键盘和鼠标两套词汇都在里面，主菜单里也有入口）。平移改成了「在画布外的空白处按住左键拖动」或者方向键，不再占用空格。", "More desktop vocabulary: hold Space to paint with the background colour temporarily, X (or the colour chip) swaps foreground and background, holding Alt turns the cursor into an eyedropper, Ctrl+O opens, Ctrl+N makes a new canvas, Ctrl+E exports, Ctrl+Shift+V pastes as a new layer and Ctrl+Alt+V as a new canvas (on a phone those two live in the selection orb), and Ctrl+F1 opens a shortcut cheat sheet listing both the keyboard and the mouse vocabulary (also reachable from the main menu). Panning moved to dragging with the left button OUTSIDE the artwork, or the arrow keys, so Space is free for painting."),
+      it("imp", "列表与画布的操作都按鼠标习惯重做：帧和图层直接按住就能拖动排序（不用再等 300ms 长按）、双击图层名或画布标题直接改名、右键点某一帧就打开帧设置、Shift+左键一次选中从上次选中的帧到这一帧之间的所有帧、Del 键按「你最后点的地方」删除（选区内容 / 选中的帧 / 当前图层 / 选中的画布标题，删画布依旧会弹确认）、帧多选时 Ctrl+V 会把剪贴板内容一次粘到每一帧。单张画布现在也显示画布标题栏。", "Lists and canvases now behave like a desktop app: frames and layers drag to reorder the moment you press (no 300ms hold), double-clicking a layer name or the canvas title renames it, right-clicking a frame opens its settings, Shift+click selects every frame between the last picked one and this one, Delete removes whatever you last touched (selection pixels, picked frames, the current layer, or the selected canvas title — closing a canvas still asks first) and, with frames picked, Ctrl+V pastes onto every one of them at once. A single canvas shows its title bar too."),
+      it("imp", "浮动球和色板继续按鼠标优化：电脑模式可以同时展开多个球，而且展开后不再挡住画布上的任何操作（Esc 收球）；画布球一次铺开全部动作不用翻页；色板颜色球改成和别的子球一样大（手机上也一样），排布和避让都跟着新尺寸重算；电脑模式下选区球不再重复放「复制/剪切/粘贴」三个按钮（有快捷键了）。", "More mouse-friendly orbs and swatches: several rings can be open at once in PC mode and an open ring no longer blocks anything on the canvas (Esc closes them), the canvas orb lays out every action at once instead of paging, palette swatches are now the same size as the other ring items (on the phone too, with the packing and clearance recomputed for the new size), and the selection orb drops its copy/cut/paste buttons in PC mode since the shortcuts cover them."),
+      it("imp", "把选区内容拖到另一张画布上时，拖动过程中就会实时看到落点：内容以半透明幽灵画在目标位置上，目标画布还会描一圈虚线，松手即落笔，所见即所得。", "Dragging a selection onto another canvas now shows the landing spot while you drag: the content appears as a translucent ghost at the target position with a dashed frame around that canvas, and releasing drops it exactly there."),
+    ],
+  },
   {
     v: "1.0.8.6",
     date: "2026-09-10",
