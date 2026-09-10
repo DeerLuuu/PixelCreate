@@ -163,3 +163,42 @@ export function snapToTargets<T>(moving: SnapRect, targets: Array<SnapTarget<T>>
   if (dx === 0 && dy === 0) hit = null;
   return { x: moving.x + dx, y: moving.y + dy, hit };
 }
+
+// ---------------------------------------------------------------- title bar
+/** height of a canvas title bar (CSS px, `.cv-title`) */
+export const TITLE_H = 26;
+/** how far above its canvas the bar sits when nothing is in the way */
+export const TITLE_LIFT = 30;
+
+/**
+ * The bar is drawn `lift` px above its canvas. When another canvas sits
+ * directly above (snapped or merely placed), that gap is smaller than the bar,
+ * so the bar would be painted over the neighbour. `obstacleBottom` is the
+ * lowest edge of everything above it (null = nothing in the way) and the bar
+ * slides down just enough to clear it.
+ */
+export function titleTop(canvasTop: number, obstacleBottom: number | null, lift = TITLE_LIFT, pad = 2): number {
+  const want = canvasTop - lift;
+  if (obstacleBottom === null) return want;
+  return Math.max(want, obstacleBottom + pad);
+}
+
+/**
+ * The lowest bottom edge among `others` that the bar above `self` would cover,
+ * or null when the space above is free. Works in any axis-aligned coordinate
+ * space (the caller passes on-screen boxes), only comparing the vertical band
+ * the bar occupies and requiring a horizontal overlap.
+ */
+export function titleObstacle(self: SnapRect, others: readonly SnapRect[], lift = TITLE_LIFT): number | null {
+  const selfRight = self.x + self.w;
+  const selfTop = self.y;
+  let out: number | null = null;
+  for (const o of others) {
+    if (!(o.x < selfRight && self.x < o.x + o.w)) continue;   // no horizontal overlap
+    const bottom = o.y + o.h;
+    if (bottom > selfTop + 1) continue;                        // not above us
+    if (bottom <= selfTop - lift) continue;                    // clears the bar anyway
+    out = out === null ? bottom : Math.max(out, bottom);
+  }
+  return out;
+}

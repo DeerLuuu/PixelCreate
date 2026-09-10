@@ -1,5 +1,5 @@
 import { eq, ok } from "./common";
-import { snapToTargets, snapCandidates, snapGapRect, SNAP_GAP, type SnapTarget } from "../src/app/canvas-snap";
+import { snapToTargets, snapCandidates, snapGapRect, titleObstacle, titleTop, SNAP_GAP, TITLE_LIFT, type SnapTarget } from "../src/app/canvas-snap";
 
 const target = (id: string, x: number, y: number, w: number, h: number): SnapTarget<string> => ({ id, x, y, w, h });
 
@@ -68,5 +68,29 @@ export function testSnap(): void {
     eq("snap.gaprect.below", below, { x0: 10, y0: 64, x1: 64, y1: 72 });
     eq("snap.gaprect.not-adjacent", snapGapRect({ x: 0, y: 0, w: 64, h: 64 }, { x: 200, y: 0, w: 64, h: 64 }), null);
     eq("snap.gaprect.overlap", snapGapRect({ x: 0, y: 0, w: 64, h: 64 }, { x: 60, y: 0, w: 64, h: 64 }), null);
+  }
+
+  // ---- canvas title bar placement (snapped neighbour above) ----
+  {
+    const lower = { x: 0, y: 72, w: 64, h: 64 };       // snapped 8px below `upper`
+    const upper = { x: 0, y: 0, w: 64, h: 64 };
+    // nothing above: the bar keeps its usual lift
+    eq("title.top.free", titleTop(200, null), 200 - TITLE_LIFT);
+    eq("title.obstacle.none", titleObstacle(lower, [{ x: 300, y: 0, w: 64, h: 64 }]), null);
+    // snapped above: the bar clears the neighbour's bottom edge
+    eq("title.obstacle.snapped", titleObstacle(lower, [upper]), 64);
+    eq("title.top.snapped", titleTop(lower.y, titleObstacle(lower, [upper])), 66);
+    ok("title.top.clears", titleTop(lower.y, 64) >= 64, "top=" + titleTop(lower.y, 64));
+    // far enough above that the bar would not touch it: no clamp
+    eq("title.obstacle.far", titleObstacle(lower, [{ x: 0, y: -100, w: 64, h: 64 }]), null);
+    // horizontally apart: no clamp even when vertically adjacent
+    eq("title.obstacle.side", titleObstacle(lower, [{ x: 200, y: 0, w: 64, h: 64 }]), null);
+    // partially overlapping horizontally is still in the way
+    eq("title.obstacle.partial", titleObstacle(lower, [{ x: 40, y: 0, w: 64, h: 64 }]), 64);
+    // the deepest of several neighbours wins (bar clears all of them)
+    eq("title.obstacle.deepest", titleObstacle(lower, [upper, { x: 0, y: 10, w: 64, h: 50 }]), 64);
+    eq("title.obstacle.deepest.single", titleObstacle(lower, [{ x: 0, y: 10, w: 64, h: 50 }]), 60);
+    // a neighbour BELOW the canvas never clamps the bar
+    eq("title.obstacle.below", titleObstacle(lower, [{ x: 0, y: 140, w: 64, h: 64 }]), null);
   }
 }

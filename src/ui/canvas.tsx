@@ -11,6 +11,7 @@ import { useSession, Icon } from "./base";
 import { showTip, hideTip } from "./tooltip";
 import type { Lang } from "./i18n";
 import type { View } from "../render/view";
+import { titleObstacle, titleTop } from "../app/canvas-snap";
 
 /** fallback magnetic range in screen px (Settings -> Canvas -> snap range) */
 const SNAP_SCREEN_PX = 14;
@@ -34,26 +35,39 @@ export function CanvasTitles({ view, tick }: { view: View | null; tick: number }
   if (!focus) return null;
   const z = view.zoom;
   const snapTol = (SESSION.prefs.snapRange || SNAP_SCREEN_PX) / z;
+  // on-screen bounding box of every canvas first: the bar needs the neighbours'
+  // boxes to know whether the space above it is free (see titleObstacle)
+  const boxes = SESSION.docs.map((e) => {
+    // the bar is positioned from the canvas rect mapped through the view
+    // (which may be rotated): use the bounding box of its four corners, so
+    // the bar stays glued above the canvas at every rotation
+    const lx = view.ox + (e.x - focus.x) * z;
+    const ly = view.oy + (e.y - focus.y) * z;
+    const cw = e.doc.w * z, ch = e.doc.h * z;
+    const cs = [view.toSurface(lx, ly), view.toSurface(lx + cw, ly),
+      view.toSurface(lx, ly + ch), view.toSurface(lx + cw, ly + ch)];
+    const minX = Math.min(cs[0].x, cs[1].x, cs[2].x, cs[3].x);
+    const maxX = Math.max(cs[0].x, cs[1].x, cs[2].x, cs[3].x);
+    const minY = Math.min(cs[0].y, cs[1].y, cs[2].y, cs[3].y);
+    const maxY = Math.max(cs[0].y, cs[1].y, cs[2].y, cs[3].y);
+    return { minX, maxX, minY, maxY, x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+  });
   return (
     <>
       {SESSION.docs.map((e, i) => {
-        // the bar is positioned from the canvas rect mapped through the view
-        // (which may be rotated): use the bounding box of its four corners, so
-        // the bar stays glued above the canvas at every rotation
-        const lx = view.ox + (e.x - focus.x) * z;
-        const ly = view.oy + (e.y - focus.y) * z;
-        const cw = e.doc.w * z, ch = e.doc.h * z;
-        const cs = [view.toSurface(lx, ly), view.toSurface(lx + cw, ly),
-          view.toSurface(lx, ly + ch), view.toSurface(lx + cw, ly + ch)];
-        const minX = Math.min(cs[0].x, cs[1].x, cs[2].x, cs[3].x);
-        const maxX = Math.max(cs[0].x, cs[1].x, cs[2].x, cs[3].x);
-        const minY = Math.min(cs[0].y, cs[1].y, cs[2].y, cs[3].y);
+        const b = boxes[i];
+        const { minX, maxX, minY } = b;
         const boxW = maxX - minX;               // canvas width on screen
         const narrow = boxW < 118;              // canvas narrower than the bar
         const width = narrow ? 118 : boxW;
         // when the bar is wider than the canvas it stays centred on it
         const left = (minX + maxX) / 2 - width / 2;
-        const top = minY - 30;
+        // a canvas snapped directly above leaves only the snap gap: slide the
+        // bar down so it clears that neighbour instead of covering it. The bar's
+        // own horizontal extent is what must not overlap (it is wider than a
+        // narrow canvas), so pass the bar rect rather than the canvas box.
+        const bar = { x: left, y: minY, w: width, h: 0 };
+        const top = titleTop(minY, titleObstacle(bar, boxes.filter((_, j) => j !== i)));
         const on = i === SESSION.docIdx;
         return (
           <div
