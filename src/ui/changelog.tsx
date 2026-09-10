@@ -8,10 +8,10 @@ import { TabBar } from "./tabs";
 import { Dialog } from "./kit";
 
 /** keep in sync with android/AndroidManifest.xml versionName on every release */
-export const APP_VERSION = "1.0.8.0";
+export const APP_VERSION = "1.0.8.1";
 /** build stamp shown next to the version (support/debug: identifies the exact
  *  package a user is running when the version number itself does not change) */
-export const BUILD_TAG = "b0912f";
+export const BUILD_TAG = "ee4b75";
 
 export type ClgKind = "add" | "imp" | "fix";
 export interface ClgItem { kind: ClgKind; zh: string; en: string }
@@ -20,6 +20,17 @@ export interface ClgVersion { v: string; date: string; items: ClgItem[] }
 const it = (kind: ClgKind, zh: string, en: string): ClgItem => ({ kind, zh, en });
 
 export const CHANGELOG: ClgVersion[] = [
+  {
+    v: "1.0.8.1",
+    date: "2026-09-10",
+    items: [
+      it("add", "新增浅色主题：设置 → 显示与取色 → 「界面主题」可在深色 / 浅色之间切换，立即生效并随设置保存。整套配色改由设计令牌驱动（141 个令牌：尺寸、主题色、固定色），浅色主题逐个覆盖 76 个主题色令牌；画布工作区在浅色下是中性灰，保证像素画的对比度。浮动球、环形菜单、停靠条、模式胶囊、长按浮标、缩放指示、颜色指示、对称提示、画布标题栏与长按提示气泡全部跟随主题；只有预览窗 / 参考图窗的底与引导遮罩保持深色（它们承载图像或需要压暗背景）。", "New light theme: Settings -> Display & Colour -> UI theme switches between Dark and Light, applied instantly and stored with the settings. The whole palette now runs on design tokens (141 of them: sizes, theme colours, fixed colours) and the light theme overrides all 76 theme-colour tokens; the canvas workspace turns neutral grey so artwork keeps its contrast. The floating orb, radial menus, dock, mode chips, hold popups, zoom HUD, colour indicator, symmetry chips, canvas title bars and the long-press tooltip all follow the theme, while only the preview / reference-image windows and the tour shade stay dark (they carry artwork or must dim the background)."),
+      it("add", "新增 UI 控件库 src/ui/kit：弹窗外壳 Dialog（遮罩 / 标题 / 关闭钮 / 正文 / 页脚，支持额外插槽与自定义类名，并带 role=dialog、aria-modal、Esc 关闭）与表单控件 Row / RowActions / ChipGroup / Segmented / Switch / NumberField / ColorField。全项目 18 处手写弹窗、17 处表单标签、8 组选项胶囊、1 组分段切换、9 处行内按钮全部收敛到这些组件，样式与行为从此只有一处实现。", "New UI kit in src/ui/kit: the Dialog shell (backdrop / title / close button / body / footer, with extra slots, custom class names, role=dialog, aria-modal and Escape-to-close) plus the form controls Row, RowActions, ChipGroup, Segmented, Switch, NumberField and ColorField. All 18 hand-written dialogs, 17 form labels, 8 chip groups, 1 segmented switch and 9 inline action rows across the app now use them, so every style and behaviour has exactly one implementation."),
+      it("imp", "设置的开关项由 ON / OFF 小胶囊换成真正的开关；设置项、弹窗与面板的配色全部改为令牌引用（外壳里不再有写死的颜色），因此主题切换不会有漏网之鱼。", "Boolean settings switched from an ON / OFF chip to a proper toggle, and every dialog, panel and settings row now paints from tokens instead of hard-coded colours, so a theme switch leaves nothing behind."),
+      it("add", "UI 规范与自检：新增 docs/UI.md（令牌表、控件 DOM 契约、迁移清单、测试约定），新增 UI 控件库演示页（开发用，npm run demo 后在 /ui-demo.html 一屏看全部控件与色板，可现场切换主题），并新增 61 条自动断言：组件渲染契约（弹窗结构、开关 aria、选项组选中态等）、令牌契约（浅色必须覆盖所有主题令牌、外壳禁止写死颜色）、控件库不得依赖 Session 等。", "UI specification and self-checks: docs/UI.md documents the token tables, the component DOM contracts, the migration list and the testing rules; a developer demo page (npm run demo, then /ui-demo.html) shows every control and swatch on one screen with a live theme switch; and 61 new assertions cover the component contracts (dialog structure, switch aria state, selected options), the token contract (the light theme must override every theme token, the app shell may not hard-code colours) and the kit's independence from the app session."),
+      it("fix", "修复一个从未定义却一直被引用的 CSS 变量 --fg：菜单按钮、设置搜索框与小图标按钮的颜色此前实际来自继承，现在明确为正文色，行为与视觉不变但不再依赖巧合。", "Fixed a CSS variable that was referenced but never defined, --fg: menu buttons, the settings search field and small icon buttons were silently inheriting their colour. They now name the body text colour explicitly, so the behaviour no longer relies on coincidence."),
+    ],
+  },
   {
     v: "1.0.8.0",
     date: "2026-09-09",
