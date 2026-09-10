@@ -4,8 +4,8 @@ import { useEffect, useMemo, useState } from "react";
 import { SESSION } from "./singleton";
 import { makeT } from "./i18n";
 import type { Lang } from "./i18n";
-import { Icon } from "./base";
 import { TabBar } from "./tabs";
+import { Dialog } from "./kit";
 
 /** keep in sync with android/AndroidManifest.xml versionName on every release */
 export const APP_VERSION = "1.0.8.0";
@@ -342,52 +342,44 @@ export function ChangelogModal({ onClose }: { onClose: () => void }) {
   ];
   return (
     <>
-      <div className="dlg-mask" onClick={onClose} />
-      <div className="dlg clg-dlg" data-guide="dlg-changelog">
-        <div className="dlg-head">
-          <span>{t("changelog")}</span>
-          <div className="grow" />
-          <button className="btn small" onClick={onClose}><Icon id="i-x" size={16} /></button>
+      <Dialog title={t("changelog")} onClose={onClose} className="clg-dlg" guide="dlg-changelog">
+        <TabBar
+          className="clg-tabs"
+          items={CHANGELOG.map((v) => ({
+            id: v.v,
+            label: v.v + (v.v === APP_VERSION ? " *" : ""),
+            badge: v.date,
+          }))}
+          value={ver.v}
+          onChange={(v) => setVi(Math.max(0, CHANGELOG.findIndex((x) => x.v === v)))}
+        />
+        <div className="clg-view" key={"v" + ver.v}>
+        <div className="clg-title">PixelCraft {ver.v} <span className="clg-date">· {ver.date}{ver.v === APP_VERSION ? " · " + BUILD_TAG : ""}</span>
+          {ver.v === APP_VERSION && <span className="clg-curtag">{t("clgCurrent")}</span>}
         </div>
-        <div className="dlg-body">
-          <TabBar
-            className="clg-tabs"
-            items={CHANGELOG.map((v) => ({
-              id: v.v,
-              label: v.v + (v.v === APP_VERSION ? " *" : ""),
-              badge: v.date,
-            }))}
-            value={ver.v}
-            onChange={(v) => setVi(Math.max(0, CHANGELOG.findIndex((x) => x.v === v)))}
-          />
-          <div className="clg-view" key={"v" + ver.v}>
-          <div className="clg-title">PixelCraft {ver.v} <span className="clg-date">· {ver.date}{ver.v === APP_VERSION ? " · " + BUILD_TAG : ""}</span>
-            {ver.v === APP_VERSION && <span className="clg-curtag">{t("clgCurrent")}</span>}
-          </div>
-          <div className="clg-list">
-            {secs.map(([kind, label]) => {
-              const rows = ver.items.filter((x) => x.kind === kind);
-              if (!rows.length) return null;
-              const gkey = ver.v + ":" + kind;
-              const open = !folded[gkey];
-              return (
-                <div className={"clg-sec" + (open ? "" : " folded")} key={kind}>
-                  <button type="button" className={"clg-sec-h " + kind} onClick={() => toggleGroup(gkey)}>
-                    <i /><b>{label}</b><span className="clg-sec-n">{rows.length}</span>
-                    <span className="clg-sec-chev">▾</span>
-                  </button>
-                  {open && (
-                    <ul className="clg-ul">
-                      {rows.map((x, i) => <li key={i}>{langOf() === "zh" ? x.zh : x.en}</li>)}
-                    </ul>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-          </div>
+        <div className="clg-list">
+          {secs.map(([kind, label]) => {
+            const rows = ver.items.filter((x) => x.kind === kind);
+            if (!rows.length) return null;
+            const gkey = ver.v + ":" + kind;
+            const open = !folded[gkey];
+            return (
+              <div className={"clg-sec" + (open ? "" : " folded")} key={kind}>
+                <button type="button" className={"clg-sec-h " + kind} onClick={() => toggleGroup(gkey)}>
+                  <i /><b>{label}</b><span className="clg-sec-n">{rows.length}</span>
+                  <span className="clg-sec-chev">▾</span>
+                </button>
+                {open && (
+                  <ul className="clg-ul">
+                    {rows.map((x, i) => <li key={i}>{langOf() === "zh" ? x.zh : x.en}</li>)}
+                  </ul>
+                )}
+              </div>
+            );
+          })}
         </div>
-      </div>
+        </div>
+      </Dialog>
     </>
   );
 }

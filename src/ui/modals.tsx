@@ -19,6 +19,7 @@ import { DropMenu, TabBar } from "./tabs";
 import { canVibrate, hapticReport } from "../io/bridge";
 import { detectInsets } from "../io/safearea";
 import type { RefImg } from "./refimg";
+import { Dialog, Row, RowActions, NumberField, ColorField, ChipGroup, Segmented, Switch } from "./kit";
 
 export type ModalId = "menu" | "changelog" | "newdoc" | "newproject" | "export" | "adjust" | "settings" | "frame" | "framePrev" | "size" | "sheet" | "history" | "canvasRef" | null;
 export type SizeMode = "canvas" | "sprite";
@@ -66,8 +67,8 @@ export function PalettePanel({ t, onClose }: { t: ReturnType<typeof makeT>; onCl
             if (v.length >= 6) { const c = hrgb(v); if (v.length === 8) SESSION.setColor([c[0], c[1], c[2], c[3]]); else { const o: [number, number, number, number] = [c[0], c[1], c[2], 255]; SESSION.setColor(o); setHex(rgbaToHex(o)); } }
           }} />
         </div>
-        <label className="rowlabel">{t("presets")}</label>
-        <div className="preset-list">
+        <Row label={t("presets")}>
+          <div className="preset-list">
           {PALETTE_PACKS.map((pack) => (
             <button key={pack.id} className="preset-row" title={t("palPresetReplace")} onClick={() => SESSION.setPalette(pack.colors.map((hc) => { const x = hexToRgba(hc); return [x[0], x[1], x[2], x[3]]; }))}>
               <span className="preset-name">{SESSION.prefs.lang === "zh" ? pack.nameZh : pack.nameEn}</span>
@@ -94,14 +95,15 @@ export function PalettePanel({ t, onClose }: { t: ReturnType<typeof makeT>; onCl
               }}>×</span>
             </button>
           ))}
-        </div>
-        <div className="row-actions">
+          </div>
+        </Row>
+        <RowActions>
           <Btn icon="i-plus" label={t("palPresetSave")} onClick={() => {
             const name = SESSION.savePalettePreset();
             bridge.toast(name ? t("palPresetSaved") + name : t("palDedupeNone"));
           }} />
-        </div>
-        <div className="row-actions">
+        </RowActions>
+        <RowActions>
           <Btn icon="i-palette" label={t("indexedMode")} active={SESSION.prefs.indexed}
             title={t(SESSION.prefs.indexed ? "indexedOn" : "indexedOff")}
             onClick={() => SESSION.setIndexed(!SESSION.prefs.indexed)} guide="pal-indexed" />
@@ -109,7 +111,7 @@ export function PalettePanel({ t, onClose }: { t: ReturnType<typeof makeT>; onCl
             <Btn icon="i-dedupe" label={t("indexedRemap")} title={t("indexedRemapHint")}
               onClick={() => SESSION.remapToPalette("canvas")} guide="pal-remap" />
           )}
-        </div>
+        </RowActions>
         <div data-guide="pal-ops">
           <TabBar<"palette" | "doc" | "recent">
             items={[
@@ -159,19 +161,20 @@ export function PalettePanel({ t, onClose }: { t: ReturnType<typeof makeT>; onCl
         })()}
         {palMode === "palette" && recolor !== null && doc.palette[recolor.i] && (
           <div className="recolor-row">
-            <label className="rowlabel">{t("recolor")} · 旧色 #{rgbaToHex(doc.palette[recolor.i]).slice(1)}</label>
+            <Row label={<>{t("recolor")} · 旧色 #{rgbaToHex(doc.palette[recolor.i]).slice(1)}</>}>
             <div className="ce-row">
               <input type="color" value={recColor} onChange={(e) => setRecColor(e.target.value)} />
               <span className="ce-hex">{recColor}</span>
             </div>
-            <div className="row-actions">
+            </Row>
+            <RowActions>
               <Btn label={t("recolorApply")} className="primary" onClick={() => { SESSION.recolorPaletteColor(recolor.i, hexToRgba(recColor)); setRecolor(null); }} />
               <Btn label={t("cancel")} onClick={() => setRecolor(null)} />
-            </div>
+            </RowActions>
           </div>
         )}
         {palMode === "palette" && (
-        <div className="row-actions" data-guide="pal-export">
+        <RowActions data-guide="pal-export">
           <Btn icon="i-plus" label={t("paletteAdd")} onClick={() => SESSION.paletteAdd(active)} />
           <Btn icon="i-palette" label={t("importPalette")} onClick={() => void (async () => {
             const f = await bridge.openFile("*/*");
@@ -182,7 +185,7 @@ export function PalettePanel({ t, onClose }: { t: ReturnType<typeof makeT>; onCl
             bridge.toast(t("importOk"));
           })()} />
           <Btn icon="i-save" label={t("exportPalette")} onClick={() => { bridge.saveBytes((SESSION.doc.name || "palette") + ".gpl", "text/plain", exportGplPalette()); bridge.toast(t("saved")); }} />
-        </div>
+        </RowActions>
         )}
       </div>
     </>
@@ -333,30 +336,26 @@ export function MenuModal({ t, snap, onClose, onOpen, onSheet, onRef, onGuide }:
   };
   return (
     <>
-      <div className="dlg-mask" onClick={onClose} />
-      <div className="dlg">
-        <div className="dlg-head"><span>{t("menu")}</span><div className="grow" /><button className="btn small" onClick={onClose}><Icon id="i-x" size={16} /></button></div>
-        <div className="dlg-body col">
-          {!sub ? (<>
-            {go("newproject")(t("newProject"), "i-new", "menu-new")}
-            {act(t("save"), "i-save", () => void saveProject(), "menu-save")}
-            {act(t("open"), "i-open", () => void openFlow("new"), "menu-open")}
-            <Btn label={t("import")} icon="i-import" className="menuitem" guide="menu-import" onClick={() => setSub("import")} />
-            {go("settings")(t("settings"), "i-gear", "menu-settings")}
-            <Btn label={t("guideReplay")} icon="i-guide" className="menuitem" guide="menu-guide" onClick={onGuide} />
-            {go("changelog")(t("changelog"), "i-news", "menu-changelog")}
-          </>) : (
-            <>
-              <Btn label={"\u2039 " + t("import")} icon="" className="menuitem sub-back" onClick={() => setSub(null)} />
-              <Btn label={t("importImg")} icon="i-import" className="menuitem" guide="menu-import-img" onClick={() => { void importFlow(); setSub(null); onClose(); }} />
-              <Btn label={t("importLayerM")} icon="i-layers" className="menuitem" guide="menu-import-layer" onClick={() => { void importLayerFlow(); setSub(null); onClose(); }} />
-              <Btn label={t("importSheet")} icon="i-sheet" className="menuitem" guide="menu-import-sheet" onClick={() => { void sheetPick(); setSub(null); }} />
-              <Btn label={t("refImg")} icon="i-image" className="menuitem" guide="menu-import-ref" onClick={() => { void refPick(); setSub(null); }} />
-              <Btn label={t("importPalette")} icon="i-palette" className="menuitem" guide="menu-import-palette" onClick={() => { void importPaletteFlow(); setSub(null); onClose(); }} />
-            </>
-          )}
-        </div>
-      </div>
+      <Dialog title={t("menu")} onClose={onClose} bodyClass="col">
+        {!sub ? (<>
+          {go("newproject")(t("newProject"), "i-new", "menu-new")}
+          {act(t("save"), "i-save", () => void saveProject(), "menu-save")}
+          {act(t("open"), "i-open", () => void openFlow("new"), "menu-open")}
+          <Btn label={t("import")} icon="i-import" className="menuitem" guide="menu-import" onClick={() => setSub("import")} />
+          {go("settings")(t("settings"), "i-gear", "menu-settings")}
+          <Btn label={t("guideReplay")} icon="i-guide" className="menuitem" guide="menu-guide" onClick={onGuide} />
+          {go("changelog")(t("changelog"), "i-news", "menu-changelog")}
+        </>) : (
+          <>
+            <Btn label={"\u2039 " + t("import")} icon="" className="menuitem sub-back" onClick={() => setSub(null)} />
+            <Btn label={t("importImg")} icon="i-import" className="menuitem" guide="menu-import-img" onClick={() => { void importFlow(); setSub(null); onClose(); }} />
+            <Btn label={t("importLayerM")} icon="i-layers" className="menuitem" guide="menu-import-layer" onClick={() => { void importLayerFlow(); setSub(null); onClose(); }} />
+            <Btn label={t("importSheet")} icon="i-sheet" className="menuitem" guide="menu-import-sheet" onClick={() => { void sheetPick(); setSub(null); }} />
+            <Btn label={t("refImg")} icon="i-image" className="menuitem" guide="menu-import-ref" onClick={() => { void refPick(); setSub(null); }} />
+            <Btn label={t("importPalette")} icon="i-palette" className="menuitem" guide="menu-import-palette" onClick={() => { void importPaletteFlow(); setSub(null); onClose(); }} />
+          </>
+        )}
+      </Dialog>
     </>
   );
 }
@@ -375,23 +374,16 @@ export function SizeModal({ t, snap, initial, onClose }: { t: ReturnType<typeof 
   const cell = (r: number, c: number) => { const on = ax === c - 1 && ay === r - 1; return <button key={r + "-" + c} className={"anchor" + (on ? " on" : "")} onClick={() => { setAx(c - 1); setAy(r - 1); }}><span className={"a-dot" + (on ? " on" : "")} /></button>; };
   return (
     <>
-      <div className="dlg-mask" onClick={onClose} />
-      <div className="dlg">
-        <div className="dlg-head"><span>{t("resizeTitle")}</span><div className="grow" /><button className="btn small" onClick={onClose}><Icon id="i-x" size={16} /></button></div>
-        <div className="dlg-body">
-          <div className="chips">
-            <button className={"chip" + (mode === "canvas" ? " on" : "")} onClick={() => switchMode("canvas")}>{t("canvasSize")}</button>
-            <button className={"chip" + (mode === "sprite" ? " on" : "")} onClick={() => switchMode("sprite")}>{t("spriteSize")}</button>
-          </div>
-          <label className="rowlabel">{t("docs.w")}</label>
-          <ScrubNum min={1} max={1024} value={w} onChange={(v) => onW(v)} />
-          <label className="rowlabel">{t("docs.h")}</label>
-          <ScrubNum min={1} max={1024} value={h} onChange={(v) => onH(v)} />
-          <div className="chips"><button className={"chip" + (locked ? " on" : "")} onClick={() => setLocked(!locked)}>{t("lockRatio")}</button></div>
-          {mode === "canvas" ? (<><label className="rowlabel">{t("anchor")}</label><div className="anchor-grid">{[0, 1, 2].map((r) => <div className="anchor-row" key={r}>{[0, 1, 2].map((c) => cell(r, c))}</div>)}</div><p className="size-note">{t("canvasNote")}</p></>) : <p className="size-note">{t("spriteNote")}</p>}
-        </div>
-        <div className="dlg-foot"><Btn label={t("cancel")} onClick={onClose} /><Btn label={t("ok")} onClick={apply} className="primary" /></div>
-      </div>
+      <Dialog title={t("resizeTitle")} onClose={onClose} footer={<><Btn label={t("cancel")} onClick={onClose} /><Btn label={t("ok")} onClick={apply} className="primary" /></>}>
+        <ChipGroup value={mode} onChange={switchMode} options={[
+          { id: "canvas", label: t("canvasSize") },
+          { id: "sprite", label: t("spriteSize") },
+        ]} />
+        <NumberField label={t("docs.w")} min={1} max={1024} value={w} onChange={(v) => onW(v)} />
+        <NumberField label={t("docs.h")} min={1} max={1024} value={h} onChange={(v) => onH(v)} />
+        <div className="chips"><button className={"chip" + (locked ? " on" : "")} onClick={() => setLocked(!locked)}>{t("lockRatio")}</button></div>
+        {mode === "canvas" ? (<><Row label={t("anchor")}><div className="anchor-grid">{[0, 1, 2].map((r) => <div className="anchor-row" key={r}>{[0, 1, 2].map((c) => cell(r, c))}</div>)}</div></Row><p className="size-note">{t("canvasNote")}</p></>) : <p className="size-note">{t("spriteNote")}</p>}
+      </Dialog>
     </>
   );
 }
@@ -404,19 +396,12 @@ export function SheetModal({ t, img, onClose }: { t: ReturnType<typeof makeT>; i
   const apply = async () => { const doc = sheetDocFromPixels(cwi, chi, img); if (!doc) { bridge.toast(t("importFail")); return; } if (await SESSION.replaceDoc(doc)) { bridge.toast(t("importOk")); onClose(); } };
   return (
     <>
-      <div className="dlg-mask" onClick={onClose} />
-      <div className="dlg">
-        <div className="dlg-head"><span>{t("importSheet")}</span><div className="grow" /><button className="btn small" onClick={onClose}><Icon id="i-x" size={16} /></button></div>
-        <div className="dlg-body">
-          <div className="row-note">{img.name} · {img.w}×{img.h}</div>
-          <label className="rowlabel">{t("sheetCellW")}</label>
-          <ScrubNum min={1} value={cw} onChange={(v) => setCw(v)} />
-          <label className="rowlabel">{t("sheetCellH")}</label>
-          <ScrubNum min={1} value={ch} onChange={(v) => setCh(v)} />
-          <div className="row-note">{t("sheetFrames")}: {cols * rows} ({cols}×{rows})</div>
-        </div>
-        <div className="dlg-foot"><Btn label={t("cancel")} onClick={onClose} /><Btn label={t("ok")} onClick={apply} className="primary" /></div>
-      </div>
+      <Dialog title={t("importSheet")} onClose={onClose} footer={<><Btn label={t("cancel")} onClick={onClose} /><Btn label={t("ok")} onClick={apply} className="primary" /></>}>
+        <div className="row-note">{img.name} · {img.w}×{img.h}</div>
+        <NumberField label={t("sheetCellW")} min={1} value={cw} onChange={(v) => setCw(v)} />
+        <NumberField label={t("sheetCellH")} min={1} value={ch} onChange={(v) => setCh(v)} />
+        <div className="row-note">{t("sheetFrames")}: {cols * rows} ({cols}×{rows})</div>
+      </Dialog>
     </>
   );
 }
@@ -440,21 +425,15 @@ export function NewDocModal({ t, onClose, mode = "canvas" }: { t: ReturnType<typ
   };
   return (
     <>
-      <div className="dlg-mask" onClick={onClose} />
-      <div className="dlg">
-        <div className="dlg-head"><span>{t(mode === "project" ? "newProject" : "newDoc")}</span><div className="grow" /><button className="btn small" onClick={onClose}><Icon id="i-x" size={16} /></button></div>
-        <div className="dlg-body">
-          {mode === "project" && <div className="row-note">{t("newProjectNote")}</div>}
-          <label className="rowlabel">{t("name")}</label>
+      <Dialog title={t(mode === "project" ? "newProject" : "newDoc")} onClose={onClose} footer={<><Btn label={t("cancel")} onClick={onClose} /><Btn label={t("ok")} onClick={apply} className="primary" /></>}>
+        {mode === "project" && <div className="row-note">{t("newProjectNote")}</div>}
+        <Row label={t("name")}>
           <input value={name} onChange={(e) => setName(e.target.value)} />
-          <label className="rowlabel">{t("docs.w")}</label>
-          <ScrubNum min={1} max={1024} value={w} onChange={(v) => setW(v)} />
-          <label className="rowlabel">{t("docs.h")}</label>
-          <ScrubNum min={1} max={1024} value={h} onChange={(v) => setH(v)} />
-          <div className="chips"><button className={"chip" + (white ? " on" : "")} onClick={() => setWhite(!white)}>{t("whiteBg")}</button></div>
-        </div>
-        <div className="dlg-foot"><Btn label={t("cancel")} onClick={onClose} /><Btn label={t("ok")} onClick={apply} className="primary" /></div>
-      </div>
+        </Row>
+        <NumberField label={t("docs.w")} min={1} max={1024} value={w} onChange={(v) => setW(v)} />
+        <NumberField label={t("docs.h")} min={1} max={1024} value={h} onChange={(v) => setH(v)} />
+        <div className="chips"><button className={"chip" + (white ? " on" : "")} onClick={() => setWhite(!white)}>{t("whiteBg")}</button></div>
+      </Dialog>
     </>
   );
 }
@@ -507,61 +486,59 @@ export function ExportModal({ t, snap, onClose }: { t: ReturnType<typeof makeT>;
   };
   return (
     <>
-      <div className="dlg-mask" onClick={onClose} />
-      <div className="dlg" data-guide="dlg-export">
-        <div className="dlg-head"><span>{t("export")}</span><div className="grow" /><button className="btn small" onClick={onClose}><Icon id="i-x" size={16} /></button></div>
-        <div className="dlg-body">
-          <div className="tabs">
-            <button className={"tab" + (tab === "png" ? " on" : "")} onClick={() => setTab("png")}>PNG</button>
-            <button className={"tab" + (tab === "gif" ? " on" : "")} onClick={() => setTab("gif")}>GIF</button>
-            <button className={"tab" + (tab === "sheet" ? " on" : "")} onClick={() => setTab("sheet")}>{t("exportSheet")}</button>
-            <button className={"tab" + (tab === "layers" ? " on" : "")} onClick={() => setTab("layers")}>{t("exportLayers")}</button>
+      <Dialog title={t("export")} onClose={onClose} guide="dlg-export" footer={<><Btn label={t("cancel")} onClick={onClose} /><Btn label={t("export")} onClick={doExport} className="primary" /></>}>
+        <Segmented value={tab} onChange={setTab} options={[
+          { id: "png", label: "PNG" },
+          { id: "gif", label: "GIF" },
+          { id: "sheet", label: t("exportSheet") },
+          { id: "layers", label: t("exportLayers") },
+        ]} />
+        {tab === "layers" ? <div className="row-note">{t("layersNote")}</div> : (<>
+        <Row label={t("srcScope")}>
+          <ChipGroup value={scope} onChange={setScope} options={[
+            { id: "frame", label: t("srcFrame") },
+            { id: "layer", label: t("srcLayer") },
+            { id: "sel", label: t("srcSel"), hidden: !selAvail },
+          ]} />
+        </Row>
+        <Row label={t("bgCustom")}>
+          <ChipGroup value={bgMode} onChange={setBgMode} options={[
+            { id: "transparent", label: t("transparent") },
+            { id: "white", label: t("whiteBg") },
+          ]} />
+        </Row>
+        </>)}
+        <Row label={t("scale")}>
+          <ChipGroup value={String(scale)} onChange={(id) => setScale(Number(id))}
+            options={[1, 2, 4, 8].map((n) => ({ id: String(n), label: n + "x" }))} />
+        </Row>
+        {tab !== "png" && (<>
+          <label className="rowlabel">{t("frameRange")}</label>
+          <div className="chips fsel-range" data-guide="exp-range">
+            <ScrubNum min={1} max={snap.frameCount} value={rFrom} onChange={(v) => {
+              const n = Math.max(1, Math.min(snap.frameCount, Number(v) || 1));
+              setRFrom(n);
+              if (n > rTo) setRTo(n);
+            }} />
+            <span className="fsel-dash">–</span>
+            <ScrubNum min={1} max={snap.frameCount} value={rTo} onChange={(v) => {
+              const n = Math.max(1, Math.min(snap.frameCount, Number(v) || 1));
+              setRTo(n);
+              if (n < rFrom) setRFrom(n);
+            }} />
+            <button className={"chip" + (rangeAll ? " on" : "")} onClick={() => { setRFrom(1); setRTo(snap.frameCount); }}>{t("frameRangeAll")}</button>
+            {snap.frameSel.length > 1 && (
+              <button className="chip" onClick={() => {
+                const list = snap.frameSel;
+                setRFrom(list[0] + 1);
+                setRTo(list[list.length - 1] + 1);
+              }}>{t("frameRangePicked")}</button>
+            )}
           </div>
-          {tab === "layers" ? <div className="row-note">{t("layersNote")}</div> : (<>
-          <label className="rowlabel">{t("srcScope")}</label>
-          <div className="chips">
-            <button className={"chip" + (scope === "frame" ? " on" : "")} onClick={() => setScope("frame")}>{t("srcFrame")}</button>
-            <button className={"chip" + (scope === "layer" ? " on" : "")} onClick={() => setScope("layer")}>{t("srcLayer")}</button>
-            {selAvail && <button className={"chip" + (scope === "sel" ? " on" : "")} onClick={() => setScope("sel")}>{t("srcSel")}</button>}
-          </div>
-          <label className="rowlabel">{t("bgCustom")}</label>
-          <div className="chips">
-            <button className={"chip" + (bgMode === "transparent" ? " on" : "")} onClick={() => setBgMode("transparent")}>{t("transparent")}</button>
-            <button className={"chip" + (bgMode === "white" ? " on" : "")} onClick={() => setBgMode("white")}>{t("whiteBg")}</button>
-          </div>
-          </>)}
-          <label className="rowlabel">{t("scale")}</label>
-          <div className="chips">{([1, 2, 4, 8] as const).map((s) => (
-            <button key={s} className={"chip" + (scale === s ? " on" : "")} onClick={() => setScale(s)}>{s}x</button>
-          ))}</div>
-          {tab !== "png" && (<>
-            <label className="rowlabel">{t("frameRange")}</label>
-            <div className="chips fsel-range" data-guide="exp-range">
-              <ScrubNum min={1} max={snap.frameCount} value={rFrom} onChange={(v) => {
-                const n = Math.max(1, Math.min(snap.frameCount, Number(v) || 1));
-                setRFrom(n);
-                if (n > rTo) setRTo(n);
-              }} />
-              <span className="fsel-dash">–</span>
-              <ScrubNum min={1} max={snap.frameCount} value={rTo} onChange={(v) => {
-                const n = Math.max(1, Math.min(snap.frameCount, Number(v) || 1));
-                setRTo(n);
-                if (n < rFrom) setRFrom(n);
-              }} />
-              <button className={"chip" + (rangeAll ? " on" : "")} onClick={() => { setRFrom(1); setRTo(snap.frameCount); }}>{t("frameRangeAll")}</button>
-              {snap.frameSel.length > 1 && (
-                <button className="chip" onClick={() => {
-                  const list = snap.frameSel;
-                  setRFrom(list[0] + 1);
-                  setRTo(list[list.length - 1] + 1);
-                }}>{t("frameRangePicked")}</button>
-              )}
-            </div>
-          </>)}
-          {tab === "sheet" && (<><label className="rowlabel">{t("columns")}</label><ScrubNum min={1} max={rTo - rFrom + 1} value={cols} onChange={(v) => setCols(Math.max(1, Math.min(rTo - rFrom + 1, Number(v) || 1)))} /></>)}
-        </div>
-        <div className="dlg-foot"><Btn label={t("cancel")} onClick={onClose} /><Btn label={t("export")} onClick={doExport} className="primary" /></div>
-      </div>
+        </>)}
+        {tab === "sheet" && <NumberField label={t("columns")} min={1} max={rTo - rFrom + 1} value={cols}
+          onChange={(v) => setCols(Math.max(1, Math.min(rTo - rFrom + 1, Number(v) || 1)))} />}
+      </Dialog>
     </>
   );
 }
@@ -579,22 +556,17 @@ export function AdjustModal({ t, onClose }: { t: ReturnType<typeof makeT>; onClo
   const closeCancel = () => { SESSION.adjustCancel(); onClose(); };
   return (
     <>
-      <div className="dlg-mask" onClick={closeCancel} />
-      <div className="dlg">
-        <div className="dlg-head"><span>{t("adjust")}</span><div className="grow" /><button className="btn small" onClick={closeCancel}><Icon id="i-x" size={16} /></button></div>
-        <div className="dlg-body col">
-          <div className="chips">
-            <button className={"chip" + (scope === "doc" ? " on" : "")} onClick={() => setScope("doc")}>{t("scopeDoc")}</button>
-            <button className={"chip" + (scope === "layer" ? " on" : "")} onClick={() => setScope("layer")}>{t("scopeLayer")}</button>
-          </div>
-          <div className="adj3">
-            <HoldAdjust dir="h" fixedBottom value={hue} min={-180} max={180} title={t("hueL")} format={(v) => "H" + Math.round(v)} reset={0} onChange={(v) => { setHue(v); live(v, sat, light); }} />
-            <HoldAdjust dir="h" fixedBottom value={sat} min={0} max={200} title={t("satL")} format={(v) => "S" + Math.round(v) + "%"} reset={100} onChange={(v) => { setSat(v); live(hue, v, light); }} />
-            <HoldAdjust dir="h" fixedBottom value={light} min={-100} max={100} title={t("lightL")} format={(v) => "L" + Math.round(v)} reset={0} onChange={(v) => { setLight(v); live(hue, sat, v); }} />
-          </div>
+      <Dialog title={t("adjust")} onClose={closeCancel} bodyClass="col" footer={<><Btn label={t("cancel")} onClick={closeCancel} /><Btn label={t("ok")} className="primary" onClick={() => { SESSION.adjustCommit(); onClose(); }} /></>}>
+        <ChipGroup value={scope} onChange={setScope} options={[
+          { id: "doc", label: t("scopeDoc") },
+          { id: "layer", label: t("scopeLayer") },
+        ]} />
+        <div className="adj3">
+          <HoldAdjust dir="h" fixedBottom value={hue} min={-180} max={180} title={t("hueL")} format={(v) => "H" + Math.round(v)} reset={0} onChange={(v) => { setHue(v); live(v, sat, light); }} />
+          <HoldAdjust dir="h" fixedBottom value={sat} min={0} max={200} title={t("satL")} format={(v) => "S" + Math.round(v) + "%"} reset={100} onChange={(v) => { setSat(v); live(hue, v, light); }} />
+          <HoldAdjust dir="h" fixedBottom value={light} min={-100} max={100} title={t("lightL")} format={(v) => "L" + Math.round(v)} reset={0} onChange={(v) => { setLight(v); live(hue, sat, v); }} />
         </div>
-        <div className="dlg-foot"><Btn label={t("cancel")} onClick={closeCancel} /><Btn label={t("ok")} className="primary" onClick={() => { SESSION.adjustCommit(); onClose(); }} /></div>
-      </div>
+      </Dialog>
     </>
   );
 }
@@ -651,7 +623,7 @@ function SettingRow({ def, t }: { def: SettingDef; t: ReturnType<typeof makeT> }
       <div className="set-line">
         <span className="set-name" title={t(def.label)}>{t(def.label)}{resetBtn}</span>
         {def.kind === "bool" && (
-          <button className={"chip" + (v ? " on" : "")} onClick={() => SESSION.setSetting(def.path, !v)}>{v ? "ON" : "OFF"}</button>
+          <Switch checked={!!v} label={t(def.label)} onChange={(on) => SESSION.setSetting(def.path, on)} />
         )}
         {def.kind === "int" && (
           <HoldAdjust dir="h" value={Number(v)} min={def.min ?? 0} max={def.max ?? 100} title={t(def.label)}
@@ -660,10 +632,7 @@ function SettingRow({ def, t }: { def: SettingDef; t: ReturnType<typeof makeT> }
         )}
       </div>
       {def.kind === "color" && (
-        <div className="set-color">
-          <input type="color" value={String(v)} onChange={(e) => SESSION.setSetting(def.path, e.target.value)} />
-          <span className="set-hex">{String(v)}</span>
-        </div>
+        <ColorField value={String(v)} onChange={(c) => SESSION.setSetting(def.path, c)} />
       )}
       {def.kind === "enum" && (asDrop ? (
         <div className="set-drop">
@@ -676,16 +645,13 @@ function SettingRow({ def, t }: { def: SettingDef; t: ReturnType<typeof makeT> }
           />
         </div>
       ) : (
-        <div className="chips">
-          {opts.map((o) => (
-            <button key={o.value} className={"chip" + (v === o.value ? " on" : "")} onClick={() => SESSION.setSetting(def.path, o.value)}>{t(o.label)}</button>
-          ))}
-        </div>
+        <ChipGroup value={String(v)} onChange={(id) => SESSION.setSetting(def.path, id)}
+          options={opts.map((o) => ({ id: o.value, label: t(o.label) }))} />
       ))}
       {def.action && (
-        <div className="row-actions">
+        <RowActions>
           <Btn icon="i-check" label={t(def.action.label)} onClick={() => def.action!.run(SESSION)} />
-        </div>
+        </RowActions>
       )}
       {def.desc && <p className="set-desc">{t(def.desc)}</p>}
     </div>
@@ -722,56 +688,51 @@ export function SettingsModal({ t, onClose }: { t: ReturnType<typeof makeT>; onC
   };
   return (
     <>
-      <div className="dlg-mask" onClick={onClose} />
-      <div className="dlg" data-guide="dlg-settings">
-        <div className="dlg-head"><span>{t("settings")}</span><div className="grow" /><button className="btn small" onClick={onClose}><Icon id="i-x" size={16} /></button></div>
-        <div className="dlg-body">
-          <div className="set-search" data-guide="set-search">
-            <input value={q} placeholder={t("setSearch")} onChange={(e) => setQ(e.target.value)} />
-            {q !== "" && <button type="button" className="btn small" onClick={() => setQ("")}><Icon id="i-x" size={14} /></button>}
-          </div>
-          <div className="row-actions set-io">
-            <Btn label={t("setExport")} onClick={doExport} />
-            <Btn label={t("setImport")} onClick={() => void doImport()} />
-          </div>
-          {SETTING_GROUPS.map((g) => {
-            const items = settingsOfGroup(SESSION, g.id).filter(hit);
-            if (!items.length) return null;
-            const open = query !== "" || !folded[g.id];
-            return (
-              <div key={g.id} className="set-group">
-                <button type="button" className="set-grouphead" onClick={() => setFolded({ ...folded, [g.id]: open })}>
-                  <span>{t(g.label)}</span>
-                  {items.some((d) => !isDefault(SESSION, d)) && <i className="set-dot" title={t("setChanged")} />}
-                  <i className={"chev" + (open ? " open" : "")}>▾</i>
-                </button>
-                {open && items.map((d) => <SettingRow key={d.path} def={d} t={t} />)}
-                {open && g.id === "screen" && <SafeAreaReport t={t} />}
-                {open && g.id === "gesture" && canVibrate() === false && (
-                  <div className="row-note">{t("hapticUnsupported")}</div>
-                )}
-                {open && g.id === "data" && (
-                  <>
-                    <div className="row-note">
-                      {asInfo && asInfo.savedAt > 0
-                        ? t("autosaveAt") + new Date(asInfo.savedAt).toLocaleString() + " · " + Math.max(1, Math.round(asInfo.bytes / 1024)) + "KB"
-                          + (asInfo.name ? " · " + asInfo.name + " " + asInfo.w + "×" + asInfo.h : "")
-                        : t("autosaveNone")}
-                    </div>
-                    <div className="row-actions">
-                      <Btn label={t("autosaveNow")} onClick={() => { void SESSION.flushAutosave().then(() => SESSION.autosaveInfo().then(setAsInfo)); }} />
-                      <Btn label={t("autosaveClear")} className="danger" onClick={() => { void SESSION.clearAutosave().then(() => setAsInfo(null)); }} />
-                    </div>
-                    {/* vibration diagnostics: what the page can actually see */}
-                    <HapticReport t={t} />
-                  </>
-                )}
-              </div>
-            );
-          })}
+      <Dialog title={t("settings")} onClose={onClose} guide="dlg-settings" footer={<><Btn label={t("close")} onClick={onClose} /></>}>
+        <div className="set-search" data-guide="set-search">
+          <input value={q} placeholder={t("setSearch")} onChange={(e) => setQ(e.target.value)} />
+          {q !== "" && <button type="button" className="btn small" onClick={() => setQ("")}><Icon id="i-x" size={14} /></button>}
         </div>
-        <div className="dlg-foot"><Btn label={t("close")} onClick={onClose} /></div>
-      </div>
+        <RowActions className="set-io">
+          <Btn label={t("setExport")} onClick={doExport} />
+          <Btn label={t("setImport")} onClick={() => void doImport()} />
+        </RowActions>
+        {SETTING_GROUPS.map((g) => {
+          const items = settingsOfGroup(SESSION, g.id).filter(hit);
+          if (!items.length) return null;
+          const open = query !== "" || !folded[g.id];
+          return (
+            <div key={g.id} className="set-group">
+              <button type="button" className="set-grouphead" onClick={() => setFolded({ ...folded, [g.id]: open })}>
+                <span>{t(g.label)}</span>
+                {items.some((d) => !isDefault(SESSION, d)) && <i className="set-dot" title={t("setChanged")} />}
+                <i className={"chev" + (open ? " open" : "")}>▾</i>
+              </button>
+              {open && items.map((d) => <SettingRow key={d.path} def={d} t={t} />)}
+              {open && g.id === "screen" && <SafeAreaReport t={t} />}
+              {open && g.id === "gesture" && canVibrate() === false && (
+                <div className="row-note">{t("hapticUnsupported")}</div>
+              )}
+              {open && g.id === "data" && (
+                <>
+                  <div className="row-note">
+                    {asInfo && asInfo.savedAt > 0
+                      ? t("autosaveAt") + new Date(asInfo.savedAt).toLocaleString() + " · " + Math.max(1, Math.round(asInfo.bytes / 1024)) + "KB"
+                        + (asInfo.name ? " · " + asInfo.name + " " + asInfo.w + "×" + asInfo.h : "")
+                      : t("autosaveNone")}
+                  </div>
+                  <RowActions>
+                    <Btn label={t("autosaveNow")} onClick={() => { void SESSION.flushAutosave().then(() => SESSION.autosaveInfo().then(setAsInfo)); }} />
+                    <Btn label={t("autosaveClear")} className="danger" onClick={() => { void SESSION.clearAutosave().then(() => setAsInfo(null)); }} />
+                  </RowActions>
+                  {/* vibration diagnostics: what the page can actually see */}
+                  <HapticReport t={t} />
+                </>
+              )}
+            </div>
+          );
+        })}
+      </Dialog>
     </>
   );
 }
@@ -781,20 +742,9 @@ export function FrameModal({ t, snap, fi, onClose, batch = false }: { t: ReturnT
   const head = batch ? t("frameSelDur") + " · " + snap.frameSel.length : t("frames") + " " + (fi + 1);
   return (
     <>
-      <div className="dlg-mask" onClick={onClose} />
-      <div className="dlg">
-        <div className="dlg-head"><span>{head}</span><div className="grow" /><button className="btn small" onClick={onClose}><Icon id="i-x" size={16} /></button></div>
-        <div className="dlg-body">
-          <label className="rowlabel">{t("frameDur")}</label>
-          <ScrubNum min={1} max={60000} value={ms} onChange={(v) => setMs(Number(v) || 1)} />
-        </div>
-        <div className="dlg-foot"><Btn label={t("cancel")} onClick={onClose} />
-          <Btn label={t("ok")} className="primary" onClick={() => {
-            if (batch) SESSION.framesSetDuration(ms);
-            else SESSION.setFrameDuration(fi, ms);
-            onClose();
-          }} /></div>
-      </div>
+      <Dialog title={head} onClose={onClose} footer={<><Btn label={t("cancel")} onClick={onClose} /> <Btn label={t("ok")} className="primary" onClick={() => { if (batch) SESSION.framesSetDuration(ms); else SESSION.setFrameDuration(fi, ms); onClose(); }} /></>}>
+        <NumberField label={t("frameDur")} min={1} max={60000} value={ms} onChange={(v) => setMs(Number(v) || 1)} />
+      </Dialog>
     </>
   );
 }
@@ -811,20 +761,13 @@ export function HistoryModal({ t, snap, onClose, onReplay }: { t: ReturnType<typ
   const rows = [{ key: 0, label: t("historyStart") } as { key: number; label: string }].concat(labels.map((lb, i) => ({ key: i + 1, label: histName(lb, t, snap.lang) })));
   return (
     <>
-      <div className="dlg-mask" onClick={onClose} />
-      <div className="dlg">
-        <div className="dlg-head"><span>{t("historyTitle")}</span><div className="grow" /><button className="btn small" onClick={onClose}><Icon id="i-x" size={16} /></button></div>
-        {SESSION.prefs.histMode === "full"
+      <Dialog title={t("historyTitle")} onClose={onClose} bodyClass="hist-body" top={SESSION.prefs.histMode === "full"
           ? <div className="hist-mode-note full">{t("histNoteFull")}</div>
-          : <div className="hist-mode-note">{t("histNoteStepsA")} {SESSION.history.limit()} {t("histNoteStepsB")}</div>}
-        <div className="dlg-body hist-body">
-          {labels.length === 0 ? <div className="row-note">{t("historyEmpty")}</div> : rows.map((r) => (<button key={r.key} className={"hist-row" + (index === r.key ? " cur" : "")} onClick={() => SESSION.jumpHistory(r.key)}><span className="hnum">{r.key === 0 ? "▸" : r.key}</span><span className="htext">{r.label}</span></button>))}
-        </div>
-        {labels.length > 0 && (
+          : <div className="hist-mode-note">{t("histNoteStepsA")} {SESSION.history.limit()} {t("histNoteStepsB")}</div>} extra={labels.length > 0 && (
           <div className="repl-line"><Btn icon="i-play" label={t("replay")} className="repl-play" onClick={onReplay} noTip /><span>{t("replayHint")}</span></div>
-        )}
-        <div className="dlg-foot"><Btn label={t("close")} onClick={onClose} /></div>
-      </div>
+        )} footer={<><Btn label={t("close")} onClick={onClose} /></>}>
+        {labels.length === 0 ? <div className="row-note">{t("historyEmpty")}</div> : rows.map((r) => (<button key={r.key} className={"hist-row" + (index === r.key ? " cur" : "")} onClick={() => SESSION.jumpHistory(r.key)}><span className="hnum">{r.key === 0 ? "▸" : r.key}</span><span className="htext">{r.label}</span></button>))}
+      </Dialog>
     </>
   );
 }
@@ -859,30 +802,24 @@ export function CanvasRefModal({ t, onClose }: { t: ReturnType<typeof makeT>; on
   const list = SESSION.docs.map((e, i) => ({ e, i })).filter(({ i }) => i !== cur);
   return (
     <>
-      <div className="dlg-mask" onClick={onClose} />
-      <div className="dlg dlg-frame-preview dlg-canvasref" data-guide="dlg-canvasref">
-        <div className="dlg-head"><span>{t("canvasRefPick")}</span><div className="grow" /><button className="btn small" onClick={onClose}><Icon id="i-x" size={16} /></button></div>
-        <div className="ref-mode">
+      <Dialog title={t("canvasRefPick")} onClose={onClose} className="dlg-frame-preview dlg-canvasref" bodyClass="fp-grid" guide="dlg-canvasref" top={<><div className="ref-mode">
           {(["layers", "flat"] as const).map((m) => (
             <button key={m} className={"ref-mode-btn" + (mode === m ? " on" : "")} onClick={() => setMode(m)}>
               <b>{t(m === "layers" ? "canvasRefModeLayers" : "canvasRefModeFlat")}</b>
               <span>{t(m === "layers" ? "canvasRefModeLayersDesc" : "canvasRefModeFlatDesc")}</span>
             </button>
           ))}
-        </div>
-        <div className="dlg-body fp-grid">
-          {list.length === 0 ? <div className="row-note">{t("canvasRefNone")}</div> : list.map(({ e, i }) => (
-            <button key={e.id} className="fp-cell col" style={{ width: 178, height: 190 }}
-              title={e.doc.name + " · " + e.doc.w + "\u00d7" + e.doc.h + " · " + e.doc.layers.length + t("canvasRefLayerCount")}
-              onClick={() => { if (SESSION.referenceCanvas(i, { mode })) onClose(); }}>
-              <FrameThumb doc={e.doc} fi={e.fi} sz={124} />
-              <span className="fp-name">{e.doc.name || "untitled"}</span>
-              <span className="fp-meta">{e.doc.w + "\u00d7" + e.doc.h + " · " + e.doc.layers.length + t("canvasRefLayerCount")}</span>
-            </button>
-          ))}
-        </div>
-        <div className="dlg-foot"><Btn label={t("close")} onClick={onClose} /></div>
-      </div>
+        </div></>} footer={<><Btn label={t("close")} onClick={onClose} /></>}>
+        {list.length === 0 ? <div className="row-note">{t("canvasRefNone")}</div> : list.map(({ e, i }) => (
+          <button key={e.id} className="fp-cell col" style={{ width: 178, height: 190 }}
+            title={e.doc.name + " · " + e.doc.w + "\u00d7" + e.doc.h + " · " + e.doc.layers.length + t("canvasRefLayerCount")}
+            onClick={() => { if (SESSION.referenceCanvas(i, { mode })) onClose(); }}>
+            <FrameThumb doc={e.doc} fi={e.fi} sz={124} />
+            <span className="fp-name">{e.doc.name || "untitled"}</span>
+            <span className="fp-meta">{e.doc.w + "\u00d7" + e.doc.h + " · " + e.doc.layers.length + t("canvasRefLayerCount")}</span>
+          </button>
+        ))}
+      </Dialog>
     </>
   );
 }
@@ -909,36 +846,30 @@ export function FramePreviewModal({ t, onClose }: { t: ReturnType<typeof makeT>;
   const thumb = Math.max(40, cell - 10);
   return (
     <>
-      <div className="dlg-mask" onClick={onClose} />
-      <div className="dlg dlg-frame-preview">
-        <div className="dlg-head"><span>{t("framePreview")}</span><div className="grow" /><button className="btn small" onClick={onClose}><Icon id="i-x" size={16} /></button></div>
-        <div className="dlg-body fp-grid" style={{ touchAction: "pan-y" }}
-          onPointerDown={(e) => {
+      <Dialog title={t("framePreview")} onClose={onClose} className="dlg-frame-preview" bodyClass="fp-grid" bodyStyle={{ touchAction: "pan-y" }}
+        bodyProps={{
+          onPointerDown: (e) => {
             pts.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
             if (pts.current.size === 2) pinch.current = { d0: dist(), c0: cell };
-          }}
-          onPointerMove={(e) => {
+          },
+          onPointerMove: (e) => {
             if (!pts.current.has(e.pointerId)) return;
             pts.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
             const p = pinch.current;
             if (!p || pts.current.size < 2) return;
             e.preventDefault();
             setCellSize(p.c0 * (dist() / p.d0));
-          }}
-          onPointerUp={(e) => { pts.current.delete(e.pointerId); if (pts.current.size < 2) pinch.current = null; }}
-          onPointerCancel={(e) => { pts.current.delete(e.pointerId); if (pts.current.size < 2) pinch.current = null; }}>
-          {frames.length === 0 ? <div className="row-note">{t("historyEmpty")}</div> : frames.map((f, i) => (
-            <button key={f.id} className={"fp-cell" + (i === snap.frameIdx ? " on" : "")}
-              style={{ width: cell, height: cell }} onClick={() => { SESSION.setFrame(i); onClose(); }}>
-              <FrameThumb doc={doc} fi={i} sz={thumb} />
-            </button>
-          ))}
-        </div>
-        <div className="dlg-foot">
-          {cell !== DEF && <Btn label={t("resetLabel")} onClick={() => setCellSize(DEF)} />}
-          <Btn label={t("close")} onClick={onClose} />
-        </div>
-      </div>
+          },
+          onPointerUp: (e) => { pts.current.delete(e.pointerId); if (pts.current.size < 2) pinch.current = null; },
+          onPointerCancel: (e) => { pts.current.delete(e.pointerId); if (pts.current.size < 2) pinch.current = null; },
+        }} footer={<>{cell !== DEF && <Btn label={t("resetLabel")} onClick={() => setCellSize(DEF)} />} <Btn label={t("close")} onClick={onClose} /></>}>
+        {frames.length === 0 ? <div className="row-note">{t("historyEmpty")}</div> : frames.map((f, i) => (
+          <button key={f.id} className={"fp-cell" + (i === snap.frameIdx ? " on" : "")}
+            style={{ width: cell, height: cell }} onClick={() => { SESSION.setFrame(i); onClose(); }}>
+            <FrameThumb doc={doc} fi={i} sz={thumb} />
+          </button>
+        ))}
+      </Dialog>
     </>
   );
 }

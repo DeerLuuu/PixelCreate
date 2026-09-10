@@ -29,6 +29,7 @@ import { watchSafeArea } from "../io/safearea";
 import { GUIDE, guideStepsFor, type GuideAction, type GuideStep } from "../app/guide";
 import { GuideOverlay, simulateTap } from "./guide";
 import type { ModalId, SizeMode, SheetData } from "./modals";
+import { Dialog } from "./kit";
 
 type PanelId = "layers" | "palette" | null;
 
@@ -493,27 +494,16 @@ export function App() {
       {guide && <GuideOverlay steps={guide} actions={guideActions} onDone={finishGuide} />}
       {textQ && (
         <div className="cfm-layer">
-          <div className="dlg-mask" onClick={() => { textQ.res(null); setTextQ(null); }} />
-          <div className="dlg">
-            <div className="dlg-head"><span>{textQ.title}</span><div className="grow" /></div>
-            <div className="dlg-body">
-              <input className="textinput" autoFocus value={textQ.value} onChange={(e) => setTextQ({ ...textQ, value: e.target.value })} />
-            </div>
-            <div className="dlg-foot">
-              <Btn label={textQ.cancel} onClick={() => { textQ.res(null); setTextQ(null); }} />
-              <Btn label={textQ.ok} className="primary" onClick={() => { const v = textQ.value; textQ.res(v); setTextQ(null); }} />
-            </div>
-          </div>
+          <Dialog title={textQ.title} onClose={() => { textQ.res(null); setTextQ(null); }} closeBtn={false} footer={<><Btn label={textQ.cancel} onClick={() => { textQ.res(null); setTextQ(null); }} /> <Btn label={textQ.ok} className="primary" onClick={() => { const v = textQ.value; textQ.res(v); setTextQ(null); }} /></>}>
+            <input className="textinput" autoFocus value={textQ.value} onChange={(e) => setTextQ({ ...textQ, value: e.target.value })} />
+          </Dialog>
         </div>
       )}
       {confirmQ && (
         <div className="cfm-layer">
-          <div className="dlg-mask" onClick={() => { confirmQ.res(false); setConfirmQ(null); }} />
-          <div className="dlg">
-            <div className="dlg-head"><span>{t("confirmTitle")}</span><div className="grow" /></div>
-            <div className="dlg-body"><div className="row-note cfm-msg">{confirmQ.msg}</div></div>
-            <div className="dlg-foot"><Btn label={confirmQ.no} onClick={() => { confirmQ.res(false); setConfirmQ(null); }} /><Btn label={confirmQ.yes} className="primary" onClick={() => { confirmQ.res(true); setConfirmQ(null); }} /></div>
-          </div>
+          <Dialog title={t("confirmTitle")} onClose={() => { confirmQ.res(false); setConfirmQ(null); }} closeBtn={false} footer={<><Btn label={confirmQ.no} onClick={() => { confirmQ.res(false); setConfirmQ(null); }} /><Btn label={confirmQ.yes} className="primary" onClick={() => { confirmQ.res(true); setConfirmQ(null); }} /></>}>
+            <div className="row-note cfm-msg">{confirmQ.msg}</div>
+          </Dialog>
         </div>
       )}
       <TipHost />
@@ -1461,20 +1451,15 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
       <Keep on={canv.open} el={canv.open ? ring({ x: canv.x, y: canv.y }, canvItems) : null} />
       <Keep on={tileDlg} el={tileDlg ? (
         <>
-          <div className="dlg-mask" onClick={() => setTileDlg(false)} />
-          <div className="dlg tile-dlg">
-            <div className="dlg-head"><span>{t("canvasTilePick")}</span><div className="grow" /><button className="btn small" onClick={() => setTileDlg(false)}><Icon id="i-x" size={16} /></button></div>
-            <div className="dlg-body col">
-              {(["off", "row", "col", "grid"] as const).map((m) => (
-                <button key={m} type="button" className={"menuitem" + (SESSION.prefs.tileMode === m ? " on" : "")}
-                  onClick={() => { SESSION.setTileMode(m); setTileDlg(false); }}>
-                  <Icon id={m === "off" ? "i-x" : m === "row" ? "i-tile-row" : m === "col" ? "i-tile-col" : "i-grid"} size={16} />
-                  <span>{t(m === "off" ? "tileOff" : m === "row" ? "tileRow" : m === "col" ? "tileCol" : "tileGrid")}</span>
-                </button>
-              ))}
-            </div>
-            <div className="dlg-foot"><Btn label={t("close")} onClick={() => setTileDlg(false)} /></div>
-          </div>
+          <Dialog title={t("canvasTilePick")} onClose={() => setTileDlg(false)} className="tile-dlg" bodyClass="col" footer={<><Btn label={t("close")} onClick={() => setTileDlg(false)} /></>}>
+            {(["off", "row", "col", "grid"] as const).map((m) => (
+              <button key={m} type="button" className={"menuitem" + (SESSION.prefs.tileMode === m ? " on" : "")}
+                onClick={() => { SESSION.setTileMode(m); setTileDlg(false); }}>
+                <Icon id={m === "off" ? "i-x" : m === "row" ? "i-tile-row" : m === "col" ? "i-tile-col" : "i-grid"} size={16} />
+                <span>{t(m === "off" ? "tileOff" : m === "row" ? "tileRow" : m === "col" ? "tileCol" : "tileGrid")}</span>
+              </button>
+            ))}
+          </Dialog>
         </>
       ) : null} />
       <Keep on={!!fxDlg} el={fxDlg ? <FxParamDialog run={fxDlg.run} vals={fxDlg.vals} onChange={fxChange} onApply={fxApplyDlg} onCancel={fxCance}

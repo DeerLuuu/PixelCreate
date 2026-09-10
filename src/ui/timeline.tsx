@@ -7,6 +7,7 @@ import { Btn, Icon, useLandscape } from "./base";
 import { HoldAdjust } from "./hold";
 import { BLEND_MODES } from "../engine/types";
 import * as bridge from "../io/bridge";
+import { Dialog, Row } from "./kit";
 export function TimelineBar({ t, snap, onFrameDlg }: { t: ReturnType<typeof makeT>; snap: Snapshot; onFrameDlg: (fi: number | "batch") => void }) {
   const HEAD = 20, ROW = 24, CELL = 30, LEFT = 96;
   const land = useLandscape();
@@ -405,34 +406,23 @@ export function TimelineBar({ t, snap, onFrameDlg }: { t: ReturnType<typeof make
       )}
       {curL && blendOpen && createPortal(
         <>
-          <div className="dlg-mask" onClick={() => setBlendOpen(false)} />
-          <div className="dlg blend-dlg">
-            <div className="dlg-head"><span>{t("blendTitle")}</span><div className="grow" /><button className="btn small" onClick={() => setBlendOpen(false)}><Icon id="i-x" size={16} /></button></div>
-            <div className="dlg-body">
-              {BLEND_MODES.map((b) => (
-                <button key={b} type="button" className={"blend-item" + (b === curL.blend ? " on" : "")}
-                  onClick={() => { SESSION.setLayerBlend(curLi, b as never); setBlendOpen(false); }}>
-                  {t("blends." + b)}
-                </button>
-              ))}
-            </div>
-          </div>
+          <Dialog title={t("blendTitle")} onClose={() => setBlendOpen(false)} className="blend-dlg">
+            {BLEND_MODES.map((b) => (
+              <button key={b} type="button" className={"blend-item" + (b === curL.blend ? " on" : "")}
+                onClick={() => { SESSION.setLayerBlend(curLi, b as never); setBlendOpen(false); }}>
+                {t("blends." + b)}
+              </button>
+            ))}
+          </Dialog>
         </>, document.body)}
       {ren && curL && createPortal(
         <>
-          <div className="dlg-mask" onClick={() => setRen(false)} />
-          <div className="dlg dlg-top">
-            <div className="dlg-head"><span>{t("layerRename")}</span><div className="grow" /><button className="btn small" onClick={() => setRen(false)}><Icon id="i-x" size={16} /></button></div>
-            <div className="dlg-body">
-              <label className="rowlabel">{t("name")}</label>
+          <Dialog title={t("layerRename")} onClose={() => setRen(false)} className="dlg-top" footer={<><Btn label={t("cancel")} onClick={() => setRen(false)} /> <Btn label={t("ok")} className="primary" onClick={commitRen} /></>}>
+            <Row label={t("name")}>
               <input autoFocus value={renName} onChange={(e) => setRenName(e.target.value)}
                 onKeyDown={(e) => { if (e.key === "Enter") commitRen(); else if (e.key === "Escape") setRen(false); }} />
-            </div>
-            <div className="dlg-foot">
-              <Btn label={t("cancel")} onClick={() => setRen(false)} />
-              <Btn label={t("ok")} className="primary" onClick={commitRen} />
-            </div>
-          </div>
+            </Row>
+          </Dialog>
         </>, document.body)}
     </footer>
   );

@@ -184,6 +184,14 @@ input[type=range]{width:64px;height:22px;accent-color:var(--accent)}
 .chips{display:flex;gap:6px;flex-wrap:wrap;margin:4px 0 8px}
 .chip{padding:7px 12px;border-radius:9px;background:var(--bg3);color:var(--dim);font-weight:600}
 .chip.on{background:var(--accent);color:var(--on-accent)}
+/* boolean switch (kit/Switch): replaces the old ON/OFF chip in settings rows */
+.sw{position:relative;width:42px;height:24px;border-radius:12px;background:var(--bg4);
+  border:1px solid var(--line);flex:0 0 auto;padding:0;transition:background .15s ease,border-color .15s ease}
+.sw i{position:absolute;left:2px;top:2px;width:18px;height:18px;border-radius:50%;
+  background:var(--dim);transition:left .15s ease,background .15s ease}
+.sw.on{background:var(--accent);border-color:var(--accent)}
+.sw.on i{left:20px;background:var(--on-accent)}
+.sw[disabled]{opacity:.5}
 .note{font-size:12px;color:var(--dim)}
 
 /* toast */

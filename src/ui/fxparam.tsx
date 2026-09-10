@@ -7,9 +7,10 @@
 // preview; Cancel restores the snapshot, Apply records one history step.
 import { makeT } from "./i18n";
 import type { Lang } from "./i18n";
-import { Btn, Icon, ScrubNum } from "./base";
+import { Btn, ScrubNum } from "./base";
 import { SESSION } from "./singleton";
 import type { Doc } from "../engine/doc";
+import { Dialog, ChipGroup } from "./kit";
 
 export interface FxParamDef {
   key: string;
@@ -60,49 +61,33 @@ export function FxParamDialog({ run, vals, onChange, onApply, onCancel, onPickCo
   const t = makeT(SESSION.prefs.lang as Lang);
   return (
     <>
-      <div className="dlg-mask" onClick={onCancel} />
-      <div className="dlg fxdlg">
-        <div className="dlg-head">
-          <span>{t(run.title)}</span>
-          <div className="grow" />
-          <button className="btn small" onClick={onCancel}><Icon id="i-x" size={16} /></button>
-        </div>
-        <div className="dlg-body">
-          {run.desc && <div className="row-note">{t(run.desc)}</div>}
-          {run.params.map((p) => (
-            <div key={p.key} className="fxp-row">
-              <label className="fxp-label">{t(p.label)}</label>
-              {p.kind === "int" && (
-                <div className="fxp-ctl">
-                  <ScrubNum min={p.min} max={p.max} value={vals[p.key] as number}
-                    onChange={(v) => onChange(p.key, Number(v) || 0)} />
-                  {p.unit && <span className="fxp-unit">{p.unit}</span>}
-                </div>
-              )}
-              {p.kind === "color" && (
-                <div className="fxp-ctl">
-                  <button type="button" className="fxp-swatch" title={t("colorPicked")}
-                    style={{ background: String(vals[p.key]) }} onClick={() => onPickColor(p.key)} />
-                  <span className="fxp-unit">{String(vals[p.key])}</span>
-                  <input type="color" value={String(vals[p.key])} onChange={(e) => onChange(p.key, e.target.value)} />
-                </div>
-              )}
-              {p.kind === "enum" && (
-                <div className="chips">
-                  {(p.options ?? []).map((o) => (
-                    <button key={o.value} type="button" className={"chip" + (vals[p.key] === o.value ? " on" : "")}
-                      onClick={() => onChange(p.key, o.value)}>{t(o.label)}</button>
-                  ))}
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
-        <div className="dlg-foot">
-          <Btn label={t("cancel")} onClick={onCancel} />
-          <Btn label={t("ok")} className="primary" onClick={onApply} />
-        </div>
-      </div>
+      <Dialog title={t(run.title)} onClose={onCancel} className="fxdlg" footer={<><Btn label={t("cancel")} onClick={onCancel} /> <Btn label={t("ok")} className="primary" onClick={onApply} /></>}>
+        {run.desc && <div className="row-note">{t(run.desc)}</div>}
+        {run.params.map((p) => (
+          <div key={p.key} className="fxp-row">
+            <label className="fxp-label">{t(p.label)}</label>
+            {p.kind === "int" && (
+              <div className="fxp-ctl">
+                <ScrubNum min={p.min} max={p.max} value={vals[p.key] as number}
+                  onChange={(v) => onChange(p.key, Number(v) || 0)} />
+                {p.unit && <span className="fxp-unit">{p.unit}</span>}
+              </div>
+            )}
+            {p.kind === "color" && (
+              <div className="fxp-ctl">
+                <button type="button" className="fxp-swatch" title={t("colorPicked")}
+                  style={{ background: String(vals[p.key]) }} onClick={() => onPickColor(p.key)} />
+                <span className="fxp-unit">{String(vals[p.key])}</span>
+                <input type="color" value={String(vals[p.key])} onChange={(e) => onChange(p.key, e.target.value)} />
+              </div>
+            )}
+            {p.kind === "enum" && (
+              <ChipGroup value={String(vals[p.key])} onChange={(id) => onChange(p.key, id)}
+                options={(p.options ?? []).map((o) => ({ id: o.value, label: t(o.label) }))} />
+            )}
+          </div>
+        ))}
+      </Dialog>
     </>
   );
 }
