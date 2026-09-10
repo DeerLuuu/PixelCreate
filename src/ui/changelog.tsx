@@ -9,10 +9,10 @@ import { useKitPcMode } from "./kit";
 import { Dialog } from "./kit";
 
 /** keep in sync with android/AndroidManifest.xml versionName on every release */
-export const APP_VERSION = "1.0.8.10";
+export const APP_VERSION = "1.0.8.11";
 /** build stamp shown next to the version (support/debug: identifies the exact
  *  package a user is running when the version number itself does not change) */
-export const BUILD_TAG = "f4b44d3";
+export const BUILD_TAG = "a5054f2";
 
 export type ClgKind = "add" | "imp" | "fix";
 export interface ClgItem { kind: ClgKind; zh: string; en: string }
@@ -21,6 +21,13 @@ export interface ClgVersion { v: string; date: string; items: ClgItem[] }
 const it = (kind: ClgKind, zh: string, en: string): ClgItem => ({ kind, zh, en });
 
 export const CHANGELOG: ClgVersion[] = [
+  {
+    v: "1.0.8.11",
+    date: "2026-09-10",
+    items: [
+      it("add", "电脑模式新增「快捷圆盘」（类似 Blender 的快速圆盘）：浮动球存储区旁边多了一个装备槽，点 + 从五个球里挑一个装上去（只能装一个，再点可以换或取消）。之后**按住 F 键**，这个球的全部子项就会以圆环铺在屏幕正中间、鼠标指针自动隐藏；鼠标往哪个方向移就聚焦哪一项（中心一圈是死区），**松开 F 就激活那一项**，中间松手或按 Esc 则什么都不做。装在槽里的球如果是调色板球，圆盘里显示的就是颜色球，松手即把该颜色设为前景色。", "PC mode gained a quick pie (like Blender's): the floating-ball storage area now has an equip slot — tap + and pick one of the five balls (only one at a time; tap again to swap or clear). Then hold the F key and that ball's entries spread out as a ring in the middle of the screen with the mouse cursor hidden; pointing in a direction focuses the matching entry (the middle is a dead zone) and releasing F runs it, while releasing in the middle or pressing Esc cancels. Equip the palette ball and the pie shows colour swatches instead — releasing sets that colour as the foreground."),
+    ],
+  },
   {
     v: "1.0.8.10",
     date: "2026-09-10",
