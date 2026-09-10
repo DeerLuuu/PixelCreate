@@ -6,8 +6,8 @@ export interface ChipBox {
   h: number;
 }
 
-/** swatch diameter used by the palette fan (`.orb-item.pal-c`) */
-export const ORB_SIZE = 30;
+/** diameter of a ring item / palette swatch (`.orb-item`, `.orb-item.pal-c`) */
+export const ORB_SIZE = 40;
 /** floater (main ball) radius: the chip must never cover it */
 export const FLOATER_R = 26;
 /** source chip size (approximate, used for the overlap test) */
@@ -40,8 +40,8 @@ export function chipBox(x: number, y: number): ChipBox {
 }
 
 /** true when a swatch centred at (sx, sy) would overlap the chip */
-export function swatchHitsChip(sx: number, sy: number, chip: ChipBox): boolean {
-  const half = ORB_SIZE / 2;
+export function swatchHitsChip(sx: number, sy: number, chip: ChipBox, size = ORB_SIZE): boolean {
+  const half = size / 2;
   return Math.abs(sx - chip.x) < half + chip.w / 2 && Math.abs(sy - chip.y) < half + chip.h / 2;
 }
 
@@ -68,11 +68,19 @@ export interface OrbMetrics {
   floaterR: number;
 }
 
-/** pure + unit tested：PC 模式下的浮动球几何 */
+/**
+ * pure + unit tested：PC 模式下的浮动球几何。
+ *
+ * 色球（palette fan）与环形子球**同尺寸**（见 ORB_SIZE / item），所以扇形的
+ * 格距 = 子球直径 + 12px 间隙、起始半径 = 主球半径 + 半个子球 + 10px，
+ * 保证「球与球」「球与胶囊」都不重叠。
+ */
 export function orbMetrics(pc: boolean): OrbMetrics {
+  const item = pc ? 48 : ORB_SIZE;
+  const floaterR = pc ? 31 : FLOATER_R;
   return pc
-    ? { orb: 62, item: 48, r1: 103, r2: 154, fanGap: 38, fanR0: 55, floaterR: 31 }
-    : { orb: 52, item: 40, r1: 86, r2: 128, fanGap: 32, fanR0: 46, floaterR: FLOATER_R };
+    ? { orb: 62, item, r1: 103, r2: 154, fanGap: item + 12, fanR0: floaterR + item / 2 + 10, floaterR }
+    : { orb: 52, item, r1: 86, r2: 128, fanGap: item + 12, fanR0: floaterR + item / 2 + 10, floaterR };
 }
 
 /** 扇形排布：给定环上项数、扇形张角与项直径，返回「不重叠」所需的最小半径 */

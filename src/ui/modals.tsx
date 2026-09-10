@@ -362,6 +362,7 @@ export function MenuModal({ t, snap, onClose, onOpen, onSheet, onRef, onGuide }:
           {act(t("open"), "i-open", () => void openFlow("new"), "menu-open")}
           <Btn label={t("import")} icon="i-import" className="menuitem" guide="menu-import" onClick={() => setSub("import")} />
           {go("settings")(t("settings"), "i-gear", "menu-settings")}
+          {go("shortcuts")(t("shortcutHelp"), "i-keys", "menu-shortcuts")}
           <Btn label={t("guideReplay")} icon="i-guide" className="menuitem" guide="menu-guide" onClick={onGuide} />
           {go("changelog")(t("changelog"), "i-news", "menu-changelog")}
         </>) : (

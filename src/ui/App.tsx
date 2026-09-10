@@ -15,6 +15,7 @@ import { orbMetrics, palChipPos, chipBox, swatchHitsChip, ringLayout } from "./o
 import { ReplayOverlay } from "./replay";
 import * as bridge from "../io/bridge";
 import { writeClipboardPng } from "../io/clipboard";
+import { pasteClipboard } from "./paste";
 import { showTip, hideTip } from "./tooltip";
 import { useColorDragFill } from "./color-drag";
 import { Icon, Btn, TipHost, Keep, Overlay, useSession, useLandscape } from "./base";
@@ -26,7 +27,6 @@ import { PalettePanel, MenuModal, SizeModal, SheetModal, NewDocModal, ExportModa
 import { FxParamDialog, fxDefaults, type FxRun, type FxVals } from "./fxparam";
 import { CanvasTitles } from "./canvas";
 import { ChangelogModal, changelogNeedsShow } from "./changelog";
-import { Cel } from "../engine/cel";
 import { watchSafeArea } from "../io/safearea";
 import { fullscreenIcon, fullscreenToggleVisible, isFullscreen, toggleFullscreen, watchFullscreen } from "../io/fullscreen";
 import { shortcutFor } from "../app/shortcuts";
@@ -145,62 +145,6 @@ export function App() {
 
   // PC 键盘快捷键（全部动作集中在这里，映射表在 app/shortcuts.ts 里是纯函数）
   useEffect(() => {
-    /** clipboard -> Cel: prefer a system-clipboard image, else the in-app clip */
-    const readClip = async (): Promise<{ clip: Cel | null; fromSystem: boolean }> => {
-      try {
-        const items = await navigator.clipboard?.read?.();
-        for (const it of items ?? []) {
-          const type = it.types.find((x) => x.startsWith("image/"));
-          if (!type) continue;
-          const blob = await it.getType(type);
-          const bmp = await createImageBitmap(blob);
-          const cv = document.createElement("canvas");
-          cv.width = bmp.width; cv.height = bmp.height;
-          const cx = cv.getContext("2d");
-          if (!cx) continue;
-          cx.drawImage(bmp, 0, 0);
-          const px = cx.getImageData(0, 0, bmp.width, bmp.height).data;
-          // a real Cel: the paste path indexes it with cel.idx()
-          const cel = new Cel(bmp.width, bmp.height);
-          cel.data.set(px);
-          return { clip: cel, fromSystem: true };
-        }
-      } catch { /* the browser may refuse clipboard access */ }
-      return { clip: SESSION.clip, fromSystem: false };
-    };
-    /** Ctrl+V / Ctrl+Shift+V / Ctrl+Alt+V */
-    const runPaste = async (mode: "inPlace" | "layer" | "canvas"): Promise<void> => {
-      const t = makeT(SESSION.prefs.lang as Lang);
-      try {
-        const { clip, fromSystem } = await readClip();
-        if (!clip) { bridge.toast(t("pasteEmpty")); return; }
-        SESSION.clip = clip;
-        if (mode === "layer") {
-          if (SESSION.pasteAsNewLayer(clip)) bridge.toast(t("pasteAsLayer"));
-          else bridge.toast(t("pasteEmpty"));
-          return;
-        }
-        if (mode === "canvas") {
-          if (SESSION.pasteAsNewCanvas(clip) >= 0) bridge.toast(t("pasteAsCanvas"));
-          else bridge.toast(t("pasteEmpty"));
-          return;
-        }
-        const d1 = SESSION.doc, li1 = SESSION.curLayer(), fi1 = SESSION.curFrame();
-        // timeline frames picked -> paste into every one of them
-        const picked = SESSION.frameSelOn ? SESSION.frameSelList() : [];
-        if (picked.length) {
-          if (SESSION.pasteIntoFrames(clip, li1, picked)) bridge.toast(t("pasteFrames"));
-          else bridge.toast(t("pasteEmpty"));
-          return;
-        }
-        selOps.selOps.paste(d1, SESSION.history, li1, fi1, clip);
-        SESSION.repaint();
-        bridge.toast(t(fromSystem ? "pasteFromSystem" : "sel.paste"));
-      } catch {
-        bridge.toast(t("pasteEmpty"));
-      }
-    };
-
     const onKey = (e: KeyboardEvent) => {
       if (!isPc()) return;
       const el = e.target as HTMLElement | null;
@@ -243,8 +187,7 @@ export function App() {
         case "pasteLayer":
         case "pasteCanvas": {
           e.preventDefault();
-          const mode = hit.action === "pasteLayer" ? "layer" : hit.action === "pasteCanvas" ? "canvas" : "inPlace";
-          void runPaste(mode);
+          void pasteClipboard(hit.action === "pasteLayer" ? "layer" : hit.action === "pasteCanvas" ? "canvas" : "inPlace");
           break;
         }
         case "delete": e.preventDefault(); SESSION.deleteSelection(); break;
@@ -983,7 +926,7 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
     }
     setOpen(false);
     setSub(null);
-    if (sel) setSel({ ...sel, open: false });
+    if (sel && !pcMode) setSel({ ...sel, open: false });
     setPal((g) => (g ? { ...g, open: false } : g));
     setFx((g) => (g ? { ...g, open: false } : g));
     setCanv((g) => (g ? { ...g, open: false } : g));
@@ -1058,7 +1001,7 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
     else if (family === "select") SESSION.setCurrentSelect(id as never);
     setOpen(false);
     setSub(null);
-    if (sel) setSel({ ...sel, open: false });
+    if (sel && !pcMode) setSel({ ...sel, open: false });
   };
 
   /** close the canvas ring (its items all dismiss it before acting) */
@@ -1072,6 +1015,24 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
     if (!L.fx) setFx((g) => (g ? { ...g, open: false } : g));
     if (!L.canv) closeCanv();
   };
+
+  // PC 模式没有「点空白处收球」的遮罩（那会拦住画布操作），所以 Esc 负责收球
+  useEffect(() => {
+    if (!pcMode) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      const L = ringLockRef.current;
+      let any = false;
+      if (open && !L.main) { setOpen(false); setSub(null); any = true; }
+      if (sel && sel.open && !L.sel) { setSel({ ...sel, open: false }); any = true; }
+      if (pal.open && !L.pal) { setPal({ ...pal, open: false }); any = true; }
+      if (fx.open && !L.fx) { setFx({ ...fx, open: false }); any = true; }
+      if (canv.open && !L.canv) { setCanv({ ...canv, open: false }); setCanvSub(null); any = true; }
+      if (any) e.preventDefault();     // 收球优先于「取消选区」
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [pcMode, open, sel, pal, fx, canv]);
 
   const separate = (m: { x: number; y: number }, o: { x: number; y: number } | null) => {
     if (!o) return m;
@@ -1148,9 +1109,15 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
     { icon: "i-sel-invert", label: t("sel.invert"), act: () => SESSION.maskOp("sel.invert", () => selOps.selOps.invert(d)) },
     { icon: "i-sel-none", label: t("sel.clear"), act: () => { selOps.selOps.clear(d); SESSION.repaint(); } },
     { icon: "i-bucket", label: t("sel.fill"), act: () => { if (!(d.sel && d.sel.hasAny())) { bridge.toast(t("noSel")); return; } selOps.selOps.fill(d, SESSION.history, li, fi, SESSION.color); repaintChanged(); } },
-    { icon: "i-dupe", label: t("sel.copy"), act: () => { const c = selOps.selOps.copy(d, li, fi); SESSION.clip = c; if (c) void writeClipboardPng(compositor.celToCanvas(c)).then((ok) => bridge.toast(ok ? t("sysCopy") : t("copied"))); } },
-    { icon: "i-cut", label: t("sel.cut"), act: () => { const c = selOps.selOps.cut(d, SESSION.history, li, fi); SESSION.clip = c; if (c) { repaintChanged(); void writeClipboardPng(compositor.celToCanvas(c)).then((ok) => bridge.toast(ok ? t("sysCopy") : t("cut"))); } } },
-    { icon: "i-paste", label: t("sel.paste"), act: () => { if (SESSION.clip) { selOps.selOps.paste(d, SESSION.history, li, fi, SESSION.clip); repaintChanged(); bridge.toast(t("pasted")); } else bridge.toast(t("noSel")); } },
+    // ⑧ 电脑模式有 Ctrl+C / Ctrl+X / Ctrl+V，球里不再重复这三个按钮；
+    //    手机端保留，并且把「粘贴为新图层 / 新画布」也放进来（⑮）
+    ...(pcMode ? [] : [
+      { icon: "i-dupe", label: t("sel.copy"), act: () => { const c = selOps.selOps.copy(d, li, fi); SESSION.clip = c; if (c) void writeClipboardPng(compositor.celToCanvas(c)).then((ok) => bridge.toast(ok ? t("sysCopy") : t("copied"))); } },
+      { icon: "i-cut", label: t("sel.cut"), act: () => { const c = selOps.selOps.cut(d, SESSION.history, li, fi); SESSION.clip = c; if (c) { repaintChanged(); void writeClipboardPng(compositor.celToCanvas(c)).then((ok) => bridge.toast(ok ? t("sysCopy") : t("cut"))); } } },
+      { icon: "i-paste", label: t("sel.paste"), act: () => { if (SESSION.clip) { selOps.selOps.paste(d, SESSION.history, li, fi, SESSION.clip); repaintChanged(); bridge.toast(t("pasted")); } else bridge.toast(t("noSel")); } },
+      { icon: "i-layers", label: t("pasteAsLayerBall"), desc: t("pasteAsLayerBallDesc"), act: () => { void pasteClipboard("layer"); } },
+      { icon: "i-canvas", label: t("pasteAsCanvasBall"), desc: t("pasteAsCanvasBallDesc"), act: () => { void pasteClipboard("canvas"); } },
+    ]),
     { icon: "i-fliph", label: t("sel.fliph"), act: () => { selOps.selOps.flip(d, SESSION.history, li, fi, true); repaintChanged(); } },
     { icon: "i-flipv", label: t("sel.flipv"), act: () => { selOps.selOps.flip(d, SESSION.history, li, fi, false); repaintChanged(); } },
     { icon: "i-plus", label: t("sel.grow"), act: () => SESSION.maskOp("sel.grow", () => selOps.growSelection(d, 1)) },
@@ -1328,7 +1295,8 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
   // canvas orb: everything that acts on the FOCUSED canvas. Page 1 = the
   // everyday actions, page 2 ("more") = preview / colour adjust / export /
   // fit / tiling, so the ring never gets crowded.
-  const canvItems: Item[] = canvSub === "more" ? [
+  // page 1 = everyday actions, page 2 = the rest; PC mode lays BOTH out at once
+  const canvPage2: Item[] = [
     { icon: "", label: "\u2039", act: () => setCanvSub(null), guide: "canv-back" },
     { icon: "i-adjust", label: t("adjust"), desc: t("canvasAdjustDesc"), act: () => { closeCanv(); onCanvasAdjust(); } },
     { icon: "i-export", label: t("export"), desc: t("canvasExportDesc"), act: () => { closeCanv(); onCanvasExport(); }, guide: "canv-export" },
@@ -1339,7 +1307,8 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
       ? [{ icon: "i-unlink", label: t("refAllRelease"), desc: t("refAllReleaseDesc"), act: () => { closeCanv(); SESSION.unrefAll(); } }]
       : []),
     { icon: "i-extract", label: t("layerExtract"), desc: t("layerExtractDesc"), act: () => { closeCanv(); void SESSION.extractLayerToCanvas(); }, guide: "canv-extract" },
-  ] : [
+  ];
+  const canvPage1: Item[] = [
     { icon: "i-plus", label: t("canvasNew"), desc: t("canvasNewDesc"), act: () => { closeCanv(); onCanvasNew(); } },
     { icon: "i-rename", label: t("canvasRename"), desc: t("canvasRenameDesc"), act: () => {
       closeCanv();
@@ -1362,6 +1331,10 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
     } },
     { icon: "i-more", label: t("canvasMore"), desc: t("canvasMoreDesc"), act: () => setCanvSub("more"), guide: "canv-more" },
   ];
+  // PC：鼠标点两下比翻页快，直接把两页铺成一个大环（去掉「返回」项）
+  const canvItems: Item[] = pcMode
+    ? [...canvPage1.filter((it) => it.guide !== "canv-more"), ...canvPage2.filter((it) => it.guide !== "canv-back")]
+    : canvSub === "more" ? canvPage2 : canvPage1;
 
   const mainItems: Item[] = sub
     ? [
@@ -1376,8 +1349,8 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
           ...SELECT_TOOLS.map((dd) => ({ icon: dd.icon, label: t("tools." + dd.id), desc: td(dd.id), act: () => pickTool("select", dd.id), active: snap.tool === dd.id, guide: "tool-" + dd.id })),
         ] : []),
         ...(pcMode ? [] : [
-        { icon: defOf(snap.shape)?.icon || "i-rect", label: t("shapeGroup"), desc: snap.lang === "zh" ? "图形工具：直线 / 矩形 / 椭圆" : "Shape tools: line / rect / ellipse", act: () => { setSub("shape"); if (sel) setSel({ ...sel, open: false }); }, active: isShapeTool(snap.tool), guide: "tool-shape-group" },
-        { icon: (snap.tool !== "line" && isSelectTool(snap.tool) ? defOf(snap.tool)?.icon : defOf(SESSION.currentSelect)?.icon) || "i-select", label: t("sel.active"), desc: snap.lang === "zh" ? "选区工具：框选 / 魔棒 / 套索" : "Select tools: rect / wand / lasso", act: () => { setSub("select"); if (sel) setSel({ ...sel, open: false }); }, active: isSelectTool(snap.tool), guide: "tool-select-group" },
+        { icon: defOf(snap.shape)?.icon || "i-rect", label: t("shapeGroup"), desc: snap.lang === "zh" ? "图形工具：直线 / 矩形 / 椭圆" : "Shape tools: line / rect / ellipse", act: () => { setSub("shape"); if (sel && !pcMode) setSel({ ...sel, open: false }); }, active: isShapeTool(snap.tool), guide: "tool-shape-group" },
+        { icon: (snap.tool !== "line" && isSelectTool(snap.tool) ? defOf(snap.tool)?.icon : defOf(SESSION.currentSelect)?.icon) || "i-select", label: t("sel.active"), desc: snap.lang === "zh" ? "选区工具：框选 / 魔棒 / 套索" : "Select tools: rect / wand / lasso", act: () => { setSub("select"); if (sel && !pcMode) setSel({ ...sel, open: false }); }, active: isSelectTool(snap.tool), guide: "tool-select-group" },
         ]),
       ];
 
@@ -1507,22 +1480,21 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
         if (open) { setOpen(false); setSub(null); setRingLock((m) => ({ ...m, main: false })); return; }
         if (sel) {
           const pushed = clearRingOf(pos, { x: sel.x, y: sel.y });
-          if (pushed) setSel({ ...pushed, open: false });
+          if (pushed) setSel({ ...pushed, open: pcMode ? sel.open : false });
         }
         if (pal) {
           const pushed2 = clearRingOf(pos, { x: pal.x, y: pal.y });
-          if (pushed2) setPal({ ...pushed2, open: false });
+          if (pushed2) setPal({ ...pushed2, open: pcMode ? pal.open : false });
         }
         if (fx) {
           const pushed3 = clearRingOf(pos, { x: fx.x, y: fx.y });
-          if (pushed3) setFx({ ...pushed3, open: false });
+          if (pushed3) setFx({ ...pushed3, open: pcMode ? fx.open : false });
         }
         SESSION.hapticTick("工具栏", 0.7);
         setOpen(true);
       })}
       <Keep on={!!sel} el={sel ? renderBall("sel", { x: sel.x, y: sel.y }, "i-select", sel.open, t("sel.active"), bd(snap.lang, "selBall"), () => {
-        setOpen(false);
-        setSub(null);
+        if (!pcMode) { setOpen(false); setSub(null); }
         if (!sel.open) {
           const np = clearRingOf({ x: sel.x, y: sel.y }, pos);
           if (np && (np.x !== pos.x || np.y !== pos.y)) {
@@ -1531,19 +1503,17 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
           }
           if (pal) {
             const pp = clearRingOf({ x: sel.x, y: sel.y }, { x: pal.x, y: pal.y });
-            if (pp) setPal({ ...pp, open: false });
+            if (pp) setPal({ ...pp, open: pcMode ? pal.open : false });
           }
           if (fx) {
             const fp = clearRingOf({ x: sel.x, y: sel.y }, { x: fx.x, y: fx.y });
-            if (fp) setFx({ ...fp, open: false });
+            if (fp) setFx({ ...fp, open: pcMode ? fx.open : false });
           }
         }
         setSel({ ...sel, open: !sel.open });
       }) : null} />
       {!dockedById("pal") && renderBall("pal", { x: pal.x, y: pal.y }, "i-palette", pal.open, t("palette"), bd(snap.lang, "palette"), () => {
-        setOpen(false);
-        setSub(null);
-        if (sel) setSel({ ...sel, open: false });
+        if (!pcMode) { setOpen(false); setSub(null); setSel((g) => (g ? { ...g, open: false } : g)); }
         if (!pal.open) {
           const np = clearRingOf({ x: pal.x, y: pal.y }, pos);
           if (np && (np.x !== pos.x || np.y !== pos.y)) {
@@ -1552,20 +1522,22 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
           }
           if (sel) {
             const sp = clearRingOf({ x: pal.x, y: pal.y }, { x: sel.x, y: sel.y });
-            if (sp) setSel({ ...sp, open: false });
+            if (sp) setSel({ ...sp, open: pcMode ? sel.open : false });
           }
           if (fx) {
             const fp = clearRingOf({ x: pal.x, y: pal.y }, { x: fx.x, y: fx.y });
-            if (fp) setFx({ ...fp, open: false });
+            if (fp) setFx({ ...fp, open: pcMode ? fx.open : false });
           }
         }
         setPal({ ...pal, open: !pal.open });
       })}
       {!dockedById("fx") && renderBall("fx", { x: fx.x, y: fx.y }, "i-star", fx.open, t("fxOrb"), bd(snap.lang, "fx"), () => {
-        setOpen(false);
-        setSub(null);
-        if (sel) setSel({ ...sel, open: false });
-        if (pal) setPal({ ...pal, open: false });
+        if (!pcMode) {
+          setOpen(false);
+          setSub(null);
+          if (sel) setSel({ ...sel, open: false });
+          if (pal) setPal({ ...pal, open: false });
+        }
         if (!fx.open) {
           const np = clearRingOf({ x: fx.x, y: fx.y }, pos);
           if (np && (np.x !== pos.x || np.y !== pos.y)) {
@@ -1574,21 +1546,23 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
           }
           if (sel) {
             const sp = clearRingOf({ x: fx.x, y: fx.y }, { x: sel.x, y: sel.y });
-            if (sp) setSel({ ...sp, open: false });
+            if (sp) setSel({ ...sp, open: pcMode ? sel.open : false });
           }
           if (pal) {
             const pp = clearRingOf({ x: fx.x, y: fx.y }, { x: pal.x, y: pal.y });
-            if (pp) setPal({ ...pp, open: false });
+            if (pp) setPal({ ...pp, open: pcMode ? pal.open : false });
           }
         }
         setFx({ ...fx, open: !fx.open });
       })}
       {!dockedById("canv") && renderBall("canv", { x: canv.x, y: canv.y }, "i-canvas", canv.open, t("canvasOrb"), bd(snap.lang, "canv"), () => {
-        setOpen(false);
-        setSub(null);
-        if (sel) setSel({ ...sel, open: false });
-        if (pal) setPal({ ...pal, open: false });
-        if (fx) setFx({ ...fx, open: false });
+        if (!pcMode) {
+          setOpen(false);
+          setSub(null);
+          if (sel) setSel({ ...sel, open: false });
+          if (pal) setPal({ ...pal, open: false });
+          if (fx) setFx({ ...fx, open: false });
+        }
         if (!canv.open) {
           const np = clearRingOf({ x: canv.x, y: canv.y }, pos);
           if (np && (np.x !== pos.x || np.y !== pos.y)) {
@@ -1597,11 +1571,11 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
           }
           if (pal) {
             const pp = clearRingOf({ x: canv.x, y: canv.y }, { x: pal.x, y: pal.y });
-            if (pp) setPal({ ...pp, open: false });
+            if (pp) setPal({ ...pp, open: pcMode ? pal.open : false });
           }
           if (fx) {
             const fp = clearRingOf({ x: canv.x, y: canv.y }, { x: fx.x, y: fx.y });
-            if (fp) setFx({ ...fp, open: false });
+            if (fp) setFx({ ...fp, open: pcMode ? fx.open : false });
           }
         }
         setCanvSub(null);
@@ -1673,7 +1647,7 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
           ))}
         </div>
       )}
-      {(open || (sel && sel.open) || pal.open || fx.open || canv.open) && (
+      {!pcMode && (open || (sel && sel.open) || pal.open || fx.open || canv.open) && (
         <div className="radial-back" onPointerDown={closeRadials} />
       )}
       {open && lockBtn("main", pos.x, pos.y)}
@@ -1722,7 +1696,7 @@ function PalBalls({ x, y, onDone }: { x: number; y: number; onDone: () => void }
   const mode = SESSION.palOrbMode;
   const colors = SESSION.palOrbColors();
   const { sx, sy } = palQuadrant(x, y);
-  const cx = x + 26, cy = y + 26;
+  const cx = x + M.floaterR, cy = y + M.floaterR;
   // the source chip owns a FIXED slot under the floater: its position never
   // depends on how many colours the fan shows, and swatches are laid out
   // around it so the two can never overlap
@@ -1737,7 +1711,7 @@ function PalBalls({ x, y, onDone }: { x: number; y: number; onDone: () => void }
       const du = (i + 0.5) * G, dv = (j + 0.5) * G;
       const r = Math.hypot(du, dv);
       if (r < R0 || r > RMAX) continue;
-      if (swatchHitsChip(cx + sx * du, cy + sy * dv, chipArea)) continue; // keep the chip slot clear
+      if (swatchHitsChip(cx + sx * du, cy + sy * dv, chipArea, M.item)) continue; // keep the chip slot clear
       cand.push({ du, dv, r });
     }
   }
