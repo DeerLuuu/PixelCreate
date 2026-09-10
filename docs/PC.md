@@ -24,20 +24,41 @@
 | ✅ 「预览所有帧」面板宽 60%、内容自动换行 | `src/ui/modals.tsx`（`.dlg-frame-preview`）、`style.css` |
 | ✅ 桌面化尺寸与悬停态：按钮 40px、菜单/弹窗/表单行加宽、`html[data-pc]` 一条条覆盖 | `src/ui/style.css`、`docs/UI.md` |
 
-## 二、建议补齐（按优先级）
+## 一b、1.0.8.7 又补上的（原 §二 里的条目）
+
+| 能力 | 实现位置 |
+|---|---|
+| ✅ 帧/图层鼠标**直接拖动排序**（不用等长按），触屏语义不变 | `src/ui/timeline.tsx`（`numDown` / `layDown` 的 `pcMouse` 分支） |
+| ✅ **双击重命名**：图层名、画布标题（双击画布本身仍是聚焦并适配） | `timeline.tsx` 的 `lname.onDoubleClick`、`canvas.tsx` 标题的 `onDoubleClick` |
+| ✅ **右键点帧＝帧设置**，并把 Del 目标切到帧 | `timeline.tsx` 帧头 `onContextMenu` |
+| ✅ `Shift`+左键**区间选帧**（从上次选中的帧连选过来） | `Session.frameAnchor` / `pickFrameRange` |
+| ✅ **Del 键全局删除**：选区内容 / 选中帧 / 当前图层 / 选中画布（画布仍弹确认） | `Session.delTarget` / `deleteKeyAction`，各区域 `setDelTarget` |
+| ✅ **单画布也显示画布标题栏** | `src/ui/canvas.tsx` |
+| ✅ **Ctrl+F1 快捷键一览**面板（键盘 + 鼠标两套词汇，逐行有测试保证不跑偏） | `SHORTCUT_SHEET`、`ShortcutHelpModal` |
+| ✅ `Ctrl+Shift+V` 粘成新图层 / `Ctrl+Alt+V` 粘成新画布（手机端是选区球的两个子球） | `Session.pasteAsNewLayer` / `pasteAsNewCanvas`、`ui/paste.ts` |
+| ✅ 帧多选时 `Ctrl+V` 一次粘到每一帧 | `Session.pasteIntoFrames` |
+| ✅ **Ctrl+O / Ctrl+N / Ctrl+E** 打开、新建、导出 | `src/app/shortcuts.ts` |
+| ✅ 文本框恢复**原生右键菜单**（画布上仍然拦截） | `App.tsx` 的 `onCtx` + `isEditable` |
+| ✅ PC 模式**拦掉浏览器手势**：双指横滑前进后退、橡皮筋回弹、右键按下、Safari 捏合；可滚动区域照常滚 | `App.tsx` 的手势守卫 effect |
+| ✅ 滚轮/拖动**调值不再跳变**（一格一档、拖动按范围换算） | `src/engine/scrub.ts` |
+| ✅ 跨画布拖选区**实时预览**落点幽灵 + 目标画布虚线框 | `View.dropTargetOf` + `drawOverlay` |
+| ✅ 色板小球与环形子球**同尺寸**；PC 球里隐藏复制/剪切/粘贴（有快捷键） | `orb-layout.ts`、`App.tsx` 的 `selItems` |
+| ✅ PC 模式**多个浮动球同时展开**且不拦截画布操作（Esc 收球） | `App.tsx`（`!pcMode` 才渲染 `.radial-back`） |
+
+## 二、还没做的（按优先级）
 
 ### P0 —— 桌面手感上的硬伤
 
-1. ⬜ **帧/图层拖动排序仍要长按 300ms**：`src/ui/timeline.tsx` 的 `numDown` / `ltmRef` 用长按武装拖动，
+1. ✅ ~~帧/图层拖动排序仍要长按 300ms~~（1.0.8.7 已改：鼠标按下即拖）：`src/ui/timeline.tsx` 的 `numDown` / `ltmRef` 用长按武装拖动，
    鼠标上很别扭。建议 `e.pointerType === "mouse"` 时**直接进入拖动**（越过计时器），长按语义只留给触屏。
-2. ⬜ **没有右键上下文菜单**：`App.tsx` 把所有 `contextmenu` 都拦掉了，桌面用户失去最顺手的入口。
+2. ⬜ **右键上下文菜单只做了「帧设置」**：`App.tsx` 把所有 `contextmenu` 都拦掉了，桌面用户失去最顺手的入口。
    建议按目标给出不同菜单：画布标题栏（重命名 / 锁定位置 / 导出 / 关闭）、图层/帧（重命名 / 复制 / 删除 /
    锁定 / 不透明度）、选区（剪切 / 复制 / 变换 / 反选 / 描边）。
 3. ⬜ **图层/帧重命名只能走弹窗**：加双击名称直接原地编辑（`dblclick` → inline input），
    与文件管理器一致。
-4. ⬜ **文件级快捷键缺失**：只有 `Ctrl+S`。建议补 `Ctrl+O` 打开、`Ctrl+N` 新建、`Ctrl+Shift+S` 另存为、
+4. ✅ ~~文件级快捷键缺失~~（1.0.8.7 已补 Ctrl+O / Ctrl+N / Ctrl+E；另存为仍缺）：只有 `Ctrl+S`。建议补 `Ctrl+O` 打开、`Ctrl+N` 新建、`Ctrl+Shift+S` 另存为、
    `Ctrl+E` 导出 PNG —— `ShortcutAction` 是联合类型，加 action + `App.tsx` 里接一条分支即可。
-5. ⬜ **快捷键没有可发现入口**：目前只在更新日志里写过。建议 `?` / `F1` 打开「快捷键一览」面板，
+5. ✅ ~~快捷键没有可发现入口~~（1.0.8.7：Ctrl+F1 一览面板 + 主菜单入口）：目前只在更新日志里写过。建议 `?` / `F1` 打开「快捷键一览」面板，
    把 PC 独占操作（空格长按换色、悬停滚轮调值、中键聚焦适配、`Alt` 单击取色）也列进去。
 6. ⬜ **粘贴的粒度**：`Ctrl+Shift+V` 粘贴为新图层 / 新画布（Aseprite 习惯），以及「粘贴到鼠标位置」。
 
@@ -51,10 +72,10 @@
    会成为负担。建议节流到 1 帧，或直接用 ref 写 DOM。
 10. ⬜ **拖放导入只按「整窗打开文件」处理**：既然已经有 `app/canvas-space.ts` 的命中测试，
     可以按落点把图片导入为**那张画布**的内容/新图层，落点高亮提示画布边框。
-11. ⬜ **多选的鼠标修饰键**：帧/图层多选目前要先进「多选模式」再点。建议 `Ctrl+点击` 加选、`Shift+点击` 连选。
+11. ✅ ~~多选的鼠标修饰键~~（1.0.8.7：Shift+左键区间选帧）：帧/图层多选目前要先进「多选模式」再点。建议 `Ctrl+点击` 加选、`Shift+点击` 连选。
 12. ⬜ **窗口尺寸变化没有防抖**：拖窗口边缘 / 进出全屏会连打 `View.resize`（FUSE 路径上尤其明显）。
     建议 rAF 合并 + ~100ms 防抖后再重建合成。
-13. ⬜ **全局拦 `contextmenu` 连输入框也拦掉了**：`App.tsx` 的 `onCtx` 没有放过 `INPUT`/`TEXTAREA`，
+13. ✅ ~~全局拦 contextmenu 连输入框也拦掉了~~（1.0.8.7：文本框放行原生菜单）：`App.tsx` 的 `onCtx` 没有放过 `INPUT`/`TEXTAREA`，
     文本框里的「复制/粘贴/拼写建议」原生菜单也没了（`isEditable` 判断在同一个文件里已经写好，直接复用）。
 14. ⬜ **面板不能自由布局**：时间轴高度可拖（已有），但图层栏/调色板不能折叠或重排；桌面习惯是可停靠面板。
 

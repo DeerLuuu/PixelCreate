@@ -360,6 +360,7 @@ interface MoveState { /* 抓取前的像素与掩码快照 */ }
 beginMove(doc, li, fi): MoveState | null
 xformFloating(doc, st, angle, sx, sy, buf, cx, cy): Array<...>   // 仿射变换
 floatDropInto(doc, li, fi, st, x, y, history?, label?): boolean  // 落进另一张画布
+pasteRaw(doc, li, fi, clip, at?): boolean                        // 落笔 + 设选区，不记历史
 
 // 对象形式（推荐）
 const selOps = {
@@ -479,6 +480,18 @@ sampleComposite(x, y): RGBA | null        // 取合成后的颜色
 undo() / redo() / jumpHistory(index)
 struct(label, fn)             // 结构快照式撤销
 ```
+
+### 11.9a0b 剪贴板粘贴
+
+```ts
+clip: Cel | null                       // 整个空间共用一份剪贴板
+pasteAsNewLayer(clip): boolean         // 粘成新图层（插入在当前图层之上并选中），一条结构历史
+pasteAsNewCanvas(clip): number         // 粘成新画布（尺寸＝剪贴板尺寸），返回画布下标
+pasteIntoFrames(clip, li, frames): boolean   // 一次粘到多帧，一条结构历史
+```
+`src/ui/paste.ts` 把三种粘贴（`inPlace` / `layer` / `canvas`）串成一条流程，
+并负责把系统剪贴板的图片转成真正的 `Cel`（以前塞的是普通对象，`pasteRaw` 调
+`clip.idx()` 会抛错，导致 Ctrl+V 静默失效）。快捷键：Ctrl+V / Ctrl+Shift+V / Ctrl+Alt+V。
 
 ### 11.9a0 提示
 
@@ -751,6 +764,13 @@ Session/View 调用：
 | 字母键 | 工具切换（`TOOL_KEYS`：B 铅笔、E 橡皮、G 油漆桶、I 取色、A 喷枪、L 直线、R 矩形、O 椭圆、C 圆形、P 多边形、Y 折线、U 曲线、M 选区、W 魔棒、Q 套索、H 轮廓填充） |
 
 在输入框里只放行 Ctrl/Cmd 组合（不会打断打字）；Alt 组合一律不处理（留给浏览器）。
+
+### 16.1b1b 快捷键一览 `SHORTCUT_SHEET`
+
+`src/app/shortcuts.ts` 里除了 `shortcutFor`，还导出面板数据 `SHORTCUT_SHEET`
+（分组 + 每行 keys/中英文案；键盘行带 `probe`/`action`，测试会逐行验证它真的能
+触发）。`Ctrl+F1` 或主菜单「快捷键一览」打开（`ui/modals.tsx` 的
+`ShortcutHelpModal`，PC 左类别右列表、手机单列分组）。
 
 ### 16.1b2 PC 模式 `src/io/pcmode.ts`
 
@@ -1071,6 +1091,8 @@ CSS 侧对应 `html[data-pc] .orb{62px}` 与 `html[data-pc] .orb-item{48px}`。
 再 `focusCanvas()` 到目标画布并用 `floatDropInto()` 落笔（同一屏幕位置，落点顶左越界按边缘裁剪）。
 目标画布当前图层锁定时整个移动作废（`endSelDrag(false)` 把像素放回，并 `Session.note()` 提示）。
 落点是否跨画布由 `screenToCanvas()` 判定，同画布内拖动仍走原本的原地落笔。
+拖动过程中 `View.dropTargetOf()` 会算出「现在松手会落在哪」，`drawOverlay` 用它
+实时画半透明落点幽灵 + 目标画布虚线框——预览与实际落笔共用同一份计算。
 
 ### 18.8 吸附设置
 
