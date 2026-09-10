@@ -2213,6 +2213,11 @@ export class Session {
     toastFn(this.prefs.lang === "en" ? en : zh);
   }
 
+  /** one-shot toast in the current language (no persistence) */
+  note(zh: string, en: string): void {
+    toastFn(this.prefs.lang === "en" ? en : zh);
+  }
+
   /** cheap scalar command: fn applied now; undo restores via back(). */
   private cheap(label: string, fn: () => void, back: () => void, data?: ScalarData): void {
     fn();

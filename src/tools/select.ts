@@ -471,3 +471,55 @@ export const selOps = {
     doc.sel.bump();
   },
 };
+
+/**
+ * Drop a floating selection into ANOTHER document — the cross-canvas move.
+ *
+ * `st.content` (the pixels grabbed at drag start) is copied at an exact
+ * position: unlike `selOps.paste`, a negative origin is CLIPPED instead of
+ * shifting the whole clip onto the edge, so a drop that hangs off the target
+ * canvas lands exactly where the pointer is. Pixels are copied directly (no
+ * alpha blending), matching the in-canvas float drop. The target document's
+ * selection becomes the dropped rectangle and one history step is pushed.
+ *
+ * @param st floating move state carried over from the source document
+ * @param x  target pixel of the clip's top-left (may be negative)
+ * @returns true when at least one pixel was written
+ */
+export function floatDropInto(
+  doc: Doc, li: number, fi: number, st: MoveState, x: number, y: number,
+  history?: History, label = "sel.move",
+): boolean {
+  const content = st.content;
+  if (!content || doc.layers[li]?.locked) return false;
+  const cel = doc.ensureCel(li, fi);
+  if (!cel) return false;
+  const w = doc.w, h = doc.h;
+  const before = history ? new Uint8ClampedArray(cel.data) : null;
+  let wrote = false;
+  for (let cy = 0; cy < content.h; cy++) {
+    const ty = y + cy;
+    if (ty < 0 || ty >= h) continue;
+    for (let cx = 0; cx < content.w; cx++) {
+      const tx = x + cx;
+      if (tx < 0 || tx >= w) continue;
+      const si = content.idx(cx, cy);
+      if (content.data[si + 3] === 0) continue;
+      const di = cel.idx(tx, ty);
+      cel.data[di] = content.data[si];
+      cel.data[di + 1] = content.data[si + 1];
+      cel.data[di + 2] = content.data[si + 2];
+      cel.data[di + 3] = content.data[si + 3];
+      wrote = true;
+    }
+  }
+  if (!wrote) return false;
+  // the selection follows the dropped pixels, clipped to the canvas edge
+  if (!doc.sel) doc.sel = new Sel(w, h, false);
+  doc.sel.clear();
+  const x0 = Math.max(0, x), y0 = Math.max(0, y);
+  const x1 = Math.min(w - 1, x + content.w - 1), y1 = Math.min(h - 1, y + content.h - 1);
+  for (let ty = y0; ty <= y1; ty++) for (let tx = x0; tx <= x1; tx++) doc.sel.set(tx, ty, 1);
+  if (history && before) record(doc, history, li, fi, before, label);
+  return true;
+}

@@ -359,6 +359,7 @@ lassoFill(doc, pts: Array<[number, number]>): void
 interface MoveState { /* 抓取前的像素与掩码快照 */ }
 beginMove(doc, li, fi): MoveState | null
 xformFloating(doc, st, angle, sx, sy, buf, cx, cy): Array<...>   // 仿射变换
+floatDropInto(doc, li, fi, st, x, y, history?, label?): boolean  // 落进另一张画布
 
 // 对象形式（推荐）
 const selOps = {
@@ -370,6 +371,11 @@ const selOps = {
   restore(doc, li, fi, st), shiftMask(doc, st, dx, dy),
 };
 ```
+
+`floatDropInto` 是**跨画布移动**的落笔：把浮动内容（`st.content`）原样写进另一个文档，
+与 `selOps.paste` 的区别是负原点**按画布边缘裁剪**（`paste` 会把整块平移到边上），
+并且是直接写 RGBA（不透明混合），与画布内浮动落笔一致。写入后把目标文档的选区设为落下的矩形，
+并（给了 `history` 时）记录一条 `sel.move`；目标图层锁定或没有任何像素落进画布时返回 `false`。
 
 > 任何改写 `mask` 的操作都要调用 `doc.sel.bump()`（或走 `set/clear/fillAll`），否则选区染色图不会刷新。
 
@@ -472,6 +478,14 @@ sampleComposite(x, y): RGBA | null        // 取合成后的颜色
 ```ts
 undo() / redo() / jumpHistory(index)
 struct(label, fn)             // 结构快照式撤销
+```
+
+### 11.9a0 提示
+
+```ts
+hintOnce(key, zh, en): void   // 只提示一次（localStorage 记忆），给 OS 抢手势这类一次性说明用
+note(zh, en): void            // 按当前语言弹一次 toast，不记忆（如「目标画布的该图层已锁定」）
+paintBlockedNote(): void      // 当前图层不能绘制时的标准提示（锁定 / 引用层失效）
 ```
 
 ### 11.9a 手势与操作记录
@@ -1050,6 +1064,13 @@ CSS 侧对应 `html[data-pc] .orb{62px}` 与 `html[data-pc] .orb-item{48px}`。
 | `screenToCanvas` | `(…) => { index, x, y } \| null` | 同上，并给出画布内的像素坐标（`0..w-1`） |
 
 `View.canvasAtScreen()` 与调色球拖拽都走这里，保证「这个点属于哪张画布」只有一份实现。
+
+**跨画布移动选区**（1.0.8.5 起，PC 与触屏都支持）：`View.onUp` 收尾时若发现
+「正在拖动的浮动选区块（`selDrag.kind === "move"` 且已 `floatCut`）松手点落在**别的**画布上」，
+就走 `View.dropSelDragToCanvas()`：源画布留下空洞并记一条 `sel.move` 历史（`floatCut` 已经挖掉了像素），
+再 `focusCanvas()` 到目标画布并用 `floatDropInto()` 落笔（同一屏幕位置，落点顶左越界按边缘裁剪）。
+目标画布当前图层锁定时整个移动作废（`endSelDrag(false)` 把像素放回，并 `Session.note()` 提示）。
+落点是否跨画布由 `screenToCanvas()` 判定，同画布内拖动仍走原本的原地落笔。
 
 ### 18.8 吸附设置
 

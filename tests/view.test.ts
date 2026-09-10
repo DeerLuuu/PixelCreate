@@ -10,6 +10,7 @@ import { Doc, Sel } from "../src/engine/doc";
 import * as compositor from "../src/render/compositor";
 import { stubEnv } from "./session.test";
 import { applyPcMode } from "../src/io/pcmode";
+import { selOps, floatDropInto, beginMove } from "../src/tools/select";
 import { eq, ok } from "./common";
 
 interface Stub { flush: () => void }
@@ -447,6 +448,129 @@ export function testView(): void {
       eq("view.pc.left.paints-fg", cel4 ? [cel4.data[off2], cel4.data[off2 + 1], cel4.data[off2 + 2]] : null, [10, 20, 30]);
 
       v3.destroy();
+    }
+
+    // ---- ⑱ 跨画布移动选区：拖到另一张画布上松手，内容搬到那边 ----
+    {
+      const s4 = new Session();
+      const host4 = {
+        clientWidth: 320, clientHeight: 240, style: {},
+        appendChild: () => undefined, replaceChildren: () => undefined,
+        getBoundingClientRect: () => ({ left: 0, top: 0, width: 320, height: 240 }),
+        addEventListener: () => undefined,
+        setPointerCapture: () => undefined, releasePointerCapture: () => undefined,
+      } as unknown as HTMLElement;
+      const v4 = new View(host4, s4);
+      s4.attachView(v4);
+      s4.doc.name = "A";
+      const bi4 = s4.addCanvas(new Doc(16, 16, "B"), { x: 72, y: 24 });
+      s4.focusCanvas(0);
+      s4.setTool("select");
+      /** 3 倍缩放：A（64×64）居中，B 在右侧偏下，两张画布都落在 320×240 视口里 */
+      const reset = (): void => { dom.flush(); v4.zoom = 3; v4.ox = 0; v4.oy = 0; dom.flush(); };
+      reset();
+      /** 焦点画布上像素 (x,y) 中心的屏幕坐标 */
+      const sp = (x: number, y: number): { x: number; y: number } =>
+        ({ x: v4.ox + (x + 0.5) * v4.zoom, y: v4.oy + (y + 0.5) * v4.zoom });
+      /** 另一张画布上像素 (x,y) 中心的屏幕坐标 */
+      const spB = (x: number, y: number): { x: number; y: number } =>
+        ({ x: v4.ox + (s4.docs[bi4].x + x + 0.5) * v4.zoom, y: v4.oy + (s4.docs[bi4].y + y + 0.5) * v4.zoom });
+      const dn = (p: { x: number; y: number }): void => { (v4 as unknown as { onDown(e: PointerEvent): void }).onDown(ev(p.x, p.y)); dom.flush(); };
+      const mv = (p: { x: number; y: number }): void => { (v4 as unknown as { onMove(e: PointerEvent): void }).onMove(ev(p.x, p.y)); dom.flush(); };
+      const up = (p: { x: number; y: number }): void => { (v4 as unknown as { onUp(e: PointerEvent): void }).onUp(ev(p.x, p.y)); dom.flush(); };
+      const aAt = (i: number, x: number, y: number): number => {
+        const c = s4.docs[i].doc.celAt(0, 0);
+        return c ? c.data[c.idx(x, y) + 3] : -1;
+      };
+      /** 在画布 i 的 (x0,y0) 处画一个 4×4 的红块 */
+      const paintBlock = (i: number, x0: number, y0: number): void => {
+        const c = s4.docs[i].doc.ensureCel(0, 0);
+        if (!c) return;
+        for (let y = 0; y < 4; y++) for (let x = 0; x < 4; x++) {
+          const k = c.idx(x0 + x, y0 + y);
+          c.data[k] = 255; c.data[k + 1] = 0; c.data[k + 2] = 0; c.data[k + 3] = 255;
+        }
+      };
+      /** 选区固定为 A 的 (16,16)-(47,47)：抓取点 (24,24) 离 8 个手柄和旋转点都够远，
+       *  否则 pointerdown 会被判成缩放/旋转而不是「移动选区」 */
+      const selectBox = (): void => { selOps.setRect(s4.doc, 16, 16, 47, 47); dom.flush(); };
+
+      // ① 拖到 B：源画布留下空洞，内容落在 B 上
+      paintBlock(0, 20, 20);
+      selectBox();
+      dn(sp(24, 24));
+      mv(sp(40, 24));
+      eq("view.xcanvas.cut-while-dragging", aAt(0, 20, 20), 0);
+      mv(spB(8, 8));
+      const revA0 = s4.docs[0].doc.pixelRev;   // 源画布不再是聚焦画布，缓存要靠它失效
+      up(spB(8, 8));
+      ok("view.xcanvas.source-cache-invalidated", s4.docs[0].doc.pixelRev > revA0);
+      eq("view.xcanvas.focus-moved", s4.docIdx, bi4);
+      eq("view.xcanvas.source-hole", aAt(0, 20, 20), 0);
+      // 抓取点相对内容内的位置保持不变：A(20,20) -> B(4,4)，落点顶左被裁到 B 内
+      eq("view.xcanvas.target-copied", aAt(bi4, 4, 4), 255);
+      const celB4 = s4.docs[bi4].doc.celAt(0, 0);
+      eq("view.xcanvas.target-rgb", celB4 ? [celB4.data[celB4.idx(4, 4)], celB4.data[celB4.idx(4, 4) + 1], celB4.data[celB4.idx(4, 4) + 2]] : null, [255, 0, 0]);
+      eq("view.xcanvas.target-empty-px", aAt(bi4, 8, 8), 0);
+      ok("view.xcanvas.target-selected", !!s4.docs[bi4].doc.sel && s4.docs[bi4].doc.sel.hasAny());
+      ok("view.xcanvas.two-steps", s4.history.list().labels.filter((l) => l === "sel.move").length >= 2);
+      // 两次撤销：先撤 B 上的落笔，再撤 A 上的空洞
+      s4.undo();
+      eq("view.xcanvas.undo-target", aAt(bi4, 4, 4), 0);
+      s4.undo();
+      eq("view.xcanvas.undo-source", aAt(0, 20, 20), 255);
+
+      // ② 同一张画布内拖动仍走原来的原地落笔（没有被跨画布分支抢走）
+      s4.focusCanvas(0);
+      s4.setTool("select");
+      reset();
+      paintBlock(0, 20, 20);
+      selectBox();
+      dn(sp(24, 24));
+      mv(sp(32, 24));
+      up(sp(32, 24));
+      eq("view.xcanvas.same-canvas-focus", s4.docIdx, 0);
+      eq("view.xcanvas.same-canvas-paste", aAt(0, 28, 20), 255);
+      eq("view.xcanvas.same-canvas-hole", aAt(0, 20, 20), 0);
+
+      // ③ 目标画布图层锁定时：整个移动作废，源画布的像素原样放回
+      s4.docs[bi4].doc.layers[0].locked = true;
+      s4.docs[bi4].li = 0;
+      s4.focusCanvas(0);
+      s4.setTool("select");
+      reset();
+      paintBlock(0, 20, 20);
+      selectBox();
+      dn(sp(24, 24));
+      mv(spB(8, 8));
+      up(spB(8, 8));
+      eq("view.xcanvas.locked-focus", s4.docIdx, 0);
+      eq("view.xcanvas.locked-kept", aAt(0, 20, 20), 255);
+      eq("view.xcanvas.locked-kept-2", aAt(0, 28, 20), 255);
+      s4.docs[bi4].doc.layers[0].locked = false;
+
+      // ④ floatDropInto：负原点按边缘裁剪，而不是把整块内容挤到 (0,0)
+      {
+        const s5 = new Session();
+        const d5 = s5.doc;
+        const c5 = d5.ensureCel(0, 0);
+        ok("view.xcanvas.drop-cel", !!c5);
+        for (let y = 0; y < 2; y++) for (let x = 0; x < 2; x++) {
+          const k = c5!.idx(3 + x, 3 + y);
+          c5!.data[k] = 9; c5!.data[k + 1] = 8; c5!.data[k + 2] = 7; c5!.data[k + 3] = 255;
+        }
+        selOps.setRect(d5, 3, 3, 4, 4);
+        const st5 = beginMove(d5, 0, 0);
+        ok("view.xcanvas.drop-state", !!st5);
+        ok("view.xcanvas.drop-clipped", floatDropInto(d5, 0, 0, st5!, -1, -1, undefined));
+        const c5b = d5.celAt(0, 0)!;
+        eq("view.xcanvas.drop-clipped-px", [c5b.data[c5b.idx(0, 0)], c5b.data[c5b.idx(0, 0) + 3]], [9, 255]);
+        eq("view.xcanvas.drop-clipped-not-shifted", c5b.data[c5b.idx(1, 1) + 3], 0);
+        ok("view.xcanvas.drop-clipped-sel", !!d5.sel && d5.sel.get(0, 0) === 1 && d5.sel.get(1, 1) === 0);
+        eq("view.xcanvas.drop-clipped-nowhere", floatDropInto(d5, 0, 0, st5!, -40, -40, undefined), false);
+      }
+
+      v4.destroy();
     }
 
     view.destroy();

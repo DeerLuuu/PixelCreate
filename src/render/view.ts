@@ -8,7 +8,7 @@ import { Stroke } from "../tools/stroke";
 import { isSymTool, SYM_ANGLES } from "../tools/registry";
 import type { SymAxis } from "../engine/symmetry";
 import { lineCells, brushStamp, fillPolygon } from "../engine/paint";
-import { selOps, lassoFill, beginMove, xformFloating, type MoveState } from "../tools/select";
+import { selOps, lassoFill, beginMove, xformFloating, floatDropInto, type MoveState } from "../tools/select";
 import type { Session } from "../app/session";
 import type { GestureActionId } from "../app/gesture-ids";
 import { clamp } from "../engine/types";
@@ -2256,7 +2256,9 @@ export class View {
       }
       this.gestureMoved = false;
       this.panLast = null;
-      if (this.selDrag) this.endSelDrag();
+      // a floating selection dropped on another canvas moves there (see
+      // dropSelDragToCanvas); everything else drops in place
+      if (this.selDrag && !this.dropSelDragToCanvas(pt.x, pt.y)) this.endSelDrag();
     }
   }
 
@@ -2858,6 +2860,63 @@ export class View {
       if (firstCut) this.session.repaint();
       else this.drawOverlay();
     }
+  }
+
+  /**
+   * Finish a selection-move drag that ended on ANOTHER canvas: the grabbed
+   * pixels are already cut out of the source layer, so the source only needs
+   * its history step, and the floating content is stamped into the canvas under
+   * the pointer (which becomes the focused one, keeping its own layer/frame).
+   * The clip keeps its SCREEN position, so a drop lands where the eye sees it.
+   * Works with a mouse and with touch, in both layout modes.
+   *
+   * @returns true when the drop was handled (the caller must skip endSelDrag)
+   */
+  private dropSelDragToCanvas(sx: number, sy: number): boolean {
+    const g = this.selDrag;
+    if (!g || g.kind !== "move" || !g.mv || !g.cut || !g.moved) return false;
+    const s = this.session;
+    const hit = screenToCanvas(this.spaceRects(), s.docIdx, this.ox, this.oy, this.zoom, sx, sy);
+    if (!hit || hit.index === s.docIdx) return false;
+    const srcE = s.docs[s.docIdx];
+    const dstE = s.docs[hit.index];
+    if (!srcE || !dstE) return false;
+    // the target keeps its own remembered layer / frame (what focusCanvas will
+    // restore): a locked target aborts the whole move, pixels go back
+    const dli = Math.max(0, Math.min(dstE.doc.layers.length - 1, dstE.li));
+    if (dstE.doc.layers[dli]?.locked) {
+      this.endSelDrag(false);
+      s.note("目标画布的该图层已锁定", "That layer is locked in the target canvas");
+      return true;
+    }
+    this.selDrag = null; // drops the floating overlay of the source canvas
+    const li = s.curLayer(), fi = s.curFrame();
+    const cel = s.doc.celAt(li, fi);
+    // the source keeps the hole (floatCut already removed the pixels)
+    if (cel) {
+      let changed = false;
+      const a = cel.data, b = g.mv.before;
+      for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) { changed = true; break; }
+      if (changed) {
+        s.history.pushPixels("sel.move", s.doc, [
+          { li, fi, before: g.mv.before, after: new Uint8ClampedArray(cel.data) },
+        ]);
+        // the source stops being the focused canvas right below, so its own
+        // composite cache (keyed on pixelRev) has to be invalidated by hand
+        s.doc.pixelRev++;
+      }
+    }
+    // space position -> pixel inside the target canvas
+    const at = {
+      x: g.mv.ox + (g.dx || 0) + srcE.x - dstE.x,
+      y: g.mv.oy + (g.dy || 0) + srcE.y - dstE.y,
+    };
+    s.focusCanvas(hit.index);
+    const ok = floatDropInto(s.doc, s.curLayer(), s.curFrame(), g.mv, at.x, at.y, s.history, "sel.move");
+    s.hapticTick("跨画布移动", 0.9);
+    if (ok) s.changed();
+    else { s.repaint(); s.changedUI(); }
+    return true;
   }
 
   private endSelDrag(commit = true): void {
