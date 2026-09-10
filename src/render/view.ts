@@ -3146,8 +3146,17 @@ export class View {
     s.focusCanvas(hit.index);
     const ok = floatDropInto(s.doc, s.curLayer(), s.curFrame(), g.mv, at.x, at.y, s.history, "sel.move");
     s.hapticTick("跨画布移动", 0.9);
-    if (ok) s.changed();
-    else { s.repaint(); s.changedUI(); }
+    if (ok) {
+      // 内容的合成缓存必须**立刻**重建：只 changed() 只会通知 React，
+      // 蚂蚁线动画自己会把选区框画出来，像素层却还是旧缓存 —— 那就会出现
+      // 「框在、内容空，点一下才出现」。
+      s.repaintAll();
+      s.changed();
+    } else {
+      s.repaint();
+      s.changedUI();
+    }
+    this.drawOverlay();
     return true;
   }
 

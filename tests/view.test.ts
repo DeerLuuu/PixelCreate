@@ -556,6 +556,21 @@ export function testView(): void {
        *  否则 pointerdown 会被判成缩放/旋转而不是「移动选区」 */
       const selectBox = (): void => { selOps.setRect(s4.doc, 16, 16, 47, 47); dom.flush(); };
 
+      // 回归：落笔那一刻就必须重建合成（以前只 changed()，会出现
+      // 「选区框在、内容空，点一下才出现」）
+      let composedWithPasted = false;
+      let composes = 0;
+      const prevOnion2 = cmod.composeFrameWithOnion;
+      cmod.composeFrameWithOnion = (...a2: unknown[]) => {
+        composes++;
+        const dd = a2[0] as Doc;
+        if (dd === s4.docs[bi4].doc) {
+          const cc = dd.celAt(0, 0);
+          if (cc && cc.data[cc.idx(4, 4) + 3] === 255) composedWithPasted = true;
+        }
+        return (prevOnion2 as (...x: unknown[]) => unknown)(...a2);
+      };
+
       // ① 拖到 B：源画布留下空洞，内容落在 B 上
       paintBlock(0, 20, 20);
       selectBox();
@@ -565,6 +580,8 @@ export function testView(): void {
       mv(spB(8, 8));
       const revA0 = s4.docs[0].doc.pixelRev;   // 源画布不再是聚焦画布，缓存要靠它失效
       up(spB(8, 8));
+      cmod.composeFrameWithOnion = prevOnion2;
+      ok("view.xcanvas.compose-on-drop", composedWithPasted && composes > 0, "composes=" + composes);
       ok("view.xcanvas.source-cache-invalidated", s4.docs[0].doc.pixelRev > revA0);
       eq("view.xcanvas.focus-moved", s4.docIdx, bi4);
       eq("view.xcanvas.source-hole", aAt(0, 20, 20), 0);

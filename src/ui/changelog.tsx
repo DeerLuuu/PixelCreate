@@ -9,10 +9,10 @@ import { useKitPcMode } from "./kit";
 import { Dialog } from "./kit";
 
 /** keep in sync with android/AndroidManifest.xml versionName on every release */
-export const APP_VERSION = "1.0.8.8";
+export const APP_VERSION = "1.0.8.9";
 /** build stamp shown next to the version (support/debug: identifies the exact
  *  package a user is running when the version number itself does not change) */
-export const BUILD_TAG = "e916e3b";
+export const BUILD_TAG = "a5d5091";
 
 export type ClgKind = "add" | "imp" | "fix";
 export interface ClgItem { kind: ClgKind; zh: string; en: string }
@@ -21,6 +21,13 @@ export interface ClgVersion { v: string; date: string; items: ClgItem[] }
 const it = (kind: ClgKind, zh: string, en: string): ClgItem => ({ kind, zh, en });
 
 export const CHANGELOG: ClgVersion[] = [
+  {
+    v: "1.0.8.9",
+    date: "2026-09-10",
+    items: [
+      it("fix", "修复「把选区拖到另一张画布上松手后，只看到选区框、内容是空的，随便点一下就又出现了」：落笔后只通知了界面状态，却没有立刻重建像素合成（会动的选区虚线自己会重画，像素层还停在旧缓存上）。现在松手即完整重绘，内容立即出现在目标画布上。新增的回归测试会在缺少这一步重绘时直接失败。", "Fixed the case where dropping a selection onto another canvas showed only the marquee with no pixels until you clicked somewhere: the drop notified the UI state but never rebuilt the pixel composite (the animated marquee redraws itself, so the box appeared while the pixels stayed on a stale cache). The composite is now rebuilt the moment you release, so the content shows up immediately, and a new regression test fails if that redraw is ever missing again."),
+    ],
+  },
   {
     v: "1.0.8.8",
     date: "2026-09-10",
