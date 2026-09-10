@@ -590,7 +590,7 @@ html[data-pc] .orb-item{width:48px;height:48px}
   .ctrlbar{flex-wrap:wrap;align-content:flex-start}
 }
 /* palette color swatches in the colour ball ring */
-.orb-item.pal-c{width:30px;height:30px;border-radius:50%;border:2px solid var(--mask);box-sizing:border-box;box-shadow:0 0 0 1px var(--ring-soft)}
+.orb-item.pal-c{border-radius:50%;border:2px solid var(--mask);box-sizing:border-box;box-shadow:0 0 0 1px var(--ring-soft)}
 .orb-item.pal-c.on{outline:2px solid var(--accent);outline-offset:2px}
 /* a colour ball dragged out of the palette fan: follows the finger, released on
    a canvas it bucket-fills there (see PalBalls / View.quickFill) */
@@ -1053,3 +1053,23 @@ html[data-pc] .dlg-frame-preview{width:60vw;max-height:84vh}
 .tl-pill{position:fixed;left:50%;transform:translateX(-50%);z-index:70;background:#0d0f16;color:#dfe3ee;
   font-size:11px;line-height:1.3;padding:3px 9px;border-radius:7px;border:1px solid #3a3f55;
   pointer-events:none;box-shadow:0 4px 14px rgba(0,0,0,.45)}
+
+/* ---- 快捷键一览（Ctrl+F1）---- */
+.sc-dlg{width:min(94vw,520px);max-height:82vh}
+html[data-pc] .sc-dlg{width:min(92vw,760px)}
+.sc-body{display:flex;flex-direction:column;gap:8px;min-height:0;overflow:hidden}
+.sc-flat{overflow-y:auto;display:flex;flex-direction:column;gap:12px;min-height:0}
+.sc-group{display:flex;flex-direction:column;gap:6px}
+.sc-gtitle{font-size:12px;font-weight:700;color:var(--dim);letter-spacing:.06em;text-transform:uppercase}
+.sc-split{display:flex;gap:14px;min-height:0;flex:1 1 auto}
+.sc-cats{display:flex;flex-direction:column;gap:4px;flex:0 0 148px;overflow-y:auto}
+.sc-cat{text-align:left;padding:8px 10px;border-radius:var(--r-3);background:var(--bg2);color:var(--fg);border:1px solid transparent}
+.sc-cat:hover{background:var(--bg3)}
+.sc-cat.on{background:var(--accent-soft);border-color:var(--accent);color:var(--text)}
+.sc-pane{flex:1 1 auto;display:flex;flex-direction:column;gap:6px;overflow-y:auto;min-height:0}
+.sc-row{display:flex;align-items:center;gap:10px;padding:6px 8px;border-radius:var(--r-3);background:var(--bg2)}
+.sc-row:hover{background:var(--bg3)}
+.sc-keys{flex:0 0 auto;min-width:132px;padding:3px 8px;border-radius:6px;background:var(--bg);border:1px solid var(--line);
+  font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;color:var(--text);text-align:center}
+.sc-desc{flex:1 1 auto;font-size:13px;line-height:1.45;color:var(--text)}
+@media (max-width:560px){html[data-pc] .sc-dlg{width:94vw}}
