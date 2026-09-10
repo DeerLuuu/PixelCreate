@@ -7,6 +7,7 @@ import { GESTURES, GESTURE_ACTIONS, gesturePath, isActionAllowed } from "../src/
 import { CORE_TOOLS, isSymTool } from "../src/tools/registry";
 import { History } from "../src/engine/history";
 import { Doc, Sel } from "../src/engine/doc";
+import { Cel } from "../src/engine/cel";
 import { Stroke } from "../src/tools/stroke";
 import { scalarActions } from "../src/app/history-io";
 import * as historyFile from "../src/io/historyfile";
@@ -1564,6 +1565,43 @@ export async function testSession(): Promise<void> {
     } finally {
       amod.saveAutosave = origSave;
     }
+  }
+
+  // --- ⑮ 粘贴为新图层 / 新画布（⑱ 多帧粘贴）---
+  {
+    const d = new Session();
+    const clip = new Cel(4, 4);
+    for (let i = 0; i < 16; i++) {
+      clip.data[i * 4] = 10; clip.data[i * 4 + 1] = 20; clip.data[i * 4 + 2] = 30; clip.data[i * 4 + 3] = 255;
+    }
+    const layers0 = d.doc.layers.length;
+    ok("paste.layer.ok", d.pasteAsNewLayer(clip));
+    eq("paste.layer.count", d.doc.layers.length, layers0 + 1);
+    eq("paste.layer.current", d.curLayer(), layers0);
+    const cel = d.doc.celAt(d.curLayer(), d.curFrame());
+    // 居中落下：64 的画布放 4×4 的剪贴板 -> 左上角在 (30,30)
+    const cAt = (30 * d.doc.w + 30) * 4;
+    ok("paste.layer.pixels", !!cel && cel.data[cAt + 3] === 255 && cel.data[cAt] === 10, "px=" + (cel ? cel.data[cAt + 3] : -1));
+    eq("paste.layer.selected", d.doc.sel?.hasAny(), true);
+    d.undo();   // 图层与像素在同一个结构步骤里，一次撤销全回退
+    eq("paste.layer.undo-count", d.doc.layers.length, layers0);
+    // 新画布：尺寸跟剪贴板一致，内容原样
+    const idx = d.pasteAsNewCanvas(clip);
+    ok("paste.canvas.index", idx >= 0, "idx=" + idx);
+    eq("paste.canvas.size", [d.docs[idx].doc.w, d.docs[idx].doc.h], [4, 4]);
+    ok("paste.canvas.pixels", !!d.docs[idx].doc.celAt(0, 0) && d.docs[idx].doc.celAt(0, 0)!.data[3] === 255);
+    // 空剪贴板：什么都不做
+    eq("paste.canvas.empty", d.pasteAsNewCanvas(null), -1);
+    eq("paste.layer.empty", d.pasteAsNewLayer(null), false);
+    // ⑱ 多帧粘贴：一次粘到每一帧（同一条历史）
+    d.focusCanvas(0);
+    d.frameAdd();
+    eq("paste.frames.added", d.doc.frames.length, 2);
+    const li = d.curLayer();
+    ok("paste.frames.ok", d.pasteIntoFrames(clip, li, [0, 1]));
+    const f1 = d.doc.celAt(li, 1);
+    ok("paste.frames.painted", !!f1 && f1.data[cAt + 3] === 255, "px=" + (f1 ? f1.data[cAt + 3] : -1));
+    eq("paste.frames.label", d.history.list().labels[d.history.list().labels.length - 1], "paste-frames");
   }
 
   // --- ⑲ Del 键：作用于「最后选中的目标」---
