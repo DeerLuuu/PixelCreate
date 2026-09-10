@@ -9,10 +9,10 @@ import { useKitPcMode } from "./kit";
 import { Dialog } from "./kit";
 
 /** keep in sync with android/AndroidManifest.xml versionName on every release */
-export const APP_VERSION = "1.0.8.9";
+export const APP_VERSION = "1.0.8.10";
 /** build stamp shown next to the version (support/debug: identifies the exact
  *  package a user is running when the version number itself does not change) */
-export const BUILD_TAG = "a5d5091";
+export const BUILD_TAG = "d3a71e8";
 
 export type ClgKind = "add" | "imp" | "fix";
 export interface ClgItem { kind: ClgKind; zh: string; en: string }
@@ -21,6 +21,13 @@ export interface ClgVersion { v: string; date: string; items: ClgItem[] }
 const it = (kind: ClgKind, zh: string, en: string): ClgItem => ({ kind, zh, en });
 
 export const CHANGELOG: ClgVersion[] = [
+  {
+    v: "1.0.8.10",
+    date: "2026-09-10",
+    items: [
+      it("imp", "拖着颜色球去画布上油漆桶填充之后，色板球不再自动收起来了：可以接着换一个颜色继续填，想收起来点一下色板球本身（电脑上按 Esc 也行）。轻点色球仍然是「取色并收起」，两条路互不影响。", "The palette fan no longer closes itself after you drag a colour ball onto the canvas to bucket-fill: you can keep filling with other colours, and tapping the palette ball (or pressing Esc on a computer) puts it away. Tapping a swatch still picks the colour and closes the fan, so neither gesture gets in the way of the other."),
+    ],
+  },
   {
     v: "1.0.8.9",
     date: "2026-09-10",

@@ -1797,10 +1797,11 @@ function PalBalls({ x, y, onDone }: { x: number; y: number; onDone: () => void }
   // dragging a colour ball onto the canvas bucket-fills there (one history step);
   // a plain tap keeps the old behaviour (take the colour, close the fan)
   const skipClick = useRef(false);
+  // 拖着色球去油漆桶填充后**不再收起色板球**：可以接着换别的颜色继续填，
+  // 想收起来点一下色板球（PC 也可以按 Esc）即可。轻点色球仍然是「取色并收起」。
   const fillDrag = useColorDragFill({
     color: () => SESSION.color,
     tip: (c) => ({ title: rgbaToHex(c), desc: t("palDragHint") }),
-    onFilled: () => onDone(),
   });
   const swatchDown = (ev: React.PointerEvent<HTMLButtonElement>, c: [number, number, number, number]) => {
     skipClick.current = false;

@@ -9,6 +9,9 @@ import { DRAG_START, TIP_MS, holdAllowed } from "../src/ui/color-drag";
 import { HOLD_MS } from "../src/ui/hold";
 import { eq, ok } from "./common";
 
+declare const require: (m: string) => { readFileSync: (p: string, enc: string) => string; resolve: (...p: string[]) => string };
+declare const __dirname: string;
+
 const HOLD = HOLD_MS;   // the toolbar chip's long-press delay (from hold.tsx)
 
 export function testColorDrag(): void {
@@ -30,4 +33,19 @@ export function testColorDrag(): void {
   eq("colordrag.hold.custom-threshold", holdAllowed(12, HOLD, HOLD, true, 20), true);
   // the palette fan has no hold action at all, so it never asks
   eq("colordrag.tip.after-hold", TIP_MS, 450);
+
+  // 拖着色球去油漆桶填充后**不能**收起色板球（可以接着换色继续填）。
+  // 这条是源码约定：PalBalls 不再传 onFilled，只有轻点取色那条路才 onDone()。
+  {
+    const fs = require("fs");
+    const path = require("path");
+    const app = fs.readFileSync(path.resolve(__dirname, "../../../src/ui/App.tsx"), "utf8");
+    const start = app.indexOf("function PalBalls(");
+    ok("pal.src.found", start > 0);
+    const body = app.slice(start, start + 6000);
+    const hook = body.slice(body.indexOf("useColorDragFill({"), body.indexOf("useColorDragFill({") + 300);
+    ok("pal.drag.no-autoclose", hook.indexOf("onFilled") < 0, hook.slice(0, 120));
+    // 轻点取色仍然会收起色板球
+    ok("pal.tap.still-closes", body.indexOf("onDone();") > 0);
+  }
 }
