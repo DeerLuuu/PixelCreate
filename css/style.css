@@ -603,13 +603,14 @@ html[data-pc] .orb-item{width:48px;height:48px}
 .orb-modechip.orb-modeempty{font-weight:500;color:var(--dim);background:var(--hud-bg-2-dim)}
 /* settings dialog: groups generated from the declaration table */
 .set-search{display:flex;gap:6px;align-items:center;margin-bottom:8px}
-/* ⑮ PC：设置左右布局（搜索与导入导出留在上方，左类别右设置） */
-.set-split{display:flex;gap:14px;align-items:flex-start;min-height:0}
-.set-cats{width:150px;flex:0 0 auto;display:flex;flex-direction:column;gap:2px;position:sticky;top:0}
-.set-cat{display:flex;align-items:center;gap:6px;padding:8px 10px;border:0;border-radius:var(--r-3);
+/* ⑮ PC：设置左右布局（搜索与导入导出留在上方，左类别右设置）。
+   界面定制面板（.cu-*）是同一套类别导航，共用同一条规则，别再写第二份 */
+.set-split,.cu-split{display:flex;gap:14px;align-items:flex-start;min-height:0}
+.set-cats,.cu-cats{width:150px;flex:0 0 auto;display:flex;flex-direction:column;gap:2px;position:sticky;top:0}
+.set-cat,.cu-cat{display:flex;align-items:center;gap:6px;padding:8px 10px;border:0;border-radius:var(--r-3);
   background:transparent;color:var(--text-3);font:inherit;font-size:var(--fs-4);text-align:left;cursor:pointer}
-.set-cat:hover{background:var(--bg3)}
-.set-cat.on{background:var(--accent);color:var(--on-accent);font-weight:700}
+.set-cat:hover,.cu-cat:hover{background:var(--bg3)}
+.set-cat.on,.cu-cat.on{background:var(--accent);color:var(--on-accent);font-weight:700}
 .set-pane{flex:1 1 auto;min-width:0}
 html[data-pc] .dlg[data-guide="dlg-settings"]{width:min(92vw,860px)}
 html[data-pc] .set-pane .set-group:first-child .set-grouphead{border-top-left-radius:var(--r-3);border-top-right-radius:var(--r-3)}
@@ -1119,7 +1120,6 @@ html[data-pc] .sc-dlg{width:min(92vw,760px)}
 .cu-dlg{width:min(94vw,520px);max-height:84vh}
 html[data-pc] .cu-dlg{width:min(92vw,800px)}
 .cu-body{display:flex;flex-direction:column;gap:10px;min-height:0;overflow:hidden}
-.cu-block{display:flex;flex-direction:column;gap:6px}
 .cu-actions{display:flex;justify-content:flex-end;gap:8px;padding-top:2px}
 .cu-entry{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .cu-entry .row-note{flex:1 1 auto;margin:0}
@@ -1175,18 +1175,21 @@ html[data-pc] .cu-dlg{width:min(92vw,800px)}
 
 /* 界面定制面板：与设置面板同一套行样式（kit 的 Row/RowActions/Switch） */
 .cu-line{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:var(--r-3);background:var(--bg2);border:1px solid transparent}
-.cu-line.off{opacity:.6}
 .cu-line-main{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:2px}
 .cu-name{font-size:13px;color:var(--text);display:flex;align-items:center;gap:6px}
 .cu-hint{font-size:11px;color:var(--dim-2)}
-.cu-tag{font-style:normal;font-size:10px;padding:1px 5px;border-radius:999px;background:var(--bg4);color:var(--dim)}
-.cu-block{display:flex;flex-direction:column;gap:6px;margin-top:6px}
 .cu-hintline{flex:1 1 auto;margin:0}
-.cu-pane.col2{display:flex;flex-direction:column;gap:10px;overflow-y:auto;min-height:0}
-.cu-first-last{display:none}
 
-/* ---- 界面定制：左边「哪里」+ 右边小方块清单 ---- */
-.cu-catrow{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px}
+/* ---- 界面定制：左边「哪里」+ 右边小方块清单 ----
+   类别导航在 PC 下沿用设置面板那一套（.cu-split/.cu-cats/.cu-cat 是上面 .set-* 的别名），
+   移动端换成项目通用的横向 chip 行（.chips > .chip），两边外观一致、不再是一排裸按钮。
+   .dlg-body 在这里是 overflow:hidden，所以左右两栏都必须自己撑满并各自滚动，
+   否则小方块清单会被弹窗最大高度裁掉、且滚不动（同 .sc-split/.sc-pane 的做法） */
+.cu-split{flex:1 1 auto;min-height:0}
+.cu-flat{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;gap:8px}
+.cu-flat > .chips{margin:0}
+.cu-cats{overflow-y:auto}
+.cu-pane{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:8px;overflow-y:auto;min-height:0}
 .cu-head{display:flex;flex-direction:column;gap:3px;padding:0 2px 6px}
 .cu-head-title{font-size:14px;font-weight:700;color:var(--text)}
 .cu-head-hint{font-size:11px;color:var(--dim-2);line-height:1.5}
@@ -1202,4 +1205,3 @@ html[data-pc] .cu-dlg{width:min(92vw,800px)}
 .cu-tile-extra{font-size:9px;color:var(--dim-2)}
 .cu-tile-eye{position:absolute;top:3px;right:3px;color:var(--dim-2);display:flex}
 .cu-tile.off .cu-tile-eye{color:var(--accent)}
-.cu-cats{overflow-y:auto}
