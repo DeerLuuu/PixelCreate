@@ -4,7 +4,8 @@
 // the interesting part — which chord means what, and when a chord must be
 // ignored (typing in a field, modifier-only presses) — stays testable.
 export type ShortcutAction =
-  | "undo" | "redo" | "save" | "copy" | "paste" | "delete" | "escape"
+  | "undo" | "redo" | "save" | "copy" | "cut" | "paste" | "delete" | "escape"
+  | "framePrev" | "frameNext" | "layerPrev" | "layerNext"
   | "zoomIn" | "zoomOut" | "fit" | "toggleUI"
   | "tool" | "nudge";
 
@@ -68,7 +69,12 @@ export function shortcutFor(e: ShortcutKey, typing = false): ShortcutHit | null 
       case "y": return { action: "redo" };
       case "s": return { action: "save" };
       case "c": return { action: "copy" };
+      case "x": return { action: "cut" };
       case "v": return { action: "paste" };
+      case "ArrowLeft": return { action: "framePrev" };
+      case "ArrowRight": return { action: "frameNext" };
+      case "ArrowUp": return { action: "layerPrev" };
+      case "ArrowDown": return { action: "layerNext" };
     }
     return null;
   }

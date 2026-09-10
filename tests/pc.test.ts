@@ -84,6 +84,14 @@ export function testPcMode(): void {
     eq("key.save", K("s", { ctrlKey: true })?.action, "save");
     eq("key.copy", K("c", { ctrlKey: true })?.action, "copy");
     eq("key.paste", K("v", { ctrlKey: true })?.action, "paste");
+    eq("key.cut", K("x", { ctrlKey: true })?.action, "cut");
+    // Ctrl+方向键：左右切帧、上下切图层
+    eq("key.frame.prev", K("ArrowLeft", { ctrlKey: true })?.action, "framePrev");
+    eq("key.frame.next", K("ArrowRight", { ctrlKey: true })?.action, "frameNext");
+    eq("key.layer.prev", K("ArrowUp", { ctrlKey: true })?.action, "layerPrev");
+    eq("key.layer.next", K("ArrowDown", { ctrlKey: true })?.action, "layerNext");
+    // 不带 Ctrl 的方向键仍是选区微移（不冲突）
+    eq("key.arrow.plain.nudge", K("ArrowLeft")?.action, "nudge");
     // 大写（Shift 按下）也能识别 Ctrl 组合
     eq("key.undo.uppercase", K("Z", { ctrlKey: true })?.action, "undo");
     // 纯 Ctrl 组合在输入框里仍然生效，普通按键不抢

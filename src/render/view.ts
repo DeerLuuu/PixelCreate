@@ -1634,7 +1634,17 @@ export class View {
     // ---- PC 鼠标：中键 / 空格+左键 = 平移，右键 = 用另一个颜色槽绘制
     this.altPaint = false;
     if (e.pointerType === "mouse") {
-      if (e.button === 1 || (e.button === 0 && this.spaceDown)) {
+      // 中键：等价于触屏的双击画布（聚焦并适配），不再用于平移
+      if (e.button === 1) {
+        const hitIdx = this.canvasAtScreen(pt.x, pt.y);
+        if (hitIdx >= 0) {
+          if (hitIdx !== this.session.docIdx) this.session.focusCanvas(hitIdx);
+          this.session.fitCanvas();
+          this.session.hapticTick("聚焦", 0.7);
+        }
+        return;
+      }
+      if (e.button === 0 && this.spaceDown) {
         this.mousePan = true;
         this.panLast = pt;
         this.syncCursor();
@@ -1768,6 +1778,12 @@ export class View {
     const tool = s.tool;
     const pp = this.screenToPixel(pt.x, pt.y);
     const doc = s.doc;
+    // Alt+单击：快速取色（与触屏长按取色等价，PC 上更顺手）
+    if (e.altKey && e.pointerType === "mouse" && e.button === 0) {
+      const c = s.sampleComposite(pp.x, pp.y);
+      if (c) { s.setFgColor(c); s.hapticTick("取色", 0.8); s.repaint(); }
+      return;
+    }
     if (tool === "outline") {
       this.outlineDown(pp);
       return;

@@ -1980,6 +1980,14 @@ export class Session {
   /** switch the visible frame. User-initiated switches (timeline taps, prev /
    *  next buttons) are recorded as their own undo step; internal playback and
    *  history restoration pass record=false. */
+  /** 前后切帧（PC 的 Ctrl+左右）：循环，且带动画/洋葱皮刷新 */
+  stepFrame(d: number): void {
+    const n = this.doc.frames.length;
+    if (n < 2) return;
+    this.setFrame(((this.curFrame() + d) % n + n) % n);
+    this.hapticTick("帧", 0.5);
+  }
+
   setFrame(fi: number, record = true): void {
     const n = this.doc.frames.length;
     const next = Math.max(0, Math.min(n - 1, fi));

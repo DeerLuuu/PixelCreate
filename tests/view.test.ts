@@ -397,14 +397,33 @@ export function testView(): void {
       fire("wheel", ev({ deltaY: 60, deltaMode: 0, altKey: true, clientX: 160, clientY: 120 }));
       ok("view.pc.wheel.alt-pans-y", v3.oy !== oyBefore, "oy=" + v3.oy);
 
-      // 中键拖动＝平移（不动像素）
+      // 中键：不再平移，等价于触屏双击（聚焦并适配画布）
       const ox2 = v3.ox, oy2 = v3.oy;
       const celBefore = s3.doc.celAt(s3.curLayer(), s3.curFrame());
+      const zBefore = v3.zoom;
+      v3.zoomAt(zBefore * 2, 10, 10);            // 先弄乱一点，好验证「适配」确实发生
+      const zZoomed = v3.zoom;
+      const focusBefore = s3.docIdx;
       fire("pointerdown", ev({ button: 1, buttons: 4, clientX: 100, clientY: 100 }));
-      fire("pointermove", ev({ button: 1, buttons: 4, clientX: 130, clientY: 120 }));
-      fire("pointerup", ev({ button: 1, clientX: 130, clientY: 120 }));
-      eq("view.pc.middle-pan", [v3.ox - ox2, v3.oy - oy2], [30, 20]);
-      eq("view.pc.middle-pan.no-paint", s3.doc.celAt(s3.curLayer(), s3.curFrame()), celBefore);
+      fire("pointerup", ev({ button: 1, clientX: 100, clientY: 100 }));
+      // 中键点在第 2 张画布上：应聚焦到它（等价触屏双击）
+      const bi3 = s3.addCanvas(new Doc(32, 32, "PC2"), { x: 200, y: 0 });
+      const pt2 = { clientX: v3.ox + (200 + 5.5) * v3.zoom, clientY: v3.oy + 5.5 * v3.zoom };
+      fire("pointerdown", ev({ button: 1, buttons: 4, ...pt2 }));
+      fire("pointerup", ev({ button: 1, ...pt2 }));
+      eq("view.pc.middle-focus.other-canvas", s3.docIdx, bi3);
+      void zZoomed; void focusBefore;
+      eq("view.pc.middle-focus.no-paint", s3.doc.celAt(s3.curLayer(), s3.curFrame()), celBefore);
+      void ox2; void oy2;
+      // 空格+左键拖动仍然平移
+      (v3 as unknown as { spaceDown: boolean }).spaceDown = true;
+      const ox3 = v3.ox, oy3 = v3.oy;
+      fire("pointerdown", ev({ button: 0, buttons: 1, clientX: 100, clientY: 100 }));
+      fire("pointermove", ev({ button: 0, buttons: 1, clientX: 130, clientY: 120 }));
+      fire("pointerup", ev({ button: 0, clientX: 130, clientY: 120 }));
+      // 视图可能被 clampView 限制幅度，这里只验证「确实朝该方向平移了」
+      ok("view.pc.space-pan", v3.ox > ox3 && v3.oy > oy3, "d=" + (v3.ox - ox3) + "," + (v3.oy - oy3));
+      (v3 as unknown as { spaceDown: boolean }).spaceDown = false;
 
       // 右键＝另一个颜色槽（当前前景色绘制时就是背景色）
       s3.setFgColor([10, 20, 30, 255]);

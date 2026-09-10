@@ -268,6 +268,8 @@ input[type=range]{width:64px;height:22px;accent-color:var(--accent)}
 /* canvas color indicator (current selected color box) */
 .view-canvas{position:absolute;inset:0}
 /* PC 光标：按工具/状态切换（data-cursor 由 View.syncCursor 写入） */
+/* 右键绘制时要彻底压掉浏览器的右键手势（拖拽/选择/系统菜单） */
+html[data-pc] .view-canvas{touch-action:none;user-select:none;-webkit-user-select:none;overscroll-behavior:contain}
 html[data-pc] .view-canvas[data-cursor="draw"]{cursor:crosshair}
 html[data-pc] .view-canvas[data-cursor="move"]{cursor:default}
 html[data-pc] .view-canvas[data-cursor="grab"]{cursor:grab}
@@ -891,6 +893,7 @@ input:-webkit-autofill{-webkit-box-shadow:0 0 0 1000px var(--input-bg) inset;-we
 .sym-chiprow .sym-chip.on{border-color:var(--sym-strong);background:var(--sym-bg-on);color:var(--sym-text)}
 /* all-frames preview (PPT-like, scrollable) */
 .dlg-frame-preview{width:min(92vw,660px);max-height:78vh;display:flex;flex-direction:column}
+html[data-pc] .dlg-frame-preview{width:60vw;max-height:84vh}
 .dlg-frame-preview .fp-grid{overflow-y:auto;display:flex;flex-wrap:wrap;gap:10px;padding:12px;align-content:flex-start}
 .fp-cell.col{flex-direction:column;gap:4px;padding:8px 8px}
 .dlg-canvasref{width:min(94vw,740px)}

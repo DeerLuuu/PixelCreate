@@ -116,6 +116,23 @@ export function ScrubNum({
     if (n === null) commit(parseFloat(String(value)) || (min ?? 0));
     else commit(n);
   };
+  /** PC：鼠标悬停在数字框上滚动滚轮＝按步长调值（0ms、无需聚焦） */
+  useEffect(() => {
+    const el = elRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const span = min != null && max != null ? max - min : 0;
+      const stepN = step != null ? step : span > 200 ? 5 : span > 50 ? 1 : 1;
+      const cur = numeric();
+      const next = clampN(cur + (e.deltaY < 0 ? stepN : -stepN));
+      if (next !== cur) commit(next);
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [min, max, step, value, text]);
+
   /** insert at the caret of the (controlled) field, keeping the caret put */
   const insert = (ins: string) => {
     const el = elRef.current;

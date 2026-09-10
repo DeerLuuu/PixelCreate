@@ -7,6 +7,7 @@ import type { Lang } from "./i18n";
 import { showTip, hideTip } from "./tooltip";
 import type { RGBA } from "../engine/types";
 import { chipCss } from "../engine/color";
+import { isPc } from "../io/pcmode";
 
 export function hsvToRgb(h: number, s: number, v: number): [number, number, number] {
   h = ((h % 360) + 360) % 360;
@@ -57,6 +58,22 @@ export function HoldAdjust({
   /** quick DOUBLE-TAP resets the value to this default */
   reset?: number;
 }) {
+  const wheelRef = useRef<HTMLButtonElement | null>(null);
+  /** ⑦ PC：鼠标悬停在长按按钮上滚动滚轮＝调值（原生监听，才能 preventDefault） */
+  useEffect(() => {
+    const el = wheelRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      if (!isPc()) return;
+      e.preventDefault();
+      const span = max - min;
+      const step = span > 200 ? 5 : span > 50 ? 2 : 1;
+      const next = Math.max(min, Math.min(max, value + (e.deltaY < 0 ? step : -step)));
+      if (next !== value) onChange(next);
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, [min, max, value, onChange]);
   const tipT = useRef<number | null>(null);
   const tipOrigin = useRef<number>(0);
   const clearHoldTip = () => {
@@ -126,7 +143,7 @@ export function HoldAdjust({
 
   return (
     <>
-      <button className="holdbtn" title={title} onPointerDown={down}>
+      <button ref={wheelRef} className="holdbtn" title={title} onPointerDown={down}>
         <span className="hb-text">{format(cur)}</span>
       </button>
       {bar && dir === "v" && (() => {

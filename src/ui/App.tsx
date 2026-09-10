@@ -47,14 +47,21 @@ export function App() {
       const el = t as HTMLElement | null;
       return !!el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable);
     };
-    const onCtx = (e: Event) => e.preventDefault();
+    const onCtx = (e: Event) => { e.preventDefault(); e.stopPropagation(); };
+    // 右键相关的浏览器手势（拖拽/中键自动滚动/辅助点击菜单）全部拦掉
+    const onAux = (e: Event) => { const m = e as MouseEvent; if (m.button === 1 || m.button === 2) e.preventDefault(); };
+    const onDragEnd = (e: Event) => e.preventDefault();
     const onDrag = (e: Event) => e.preventDefault();
     const onSel = (e: Event) => { if (!isEditable(e.target)) e.preventDefault(); };
     document.addEventListener("contextmenu", onCtx);
+    document.addEventListener("auxclick", onAux);
+    document.addEventListener("dragend", onDragEnd);
     document.addEventListener("dragstart", onDrag);
     document.addEventListener("selectstart", onSel);
     return () => {
       document.removeEventListener("contextmenu", onCtx);
+      document.removeEventListener("auxclick", onAux);
+      document.removeEventListener("dragend", onDragEnd);
       document.removeEventListener("dragstart", onDrag);
       document.removeEventListener("selectstart", onSel);
     };
@@ -160,6 +167,21 @@ export function App() {
           if (clip) void writeClipboardPng(compositor.celToCanvas(clip)).then((ok) => bridge.toast(ok ? makeT(SESSION.prefs.lang as Lang)("sysCopy") : makeT(SESSION.prefs.lang as Lang)("copied")));
           break;
         }
+        case "cut": {
+          e.preventDefault();
+          const d0 = SESSION.doc, li0 = SESSION.curLayer(), fi0 = SESSION.curFrame();
+          const clip = selOps.selOps.cut(d0, SESSION.history, li0, fi0);
+          SESSION.clip = clip;
+          if (clip) {
+            SESSION.repaint();
+            void writeClipboardPng(compositor.celToCanvas(clip)).then((ok) => bridge.toast(ok ? makeT(SESSION.prefs.lang as Lang)("sysCopy") : makeT(SESSION.prefs.lang as Lang)("cut")));
+          }
+          break;
+        }
+        case "framePrev": e.preventDefault(); SESSION.stepFrame(-1); break;
+        case "frameNext": e.preventDefault(); SESSION.stepFrame(1); break;
+        case "layerPrev": e.preventDefault(); SESSION.cycleLayer(-1); break;
+        case "layerNext": e.preventDefault(); SESSION.cycleLayer(1); break;
         case "paste": {
           e.preventDefault();
           const d1 = SESSION.doc, li1 = SESSION.curLayer(), fi1 = SESSION.curFrame();
