@@ -9,10 +9,10 @@ import { useKitPcMode } from "./kit";
 import { Dialog } from "./kit";
 
 /** keep in sync with android/AndroidManifest.xml versionName on every release */
-export const APP_VERSION = "1.0.9.0";
+export const APP_VERSION = "1.0.9.1";
 /** build stamp shown next to the version (support/debug: identifies the exact
  *  package a user is running when the version number itself does not change) */
-export const BUILD_TAG = "2d98471";
+export const BUILD_TAG = "22806ee";
 
 export type ClgKind = "add" | "imp" | "fix";
 export interface ClgItem { kind: ClgKind; zh: string; en: string }
@@ -21,6 +21,14 @@ export interface ClgVersion { v: string; date: string; items: ClgItem[] }
 const it = (kind: ClgKind, zh: string, en: string): ClgItem => ({ kind, zh, en });
 
 export const CHANGELOG: ClgVersion[] = [
+  {
+    v: "1.0.9.1",
+    date: "2026-09-10",
+    items: [
+      it("add", "快捷键可以自己改了：Ctrl+F1（或主菜单里的「快捷键一览」）打开面板后，**每一行的按键都是一个按钮**——点它，然后按下你想要的新组合键即可，立刻生效并自动记住；Esc 取消，Backspace/Delete 把这一项恢复默认，顶部还有「全部恢复默认」。如果新组合键已经被别的功能占用，会直接告诉你被谁占了（例如「这个组合键已被占用：保存工程」）。连「按住 F 发动快捷圆盘」的发动键也能改。", "Shortcuts are now rebindable: open the panel with Ctrl+F1 (or the main menu) and every chord is a button — click it and press the combination you want; it applies immediately and is remembered. Esc cancels, Backspace/Delete restores that one entry, and the footer has “Reset all shortcuts”. If the chord you press is already taken, the panel tells you exactly which action owns it. Even the quick-pie launch key (hold F) can be changed."),
+      it("fix", "重画/新增了一批图标，之前有几处图形重复或名不副实：播放和「下一帧」以前是同一个三角形（现在播放是纯三角、下一帧带一条竖线），横向平铺和纵向平铺以前也完全一样（现在一个向右排、一个向下排）；另外给这些动作各自画了专属图标——画布调整模式（四边把手）、扩展/收缩选区（虚线选区 + 朝外/朝内箭头）、索引色模式（固定色块 + 勾）、粘贴为新图层 / 新画布（图层/画布 + 输入箭头）、裁切到选区（裁切标记 + 虚线选区）。同时补上了快捷键一览里漏写的 Ctrl+S（保存），并把 Ctrl+←/→、Ctrl+↑/↓、+/- 拆成独立两行，让每个动作都能单独改键。", "A batch of icons was redrawn or added, because a few were duplicated or misleading: play and “next frame” used to be the same triangle (play is now a plain triangle, next frame has a bar), and row tiling and column tiling were literally the same picture (one now repeats to the right, the other downwards). Purpose-built glyphs were added for resize mode (edge handles), grow/shrink selection (dashed marquee with outward/inward arrows), indexed colour mode (fixed swatches plus a check), paste as layer / canvas (a layer or canvas with an input arrow) and crop-to-selection (crop marks plus a dashed marquee). The cheat sheet also gained the missing Ctrl+S row, and Ctrl+Left/Right, Ctrl+Up/Down and +/- were split into separate rows so each action can be rebound on its own."),
+    ],
+  },
   {
     v: "1.0.9.0",
     date: "2026-09-10",
