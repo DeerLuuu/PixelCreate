@@ -956,17 +956,21 @@ view.fitAnimated(ms = 220) / animateTo(z, ox, oy, ms)  // 缓动适配（双击�
 
 ### 18.7a 颜色拖拽填充 `ui/color-drag.tsx`
 
-调色球扇形里的颜色小球与底栏颜色块共用同一个手势实现：按下后**在长按计时器触发之前**移动超过 8px
-即为拖拽，跟手显示一枚同色幽灵球，松手落在画布上就用该颜色执行一次油漆桶填充（`Session.quickFill`）。
+调色球扇形里的颜色小球与底栏颜色块共用同一个手势实现：按下后移动超过 8px 即为拖拽，跟手显示一枚同色幽灵球，
+松手落在画布上就用该颜色执行一次油漆桶填充（`Session.quickFill`）。
 
 | 导出 | 说明 |
 |---|---|
-| `useColorDragFill({ color, tip?, holdMs?, onFilled? })` | 返回 `{ ghost, dragging, begin, move, end, cancel }`；`ghost` 是要渲染的幽灵球 |
-| `gestureIntent(moved, elapsed, holdMs, threshold)` | 纯函数：`hold`（长按动作优先）/ `drag`（提前移动）/ `pending` |
+| `useColorDragFill({ color, tip?, holdActive?, onFilled? })` | 返回 `{ ghost, dragging, begin, move, end, cancel }`；`ghost` 是要渲染的幽灵球 |
+| `holdAllowed(moved, elapsed, holdMs, inside, threshold)` | 纯函数：这一次长按是否成立（时间到 + 手指仍在控件内 + 位移未超过拖拽阈值） |
+| `leftRect(rect, x, y, tol)` | 纯函数：点是否已离开控件（默认 4px 容差，抖动不算离开） |
 | `DRAG_START` (8) / `TIP_MS` (450) | 拖拽阈值 / 长按提示延迟 |
 
-底栏颜色块本身还有长按=快捷调色盘（`hold.tsx` 的 `HOLD_MS = 330`），所以 `holdMs` 传 `HOLD_MS`：
-超时后手势归调色盘，未超时就移动则是填充拖拽，两者不会互相抢。
+底栏颜色块还有长按=快捷调色盘（`hold.tsx` 的 `HOLD_MS = 330`）。两者互斥的规则是：
+
+- 长按计时器到点时用 `holdAllowed()` 复核：**手指已移动超过 8px 或已经离开按钮 → 不呼出调色盘**，手势归填充拖拽；
+- 调色盘已经打开时（`holdActive` 为真）填充拖拽不会启动，移动仍然调节色盘；
+- 因此不存在「拖到一半突然弹出调色盘」或「松手后什么都没发生」的中间态。
 
 ### 18.7b 画布空间命中测试 `app/canvas-space.ts`
 

@@ -19,18 +19,32 @@ export const DRAG_START = 8;
 export const TIP_MS = 450;
 
 /**
- * What a press on a colour control means once it has been held for `elapsed` ms
- * having travelled `moved` px. Pure and unit tested — the toolbar chip opens its
- * quick colour wheel on a HOLD, so there only a move made BEFORE the hold fires
- * may turn into a fill drag.
+ * May a long press still fire its hold action? Pure and unit tested.
  *
- * `holdMs = Infinity` = the control has no hold action (the palette fan), where
- * any movement past the threshold is a drag.
+ * The toolbar colour chip opens its quick colour wheel on a hold, while moving
+ * the finger turns the same press into a fill drag. A hold is therefore refused
+ * when the finger has travelled past the drag threshold (`moved`) or has left
+ * the control (`inside = false`) — i.e. once the gesture is no longer a hold it
+ * must not pop the wheel open from outside the button. The palette fan has no
+ * hold action at all, so it never asks.
  */
-export function gestureIntent(moved: number, elapsed: number, holdMs: number, threshold = DRAG_START): "hold" | "drag" | "pending" {
-  if (elapsed >= holdMs) return "hold";    // the long-press action owns the gesture
-  if (moved >= threshold) return "drag";   // moved early enough: fill gesture
-  return "pending";
+export function holdAllowed(moved: number, elapsed: number, holdMs: number, inside = true, threshold = DRAG_START): boolean {
+  if (elapsed < holdMs) return false;   // not due yet
+  if (!inside) return false;            // the finger left the control
+  return moved < threshold;             // moving means dragging, not holding
+}
+
+export interface RectBox { left: number; top: number; right: number; bottom: number }
+
+/**
+ * True when a point has left `rect` by more than `tol` px. A long press whose
+ * finger wanders off its control must NOT fire its hold action any more (the
+ * toolbar chip would otherwise open the quick colour wheel from outside the
+ * button, which reads as "the drag opened the wheel"). A small tolerance keeps
+ * an ordinary hold with a shaky finger working.
+ */
+export function leftRect(rect: RectBox, x: number, y: number, tol = 4): boolean {
+  return x < rect.left - tol || x > rect.right + tol || y < rect.top - tol || y > rect.bottom + tol;
 }
 
 export interface ColorDragApi {
@@ -54,8 +68,9 @@ export function useColorDragFill(opts: {
   /** long-press hint for the colour being dragged (omit where a hold does
    *  something else — the toolbar chip opens its quick wheel on a hold) */
   tip?: (c: RGBA) => { title: string; desc?: string };
-  /** long-press delay of the CALLER's own hold action (see gestureIntent) */
-  holdMs?: number;
+  /** true while the CALLER's own hold action owns the gesture (its quick wheel
+   *  is open): the drag must not start then. Omit when there is no hold action. */
+  holdActive?: () => boolean;
   /** after a successful fill (e.g. close the palette fan) */
   onFilled?: (canvasIndex: number) => void;
 }): ColorDragApi {
@@ -82,9 +97,8 @@ export function useColorDragFill(opts: {
     const d = drag.current;
     if (!d || d.id !== ev.pointerId) return false;
     if (!d.moved) {
-      const travel = Math.hypot(ev.clientX - d.sx, ev.clientY - d.sy);
-      const holdMs = opts.holdMs ?? Number.POSITIVE_INFINITY;
-      if (gestureIntent(travel, Date.now() - d.t0, holdMs) !== "drag") return false;
+      if (opts.holdActive?.()) return false;   // the wheel owns the gesture
+      if (Math.hypot(ev.clientX - d.sx, ev.clientY - d.sy) < DRAG_START) return false;
       d.moved = true;
       stopTip();
     }

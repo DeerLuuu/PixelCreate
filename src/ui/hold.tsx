@@ -1,7 +1,7 @@
 // Hold-to-adjust buttons + long-press quick color wheel
 import React, { useEffect, useRef, useState } from "react";
 import { SESSION } from "./singleton";
-import { useColorDragFill } from "./color-drag";
+import { DRAG_START, holdAllowed, leftRect, useColorDragFill, type RectBox } from "./color-drag";
 import { makeT } from "./i18n";
 import type { Lang } from "./i18n";
 import { showTip, hideTip } from "./tooltip";
@@ -182,10 +182,25 @@ export function ColorHoldChip({ onClickTap }: { onClickTap: () => void }) {
   const t = makeT(SESSION.prefs.lang as Lang);
   // move early enough = drag the colour onto a canvas to bucket-fill it there;
   // hold still = the quick colour wheel (the hold may not be stolen by a drag)
+  const wheelRef = useRef(false);   // the quick wheel is open and owns the gesture
   const fillDrag = useColorDragFill({
     color: () => SESSION.color,
-    holdMs: HOLD_MS,
+    holdActive: () => wheelRef.current,
   });
+  /** the chip's own box + the last pointer position: a press that wanders off
+   *  the button must not open the wheel (that is the drag gesture's job) */
+  const boxRef = useRef<RectBox | null>(null);
+  const ptRef = useRef<{ x: number; y: number } | null>(null);
+  const downRef = useRef<{ x: number; y: number } | null>(null);
+  const cancelHold = () => {
+    if (timer.current !== null) { window.clearTimeout(timer.current); timer.current = null; }
+  };
+  const offChip = (x: number, y: number): boolean => !!boxRef.current && leftRect(boxRef.current, x, y);
+  /** px travelled since the press (0 when there is no press) */
+  const travel = (x: number, y: number): number => {
+    const d = downRef.current;
+    return d ? Math.hypot(x - d.x, y - d.y) : 0;
+  };
 
   const doMove = (ev: PointerEvent) => {
     const o = originRef.current;
@@ -209,6 +224,7 @@ export function ColorHoldChip({ onClickTap }: { onClickTap: () => void }) {
   };
   const doUp = () => {
     activeRef.current = false;
+    wheelRef.current = false;
     window.removeEventListener("pointermove", doMove);
     window.removeEventListener("pointerup", doUp);
     window.removeEventListener("pointercancel", doUp);
@@ -224,16 +240,24 @@ export function ColorHoldChip({ onClickTap }: { onClickTap: () => void }) {
     fillDrag.begin(e);
     if (timer.current) window.clearTimeout(timer.current);
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    // remember the button box: leaving it cancels the pending hold
+    boxRef.current = { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom };
+    ptRef.current = { x: e.clientX, y: e.clientY };
+    downRef.current = { x: e.clientX, y: e.clientY };
+    wheelRef.current = false;
     const size = 170;
     const x = Math.max(6, Math.min(window.innerWidth - size - 16 - 26, rect.left + rect.width / 2 - (size + 24) / 2));
     const y = Math.max(6, rect.top - size - 16);
     timer.current = window.setTimeout(() => {
       timer.current = null;
-      // a drag already started (the finger moved before the hold fired): the
-      // fill gesture owns the pointer now, do not hijack it with the wheel
+      // summon the wheel only while this is still a HOLD: a finger that has
+      // moved past the drag threshold, or left the button, is filling instead
+      const p = ptRef.current;
+      if (!holdAllowed(p ? travel(p.x, p.y) : 0, HOLD_MS, HOLD_MS, p ? !offChip(p.x, p.y) : true)) return;
       if (fillDrag.dragging) return;
       originRef.current = { x, y, size };
       activeRef.current = true;
+      wheelRef.current = true;
       SESSION.setColorPicking(true);
       setOpen(true);
       window.addEventListener("pointermove", doMove);
@@ -253,10 +277,19 @@ export function ColorHoldChip({ onClickTap }: { onClickTap: () => void }) {
         style={{ background: chipCss(c) }}
         title={t("colorChipHint")}
         onPointerDown={start}
-        onPointerMove={(e) => { fillDrag.move(e); }}
+        onPointerMove={(e) => {
+          ptRef.current = { x: e.clientX, y: e.clientY };
+          // the pending hold dies as soon as the finger drags or leaves the
+          // button: from then on the gesture is a fill drag, not a wheel
+          if (timer.current !== null && (offChip(e.clientX, e.clientY) || travel(e.clientX, e.clientY) >= DRAG_START)) cancelHold();
+          fillDrag.move(e);
+        }}
         onPointerUp={(e) => {
           // a drag that reached the canvas is handled here; a plain tap opens
           // the palette, and the (cancelled) long press opens the quick wheel
+          boxRef.current = null;
+          ptRef.current = null;
+          downRef.current = null;
           if (fillDrag.end(e)) return;
           if (timer.current) {
             window.clearTimeout(timer.current);
@@ -265,8 +298,12 @@ export function ColorHoldChip({ onClickTap }: { onClickTap: () => void }) {
           }
         }}
         onPointerCancel={() => {
+          boxRef.current = null;
+          ptRef.current = null;
+          downRef.current = null;
+          wheelRef.current = false;
           fillDrag.cancel();
-          if (timer.current) { window.clearTimeout(timer.current); timer.current = null; }
+          cancelHold();
         }}
       />
       {fillDrag.ghost}
