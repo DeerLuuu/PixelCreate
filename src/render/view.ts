@@ -1778,7 +1778,7 @@ export class View {
     const pickAllowed = !selOn && tool !== "select" && tool !== "lasso" && tool !== "wand";
     const longAction = this.session.prefs.gLongPress;
     const longWantsDoc = longAction === "pickColor" || longAction === "zoomIn" || longAction === "zoomOut";
-    if ((!longWantsDoc || pickAllowed) && pp.x >= 0 && pp.y >= 0 && pp.x < doc.w && pp.y < doc.h) {
+    if (!isPc() && (!longWantsDoc || pickAllowed) && pp.x >= 0 && pp.y >= 0 && pp.x < doc.w && pp.y < doc.h) {
       this.pickAnchor = [pp.x, pp.y];
       this.longT = window.setTimeout(() => {
         this.longT = null;
@@ -2146,7 +2146,8 @@ export class View {
       } else {
         // single-finger tap sequence: double-tap on the margin = undo,
         // triple-tap on the doc = zoom (double-tap on the doc does nothing)
-        const contSeq = this.tapN > 0 && now - this.tapT < 480 && this.tapPt &&
+        // PC：双击/三击这类触控快捷手势全部关闭（滚轮与快捷键替代它们）
+        const contSeq = !isPc() && this.tapN > 0 && now - this.tapT < 480 && this.tapPt &&
           Math.hypot(pt.x - this.tapPt.x, pt.y - this.tapPt.y) < 64;
         this.tapN = contSeq ? this.tapN + 1 : 1;
         this.tapT = now;

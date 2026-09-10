@@ -353,6 +353,16 @@ const hover = useHoverTip({ title: t("brushSize"), desc: bd(snap.lang, "brush"),
 - 实现：`src/io/theme.ts` 的 `applyTheme(mode)` 写 `document.documentElement.dataset.theme`，并同步 `<meta name="theme-color">`；
   启动时在 `main.tsx` 调用，设置项用 `after` 钩子调用。
 - 浅色主题是**新增可选项**，默认仍是暗色；画布工作区在浅色下为中性灰（`--ws-bg`），保证像素画对比度。
+### 3.7b PC 桌面化尺寸（`html[data-pc]`）
+
+PC 模式下不只改颜色/令牌，还会整体桌面化：`--barh` 48px、`.btn` 最小 40px 且字号 +1、
+`.btn.small/.mini` 32/28、`.btn.rail` 44、chip/tab/dropmenu 的内边距与字号上调、弹窗与面板加宽加松、
+设置行与描述行距更松、`.colorchip` 38px。全部写在 `html[data-pc]` 前缀下，触摸端零影响。
+
+同一模式下**关闭触控快捷手势**（`isPc()` 判定）：长按取色、双击画布适配、双击边距动作、三击缩放
+都不再触发（`View` 里 `tapN` 始终停在 1），由滚轮缩放、中键/空格平移、方向键与快捷键替代。
+长按调节类控件（`HoldAdjust`、`ColorHoldChip` 的快捷调色盘）保留——鼠标没有别的拖动调值方式。
+
 ### 3.8 层级与首启动顺序
 
 - `--z-guide`（400）**必须大于表内所有层级**：引导是一层全屏聚光遮罩，被别的浮层压住就会出现
