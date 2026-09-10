@@ -303,6 +303,15 @@ html[data-pc] .view-canvas[data-cursor="pick"]{cursor:url("data:image/svg+xml;ut
   background:var(--surface-item);border:1.5px solid var(--surface-item-line);color:var(--text-2);display:flex;align-items:center;justify-content:center;
   box-shadow:var(--sh-1);touch-action:none}
 .orb-item.on{background:var(--accent);border-color:var(--on-accent)}
+/* PC：浮动球整体放大 1.2×（半径/格距在 orbMetrics() 里同步放大） */
+html[data-pc] .orb{width:62px;height:62px}
+html[data-pc] .orb-item{width:48px;height:48px}
+/* 展开锁定按钮：只在球展开时出现，叠在主球右上角 */
+.orb-lock{position:fixed;z-index:33;width:26px;height:26px;border-radius:50%;padding:0;
+  background:var(--surface-item);border:1px solid var(--surface-item-line);color:var(--text-3);
+  display:flex;align-items:center;justify-content:center;box-shadow:var(--sh-1);pointer-events:auto}
+.orb-lock.on{background:var(--accent);border-color:var(--on-accent);color:var(--on-accent)}
+.orb-lock:active{background:var(--surface-item-active)}
 .orb-item:active{background:var(--surface-item-active)}
 
 /* hold-to-adjust buttons + floating bar */

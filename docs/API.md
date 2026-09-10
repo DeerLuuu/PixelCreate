@@ -1000,6 +1000,17 @@ view.fitAnimated(ms = 220) / animateTo(z, ox, oy, ms)  // 缓动适配（双击�
 | `ui/preview.tsx` | `PreviewBox`：按 `SESSION.previews` 渲染多个预览框，每个绑定一张画布 |
 | `ui/base.tsx` | `ScrubNum` 支持算式与运算符浮条 |
 
+### 18.6b 浮动球几何与展开锁定
+
+`ui/orb-layout.ts` 新增纯函数 **`orbMetrics(pc)`**：一张尺寸表（主球直径、菜单项直径、内/外环半径、
+调色球扇形格距与起始半径、主球避让半径）。触摸端 52/40/86/128/32/46，PC 端 62/48/103/154/38/55
+（约 1.2×，排布更散）；`palChipPos(cx, cy, w, h, floaterR?)` 可传入放大的主球半径。
+CSS 侧对应 `html[data-pc] .orb{62px}` 与 `html[data-pc] .orb-item{48px}`。
+
+**展开锁定**：主球环展开时右上角出现 `.orb-lock` 小按钮（仅展开时显示，叠在主球边角），
+点击后 `ringLock` 为真 —— `closeRadials()` 直接返回，外部点击与其它球的切换都不会再收起主球环；
+再点一次解锁，点主球收起时也会自动解锁。锚点 `data-guide="orb-ring-lock"`。
+
 ### 18.7a 颜色拖拽填充 `ui/color-drag.tsx`
 
 调色球扇形里的颜色小球与底栏颜色块共用同一个手势实现：按下后移动超过 8px 即为拖拽，跟手显示一枚同色幽灵球，

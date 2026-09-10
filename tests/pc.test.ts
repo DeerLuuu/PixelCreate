@@ -2,6 +2,7 @@
 // "which environment am I in" rules behind the desktop extras.
 import { normalizePcMode, resolvePcMode } from "../src/io/pcmode";
 import { normalizeWheelDelta, wheelIntent, wheelZoomFactor } from "../src/render/wheel";
+import { orbMetrics } from "../src/ui/orb-layout";
 import { cursorFor } from "../src/render/cursor";
 import { NUDGE_STEP, NUDGE_STEP_FAST, TOOL_KEYS, shortcutFor } from "../src/app/shortcuts";
 import { eq, ok } from "./common";
@@ -121,5 +122,28 @@ export function testPcMode(): void {
     eq("key.alt.ignored", K("b", { altKey: true }), null);
     eq("key.unknown", K("F5"), null);
     eq("key.ctrl.unknown", K("q", { ctrlKey: true }), null);
+  }
+
+  // ---- 浮动球尺寸：PC 模式 1.2× 且排布更散（纯函数）----
+  {
+    const t = orbMetrics(false);
+    const pc = orbMetrics(true);
+    eq("orb.touch.orb", t.orb, 52);
+    eq("orb.touch.item", t.item, 40);
+    eq("orb.pc.orb", pc.orb, 62);
+    eq("orb.pc.item", pc.item, 48);
+    // 主球 1.2× 左右（±1px 允许取整）
+    ok("orb.pc.orb-ratio", Math.abs(pc.orb / t.orb - 1.2) < 0.03, "ratio=" + (pc.orb / t.orb));
+    ok("orb.pc.item-ratio", Math.abs(pc.item / t.item - 1.2) < 0.03, "ratio=" + (pc.item / t.item));
+    // 环形排布也更散（半径按 1.2 放大）
+    ok("orb.pc.r1-spread", pc.r1 > t.r1 * 1.15, "r1 " + t.r1 + " -> " + pc.r1);
+    ok("orb.pc.r2-spread", pc.r2 > t.r2 * 1.15, "r2 " + t.r2 + " -> " + pc.r2);
+    ok("orb.pc.rings-apart", pc.r2 - pc.r1 > t.r2 - t.r1, "gap " + (t.r2 - t.r1) + " -> " + (pc.r2 - pc.r1));
+    // 调色球扇形格距更松、主球避让半径同步放大
+    ok("orb.pc.fan-gap", pc.fanGap > t.fanGap && pc.fanR0 > t.fanR0);
+    ok("orb.pc.floater", pc.floaterR > t.floaterR, "floater " + t.floaterR + " -> " + pc.floaterR);
+    // 内环半径必须大于主球半径，否则菜单项会压在球上
+    ok("orb.touch.ring-clears-ball", t.r1 > t.orb, "r1=" + t.r1 + " orb=" + t.orb);
+    ok("orb.pc.ring-clears-ball", pc.r1 > pc.orb, "r1=" + pc.r1 + " orb=" + pc.orb);
   }
 }

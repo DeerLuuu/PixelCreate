@@ -11,7 +11,7 @@ import * as selOps from "../tools/select";
 import * as fxE from "../engine/effects";
 import * as compositor from "../render/compositor";
 import { HoldAdjust, ColorHoldChip } from "./hold";
-import { palChipPos, chipBox, swatchHitsChip } from "./orb-layout";
+import { orbMetrics, palChipPos, chipBox, swatchHitsChip } from "./orb-layout";
 import { ReplayOverlay } from "./replay";
 import * as bridge from "../io/bridge";
 import { writeClipboardPng } from "../io/clipboard";
@@ -33,7 +33,7 @@ import { isPc } from "../io/pcmode";
 import { GUIDE, bootOverlay, guideStepsFor, type GuideAction, type GuideStep } from "../app/guide";
 import { GuideOverlay, simulateTap } from "./guide";
 import type { ModalId, SizeMode, SheetData } from "./modals";
-import { Dialog } from "./kit";
+import { Dialog, useKitPcMode } from "./kit";
 
 type PanelId = "layers" | "palette" | null;
 
@@ -665,8 +665,14 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
   const prevSelA = useRef(false);
   const drag = useRef<{ which: OrbId; dx: number; dy: number; moved: boolean } | null>(null);
 
-  const ORB = 52;
+  const pcMode = useKitPcMode();
+  const M = orbMetrics(pcMode);
+  const ORB = M.orb;
   const MINC = ORB + 16;
+  /** 展开锁定：锁定后外部点击/其它球不会再收起主球环 */
+  const [ringLock, setRingLock] = useState(false);
+  const ringLockRef = useRef(false);
+  ringLockRef.current = ringLock;
   const clampXY = (p: { x: number; y: number }) => ({
     x: Math.max(8, Math.min(window.innerWidth - ORB - 8, p.x)),
     y: Math.max(8, Math.min(window.innerHeight - ORB - 8, p.y)),
@@ -911,6 +917,7 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
   const closeCanv = () => { setCanv((g) => (g ? { ...g, open: false } : g)); setCanvSub(null); };
 
   const closeRadials = () => {
+    if (ringLockRef.current) return;   // 展开已锁定：忽略外部点击
     setOpen(false);
     setSub(null);
     if (sel) setSel({ ...sel, open: false });
@@ -1227,7 +1234,7 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
 
   const ringAt = (p0: { x: number; y: number }, i: number, n: number) => {
     const cx = p0.x + ORB / 2, cy = p0.y + ORB / 2;
-    const R1 = 86, R2 = 128;
+    const R1 = M.r1, R2 = M.r2;
     const dx = window.innerWidth - cx >= cx ? 1 : -1;
     const dy = window.innerHeight - cy >= cy ? 1 : -1;
     const deg = dx === 1 && dy === 1 ? [-6, 84] : dx === 1 && dy === -1 ? [-84, 6] : dx === -1 && dy === -1 ? [174, 264] : [96, 186];
@@ -1329,7 +1336,7 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
   return (
     <>
       {!dockedById("main") && renderBall("main", pos, baseIcon, open, t("menu"), bd(snap.lang, "orb"), () => {
-        if (open) { setOpen(false); setSub(null); return; }
+        if (open) { setOpen(false); setSub(null); setRingLock(false); return; }
         if (sel) {
           const pushed = clearRingOf(pos, { x: sel.x, y: sel.y });
           if (pushed) setSel({ ...pushed, open: false });
@@ -1501,6 +1508,16 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
       {(open || (sel && sel.open) || pal.open || fx.open || canv.open) && (
         <div className="radial-back" onPointerDown={closeRadials} />
       )}
+      {open && (
+        <button type="button" className={"orb-lock" + (ringLock ? " on" : "")}
+          data-guide="orb-ring-lock"
+          style={{ left: pos.x + ORB - 13, top: pos.y - 13 }}
+          title={t(ringLock ? "orbUnlockRing" : "orbLockRing")}
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => { e.stopPropagation(); SESSION.hapticTick("工具栏", 0.6); setRingLock((v) => !v); }}>
+          <Icon id={ringLock ? "i-lock" : "i-unlock"} size={15} />
+        </button>
+      )}
       <Keep on={open} el={open ? ring(pos, mainItems) : null} />
       <Keep on={!!sel && sel.open} el={sel && sel.open ? ring({ x: sel.x, y: sel.y }, selItems) : null} />
       <Keep on={pal.open} el={pal.open ? <PalBalls x={pal.x} y={pal.y} onDone={() => setPal({ ...pal, open: false })} /> : null} />
@@ -1538,6 +1555,7 @@ function palQuadrant(x: number, y: number) {
 function PalBalls({ x, y, onDone }: { x: number; y: number; onDone: () => void }) {
   const t = makeT(SESSION.prefs.lang as Lang);
   useSession(); // subscribe: a newly used colour must appear immediately
+  const M = orbMetrics(useKitPcMode());
   const mode = SESSION.palOrbMode;
   const colors = SESSION.palOrbColors();
   const { sx, sy } = palQuadrant(x, y);
@@ -1545,11 +1563,11 @@ function PalBalls({ x, y, onDone }: { x: number; y: number; onDone: () => void }
   // the source chip owns a FIXED slot under the floater: its position never
   // depends on how many colours the fan shows, and swatches are laid out
   // around it so the two can never overlap
-  const chip = palChipPos(cx, cy, window.innerWidth, window.innerHeight);
+  const chip = palChipPos(cx, cy, window.innerWidth, window.innerHeight, M.floaterR);
   const chipArea = chipBox(chip.x, chip.y);
   // neat lattice: regular grid clipped to an annulus sector (R0..R1 inside the quadrant)
   // pack tightly around the floater: candidates sorted by distance, take only what the palette needs
-  const G = 32, R0 = 46, RMAX = 340;
+  const G = M.fanGap, R0 = M.fanR0, RMAX = 340;
   const cand: Array<{ du: number; dv: number; r: number }> = [];
   for (let i = 0; (i + 0.5) * G <= RMAX; i++) {
     for (let j = 0; (j + 0.5) * G <= RMAX; j++) {

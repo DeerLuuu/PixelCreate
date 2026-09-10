@@ -5,7 +5,8 @@ export { Icon, Btn, TipHost, Overlay, Keep, useBlankTap, useLandscape } from "./
 export { ScrubNum } from "./scrub";
 export type { ScrubNumProps } from "./scrub";
 export { Dialog } from "./Dialog";
-export { HoverTip, hoverTipPos, setHoverTipsEnabled, useHoverTip, useHoverTipsEnabled, hoverTipsEnabled } from "./HoverTip";
+export { HoverTip, hoverTipPos, useHoverTip, setHoverTipsEnabled, useHoverTipsEnabled, hoverTipsEnabled } from "./HoverTip";
+export { setKitPcMode, kitPcOn, useKitPcMode } from "./pcmode";
 export type { HoverTipProps, HoverTipApi } from "./HoverTip";
 export type { DialogProps } from "./Dialog";
 export { Row, RowActions, ChipGroup, Segmented, Switch, NumberField, ColorField } from "./Form";

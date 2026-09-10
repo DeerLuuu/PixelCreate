@@ -7,32 +7,13 @@
 // The kit must stay free of app imports (docs/UI.md §1.1), so the PC flag is
 // pushed in from the app layer: main.tsx calls setHoverTipsEnabled() whenever
 // pcmode.ts re-resolves the mode.
-import React, { useEffect, useState, useSyncExternalStore } from "react";
+import React, { useEffect, useState } from "react";
+import { useKitPcMode } from "./pcmode";
 
-// ---------------------------------------------------------------- PC flag
-let pcOn = false;
-const subs = new Set<() => void>();
-
-/** called by the app when PC mode is (re)resolved */
-export function setHoverTipsEnabled(on: boolean): void {
-  if (pcOn === on) return;
-  pcOn = on;
-  for (const f of subs) f();
-}
-
-export function hoverTipsEnabled(): boolean {
-  return pcOn;
-}
-
-function subscribe(cb: () => void): () => void {
-  subs.add(cb);
-  return () => { subs.delete(cb); };
-}
-
-/** React binding for the flag above */
-export function useHoverTipsEnabled(): boolean {
-  return useSyncExternalStore(subscribe, hoverTipsEnabled, hoverTipsEnabled);
-}
+// PC 开关见 ./pcmode（kit 自有的最小状态，由应用层写入）
+export { setKitPcMode, kitPcOn, useKitPcMode } from "./pcmode";
+/** 兼容旧名（内部只关心「现在是 PC 吗」） */
+export { setKitPcMode as setHoverTipsEnabled, kitPcOn as hoverTipsEnabled, useKitPcMode as useHoverTipsEnabled } from "./pcmode";
 
 // ------------------------------------------------------------- positioning
 export interface TipPoint { x: number; y: number }
@@ -95,7 +76,7 @@ export interface HoverTipApi {
  * mode, and only when there is something to say.
  */
 export function useHoverTip(opts: { title?: string; desc?: string; enabled?: boolean }): HoverTipApi {
-  const pc = useHoverTipsEnabled();
+  const pc = useKitPcMode();
   const [pt, setPt] = useState<TipPoint | null>(null);
   const usable = (opts.enabled ?? true) && pc && !!(opts.title || opts.desc);
   // leaving PC mode while a tip is up must close it right away
