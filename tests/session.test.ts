@@ -1567,6 +1567,32 @@ export async function testSession(): Promise<void> {
     }
   }
 
+  // --- 快捷圆盘的两个设置项（尺寸 / 半径）---
+  {
+    const d = new Session();
+    const itemDef = SETTINGS.find((x) => x.path === "display.pieItem");
+    const radDef = SETTINGS.find((x) => x.path === "display.pieRadius");
+    ok("pie.set.item-exists", !!itemDef && itemDef.kind === "int");
+    ok("pie.set.radius-exists", !!radDef && radDef.kind === "int");
+    ok("pie.set.defaults", d.prefs.pieItem === 58 && d.prefs.pieRadius === 0,
+      d.prefs.pieItem + "/" + d.prefs.pieRadius);
+    // 范围夹取（导入设置文件时会走同一条 coerceSetting）
+    eq("pie.set.item-clamp-hi", coerceSetting(itemDef!, 500), 96);
+    eq("pie.set.item-clamp-lo", coerceSetting(itemDef!, 1), 36);
+    eq("pie.set.radius-clamp-hi", coerceSetting(radDef!, 9999), 520);
+    eq("pie.set.radius-clamp-lo", coerceSetting(radDef!, -20), 0);
+    eq("pie.set.radius-bad", coerceSetting(radDef!, "abc"), undefined);
+    // 设置写进去后 prefs 真的变了
+    d.setSetting("display.pieItem", 72);
+    d.setSetting("display.pieRadius", 240);
+    eq("pie.set.applied", [d.prefs.pieItem, d.prefs.pieRadius], [72, 240]);
+    eq("pie.set.read-back", [d.settingValue("display.pieItem"), d.settingValue("display.pieRadius")], [72, 240]);
+    // 恢复默认
+    resetSetting(d, itemDef!);
+    resetSetting(d, radDef!);
+    eq("pie.set.reset", [d.prefs.pieItem, d.prefs.pieRadius], [58, 0]);
+  }
+
   // --- ⑮ 粘贴为新图层 / 新画布（⑱ 多帧粘贴）---
   {
     const d = new Session();

@@ -530,6 +530,15 @@ const defs: SettingDef[] = [
     after: (s) => { applyPcMode(pcModeOf(s.prefs)); },
   },
   {
+    // 快捷圆盘（PC）：子球多大、离屏幕中心多远
+    path: "display.pieItem", field: "pieItem", kind: "int", group: "display",
+    label: "pieItemLabel", desc: "pieItemDesc", default: 58, min: 36, max: 96, unit: "px", reset: 58, refresh: "none",
+  },
+  {
+    path: "display.pieRadius", field: "pieRadius", kind: "int", group: "display",
+    label: "pieRadiusLabel", desc: "pieRadiusDesc", default: 0, min: 0, max: 520, unit: "px", reset: 0, refresh: "none",
+  },
+  {
     path: "display.previewBg", field: "previewBg", kind: "enum", group: "display",
     label: "previewBg", default: "white", refresh: "changed",
     options: [{ value: "white", label: "previewWhite" }, { value: "black", label: "previewBlack" }, { value: "checker", label: "previewChecker" }],

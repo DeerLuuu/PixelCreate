@@ -41,6 +41,10 @@ export interface Prefs {
   magZoom: number;
   /** show the pixel loupe while picking a colour */
   loupe: boolean;
+  /** 快捷圆盘子球直径（px，36..96） */
+  pieItem: number;
+  /** 快捷圆盘半径（px，0 = 按屏幕与子球数量自动适配） */
+  pieRadius: number;
   /** onion skin master switch */
   onionOn: boolean;
   /** loop-aware onion skin: ghosts wrap around the first/last frame and get
@@ -1242,6 +1246,7 @@ export class Session {
   private loadPrefs(): Prefs {
     const p: Prefs = {
       lang: "zh", theme: "dark", pcMode: "auto", gridMode: "off", gridSize: 1, magZoom: 12, loupe: true,
+      pieItem: 58, pieRadius: 0,
       onionOn: false, onionBefore: 1, onionAfter: 0, onionAlpha: 55, onionTint: true, onionWrap: true,
       autosave: true, autosaveMin: 5, recordHistory: true, newFrameCopy: false, railSwap: true, previewBg: "white", previewGray: false, tileMode: "off", tlH: 200, tlHv: 2,
       immersive: true, safeArea: true, safeExtra: 0,
@@ -1273,6 +1278,8 @@ export class Session {
       if (typeof saved.gridSize === "number") p.gridSize = Math.max(1, Math.min(64, Math.round(saved.gridSize)));
       if (typeof saved.magZoom === "number") p.magZoom = Math.max(8, Math.min(20, Math.round(saved.magZoom)));
       if (typeof saved.loupe === "boolean") p.loupe = saved.loupe;
+      if (typeof saved.pieItem === "number") p.pieItem = Math.max(36, Math.min(96, Math.round(saved.pieItem)));
+      if (typeof saved.pieRadius === "number") p.pieRadius = Math.max(0, Math.min(520, Math.round(saved.pieRadius)));
       // onion: migrate the old 0/1/2 tri-state into the fine-grained prefs
       if (saved.onion === 1) { p.onionOn = true; p.onionBefore = 1; p.onionAfter = 0; }
       else if (saved.onion === 2) { p.onionOn = true; p.onionBefore = 1; p.onionAfter = 1; }

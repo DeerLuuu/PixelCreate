@@ -1544,9 +1544,15 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
       const el = t as HTMLElement | null;
       return !!el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable);
     };
+    /** 圆盘半径：设置了就用设置值，否则按屏幕与子球数量自动适配 */
+    const radiusFor = (count: number): number => {
+      const n = Math.max(1, count);
+      const custom = SESSION.prefs.pieRadius;
+      return custom > 0 ? custom : pieRadiusFor(window.innerWidth, window.innerHeight, n, SESSION.prefs.pieItem);
+    };
     const focusAt = (x: number, y: number, ball: OrbId): number => {
       const cx = window.innerWidth / 2, cy = window.innerHeight / 2;
-      return pieFocusIndex(x, y, cx, cy, Math.max(1, pieCount(ball)), pieRadiusFor(window.innerWidth, window.innerHeight, Math.max(1, pieCount(ball))));
+      return pieFocusIndex(x, y, cx, cy, Math.max(1, pieCount(ball)), radiusFor(pieCount(ball)));
     };
     const onDown = (e: KeyboardEvent) => {
       const open = pieRef.current;
@@ -1848,7 +1854,9 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
         const items = pieEntries(ball);
         const n = Math.max(1, ball === "pal" ? cols.length : items.length);
         const cx = window.innerWidth / 2, cy = window.innerHeight / 2;
-        const R = pieRadiusFor(window.innerWidth, window.innerHeight, n);
+        const item = SESSION.prefs.pieItem;
+        const custom = SESSION.prefs.pieRadius;
+        const R = custom > 0 ? custom : pieRadiusFor(window.innerWidth, window.innerHeight, n, item);
         const slots = pieSlots(n, cx, cy, R);
         const foc = pie.focus;
         const label = foc >= 0
@@ -1870,7 +1878,7 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
                 return (
                   <span key={"piec" + i}
                     className={"pie-item" + (i === foc ? " on" : "")}
-                    style={{ left: p0.x, top: p0.y, background: chipCss(c) } as React.CSSProperties} />
+                    style={{ left: p0.x, top: p0.y, width: item, height: item, background: chipCss(c) } as React.CSSProperties} />
                 );
               })
               : items.map((it, i) => {
@@ -1878,8 +1886,8 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
                 return (
                   <span key={"pie" + i + it.label}
                     className={"pie-item" + (i === foc ? " on" : "")}
-                    style={{ left: p0.x, top: p0.y } as React.CSSProperties}>
-                    <Icon id={it.icon || "i-more"} size={24} />
+                    style={{ left: p0.x, top: p0.y, width: item, height: item } as React.CSSProperties}>
+                    <Icon id={it.icon || "i-more"} size={Math.round(item * 0.42)} />
                   </span>
                 );
               })}

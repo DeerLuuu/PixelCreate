@@ -9,7 +9,7 @@ import { useKitPcMode } from "./kit";
 import { Dialog } from "./kit";
 
 /** keep in sync with android/AndroidManifest.xml versionName on every release */
-export const APP_VERSION = "1.0.8.11";
+export const APP_VERSION = "1.0.9.0";
 /** build stamp shown next to the version (support/debug: identifies the exact
  *  package a user is running when the version number itself does not change) */
 export const BUILD_TAG = "2d98471";
@@ -21,6 +21,15 @@ export interface ClgVersion { v: string; date: string; items: ClgItem[] }
 const it = (kind: ClgKind, zh: string, en: string): ClgItem => ({ kind, zh, en });
 
 export const CHANGELOG: ClgVersion[] = [
+  {
+    v: "1.0.9.0",
+    date: "2026-09-10",
+    items: [
+      it("add", "电脑模式新增「快捷圆盘」（类似 Blender 的快速圆盘）：浮动球存储区**下方**多了一个装备槽，把一个浮动球**拖进去**就装备好了（只能装一个；拖着别的球再放进去会替换，被换下的球回到屏幕上；点一下槽把球取出）。按住**发动键 F**：这个球的全部子项以圆环铺在屏幕正中、鼠标指针隐藏，鼠标往哪个方向移就聚焦哪一项（中心一圈是死区），**松开 F 激活该项**，中间松手或 Esc 取消。装备调色板球时圆盘里显示的是颜色球，松手即设为前景色。", "PC mode gained a quick pie (Blender-style): an equip slot now sits BELOW the floating-ball storage area — drag a floating ball onto it to equip it (one at a time; dropping another swaps it and the replaced ball returns to the screen; clicking the slot takes the ball back out). Hold the launch key F and that ball's entries spread as a ring in the middle of the screen with the cursor hidden; pointing in a direction focuses the entry (the middle is a dead zone) and releasing F runs it, while releasing in the middle or pressing Esc cancels. Equip the palette ball and the pie shows colour swatches instead — releasing sets the foreground colour."),
+      it("add", "快捷圆盘的大小可以自己调：设置 → 显示与取色里新增「快捷键圆盘子球大小」（36–96px，默认 58）与「快捷圆盘半径」（0 = 按屏幕大小和子球数量自动适配，也可以填固定像素值）。圆环会保证子球之间不重叠、也不超出屏幕。", "The quick pie is now adjustable: Settings -> Display & Colour has \u201cQuick pie entry size\u201d (36-96px, 58 by default) and \u201cQuick pie radius\u201d (0 fits the screen and entry count automatically, or enter a fixed pixel value). The ring always keeps its entries apart and inside the screen."),
+      it("add", "另外新增 **Ctrl+滚轮＝快速改笔刷大小**（一格滚轮一步，不会因为浏览器把一格拆成几十个事件而飞掉）。", "Also new: **Ctrl+wheel changes the brush size** (one notch is one step, accumulated the same way as value scrubbing, so a notch the browser splits into dozens of events still moves by one)."),
+    ],
+  },
   {
     v: "1.0.8.11",
     date: "2026-09-10",
