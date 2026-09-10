@@ -19,7 +19,7 @@ import { DropMenu, TabBar } from "./tabs";
 import { canVibrate, hapticReport } from "../io/bridge";
 import { detectInsets } from "../io/safearea";
 import type { RefImg } from "./refimg";
-import { Dialog, Row, RowActions, NumberField, ColorField, ChipGroup, Segmented, Switch } from "./kit";
+import { Dialog, Row, RowActions, NumberField, ColorField, ChipGroup, Segmented, Switch, useKitPcMode } from "./kit";
 
 export type ModalId = "menu" | "changelog" | "newdoc" | "newproject" | "export" | "adjust" | "settings" | "frame" | "framePrev" | "size" | "sheet" | "history" | "canvasRef" | null;
 export type SizeMode = "canvas" | "sprite";
@@ -679,6 +679,8 @@ function SettingRow({ def, t }: { def: SettingDef; t: ReturnType<typeof makeT> }
 /** Settings dialog, generated entirely from the declaration table in
  *  src/app/settings.ts: adding a setting there makes it appear here. */
 export function SettingsModal({ t, onClose }: { t: ReturnType<typeof makeT>; onClose: () => void }) {
+  const pc = useKitPcMode();
+  const [pcCat, setPcCat] = useState<string>("general");
   const snap = useSession();
   const [asInfo, setAsInfo] = useState<autosave.AutosaveMeta | null>(null);
   const [folded, setFolded] = useState<Record<string, boolean>>({});
@@ -715,10 +717,11 @@ export function SettingsModal({ t, onClose }: { t: ReturnType<typeof makeT>; onC
           <Btn label={t("setExport")} onClick={doExport} />
           <Btn label={t("setImport")} onClick={() => void doImport()} />
         </RowActions>
-        {SETTING_GROUPS.map((g) => {
+        {(() => {
+          const renderGroup = (g: typeof SETTING_GROUPS[number]) => {
           const items = settingsOfGroup(SESSION, g.id).filter(hit);
           if (!items.length) return null;
-          const open = query !== "" || !folded[g.id];
+          const open = query !== "" || !folded[g.id] || pcCat === g.id;
           return (
             <div key={g.id} className="set-group">
               <button type="button" className="set-grouphead" onClick={() => setFolded({ ...folded, [g.id]: open })}>
@@ -749,7 +752,33 @@ export function SettingsModal({ t, onClose }: { t: ReturnType<typeof makeT>; onC
               )}
             </div>
           );
-        })}
+          };
+          // ⑮ PC：左侧类别列表 + 右侧当前类别的设置（搜索时跨类别显示结果）
+          if (pc) {
+            const groups = SETTING_GROUPS.filter((g) => settingsOfGroup(SESSION, g.id).filter(hit).length > 0);
+            const active = query !== "" ? null : groups.find((g) => g.id === pcCat) ?? groups[0];
+            return (
+              <div className="set-split">
+                <div className="set-cats">
+                  {groups.map((g) => (
+                    <button key={g.id} type="button"
+                      className={"set-cat" + (active && active.id === g.id ? " on" : "")}
+                      onClick={() => { setPcCat(g.id); setQ(""); }}>
+                      <span>{t(g.label)}</span>
+                      {settingsOfGroup(SESSION, g.id).some((d) => !isDefault(SESSION, d)) && <i className="set-dot" />}
+                    </button>
+                  ))}
+                </div>
+                <div className="set-pane">
+                  {query !== ""
+                    ? groups.map((g) => renderGroup(g))
+                    : (active ? renderGroup(active) : null)}
+                </div>
+              </div>
+            );
+          }
+          return SETTING_GROUPS.map((g) => renderGroup(g));
+        })()}
       </Dialog>
     </>
   );
