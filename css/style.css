@@ -1184,3 +1184,22 @@ html[data-pc] .cu-dlg{width:min(92vw,800px)}
 .cu-hintline{flex:1 1 auto;margin:0}
 .cu-pane.col2{display:flex;flex-direction:column;gap:10px;overflow-y:auto;min-height:0}
 .cu-first-last{display:none}
+
+/* ---- 界面定制：左边「哪里」+ 右边小方块清单 ---- */
+.cu-catrow{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px}
+.cu-head{display:flex;flex-direction:column;gap:3px;padding:0 2px 6px}
+.cu-head-title{font-size:14px;font-weight:700;color:var(--text)}
+.cu-head-hint{font-size:11px;color:var(--dim-2);line-height:1.5}
+.cu-tiles{display:flex;flex-wrap:wrap;gap:8px}
+.cu-tile{position:relative;width:74px;height:64px;border-radius:12px;background:var(--surface-item);
+  border:1px solid var(--ctl-line-soft);color:var(--text);display:flex;flex-direction:column;align-items:center;
+  justify-content:center;gap:3px;padding:4px;cursor:pointer;transition:transform .08s,background .12s,border-color .12s}
+.cu-tile:hover{background:var(--surface-item-active);border-color:var(--accent);transform:translateY(-1px)}
+.cu-tile.off{opacity:.5;border-style:dashed}
+.cu-tile-icon{display:flex;align-items:center;justify-content:center;height:20px;color:var(--text-3)}
+.cu-tile-label{font-size:10px;line-height:1.15;text-align:center;max-width:100%;overflow:hidden;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;word-break:break-all}
+.cu-tile-extra{font-size:9px;color:var(--dim-2)}
+.cu-tile-eye{position:absolute;top:3px;right:3px;color:var(--dim-2);display:flex}
+.cu-tile.off .cu-tile-eye{color:var(--accent)}
+.cu-cats{overflow-y:auto}
