@@ -5,6 +5,7 @@ import { SESSION } from "./singleton";
 import { makeT } from "./i18n";
 import type { Lang } from "./i18n";
 import { TabBar } from "./tabs";
+import { useKitPcMode } from "./kit";
 import { Dialog } from "./kit";
 
 /** keep in sync with android/AndroidManifest.xml versionName on every release */
@@ -364,6 +365,7 @@ export function changelogNeedsShow(): boolean {
 }
 
 export function ChangelogModal({ onClose }: { onClose: () => void }) {
+  const pc = useKitPcMode();
   const lang = langOf();
   const t = useMemo(() => makeT(lang), [lang]);
   const [vi, setVi] = useState(() => {
@@ -385,7 +387,21 @@ export function ChangelogModal({ onClose }: { onClose: () => void }) {
   ];
   return (
     <>
-      <Dialog title={t("changelog")} onClose={onClose} className="clg-dlg" guide="dlg-changelog">
+      <Dialog title={t("changelog")} onClose={onClose} className={"clg-dlg" + (pc ? " clg-dlg-pc" : "")} guide="dlg-changelog">
+        {/* PC：版本竖排列表（左），选中项的内容显示在右侧；触屏仍用横向标签条 */}
+        {pc && (
+          <div className="clg-vers">
+            {CHANGELOG.map((v, i) => (
+              <button key={v.v} type="button"
+                className={"clg-veritem" + (i === vi ? " on" : "")}
+                onClick={() => setVi(i)}>
+                <span className="clg-veritem-v">{v.v}{v.v === APP_VERSION ? " *" : ""}</span>
+                <span className="clg-veritem-d">{v.date}</span>
+              </button>
+            ))}
+          </div>
+        )}
+        {!pc && (
         <TabBar
           className="clg-tabs"
           items={CHANGELOG.map((v) => ({
@@ -396,6 +412,7 @@ export function ChangelogModal({ onClose }: { onClose: () => void }) {
           value={ver.v}
           onChange={(v) => setVi(Math.max(0, CHANGELOG.findIndex((x) => x.v === v)))}
         />
+        )}
         <div className="clg-view" key={"v" + ver.v}>
         <div className="clg-title">PixelCraft {ver.v} <span className="clg-date">· {ver.date}{ver.v === APP_VERSION ? " · " + BUILD_TAG : ""}</span>
           {ver.v === APP_VERSION && <span className="clg-curtag">{t("clgCurrent")}</span>}
