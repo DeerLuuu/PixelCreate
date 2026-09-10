@@ -2,7 +2,8 @@
 // (src/app/uibar.ts + the Session wrappers).
 import {
   CBAR_ACTIONS, DEFAULT_LAYOUT, LAYOUT_KEYS, ORB_IDS, TOPBAR_ACTIONS,
-  fullOrder, isDefaultLayout, moveId, normalizeLayout, orderedActions, toggleHidden, visibleCount,
+  dropIndexAt, fullOrder, isDefaultLayout, moveId, nearestSlotIndex, normalizeLayout, orderedActions,
+  stepsBetween, toggleHidden, visibleCount,
 } from "../src/app/uibar";
 import { Session } from "../src/app/session";
 import { eq, ok } from "./common";
@@ -56,6 +57,24 @@ export function testUibar(): void {
     eq("uibar.hidden.on", toggleHidden([], "undo"), ["undo"]);
     eq("uibar.hidden.off", toggleHidden(["undo", "save"], "undo"), ["save"]);
     eq("uibar.visible-count", visibleCount(all, ["undo", "save"]), all.length - 2);
+  }
+
+  // ---- 直接拖动：落点判定（栏内按坐标、圆环按最近槽位）----
+  {
+    const centers = [10, 50, 90, 130];
+    eq("uibar.drop.left-edge", dropIndexAt(centers, 0), 0);
+    eq("uibar.drop.mid", dropIndexAt(centers, 88), 2);
+    eq("uibar.drop.right-edge", dropIndexAt(centers, 999), 3);
+    eq("uibar.drop.between", dropIndexAt(centers, 69), 1);
+    eq("uibar.drop.empty", dropIndexAt([], 5), -1);
+    // 圆环：0 号在正上方，顺时针
+    eq("uibar.ring.top", nearestSlotIndex(100, 0, 100, 100, 4), 0);
+    eq("uibar.ring.right", nearestSlotIndex(200, 100, 100, 100, 4), 1);
+    eq("uibar.ring.bottom", nearestSlotIndex(100, 200, 100, 100, 4), 2);
+    eq("uibar.ring.left", nearestSlotIndex(0, 100, 100, 100, 4), 3);
+    eq("uibar.ring.none", nearestSlotIndex(0, 0, 0, 0, 0), -1);
+    eq("uibar.ring.near-top-of-8", nearestSlotIndex(100, -50, 100, 100, 8), 0);
+    eq("uibar.steps", [stepsBetween(0, 2), stepsBetween(3, 1)], [2, -2]);
   }
 
   // ---- Session wrappers persist and refuse to hide everything ----

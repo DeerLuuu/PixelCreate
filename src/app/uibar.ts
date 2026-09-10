@@ -132,3 +132,45 @@ export function missingFrom(list: readonly string[], all: readonly { id: string 
   const known = new Set(all.map((a) => a.id));
   return list.filter((id) => !known.has(id));
 }
+
+/**
+ * Index the dragged item should land on, given the current slots' centre
+ * positions along one axis (screen px). Used by the bar drag: the item is
+ * re-ordered live as the pointer passes a neighbour's midpoint.
+ */
+export function dropIndexAt(centers: readonly number[], x: number): number {
+  if (!centers.length) return -1;
+  let best = 0;
+  let bestD = Infinity;
+  for (let i = 0; i < centers.length; i++) {
+    const d = Math.abs(centers[i] - x);
+    if (d < bestD) { bestD = d; best = i; }
+  }
+  return best;
+}
+
+/**
+ * Nearest slot of a ring (floating-ball drag): the slot whose centre is closest
+ * to the pointer. `count` slots are evenly spaced from the top, clockwise —
+ * the same convention as the orb ring renderer.
+ */
+export function nearestSlotIndex(
+  px: number, py: number, cx: number, cy: number, count: number,
+): number {
+  if (count <= 0) return -1;
+  let best = 0;
+  let bestD = Infinity;
+  for (let i = 0; i < count; i++) {
+    const a = -Math.PI / 2 + i * ((Math.PI * 2) / count);
+    const x = cx + Math.cos(a);
+    const y = cy + Math.sin(a);
+    const d = (px - x) * (px - x) + (py - y) * (py - y);
+    if (d < bestD) { bestD = d; best = i; }
+  }
+  return best;
+}
+
+/** how many steps to move `from` to reach `to` (negative = up/left) */
+export function stepsBetween(from: number, to: number): number {
+  return to - from;
+}

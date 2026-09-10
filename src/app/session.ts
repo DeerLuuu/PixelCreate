@@ -3155,6 +3155,14 @@ export class Session {
     return true;
   }
 
+  /** 「编辑界面」模式：直接在界面上拖动排序 / 点 × 隐藏（不持久化，重启即退出） */
+  uiEdit = false;
+  setUiEdit(on: boolean): void {
+    if (this.uiEdit === on) return;
+    this.uiEdit = on;
+    this.changedUI();
+  }
+
   /** 每个浮动球的条目目录（App 注册，界面定制面板据此列清单） */
   private orbCatalog: Record<string, Array<{ id: string; label: string }>> = {};
   registerOrbCatalog(ball: string, items: Array<{ id: string; label: string }>): void {

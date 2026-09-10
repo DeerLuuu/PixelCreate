@@ -9,10 +9,10 @@ import { useKitPcMode } from "./kit";
 import { Dialog } from "./kit";
 
 /** keep in sync with android/AndroidManifest.xml versionName on every release */
-export const APP_VERSION = "1.0.9.2";
+export const APP_VERSION = "1.0.9.3";
 /** build stamp shown next to the version (support/debug: identifies the exact
  *  package a user is running when the version number itself does not change) */
-export const BUILD_TAG = "a5e4bf5";
+export const BUILD_TAG = "pending";
 
 export type ClgKind = "add" | "imp" | "fix";
 export interface ClgItem { kind: ClgKind; zh: string; en: string }
@@ -25,6 +25,7 @@ export const CHANGELOG: ClgVersion[] = [
     v: "1.0.9.2",
     date: "2026-09-10",
     items: [
+      it("add", "**在界面上直接拖动排序**：界面定制面板里点「在界面上直接拖动排序」进入编辑模式（顶部会出现提示条，按 Esc 或点「完成」退出）——顶栏和底栏的按钮这时带虚线框和 × 角标，**按住就能拖，拖过邻居的中点即实时换位**（拖动时不会误触发按钮功能），点 × 隐藏、点末尾的 + 把隐藏的按钮放回来；浮动球的子项同样可以拖动换位、点 × 隐藏。拖动基于完整的排序列表（含隐藏项），所以隐藏项的位置不会被打乱。", "**Drag to reorder right in the UI**: the Customise UI panel has a “Drag to reorder directly in the UI” button that turns on edit mode (a bar appears at the top; Esc or “Done” leaves it). The top and bottom bar buttons then show a dashed outline and an × badge — **hold and drag, and they swap places live as you pass a neighbour's midpoint** (a drag never fires the button's action), the × hides one and the + at the end brings a hidden button back; the floating-ball entries can be dragged around the ring the same way and hidden with their ×. Dragging works on the full order list (hidden entries included), so hiding never shuffles anything."),
       it("add", "界面可以自己排了：主菜单新增「界面定制」，里面分三页——**布局**（顶栏 / 底部控制栏 / 时间轴 / 浮动球存储区与装备槽 / 浮动球本体 / 画布标题栏，逐项开或关，也有一键恢复默认）、**工具栏**（顶栏与底栏的按钮可以上下调顺序、单独隐藏，隐藏的按钮随时能放回来）、**浮动球**（五个球分别列出全部子项，同样可调顺序与显隐）。所有改动立即生效并自动保存，随设置一起持久化；就算把某个按钮藏了，它的功能也仍然能从别处（快捷键 / 浮动球 / 快捷圆盘）用到。", "The interface is now yours to arrange: the main menu has a new “Customise UI” panel with three pages — Layout (top bar, bottom bar, timeline, ball storage + equip slot, the floating balls themselves and the canvas titles, each switchable, with a one-click reset), Toolbar (the top and bottom bar buttons can be reordered and hidden one by one, and a hidden button can always be brought back) and Floating balls (each of the five lists all of its entries with the same reorder and show/hide controls). Every change applies instantly and is saved with the rest of the settings; hiding a button never removes the feature, which stays reachable from the shortcuts, the balls or the quick pie."),
     ],
   },

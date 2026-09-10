@@ -1074,7 +1074,11 @@ export function CustomiseModal({ t, onClose }: { t: ReturnType<typeof makeT>; on
 
   return (
     <Dialog title={t("customise")} onClose={onClose} className={"cu-dlg" + (pc ? " cu-dlg-pc" : "")} bodyClass="cu-body"
-      extra={<div className="row-note">{t("cuHint")}</div>}
+      extra={<div className="cu-entry">
+        <div className="row-note">{t("cuHint")}</div>
+        <Btn label={t("uiEditStart")} icon="i-grid" className="primary"
+          onClick={() => { SESSION.setUiEdit(true); onClose(); }} />
+      </div>}
       footer={<><Btn label={t("cuResetAll")} onClick={() => { SESSION.resetAllUi(); redraw(); }} /><Btn label={t("close")} onClick={onClose} className="primary" /></>}>
       <div className={pc ? "cu-split" : ""}>
         <div className={pc ? "cu-cats" : "cu-tabs"}>

@@ -1123,7 +1123,16 @@ toggleHidden(hidden, id) / visibleCount(all, hidden)
 存储模型：`prefs.barOrder` 保存**完整** id 顺序（含隐藏项），`prefs.barHidden` 保存被
 隐藏的 id，`prefs.orbPrefs[ball]` 是每个浮动球的 `{ order, hidden }`。因此隐藏再恢复
 位置不变，新版本新增的动作会自动出现在末尾而不会丢失。界面定制的入口是主菜单 →
-「界面定制」（`CustomiseModal`，布局/工具栏/浮动球三个分页）。
+「界面定制」（`CustomiseModal`，布局/工具栏/浮动球三个分页），面板里每一项也能用
+↑↓/眼睛按钮调整。
+
+**在界面上直接拖动**：面板里的「在界面上直接拖动排序」会打开编辑模式
+（`Session.uiEdit`，不持久化，Esc 或「完成」退出）。开启后：
+- 顶栏与底栏按钮出现虚框与 × 角标，**按住拖动越过邻居中点即实时换位**
+  （`dropIndexAt` + `stepsBetween`，抬手时吞掉那次点击，不会误触发按钮功能）；
+  末尾的 + 号列出被隐藏的按钮，点一下放回；
+- 浮动球的子项同样可以拖动换位（按圆环最近槽位判定 `nearestSlotIndex`），角标 × 隐藏；
+- 拖动一律基于**完整**的排序列表（含隐藏项），所以隐藏项的位置不会被打乱。
 
 ### 18.7c 快捷圆盘（Pie）`ui/pie-layout.ts`
 

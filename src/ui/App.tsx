@@ -13,7 +13,7 @@ import * as compositor from "../render/compositor";
 import { HoldAdjust, ColorHoldChip } from "./hold";
 import { orbMetrics, palChipPos, chipBox, swatchHitsChip, ringLayout } from "./orb-layout";
 import { pieFocusIndex, pieRadiusFor, pieSlots } from "./pie-layout";
-import { CBAR_ACTIONS, TOPBAR_ACTIONS, orderedActions } from "../app/uibar";
+import { CBAR_ACTIONS, TOPBAR_ACTIONS, dropIndexAt, nearestSlotIndex, orderedActions, stepsBetween } from "../app/uibar";
 import { chordForAction, chordOf } from "../app/keymap";
 import { ReplayOverlay } from "./replay";
 import * as bridge from "../io/bridge";
@@ -153,6 +153,17 @@ export function App() {
       window.removeEventListener("drop", onDrop);
     };
   }, []);
+
+  // 编辑界面模式：Esc 退出（其它键照常工作）
+  useEffect(() => {
+    if (!SESSION.uiEdit) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      SESSION.setUiEdit(false);
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [SESSION.uiEdit]);
 
   // PC 键盘快捷键（全部动作集中在这里，映射表在 app/shortcuts.ts 里是纯函数）
   useEffect(() => {
@@ -666,6 +677,13 @@ export function App() {
       <Keep on={modal === "history"} el={modal === "history" ? <HistoryModal t={t} snap={snap} onClose={() => setModal(null)} onReplay={() => { setModal(null); setReplayOn(true); }} /> : null} />
       <Keep on={modal === "framePrev"} el={modal === "framePrev" ? <FramePreviewModal t={t} onClose={() => setModal(null)} /> : null} />
       <Keep on={modal === "canvasRef"} el={modal === "canvasRef" ? <CanvasRefModal t={t} onClose={() => setModal(null)} /> : null} />
+      {SESSION.uiEdit && (
+        <div className="ui-edit-bar" data-guide="ui-edit-bar">
+          <span className="ue-dot" />
+          <span className="ue-text">{t("uiEditHint")}</span>
+          <Btn label={t("uiEditDone")} className="primary" onClick={() => SESSION.setUiEdit(false)} />
+        </div>
+      )}
       <Keep on={modal === "customise"} el={modal === "customise" ? <CustomiseModal t={t} onClose={() => setModal(null)} /> : null} />
       <Keep on={modal === "shortcuts"} el={modal === "shortcuts" ? <ShortcutHelpModal t={t} onClose={() => setModal(null)} /> : null} />
       <Keep on={modal === "changelog"} el={modal === "changelog" ? <ChangelogModal onClose={() => { setModal(null); setClgBlock(false); }} /> : null} />
@@ -728,6 +746,45 @@ function bd(lang: string, key: keyof typeof B_DESC): string {
   return lang === "zh" ? e.zh : e.en;
 }
 
+/**
+ * 「编辑界面」模式下的直接拖动排序：按住某个按钮拖动，越过邻居中点就实时换位
+ * （即时反馈，不需要额外的落点指示器）。移动超过 6px 才算拖动，抬手时吞掉那次点击。
+ */
+function useBarDrag(opts: {
+  /** 把 id 移动若干步（负数 = 往前） */
+  onMove: (id: string, delta: number) => void;
+  /** 容器内各槽位在拖动轴上的中心坐标，顺序与列表一致 */
+  centers: () => number[];
+  axis: "x" | "y";
+  enabled: boolean;
+}) {
+  const drag = useRef<{ id: string; index: number; last: number; moved: boolean } | null>(null);
+  const onDown = (id: string, index: number) => (e: React.PointerEvent) => {
+    if (!opts.enabled) return;
+    drag.current = { id, index, last: opts.axis === "x" ? e.clientX : e.clientY, moved: false };
+  };
+  const onMove = (e: React.PointerEvent) => {
+    const d = drag.current;
+    if (!d || !opts.enabled) return;
+    const pos = opts.axis === "x" ? e.clientX : e.clientY;
+    if (!d.moved && Math.abs(pos - d.last) < 6) return;
+    d.moved = true;
+    d.last = pos;
+    const centers = opts.centers();
+    const at = dropIndexAt(centers, pos);
+    if (at < 0 || at === d.index) return;
+    opts.onMove(d.id, stepsBetween(d.index, at));
+    d.index = at;
+  };
+  const onUp = (): boolean => {
+    const moved = !!drag.current?.moved;
+    drag.current = null;
+    return moved;
+  };
+  const swallow = useRef(false);
+  return { onDown, onMove, onUp, dragging: () => !!drag.current?.moved, swallow };
+}
+
 function TopBar({
   t, snap, tlOn, noCanvas, onToggleTl, onMenu, onHistory, onSave,
 }: {
@@ -737,19 +794,31 @@ function TopBar({
   // the browser build gets a fullscreen toggle; the APK shell already hides the
   // system bars itself, so there the button is not rendered at all
   const [fsShow] = useState(() => fullscreenToggleVisible());
+  // 「编辑界面」模式：直接拖动排序 / 点 × 隐藏
+  const edit = SESSION.uiEdit;
+  const all = TOPBAR_ACTIONS.filter((a) => a.id !== "fullscreen" || fsShow);
+  const SHOWN = orderedActions(all, SESSION.prefs.barOrder, SESSION.prefs.barHidden);
+  const HIDDEN = all.filter((a) => SESSION.prefs.barHidden.indexOf(a.id) >= 0);
+  const [addOpen, setAddOpen] = useState(false);
+  const swallow = useRef(false);
+  const barRef = useRef<HTMLElement | null>(null);
+  const drag = useBarDrag({
+    enabled: edit,
+    axis: "x",
+    onMove: (id, delta) => SESSION.moveBarAction(all, id, delta),
+    centers: () => Array.from(barRef.current?.querySelectorAll<HTMLElement>("[data-bar-id]") ?? [])
+      .map((el) => { const r = el.getBoundingClientRect(); return r.left + r.width / 2; }),
+  });
   const [fsOn, setFsOn] = useState(isFullscreen);
   useEffect(() => (fsShow ? watchFullscreen(setFsOn) : undefined), [fsShow]);
   // undo/redo stay live on the empty-space screen: closing the LAST canvas is
   // itself a history step, so it can be brought back from there
   const hist = snap.canUndo || snap.canRedo;
   return (
-    <header className="topbar">
-      {/* 按钮来自 uibar 注册表：顺序与显隐都可以在「界面定制」里改。
-          第一个按钮固定在左，其余靠右（与以前一致）。 */}
-      {SESSION.layoutOn("top") && orderedActions(TOPBAR_ACTIONS, SESSION.prefs.barOrder, SESSION.prefs.barHidden)
-        // 全屏按钮只在支持的平台上出现（网页/PWA），和以前一样有门槛
-        .filter((a) => a.id !== "fullscreen" || fsShow)
-        .map((a) => {
+    <header className="topbar" ref={barRef} onPointerMove={drag.onMove} onPointerUp={() => { if (drag.onUp()) swallow.current = true; }}>
+      {/* 按钮来自 uibar 注册表：顺序与显隐可以在这里直接拖动修改（编辑界面模式），
+          也可以在「界面定制」面板里改。第一个按钮固定在左，其余靠右（与以前一致）。 */}
+      {SESSION.layoutOn("top") && SHOWN.map((a, i) => {
         const act = (): void => {
           if (a.id === "menu") onMenu();
           else if (a.id === "history") onHistory();
@@ -765,14 +834,39 @@ function TopBar({
           : a.id === "fullscreen" ? t(fsOn ? "exitFullscreen" : "fullscreen")
           : t(a.label);
         const icon = a.id === "fullscreen" ? fullscreenIcon(fsOn) : a.icon;
-        if (a.id === "menu" || a.id === "history") {
-          return <Btn key={a.id} icon={icon} onClick={act} title={title}
-            desc={bd(snap.lang, a.desc as "menu")} className={disabled ? "off" : ""} guide={a.guide} />;
-        }
-        return <Btn key={a.id} icon={icon} onClick={act} title={title} desc={a.desc ? bd(snap.lang, a.desc as "undo") : undefined}
-          active={a.id === "timeline" ? (tlOn && !noCanvas) : undefined}
-          className={disabled ? "off" : ""} guide={a.guide} />;
+        const btn = a.id === "menu" || a.id === "history"
+          ? <Btn icon={icon} onClick={() => { if (!swallow.current) act(); else swallow.current = false; }} title={title}
+            desc={bd(snap.lang, a.desc as "menu")} className={disabled ? "off" : ""} guide={a.guide} />
+          : <Btn icon={icon} onClick={() => { if (!swallow.current) act(); else swallow.current = false; }} title={title}
+            desc={a.desc ? bd(snap.lang, a.desc as "undo") : undefined}
+            active={a.id === "timeline" ? (tlOn && !noCanvas) : undefined}
+            className={disabled ? "off" : ""} guide={a.guide} />;
+        if (!edit) return <span key={a.id} data-bar-id={a.id} className="bar-slot">{btn}</span>;
+        return (
+          <span key={a.id} data-bar-id={a.id} className="bar-slot editing"
+            onPointerDown={drag.onDown(a.id, i)}>
+            {btn}
+            <button className="bar-x" title={t("cuHide")}
+              onClick={(e) => { e.stopPropagation(); if (!SESSION.toggleBarAction(TOPBAR_ACTIONS, a.id)) bridge.toast(t("cuKeepOne")); }}>
+              <Icon id="i-x" size={10} />
+            </button>
+          </span>
+        );
       })}
+      {edit && (
+        <button className="bar-add" title={t("cuAddBack")} onClick={() => setAddOpen((v) => !v)}><Icon id="i-plus" size={14} /></button>
+      )}
+      {edit && addOpen && (
+        <div className="bar-addmenu">
+          <div className="bar-addtitle">{t("cuHiddenTitle")}</div>
+          {HIDDEN.length === 0 && <div className="row-note">{t("cuNoneHidden")}</div>}
+          {HIDDEN.map((a) => (
+            <button key={a.id} className="menuitem" onClick={() => { SESSION.toggleBarAction(TOPBAR_ACTIONS, a.id); setAddOpen(false); }}>
+              <Icon id={a.icon || "i-more"} size={14} /><span>{t(a.label)}</span>
+            </button>
+          ))}
+        </div>
+      )}
     </header>
   );
 }
@@ -1737,30 +1831,68 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
     </button>
   );
 
-  const ring = (p0: { x: number; y: number }, items: Item[]) => (
+  const ring = (p0: { x: number; y: number }, items: Item[], ball?: OrbId) => {
+    const edit = SESSION.uiEdit && !!ball;
+    const cx = p0.x + ORB / 2, cy = p0.y + ORB / 2;
+    /** 编辑模式：把拖动中的球拖到圆环的某个槽位就换到那里 */
+    const dragRing = (id: string, index: number, n: number) => (e: React.PointerEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); } catch { /* ignore */ }
+      let cur = index;
+      // 用完整目录（含被隐藏项）做移动，隐藏项的位置因此不会被打乱
+      const all = SESSION.orbCatalogOf(ball!);
+      const onWinMove = (ev: PointerEvent) => {
+        const at = nearestSlotIndex(ev.clientX, ev.clientY, cx, cy, n);
+        if (at < 0 || at === cur) return;
+        SESSION.moveOrbItem(all, ball!, id, stepsBetween(cur, at));
+        cur = at;
+      };
+      const done = () => {
+        window.removeEventListener("pointermove", onWinMove);
+        window.removeEventListener("pointerup", done);
+        window.removeEventListener("pointercancel", done);
+      };
+      window.addEventListener("pointermove", onWinMove);
+      window.addEventListener("pointerup", done);
+      window.addEventListener("pointercancel", done);
+    };
+    return (
     <div className="radial-layer">
       {items.map((it, i) => {
         const pt = ringAt(p0, i, items.length);
         return (
           <button
-            key={it.label + i}
+            key={it.id + i}
             data-guide={it.guide}
-            className={"orb-item" + (it.active ? " on" : "")}
+            data-orb-id={it.id}
+            className={"orb-item" + (it.active ? " on" : "") + (edit ? " editing" : "")}
             style={{ left: pt.x, top: pt.y, "--st": (i * 16) + "ms" } as unknown as React.CSSProperties}
-            title={it.desc || it.label}
-            onClick={it.act}
-            onPointerDown={startTip(it.label, it.desc)}
-            onPointerMove={guardTip}
-            onPointerUp={stopTip}
-            onPointerCancel={stopTip}
+            title={edit ? t("uiEditHint") : (it.desc || it.label)}
+            onClick={() => { if (!edit) it.act(); }}
+            onPointerDown={edit ? dragRing(it.id, i, items.length) : startTip(it.label, it.desc)}
+            onPointerMove={edit ? undefined : guardTip}
+            onPointerUp={edit ? undefined : stopTip}
+            onPointerCancel={edit ? undefined : stopTip}
             onContextMenu={(e) => e.preventDefault()}
           >
             {it.icon ? <Icon id={it.icon} size={16} /> : <span style={{ fontSize: 16, fontWeight: 800 }}>{it.label}</span>}
+            {edit && (
+              <span className="orb-x" title={t("cuHide")}
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (!SESSION.toggleOrbItem(SESSION.orbCatalogOf(ball!), ball!, it.id)) bridge.toast(t("cuKeepOne"));
+                }}>
+                <Icon id="i-x" size={10} />
+              </span>
+            )}
           </button>
         );
       })}
     </div>
-  );
+    );
+  };
 
   return (
     <>
@@ -2007,14 +2139,14 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
         <div className="radial-back" onPointerDown={closeRadials} />
       )}
       {open && lockBtn("main", pos.x, pos.y)}
-      <Keep on={open} el={open ? ring(pos, SESSION.orbItems(mainItems, "main")) : null} />
-      <Keep on={!!sel && sel.open} el={sel && sel.open ? ring({ x: sel.x, y: sel.y }, SESSION.orbItems(selItems, "sel")) : null} />
+      <Keep on={open} el={open ? ring(pos, SESSION.orbItems(mainItems, "main"), "main") : null} />
+      <Keep on={!!sel && sel.open} el={sel && sel.open ? ring({ x: sel.x, y: sel.y }, SESSION.orbItems(selItems, "sel"), "sel") : null} />
       {sel && sel.open && lockBtn("sel", sel.x, sel.y)}
       <Keep on={pal.open} el={pal.open ? <PalBalls x={pal.x} y={pal.y} onDone={() => setPal({ ...pal, open: false })} /> : null} />
       {pal.open && lockBtn("pal", pal.x, pal.y)}
-      <Keep on={fx.open} el={fx.open ? ring({ x: fx.x, y: fx.y }, SESSION.orbItems(fxItems, "fx")) : null} />
+      <Keep on={fx.open} el={fx.open ? ring({ x: fx.x, y: fx.y }, SESSION.orbItems(fxItems, "fx"), "fx") : null} />
       {fx.open && lockBtn("fx", fx.x, fx.y)}
-      <Keep on={canv.open} el={canv.open ? ring({ x: canv.x, y: canv.y }, SESSION.orbItems(canvItems, "canv")) : null} />
+      <Keep on={canv.open} el={canv.open ? ring({ x: canv.x, y: canv.y }, SESSION.orbItems(canvItems, "canv"), "canv") : null} />
       {canv.open && lockBtn("canv", canv.x, canv.y)}
       <Keep on={tileDlg} el={tileDlg ? (
         <>
@@ -2152,14 +2284,40 @@ function ControlBar({ t, snap, onPanel, onAdjust, onFramePrev }: { t: ReturnType
   const dir: "h" | "v" = land ? "v" : "h";
   const sym: "off" | "on" = SESSION.sym;
   const symKey = { off: "sym.off", on: "sym.on" } as const;
+  const edit = SESSION.uiEdit;
+  const [addOpen, setAddOpen] = useState(false);
+  const swallow = useRef(false);
+  const rowRef = useRef<HTMLDivElement | null>(null);
+  const cShown = orderedActions(CBAR_ACTIONS, SESSION.prefs.barOrder, SESSION.prefs.barHidden);
+  const cHidden = CBAR_ACTIONS.filter((a) => SESSION.prefs.barHidden.indexOf(a.id) >= 0);
+  const drag = useBarDrag({
+    enabled: edit,
+    axis: land ? "y" : "x",
+    onMove: (id, delta) => SESSION.moveBarAction(CBAR_ACTIONS, id, delta),
+    centers: () => Array.from(rowRef.current?.querySelectorAll<HTMLElement>("[data-bar-id]") ?? [])
+      .map((el) => { const r = el.getBoundingClientRect(); return land ? r.top + r.height / 2 : r.left + r.width / 2; }),
+  });
   return (
     <section className={"ctrlbar" + (land ? " land" : "")}>
-      <div className="cb-row">
-        {/* 全局按钮来自 uibar 注册表（顺序/显隐同样可定制）；滑杆区是随工具变化的，保持自动 */}
-        {orderedActions(CBAR_ACTIONS, SESSION.prefs.barOrder, SESSION.prefs.barHidden).map((a) => {
+      <div className="cb-row" ref={rowRef} onPointerMove={drag.onMove} onPointerUp={() => { if (drag.onUp()) swallow.current = true; }}>
+        {/* 全局按钮来自 uibar 注册表（顺序/显隐可定制，编辑模式下可直接拖动）；
+            滑杆区是随工具变化的，保持自动 */}
+        {cShown.map((a, i) => {
+          const slot = (node: React.ReactNode): React.ReactNode => (
+            <span key={a.id} data-bar-id={a.id} className="bar-slot"
+              onPointerDown={drag.onDown(a.id, i)}>
+              {node}
+              {edit && (
+                <button className="bar-x" title={t("cuHide")}
+                  onClick={(e) => { e.stopPropagation(); if (!SESSION.toggleBarAction(CBAR_ACTIONS, a.id)) bridge.toast(t("cuKeepOne")); }}>
+                  <Icon id="i-x" size={10} />
+                </button>
+              )}
+            </span>
+          );
           if (a.id === "colors") {
-            return (
-              <div key={a.id} className="colorpair" data-guide="btn-colors" title={SESSION.colorTarget === "bg" ? t("bgActive") : t("fgActive")}>
+            return slot(
+              <div className="colorpair" data-guide="btn-colors" title={SESSION.colorTarget === "bg" ? t("bgActive") : t("fgActive")}>
                 <div className={"cp-front" + (SESSION.colorTarget === "fg" ? " on" : "")}>
                   <ColorHoldChip onClickTap={() => onPanel("palette")} />
                 </div>
@@ -2172,20 +2330,34 @@ function ControlBar({ t, snap, onPanel, onAdjust, onFramePrev }: { t: ReturnType
             );
           }
           if (a.id === "swap") {
-            return <Btn key={a.id} label="⇄" className="swap-color" title={t("swapColors")} onClick={() => SESSION.swapColors()} guide={a.guide} />;
+            return slot(<Btn label="\u21c4" className="swap-color" title={t("swapColors")} onClick={() => { if (!swallow.current) SESSION.swapColors(); else swallow.current = false; }} guide={a.guide} />);
           }
           if (a.id === "adjust") {
-            return <Btn key={a.id} icon={a.icon} onClick={onAdjust} title={t("adjust")} guide={a.guide} />;
+            return slot(<Btn icon={a.icon} onClick={onAdjust} title={t("adjust")} guide={a.guide} />);
           }
           if (a.id === "symmetry") {
-            return <Btn key={a.id} label={SYM_GLYPH[sym]} active={sym !== "off"} title={t(symKey[sym])} desc={bd(snap.lang, "sym")}
-              guide={a.guide} onClick={() => { const m = SESSION.cycleSym(); bridge.toast(t(symKey[m])); }} />;
+            return slot(<Btn label={SYM_GLYPH[sym]} active={sym !== "off"} title={t(symKey[sym])} desc={bd(snap.lang, "sym")}
+              guide={a.guide} onClick={() => { const m = SESSION.cycleSym(); bridge.toast(t(symKey[m])); }} />);
           }
           if (a.id === "frameprev") {
-            return <Btn key={a.id} icon={a.icon} onClick={onFramePrev} title={t("framePreview")} guide={a.guide} />;
+            return slot(<Btn icon={a.icon} onClick={onFramePrev} title={t("framePreview")} guide={a.guide} />);
           }
           return null;
         })}
+        {edit && (
+          <button className="bar-add" title={t("cuAddBack")} onClick={() => setAddOpen((v) => !v)}><Icon id="i-plus" size={14} /></button>
+        )}
+        {edit && addOpen && (
+          <div className="bar-addmenu">
+            <div className="bar-addtitle">{t("cuHiddenTitle")}</div>
+            {cHidden.length === 0 && <div className="row-note">{t("cuNoneHidden")}</div>}
+            {cHidden.map((a) => (
+              <button key={a.id} className="menuitem" onClick={() => { SESSION.toggleBarAction(CBAR_ACTIONS, a.id); setAddOpen(false); }}>
+                <Icon id={a.icon || "i-more"} size={14} /><span>{t(a.label)}</span>
+              </button>
+            ))}
+          </div>
+        )}
       </div>
       <div className="cb-sliders">
         <HoldAdjust dir={dir} value={snap.brushSize} min={1} max={64} title={t("brushSize")} hint={bd(snap.lang, "brush")} format={(v) => "◉" + v} reset={1} onChange={(v) => SESSION.setBrushSize(v)} />

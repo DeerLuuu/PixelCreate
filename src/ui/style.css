@@ -1141,3 +1141,29 @@ html[data-pc] .cu-dlg{width:min(92vw,800px)}
 .cu-btn:disabled{opacity:.35}
 .cu-btn.off{background:var(--bg3);color:var(--dim-2)}
 .cu-actions{display:flex;justify-content:flex-end;gap:8px;padding-top:2px}
+.cu-entry{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.cu-entry .row-note{flex:1 1 auto;margin:0}
+
+/* ---- 编辑界面模式：直接拖动排序 ---- */
+.bar-slot{position:relative;display:inline-flex;align-items:center}
+.bar-slot.editing{outline:1px dashed var(--accent);outline-offset:2px;border-radius:10px;cursor:grab;touch-action:none}
+.bar-slot.editing:active{cursor:grabbing}
+.bar-x{position:absolute;top:-6px;right:-6px;width:17px;height:17px;border-radius:50%;z-index:2;
+  background:var(--danger);color:#fff;display:flex;align-items:center;justify-content:center;
+  border:1px solid var(--bg);padding:0;line-height:1}
+.bar-x:hover{transform:scale(1.15)}
+.bar-add{width:34px;height:34px;border-radius:10px;flex:0 0 auto;background:var(--surface-item);color:var(--text-3);
+  border:1px dashed var(--accent);display:flex;align-items:center;justify-content:center}
+.bar-add:hover{background:var(--surface-item-active);color:var(--text)}
+.bar-addmenu{position:fixed;z-index:var(--z-pop);top:56px;left:50%;transform:translateX(-50%);
+  min-width:200px;max-height:52vh;overflow-y:auto;background:var(--surface-pop);border:1px solid var(--line);
+  border-radius:14px;padding:8px;box-shadow:var(--sh-2);display:flex;flex-direction:column;gap:2px}
+.bar-addtitle{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--dim);padding:2px 6px 4px}
+.orb-item.editing{outline:1px dashed var(--accent);outline-offset:1px;cursor:grab;touch-action:none}
+.orb-x{position:absolute;top:-4px;right:-4px;width:16px;height:16px;border-radius:50%;
+  background:var(--danger);color:#fff;display:flex;align-items:center;justify-content:center;padding:0;line-height:1}
+.ui-edit-bar{position:fixed;left:50%;top:calc(var(--barh, 44px) + 8px);transform:translateX(-50%);z-index:var(--z-pop);
+  display:flex;align-items:center;gap:10px;padding:6px 8px 6px 12px;border-radius:999px;
+  background:var(--surface-toast);border:1px solid var(--accent);box-shadow:var(--sh-1);max-width:92vw}
+.ui-edit-bar .ue-dot{width:8px;height:8px;border-radius:50%;background:var(--accent);flex:0 0 auto}
+.ui-edit-bar .ue-text{font-size:12px;color:var(--text-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
