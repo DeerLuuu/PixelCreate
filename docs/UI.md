@@ -162,6 +162,24 @@ import { Dialog } from "../kit";
 - `ColorField` = `Row` + `<input type="color">` + 十六进制文本。
 - 需要自定义布局时仍可直接用 `ScrubNum`（`base.tsx` 导出）。
 
+### 2.6b HoverTip（PC 悬停提示）
+
+```tsx
+const hover = useHoverTip({ title: t("brushSize"), desc: bd(snap.lang, "brush"), enabled: !noTip });
+<button {...{ onPointerEnter: hover.onPointerEnter, onPointerMove: hover.onPointerMove, onPointerLeave: hover.onPointerLeave }}>
+  …
+  {hover.node}
+</button>
+```
+
+- **只在 PC 模式 + 鼠标指针**下出现：`pointerType === "mouse"` 且 `useHoverTipsEnabled()` 为真；
+  **0ms 显示**（无延迟）、跟随光标、`pointerleave` 立即消失。触摸端仍然是 `src/ui/tooltip.ts` 的长按提示。
+- 面板样式 `.htip`（`.htip-title` / `.htip-desc`），`z-index: var(--z-tip)`，`pointer-events:none`。
+- 定位是纯函数 `hoverTipPos(x, y, w, h, vw, vh)`：默认在光标右下 14px，越界时翻到另一侧并夹在视口内。
+- PC 开关由应用层推入 kit：`setHoverTipsEnabled(on)`（`main.tsx` 在 `applyPcMode` / 指针能力变化时调用），
+  这样 kit 不需要 import `io/`。
+- `Btn` 已内置：鼠标悬停走 HoverTip，触摸长按走原来的 450ms 提示，两者不会同时出现。
+
 ### 2.7 基础件（沿用既有契约）
 
 | 组件 | class | 变体 |

@@ -10,6 +10,7 @@ import { Dialog } from "../src/ui/kit/Dialog";
 import { Row, RowActions, ChipGroup, Segmented, Switch, NumberField, ColorField } from "../src/ui/kit/Form";
 import { Icon, Btn } from "../src/ui/kit/primitives";
 import { Demo } from "../src/ui/kit/demo";
+import { HoverTip, hoverTipPos, setHoverTipsEnabled } from "../src/ui/kit/HoverTip";
 
 declare const require: (m: string) => any;
 declare const __dirname: string;
@@ -111,6 +112,44 @@ export function testUiKit(): void {
   const btn = html(<Btn label="保存" onClick={() => { /* noop */ }} active danger guide="btn-save" />);
   ok("ui.btn", btn.indexOf('class="btn active danger"') >= 0 && btn.indexOf('aria-label="保存"') >= 0 && btn.indexOf('data-guide="btn-save"') >= 0);
   ok("ui.icon", html(<Icon id="i-x" size={16} />).indexOf('width="16"') >= 0);
+
+  // ------------------------------------------------------------ HoverTip
+  // the panel is positioned by a pure helper: to the lower-right of the cursor,
+  // flipped when it would leave the viewport, always clamped inside it
+  eq("ui.htip.pos.default", hoverTipPos(100, 100, 200, 60, 1000, 800), { x: 114, y: 114 });
+  {
+    // near the right edge -> flips to the left of the pointer
+    const p1 = hoverTipPos(980, 100, 200, 60, 1000, 800);
+    ok("ui.htip.pos.flip-x", p1.x < 980, "x=" + p1.x);
+    // near the bottom edge -> flips above the pointer
+    const p2 = hoverTipPos(100, 780, 200, 60, 1000, 800);
+    ok("ui.htip.pos.flip-y", p2.y < 780, "y=" + p2.y);
+    // a pointer in the corner still yields an on-screen panel
+    const p3 = hoverTipPos(999, 799, 200, 60, 1000, 800);
+    ok("ui.htip.pos.inside", p3.x >= 0 && p3.y >= 0 && p3.x + 200 <= 1000 && p3.y + 60 <= 800, JSON.stringify(p3));
+    // a panel wider than the viewport is pinned to the edge, never negative
+    const p4 = hoverTipPos(10, 10, 2000, 60, 1000, 800);
+    ok("ui.htip.pos.oversize", p4.x >= 0 && p4.y >= 0, JSON.stringify(p4));
+  }
+  const htip = html(<HoverTip title="画笔" desc="按住拖动可调大小" x={40} y={40} />);
+  ok("ui.htip.markup", htip.indexOf('class="htip"') >= 0 && htip.indexOf('role="tooltip"') >= 0);
+  ok("ui.htip.title", htip.indexOf("htip-title") >= 0 && htip.indexOf("画笔") >= 0);
+  ok("ui.htip.desc", htip.indexOf("htip-desc") >= 0 && htip.indexOf("按住拖动可调大小") >= 0);
+  eq("ui.htip.no-desc", html(<HoverTip title="只有标题" x={10} y={10} />).indexOf("htip-desc") >= 0, false);
+  // the kit exposes the on/off switch the app pushes PC mode into
+  setHoverTipsEnabled(true);
+  const { hoverTipsEnabled } = require("../src/ui/kit/HoverTip") as { hoverTipsEnabled: () => boolean };
+  eq("ui.htip.enabled-flag", hoverTipsEnabled(), true);
+  setHoverTipsEnabled(false);
+  eq("ui.htip.disabled-flag", hoverTipsEnabled(), false);
+  // Btn must be wired to it (the hover tip is the desktop substitute for the
+  // long-press tip, so it has to live inside Btn and not at the call sites)
+  {
+    const kitDir = path.resolve(__dirname, "../../../src/ui/kit");
+    const prim = fs.readFileSync(path.join(kitDir, "primitives.tsx"), "utf8");
+    ok("ui.htip.btn-wired", prim.indexOf("useHoverTip") >= 0 && prim.indexOf("hover.node") >= 0);
+    ok("ui.htip.mouse-not-longpress", prim.indexOf('e.pointerType === "mouse"') >= 0);
+  }
 
   // ------------------------------------------------------------- demo page
   // the demo exercises every component at once; rendering it here also proves

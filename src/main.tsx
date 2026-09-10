@@ -5,12 +5,13 @@ import { makeT } from "./ui/i18n";
 import { backAction, type BackState } from "./ui/back";
 import { applyTheme } from "./io/theme";
 import { applyPcMode, pcModeOf, watchPcCapabilities } from "./io/pcmode";
+import { setHoverTipsEnabled } from "./ui/kit";
 
 // colour theme before the first paint (prefs are read synchronously in Session)
 applyTheme(SESSION.prefs.theme);
 // desktop extras (wheel zoom / hover / shortcuts) follow the pointer, not the UA
-applyPcMode(pcModeOf(SESSION.prefs));
-watchPcCapabilities(() => pcModeOf(SESSION.prefs));
+setHoverTipsEnabled(applyPcMode(pcModeOf(SESSION.prefs)));
+watchPcCapabilities(() => pcModeOf(SESSION.prefs), setHoverTipsEnabled);
 const host = document.getElementById("root");
 if (!host) throw new Error("no #root");
 createRoot(host).render(<App />);

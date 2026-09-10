@@ -4,6 +4,7 @@
 // re-exports everything for the existing call sites (see docs/UI.md §1.2).
 import React, { useEffect, useRef, useState } from "react";
 import { showTip, hideTip, subscribeTip } from "../tooltip";
+import { useHoverTip } from "./HoverTip";
 
 /** true whenever landscape: side-rail layout is used on every device */
 export function useLandscape(): boolean {
@@ -38,6 +39,8 @@ export function Btn({
   if (danger) cls.push("danger");
   if (className) cls.push(className);
   const tipTitle = title ?? label ?? "";
+  // PC：鼠标悬停立刻显示、跟随光标、离开即消失；触摸仍走下面的长按提示
+  const hover = useHoverTip({ title: tipTitle, desc, enabled: !noTip });
   const tipTimer = useRef<number | null>(null);
   const tipOrigin = useRef<{ x: number; y: number } | null>(null);
   const clearTip = () => {
@@ -47,6 +50,7 @@ export function Btn({
   };
   const startTip = (e: React.PointerEvent<HTMLButtonElement>) => {
     if (noTip || (!tipTitle && !desc)) return;
+    if (e.pointerType === "mouse") return;   // the mouse hovers instead of pressing
     e.preventDefault(); // keep the browser's own long-press menus from appearing
     tipOrigin.current = { x: e.clientX, y: e.clientY };
     tipTimer.current = window.setTimeout(() => {
@@ -68,14 +72,16 @@ export function Btn({
       title={tipTitle}
       aria-label={tipTitle}
       onPointerDown={startTip}
-      onPointerMove={guardMove}
+      onPointerMove={(e) => { hover.onPointerMove(e); guardMove(e); }}
       onPointerUp={clearTip}
       onPointerCancel={clearTip}
-      onPointerLeave={clearTip}
+      onPointerEnter={hover.onPointerEnter}
+      onPointerLeave={() => { hover.onPointerLeave(); clearTip(); }}
       onContextMenu={(e) => e.preventDefault()}
     >
       {icon && <Icon id={icon} />}
       {label && <span>{label}</span>}
+      {hover.node}
     </button>
   );
 }
