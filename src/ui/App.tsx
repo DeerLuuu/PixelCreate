@@ -1336,8 +1336,15 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
       ]
     : [
         ...CORE_TOOLS.map((dd) => ({ icon: dd.icon, label: t("tools." + dd.id), desc: td(dd.id), act: () => pickTool("core", dd.id), active: snap.tool === dd.id, guide: "tool-" + dd.id })),
+        // ③ PC：鼠标没有“翻页”的耐心——把「图形 / 选区」两页的工具直接铺进同一个环
+        ...(pcMode ? [
+          ...SHAPE_TOOLS.map((dd) => ({ icon: dd.icon, label: t("tools." + dd.id), desc: td(dd.id), act: () => pickTool("shape", dd.id), active: snap.tool === dd.id, guide: "tool-" + dd.id })),
+          ...SELECT_TOOLS.map((dd) => ({ icon: dd.icon, label: t("tools." + dd.id), desc: td(dd.id), act: () => pickTool("select", dd.id), active: snap.tool === dd.id, guide: "tool-" + dd.id })),
+        ] : []),
+        ...(pcMode ? [] : [
         { icon: defOf(snap.shape)?.icon || "i-rect", label: t("shapeGroup"), desc: snap.lang === "zh" ? "图形工具：直线 / 矩形 / 椭圆" : "Shape tools: line / rect / ellipse", act: () => { setSub("shape"); if (sel) setSel({ ...sel, open: false }); }, active: isShapeTool(snap.tool), guide: "tool-shape-group" },
         { icon: (snap.tool !== "line" && isSelectTool(snap.tool) ? defOf(snap.tool)?.icon : defOf(SESSION.currentSelect)?.icon) || "i-select", label: t("sel.active"), desc: snap.lang === "zh" ? "选区工具：框选 / 魔棒 / 套索" : "Select tools: rect / wand / lasso", act: () => { setSub("select"); if (sel) setSel({ ...sel, open: false }); }, active: isSelectTool(snap.tool), guide: "tool-select-group" },
+        ]),
       ];
 
   const baseIcon =
