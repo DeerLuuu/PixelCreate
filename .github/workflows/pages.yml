@@ -1,0 +1,45 @@
+# 把 main 分支根目录的静态站点发布到 GitHub Pages。
+#
+# 使用前提（一次性）：仓库 Settings → Pages → Source 选 “GitHub Actions”。
+# 之后每次 push 到 main 都会自动重新部署，也可以在 Actions 页面手动 Run workflow。
+name: Deploy web to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 校验站点文件
+        run: |
+          set -e
+          test -f index.html            || { echo "缺少 index.html"; exit 1; }
+          test -f js/app.js             || { echo "缺少 js/app.js"; exit 1; }
+          test -f css/style.css         || { echo "缺少 css/style.css"; exit 1; }
+          test -f manifest.webmanifest  || { echo "缺少 manifest.webmanifest"; exit 1; }
+          echo "app.js    $(wc -c < js/app.js) bytes"
+          echo "style.css $(wc -c < css/style.css) bytes"
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: .
+      - id: deploy
+        uses: actions/deploy-pages@v4
