@@ -20,7 +20,11 @@ export function testGuideAnchors(): void {
   const uiDir = path.resolve(__dirname, "../../../src/ui");
   const files = fs.readdirSync(uiDir).filter((f) => /\.(ts|tsx)$/.test(f));
   ok("guideanchor.ui-sources", files.length > 10, "files=" + files.length);
-  const text = files.map((f) => fs.readFileSync(path.join(uiDir, f), "utf8")).join("\n");
+  const text = files.map((f) => fs.readFileSync(path.join(uiDir, f), "utf8")).join("\n")
+    // 工具栏按钮现在由注册表驱动（src/app/uibar.ts），锚点声明在那里
+    + "\n" + (() => {
+      try { return fs.readFileSync(path.resolve(__dirname, "../../../src/app/uibar.ts"), "utf8"); } catch { return ""; }
+    })();
 
   // anchors rendered as a literal attribute, plus the ones built from ids
   const anchors = new Set<string>();

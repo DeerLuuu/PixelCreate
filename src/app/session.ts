@@ -23,6 +23,9 @@ import type { View } from "../render/view";
 import * as selM from "../tools/select";
 import { pasteRaw } from "../tools/select";
 import { bindChord, chordForAction, unbindChord } from "./keymap";
+import {
+  DEFAULT_LAYOUT, fullOrder, moveId, normalizeLayout, orderedActions, toggleHidden, visibleCount,
+} from "./uibar";
 import { mirrorMaskInPlace } from "../engine/symmetry";
 import { adjustPixel, type HslAdj } from "../engine/adjust";
 import { type LoopMode, nextLoopMode, nextPlayFrame, startPlayDir, startPlayFrame } from "./playback";
@@ -48,6 +51,14 @@ export interface Prefs {
   pieRadius: number;
   /** 自定义快捷键：action -> chord（"ctrl+shift+z"）；空 = 全部用默认 */
   keymap: Record<string, string>;
+  /** 界面定制：各区域显隐 */
+  layout: Record<string, boolean>;
+  /** 工具栏/底栏按钮的完整顺序（含隐藏项） */
+  barOrder: string[];
+  /** 工具栏/底栏里被隐藏的按钮 id */
+  barHidden: string[];
+  /** 每个浮动球的子项定制：{ order: string[]; hidden: string[] } */
+  orbPrefs: Record<string, { order: string[]; hidden: string[] }>;
   /** onion skin master switch */
   onionOn: boolean;
   /** loop-aware onion skin: ghosts wrap around the first/last frame and get
@@ -1250,6 +1261,7 @@ export class Session {
     const p: Prefs = {
       lang: "zh", theme: "dark", pcMode: "auto", gridMode: "off", gridSize: 1, magZoom: 12, loupe: true,
       pieItem: 58, pieRadius: 0, keymap: {},
+      layout: { ...DEFAULT_LAYOUT }, barOrder: [], barHidden: [], orbPrefs: {},
       onionOn: false, onionBefore: 1, onionAfter: 0, onionAlpha: 55, onionTint: true, onionWrap: true,
       autosave: true, autosaveMin: 5, recordHistory: true, newFrameCopy: false, railSwap: true, previewBg: "white", previewGray: false, tileMode: "off", tlH: 200, tlHv: 2,
       immersive: true, safeArea: true, safeExtra: 0,
@@ -1283,6 +1295,22 @@ export class Session {
       if (typeof saved.loupe === "boolean") p.loupe = saved.loupe;
       if (typeof saved.pieItem === "number") p.pieItem = Math.max(36, Math.min(96, Math.round(saved.pieItem)));
       if (typeof saved.pieRadius === "number") p.pieRadius = Math.max(0, Math.min(520, Math.round(saved.pieRadius)));
+      p.layout = normalizeLayout(saved.layout);
+      if (Array.isArray(saved.barOrder)) p.barOrder = saved.barOrder.filter((x: unknown): x is string => typeof x === "string").slice(0, 64);
+      if (Array.isArray(saved.barHidden)) p.barHidden = saved.barHidden.filter((x: unknown): x is string => typeof x === "string").slice(0, 64);
+      if (saved.orbPrefs && typeof saved.orbPrefs === "object") {
+        const op: Record<string, { order: string[]; hidden: string[] }> = {};
+        for (const [ball, v] of Object.entries(saved.orbPrefs as Record<string, unknown>)) {
+          if (!v || typeof v !== "object") continue;
+          const o = (v as { order?: unknown }).order;
+          const h = (v as { hidden?: unknown }).hidden;
+          op[ball] = {
+            order: Array.isArray(o) ? o.filter((x): x is string => typeof x === "string").slice(0, 128) : [],
+            hidden: Array.isArray(h) ? h.filter((x): x is string => typeof x === "string").slice(0, 128) : [],
+          };
+        }
+        p.orbPrefs = op;
+      }
       if (saved.keymap && typeof saved.keymap === "object") {
         const km: Record<string, string> = {};
         for (const [k, v] of Object.entries(saved.keymap as Record<string, unknown>)) {
@@ -3125,6 +3153,98 @@ export class Session {
     if (b.w === doc.w && b.h === doc.h && b.x === 0 && b.y === 0) return false;
     this.struct("crop-sel", () => ops.resizeDocCanvas(doc, b.w, b.h, -b.x, -b.y));
     return true;
+  }
+
+  /** 每个浮动球的条目目录（App 注册，界面定制面板据此列清单） */
+  private orbCatalog: Record<string, Array<{ id: string; label: string }>> = {};
+  registerOrbCatalog(ball: string, items: Array<{ id: string; label: string }>): void {
+    this.orbCatalog = { ...this.orbCatalog, [ball]: items };
+  }
+  orbCatalogOf(ball: string): Array<{ id: string; label: string }> {
+    return this.orbCatalog[ball] ?? [];
+  }
+
+  // ---------- 界面定制：布局 / 工具栏 / 浮动球 ----------
+  /** 某个区域是否显示 */
+  layoutOn(k: string): boolean {
+    return this.prefs.layout[k] !== false;
+  }
+  setLayout(k: string, on: boolean): void {
+    this.prefs.layout = { ...this.prefs.layout, [k]: on };
+    this.scheduleSavePrefs();
+    this.changed();
+  }
+  resetLayout(): void {
+    this.prefs.layout = { ...DEFAULT_LAYOUT };
+    this.scheduleSavePrefs();
+    this.changed();
+  }
+  /** 工具栏里按顺序显示哪些动作（注册表 + 用户顺序/隐藏） */
+  barActions<T extends { id: string }>(all: readonly T[]): T[] {
+    return orderedActions(all, this.prefs.barOrder, this.prefs.barHidden);
+  }
+  isBarHidden(id: string): boolean {
+    return this.prefs.barHidden.indexOf(id) >= 0;
+  }
+  moveBarAction(all: readonly { id: string }[], id: string, delta: number): void {
+    this.prefs.barOrder = moveId(all, this.prefs.barOrder, id, delta);
+    this.scheduleSavePrefs();
+    this.changedUI();
+  }
+  toggleBarAction(all: readonly { id: string }[], id: string): boolean {
+    // 至少留一个可见按钮，否则工具栏会整条空掉
+    if (!this.isBarHidden(id) && visibleCount(all, this.prefs.barHidden) <= 1) return false;
+    this.prefs.barHidden = toggleHidden(this.prefs.barHidden, id);
+    this.scheduleSavePrefs();
+    this.changedUI();
+    return true;
+  }
+  resetBar(all: readonly { id: string }[]): void {
+    this.prefs.barOrder = all.map((a) => a.id);
+    this.prefs.barHidden = [];
+    this.scheduleSavePrefs();
+    this.changedUI();
+  }
+  // ---------------- 浮动球子项 ----------------
+  orbPref(ball: string): { order: string[]; hidden: string[] } {
+    return this.prefs.orbPrefs[ball] ?? { order: [], hidden: [] };
+  }
+  orbItems<T extends { id: string }>(all: readonly T[], ball: string): T[] {
+    const p = this.orbPref(ball);
+    return orderedActions(all, p.order, p.hidden);
+  }
+  isOrbItemHidden(ball: string, id: string): boolean {
+    return this.orbPref(ball).hidden.indexOf(id) >= 0;
+  }
+  moveOrbItem(all: readonly { id: string }[], ball: string, id: string, delta: number): void {
+    const p = this.orbPref(ball);
+    this.setOrbPref(ball, { order: moveId(all, p.order, id, delta), hidden: p.hidden });
+  }
+  toggleOrbItem(all: readonly { id: string }[], ball: string, id: string): boolean {
+    const p = this.orbPref(ball);
+    if (!this.isOrbItemHidden(ball, id) && visibleCount(all, p.hidden) <= 1) return false;
+    this.setOrbPref(ball, { order: fullOrder(all, p.order), hidden: toggleHidden(p.hidden, id) });
+    return true;
+  }
+  resetOrb(ball: string): void {
+    const next = { ...this.prefs.orbPrefs };
+    delete next[ball];
+    this.prefs.orbPrefs = next;
+    this.scheduleSavePrefs();
+    this.changedUI();
+  }
+  resetAllUi(): void {
+    this.prefs.layout = { ...DEFAULT_LAYOUT };
+    this.prefs.barOrder = [];
+    this.prefs.barHidden = [];
+    this.prefs.orbPrefs = {};
+    this.scheduleSavePrefs();
+    this.changed();
+  }
+  private setOrbPref(ball: string, v: { order: string[]; hidden: string[] }): void {
+    this.prefs.orbPrefs = { ...this.prefs.orbPrefs, [ball]: v };
+    this.scheduleSavePrefs();
+    this.changedUI();
   }
 
   // ---------- 自定义快捷键（设置面板直接改 prefs.keymap）----------

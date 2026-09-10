@@ -25,6 +25,7 @@ import { testScrub } from "./scrub.test";
 import { testPie } from "./pie.test";
 import { testIcons } from "./icons.test";
 import { testKeymap } from "./keymap.test";
+import { testUibar } from "./uibar.test";
 import { testExpr } from "./expr.test";
 import { testEffects } from "./effects.test";
 import { testView } from "./view.test";
@@ -91,6 +92,8 @@ async function main(): Promise<void> {
   testIcons();
   console.log("--- keymap ---");
   testKeymap();
+  console.log("--- uibar ---");
+  testUibar();
   finish();
 }
 

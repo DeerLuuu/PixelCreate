@@ -22,8 +22,9 @@ import type { RefImg } from "./refimg";
 import { Dialog, Row, RowActions, NumberField, ColorField, ChipGroup, Segmented, Switch, useKitPcMode } from "./kit";
 import { SHORTCUT_SHEET } from "../app/shortcuts";
 import { REBINDABLE, chordForAction, chordLabel, chordOf, isOverridden, overrides } from "../app/keymap";
+import { CBAR_ACTIONS, LAYOUT_KEYS, ORB_IDS, TOPBAR_ACTIONS, fullOrder } from "../app/uibar";
 
-export type ModalId = "menu" | "changelog" | "newdoc" | "newproject" | "export" | "adjust" | "settings" | "frame" | "framePrev" | "size" | "sheet" | "history" | "canvasRef" | "shortcuts" | null;
+export type ModalId = "menu" | "changelog" | "newdoc" | "newproject" | "export" | "adjust" | "settings" | "frame" | "framePrev" | "size" | "sheet" | "history" | "canvasRef" | "shortcuts" | "customise" | null;
 export type SizeMode = "canvas" | "sprite";
 export type SheetData = { w: number; h: number; px: Uint8ClampedArray; name: string };
 
@@ -365,6 +366,7 @@ export function MenuModal({ t, snap, onClose, onOpen, onSheet, onRef, onGuide }:
           <Btn label={t("import")} icon="i-import" className="menuitem" guide="menu-import" onClick={() => setSub("import")} />
           {go("settings")(t("settings"), "i-gear", "menu-settings")}
           {go("shortcuts")(t("shortcutHelp"), "i-keys", "menu-shortcuts")}
+          {go("customise")(t("customise"), "i-grid", "menu-customise")}
           <Btn label={t("guideReplay")} icon="i-guide" className="menuitem" guide="menu-guide" onClick={onGuide} />
           {go("changelog")(t("changelog"), "i-news", "menu-changelog")}
         </>) : (
@@ -997,6 +999,121 @@ function keyActionLabel(action: string, en: boolean): string {
     for (const it of g.items) if (it.action === action) return en ? it.en : it.zh;
   }
   return action;
+}
+
+/**
+ * 界面定制：布局 / 工具栏 / 浮动球 三个分页。
+ * 所有改动都写进 prefs（layout / barOrder / barHidden / orbPrefs），随设置持久化。
+ * 顺序用 ↑↓ 按钮调整（触摸和鼠标都能用），显隐用眼睛按钮；每个分页都能单独重置。
+ */
+export function CustomiseModal({ t, onClose }: { t: ReturnType<typeof makeT>; onClose: () => void }) {
+  const en = SESSION.prefs.lang === "en";
+  const pc = useKitPcMode();
+  const [tab, setTab] = useState<"layout" | "bar" | "orbs">("layout");
+  const [ball, setBall] = useState<string>("main");
+  const [, bump] = useState(0);
+  const redraw = () => bump((n) => n + 1);
+
+  const layoutLabels: Record<string, { zh: string; en: string; descZh: string; descEn: string }> = {
+    top: { zh: "顶栏", en: "Top bar", descZh: "菜单 / 撤销 / 保存 / 时间轴这些按钮", descEn: "Menu, undo, redo, save, timeline, fullscreen" },
+    bar: { zh: "底部控制栏", en: "Bottom bar", descZh: "颜色对、笔刷大小与随工具变化的滑杆", descEn: "Colour pair, brush size and the tool sliders" },
+    timeline: { zh: "时间轴", en: "Timeline", descZh: "帧与图层的矩阵（顶栏按钮也能开关）", descEn: "Frame and layer matrix (the top bar button toggles it too)" },
+    dock: { zh: "浮动球存储区与装备槽", en: "Ball storage + equip slot", descZh: "右侧（横屏顶部）的停靠区与快捷圆盘装备槽", descEn: "The dock at the right edge (top in landscape) and the pie equip slot" },
+    orbs: { zh: "浮动球", en: "Floating balls", descZh: "五个浮动球本身", descEn: "The five floating balls themselves" },
+    titles: { zh: "画布标题栏", en: "Canvas titles", descZh: "每张画布上方的标题条", descEn: "The title bar above each canvas" },
+  };
+
+  const reorderRow = (label: string, sub: string | undefined, hidden: boolean, i: number, n: number,
+    onUp: () => void, onDown: () => void, onToggle: () => void) => (
+    <div key={label + i} className={"cu-row" + (hidden ? " hidden" : "")}>
+      <span className="cu-label">{label}{sub ? <em className="cu-sub">{sub}</em> : null}</span>
+      <button className="cu-btn" disabled={i === 0} onClick={() => { onUp(); redraw(); }} title={t("cuUp")}><Icon id="i-up" size={14} /></button>
+      <button className="cu-btn" disabled={i === n - 1} onClick={() => { onDown(); redraw(); }} title={t("cuDown")}><Icon id="i-down" size={14} /></button>
+      <button className={"cu-btn" + (hidden ? " off" : "")} onClick={() => { onToggle(); redraw(); }}
+        title={hidden ? t("cuShow") : t("cuHide")}><Icon id={hidden ? "i-eyeoff" : "i-eye"} size={14} /></button>
+    </div>
+  );
+
+  const barSection = (all: typeof TOPBAR_ACTIONS, key: string) => {
+    const order = fullOrder(all, SESSION.prefs.barOrder);
+    const items = order.map((id) => all.find((a) => a.id === id)).filter((a): a is typeof all[number] => !!a);
+    return (
+      <div className="cu-block" key={key}>
+        <div className="cu-btitle">{key === "top" ? t("cuTopBar") : t("cuBottomBar")}</div>
+        {items.map((a, i) => reorderRow(t(a.label), SESSION.prefs.barHidden.indexOf(a.id) >= 0 ? t("cuHidden") : undefined,
+          SESSION.prefs.barHidden.indexOf(a.id) >= 0, i, items.length,
+          () => SESSION.moveBarAction(all, a.id, -1),
+          () => SESSION.moveBarAction(all, a.id, 1),
+          () => { if (!SESSION.toggleBarAction(all, a.id)) bridge.toast(t("cuKeepOne")); }))}
+        <div className="cu-actions"><Btn label={t("cuResetSection")} onClick={() => { SESSION.resetBar(all); redraw(); }} /></div>
+      </div>
+    );
+  };
+
+  const orbSection = () => {
+    const all = pieAllItems(ball);
+    const order = fullOrder(all, SESSION.orbPref(ball).order);
+    const items = order.map((id) => all.find((a) => a.id === id)).filter((a): a is typeof all[number] => !!a);
+    return (
+      <div className="cu-block">
+        <div className="cu-tabs">
+          {ORB_IDS.map((b) => (
+            <button key={b} className={"cu-tab" + (b === ball ? " on" : "")} onClick={() => setBall(b)}>{ballLabelOf(b, t)}</button>
+          ))}
+        </div>
+        {ball === "pal" && <div className="row-note">{t("cuPalNote")}</div>}
+        {items.map((a, i) => reorderRow(a.label, SESSION.isOrbItemHidden(ball, a.id) ? t("cuHidden") : undefined,
+          SESSION.isOrbItemHidden(ball, a.id), i, items.length,
+          () => SESSION.moveOrbItem(all, ball, a.id, -1),
+          () => SESSION.moveOrbItem(all, ball, a.id, 1),
+          () => { if (!SESSION.toggleOrbItem(all, ball, a.id)) bridge.toast(t("cuKeepOne")); }))}
+        <div className="cu-actions"><Btn label={t("cuResetSection")} onClick={() => { SESSION.resetOrb(ball); redraw(); }} /></div>
+      </div>
+    );
+  };
+
+  return (
+    <Dialog title={t("customise")} onClose={onClose} className={"cu-dlg" + (pc ? " cu-dlg-pc" : "")} bodyClass="cu-body"
+      extra={<div className="row-note">{t("cuHint")}</div>}
+      footer={<><Btn label={t("cuResetAll")} onClick={() => { SESSION.resetAllUi(); redraw(); }} /><Btn label={t("close")} onClick={onClose} className="primary" /></>}>
+      <div className={pc ? "cu-split" : ""}>
+        <div className={pc ? "cu-cats" : "cu-tabs"}>
+          {(["layout", "bar", "orbs"] as const).map((k) => (
+            <button key={k} className={(pc ? "cu-cat" : "cu-tab") + (k === tab ? " on" : "")} onClick={() => setTab(k)}>
+              {k === "layout" ? t("cuTabLayout") : k === "bar" ? t("cuTabBar") : t("cuTabOrbs")}
+            </button>
+          ))}
+        </div>
+        <div className={pc ? "cu-pane" : ""}>
+          {tab === "layout" && LAYOUT_KEYS.map((k) => (
+            <div key={k} className="cu-row">
+              <span className="cu-label">{en ? layoutLabels[k].en : layoutLabels[k].zh}
+                <em className="cu-sub">{en ? layoutLabels[k].descEn : layoutLabels[k].descZh}</em></span>
+              <button className={"cu-btn" + (SESSION.layoutOn(k) ? "" : " off")}
+                onClick={() => { SESSION.setLayout(k, !SESSION.layoutOn(k)); redraw(); }}
+                title={SESSION.layoutOn(k) ? t("cuHide") : t("cuShow")}>
+                <Icon id={SESSION.layoutOn(k) ? "i-eye" : "i-eyeoff"} size={14} />
+              </button>
+            </div>
+          ))}
+          {tab === "layout" && (
+            <div className="cu-actions"><Btn label={t("cuResetSection")} onClick={() => { SESSION.resetLayout(); redraw(); }} /></div>
+          )}
+          {tab === "bar" && <>{barSection(TOPBAR_ACTIONS, "top")}{barSection(CBAR_ACTIONS, "bar")}</>}
+          {tab === "orbs" && orbSection()}
+        </div>
+      </div>
+    </Dialog>
+  );
+}
+
+/** 某个球的全部条目（含被隐藏的）：由 App 注册进 Session，面板据此列清单 */
+function pieAllItems(ball: string): Array<{ id: string; label: string }> {
+  return SESSION.orbCatalogOf(ball);
+}
+/** 球的显示名 */
+function ballLabelOf(ball: string, t: ReturnType<typeof makeT>): string {
+  return ball === "main" ? t("menu") : ball === "sel" ? t("sel.active") : ball === "pal" ? t("palette") : ball === "fx" ? t("fxOrb") : t("canvasOrb");
 }
 
 export function HistoryModal({ t, snap, onClose, onReplay }: { t: ReturnType<typeof makeT>; snap: Snapshot; onClose: () => void; onReplay: () => void }) {

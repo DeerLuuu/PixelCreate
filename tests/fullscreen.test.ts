@@ -46,7 +46,9 @@ export function testFullscreen(): void {
   ok("full.ui.source", !!appFile, "app=" + appFile);
   if (appFile) {
     const app = fs.readFileSync(appFile, "utf8");
-    ok("full.ui.gated", app.indexOf("{fsShow && (") >= 0 && app.indexOf("fullscreenToggleVisible()") >= 0);
+    // 工具栏按钮现在由注册表驱动，全屏项必须在渲染前被过滤掉（而不是无条件渲染）
+    ok("full.ui.gated", app.indexOf("fullscreenToggleVisible()") >= 0 &&
+      (app.indexOf("{fsShow && (") >= 0 || app.indexOf('a.id !== "fullscreen" || fsShow') >= 0));
   }
 }
 

@@ -1114,3 +1114,30 @@ html[data-pc] .sc-dlg{width:min(92vw,760px)}
 .pie-hint{position:fixed;left:50%;bottom:26px;transform:translateX(-50%);font-size:var(--fs-4);color:var(--dim);
   background:var(--surface-toast);padding:6px 12px;border-radius:999px;pointer-events:none}
 .pie-empty{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);font-size:13px;color:var(--text-2);text-align:center;max-width:60vw}
+
+/* ---- 界面定制面板（布局 / 工具栏 / 浮动球）---- */
+.cu-dlg{width:min(94vw,520px);max-height:84vh}
+html[data-pc] .cu-dlg{width:min(92vw,800px)}
+.cu-body{display:flex;flex-direction:column;gap:10px;min-height:0;overflow:hidden}
+.cu-split{display:flex;gap:14px;min-height:0;flex:1 1 auto}
+.cu-cats{display:flex;flex-direction:column;gap:4px;flex:0 0 132px}
+.cu-cat{text-align:left;padding:8px 10px;border-radius:var(--r-3);background:var(--bg2);color:var(--text);border:1px solid transparent}
+.cu-cat:hover{background:var(--bg3)}
+.cu-cat.on{background:var(--accent-soft);border-color:var(--accent)}
+.cu-pane{flex:1 1 auto;display:flex;flex-direction:column;gap:10px;overflow-y:auto;min-height:0}
+.cu-tabs{display:flex;flex-wrap:wrap;gap:6px}
+.cu-tab{padding:6px 10px;border-radius:999px;background:var(--bg2);color:var(--text-3);border:1px solid transparent}
+.cu-tab:hover{background:var(--bg3)}
+.cu-tab.on{background:var(--accent-soft);border-color:var(--accent);color:var(--text)}
+.cu-block{display:flex;flex-direction:column;gap:6px}
+.cu-btitle{font-size:var(--fs-4);font-weight:700;color:var(--dim);margin-top:2px}
+.cu-row{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:var(--r-3);background:var(--bg2)}
+.cu-row.hidden{opacity:.55}
+.cu-label{flex:1 1 auto;font-size:13px;color:var(--text);min-width:0;overflow:hidden;text-overflow:ellipsis}
+.cu-sub{display:block;font-style:normal;font-size:11px;color:var(--dim-2);margin-top:2px}
+.cu-btn{width:28px;height:28px;border-radius:8px;flex:0 0 auto;background:var(--surface-item);color:var(--text-3);
+  border:1px solid transparent;display:flex;align-items:center;justify-content:center}
+.cu-btn:hover:not(:disabled){background:var(--surface-item-active);color:var(--text)}
+.cu-btn:disabled{opacity:.35}
+.cu-btn.off{background:var(--bg3);color:var(--dim-2)}
+.cu-actions{display:flex;justify-content:flex-end;gap:8px;padding-top:2px}

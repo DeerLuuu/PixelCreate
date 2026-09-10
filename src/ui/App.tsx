@@ -13,6 +13,7 @@ import * as compositor from "../render/compositor";
 import { HoldAdjust, ColorHoldChip } from "./hold";
 import { orbMetrics, palChipPos, chipBox, swatchHitsChip, ringLayout } from "./orb-layout";
 import { pieFocusIndex, pieRadiusFor, pieSlots } from "./pie-layout";
+import { CBAR_ACTIONS, TOPBAR_ACTIONS, orderedActions } from "../app/uibar";
 import { chordForAction, chordOf } from "../app/keymap";
 import { ReplayOverlay } from "./replay";
 import * as bridge from "../io/bridge";
@@ -25,7 +26,7 @@ import { TimelineBar } from "./timeline";
 import { PreviewBox } from "./preview";
 import { RefImageBox } from "./refimg";
 import type { RefImg } from "./refimg";
-import { PalettePanel, openFlow, MenuModal, SizeModal, SheetModal, NewDocModal, ExportModal, AdjustModal, SettingsModal, FrameModal, FramePreviewModal, CanvasRefModal, HistoryModal, ShortcutHelpModal, histName, importFlow, saveProject, openFileBytes } from "./modals";
+import { PalettePanel, openFlow, MenuModal, SizeModal, SheetModal, NewDocModal, ExportModal, AdjustModal, SettingsModal, FrameModal, FramePreviewModal, CanvasRefModal, HistoryModal, ShortcutHelpModal, CustomiseModal, histName, importFlow, saveProject, openFileBytes } from "./modals";
 import { FxParamDialog, fxDefaults, type FxRun, type FxVals } from "./fxparam";
 import { CanvasTitles } from "./canvas";
 import { ChangelogModal, changelogNeedsShow } from "./changelog";
@@ -606,8 +607,11 @@ export function App() {
     window.setTimeout(() => setTlDrag(null), 700);
   };
 
+  const L = (k: string): boolean => SESSION.layoutOn(k);
   return (
-    <div className={"app-root" + (SESSION.prefs.railSwap ? " rails-swap" : "") + (tlOn ? " has-tl" : "") + (uiHidden ? " chrome-off" : "")} onContextMenu={(e) => e.preventDefault()} onDragStart={(e) => e.preventDefault()}>
+    <div className={"app-root" + (SESSION.prefs.railSwap ? " rails-swap" : "") + (tlOn ? " has-tl" : "") + (uiHidden ? " chrome-off" : "")
+      + (L("bar") ? "" : " no-bar") + (L("dock") ? "" : " no-dock") + (L("orbs") ? "" : " no-orbs") + (L("titles") ? "" : " no-titles")}
+      onContextMenu={(e) => e.preventDefault()} onDragStart={(e) => e.preventDefault()}>
       <TopBar t={t} snap={snap} tlOn={tlOn} noCanvas={snap.canvasCount === 0} onToggleTl={() => {
         if (tlClosing) return;
         if (tlOn) {
@@ -662,6 +666,7 @@ export function App() {
       <Keep on={modal === "history"} el={modal === "history" ? <HistoryModal t={t} snap={snap} onClose={() => setModal(null)} onReplay={() => { setModal(null); setReplayOn(true); }} /> : null} />
       <Keep on={modal === "framePrev"} el={modal === "framePrev" ? <FramePreviewModal t={t} onClose={() => setModal(null)} /> : null} />
       <Keep on={modal === "canvasRef"} el={modal === "canvasRef" ? <CanvasRefModal t={t} onClose={() => setModal(null)} /> : null} />
+      <Keep on={modal === "customise"} el={modal === "customise" ? <CustomiseModal t={t} onClose={() => setModal(null)} /> : null} />
       <Keep on={modal === "shortcuts"} el={modal === "shortcuts" ? <ShortcutHelpModal t={t} onClose={() => setModal(null)} /> : null} />
       <Keep on={modal === "changelog"} el={modal === "changelog" ? <ChangelogModal onClose={() => { setModal(null); setClgBlock(false); }} /> : null} />
       {guide && <GuideOverlay steps={guide} actions={guideActions} onDone={finishGuide} />}
@@ -739,17 +744,35 @@ function TopBar({
   const hist = snap.canUndo || snap.canRedo;
   return (
     <header className="topbar">
-      <Btn icon="i-menu" onClick={onMenu} title={t("menu")} desc={bd(snap.lang, "menu")} guide="btn-menu" />
-      <div className="grow" />
-      <Btn icon="i-history" onClick={onHistory} title={t("historyTitle")} desc={bd(snap.lang, "hist")} className={noCanvas && !hist ? "off" : ""} guide="btn-history" />
-      <Btn icon="i-undo" onClick={() => SESSION.undo()} title={t("undo")} desc={bd(snap.lang, "undo")} className={snap.canUndo ? "" : "off"} guide="btn-undo" />
-      <Btn icon="i-redo" onClick={() => SESSION.redo()} title={t("redo")} desc={bd(snap.lang, "redo")} className={snap.canRedo ? "" : "off"} guide="btn-redo" />
-      <Btn icon="i-save" onClick={off(onSave)} title={t("save")} desc={bd(snap.lang, "save")} className={noCanvas ? "off" : ""} guide="btn-save" />
-      <Btn icon="i-timeline" onClick={off(onToggleTl)} active={tlOn && !noCanvas} title={t(tlOn ? "timelineHide" : "timelineShow")} className={noCanvas ? "off" : ""} guide="btn-timeline" />
-      {fsShow && (
-        <Btn icon={fullscreenIcon(fsOn)} onClick={() => { void toggleFullscreen(); }}
-          title={t(fsOn ? "exitFullscreen" : "fullscreen")} desc={bd(snap.lang, "full")} guide="btn-fullscreen" />
-      )}
+      {/* 按钮来自 uibar 注册表：顺序与显隐都可以在「界面定制」里改。
+          第一个按钮固定在左，其余靠右（与以前一致）。 */}
+      {SESSION.layoutOn("top") && orderedActions(TOPBAR_ACTIONS, SESSION.prefs.barOrder, SESSION.prefs.barHidden)
+        // 全屏按钮只在支持的平台上出现（网页/PWA），和以前一样有门槛
+        .filter((a) => a.id !== "fullscreen" || fsShow)
+        .map((a) => {
+        const act = (): void => {
+          if (a.id === "menu") onMenu();
+          else if (a.id === "history") onHistory();
+          else if (a.id === "undo") SESSION.undo();
+          else if (a.id === "redo") SESSION.redo();
+          else if (a.id === "save") off(onSave)();
+          else if (a.id === "timeline") off(onToggleTl)();
+          else if (a.id === "fullscreen") void toggleFullscreen();
+        };
+        const disabled = a.id === "undo" ? !snap.canUndo : a.id === "redo" ? !snap.canRedo
+          : a.id === "fullscreen" ? !fsShow : (a.id === "history" || a.id === "save" || a.id === "timeline") ? (noCanvas && !(a.id === "history" && hist)) : false;
+        const title = a.id === "timeline" ? t(tlOn ? "timelineHide" : "timelineShow")
+          : a.id === "fullscreen" ? t(fsOn ? "exitFullscreen" : "fullscreen")
+          : t(a.label);
+        const icon = a.id === "fullscreen" ? fullscreenIcon(fsOn) : a.icon;
+        if (a.id === "menu" || a.id === "history") {
+          return <Btn key={a.id} icon={icon} onClick={act} title={title}
+            desc={bd(snap.lang, a.desc as "menu")} className={disabled ? "off" : ""} guide={a.guide} />;
+        }
+        return <Btn key={a.id} icon={icon} onClick={act} title={title} desc={a.desc ? bd(snap.lang, a.desc as "undo") : undefined}
+          active={a.id === "timeline" ? (tlOn && !noCanvas) : undefined}
+          className={disabled ? "off" : ""} guide={a.guide} />;
+      })}
     </header>
   );
 }
@@ -1180,7 +1203,7 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
     }
   };
 
-  type Item = { icon: string; label: string; act: () => void; active?: boolean; desc?: string; guide?: string };
+  type Item = { id: string; icon: string; label: string; act: () => void; active?: boolean; desc?: string; guide?: string };
 
   // ---------- 装备槽 + 饼菜单（Blender 式，仅 PC）----------
   // 存储区边的槽里可以「装备」一个球；按住发动键（默认 F）时，这个球的所有
@@ -1236,31 +1259,31 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
   // ⑥ 手机端：选区球分两页（常用在前，其余在「更多」里），PC 模式一次全铺开
   const [selSub, setSelSub] = useState<null | "more">(null);
   const selPage1: Item[] = [
-    { icon: "i-sel-all", label: t("sel.all"), act: () => { selOps.selOps.selectAll(d); SESSION.repaint(); } },
-    { icon: "i-sel-invert", label: t("sel.invert"), act: () => SESSION.maskOp("sel.invert", () => selOps.selOps.invert(d)) },
-    { icon: "i-sel-none", label: t("sel.clear"), act: () => { selOps.selOps.clear(d); SESSION.repaint(); } },
-    { icon: "i-bucket", label: t("sel.fill"), act: () => { if (!(d.sel && d.sel.hasAny())) { bridge.toast(t("noSel")); return; } selOps.selOps.fill(d, SESSION.history, li, fi, SESSION.color); repaintChanged(); } },
+    { id: "sel.all", icon: "i-sel-all", label: t("sel.all"), act: () => { selOps.selOps.selectAll(d); SESSION.repaint(); } },
+    { id: "sel.invert", icon: "i-sel-invert", label: t("sel.invert"), act: () => SESSION.maskOp("sel.invert", () => selOps.selOps.invert(d)) },
+    { id: "sel.clear", icon: "i-sel-none", label: t("sel.clear"), act: () => { selOps.selOps.clear(d); SESSION.repaint(); } },
+    { id: "sel.fill", icon: "i-bucket", label: t("sel.fill"), act: () => { if (!(d.sel && d.sel.hasAny())) { bridge.toast(t("noSel")); return; } selOps.selOps.fill(d, SESSION.history, li, fi, SESSION.color); repaintChanged(); } },
     // ⑧ 电脑模式有 Ctrl+C / Ctrl+X / Ctrl+V，球里不再重复这三个按钮；
     //    手机端保留，并且把「粘贴为新图层 / 新画布」也放进来（⑮）
     ...(pcMode ? [] : [
-      { icon: "i-dupe", label: t("sel.copy"), act: () => { const c = selOps.selOps.copy(d, li, fi); SESSION.clip = c; if (c) void writeClipboardPng(compositor.celToCanvas(c)).then((ok) => bridge.toast(ok ? t("sysCopy") : t("copied"))); } },
-      { icon: "i-cut", label: t("sel.cut"), act: () => { const c = selOps.selOps.cut(d, SESSION.history, li, fi); SESSION.clip = c; if (c) { repaintChanged(); void writeClipboardPng(compositor.celToCanvas(c)).then((ok) => bridge.toast(ok ? t("sysCopy") : t("cut"))); } } },
-      { icon: "i-paste", label: t("sel.paste"), act: () => { if (SESSION.clip) { selOps.selOps.paste(d, SESSION.history, li, fi, SESSION.clip); repaintChanged(); bridge.toast(t("pasted")); } else bridge.toast(t("noSel")); } },
-      { icon: "i-paste-layer", label: t("pasteAsLayerBall"), desc: t("pasteAsLayerBallDesc"), act: () => { void pasteClipboard("layer"); } },
-      { icon: "i-paste-canvas", label: t("pasteAsCanvasBall"), desc: t("pasteAsCanvasBallDesc"), act: () => { void pasteClipboard("canvas"); } },
+      { id: "sel.copy", icon: "i-dupe", label: t("sel.copy"), act: () => { const c = selOps.selOps.copy(d, li, fi); SESSION.clip = c; if (c) void writeClipboardPng(compositor.celToCanvas(c)).then((ok) => bridge.toast(ok ? t("sysCopy") : t("copied"))); } },
+      { id: "sel.cut", icon: "i-cut", label: t("sel.cut"), act: () => { const c = selOps.selOps.cut(d, SESSION.history, li, fi); SESSION.clip = c; if (c) { repaintChanged(); void writeClipboardPng(compositor.celToCanvas(c)).then((ok) => bridge.toast(ok ? t("sysCopy") : t("cut"))); } } },
+      { id: "sel.paste", icon: "i-paste", label: t("sel.paste"), act: () => { if (SESSION.clip) { selOps.selOps.paste(d, SESSION.history, li, fi, SESSION.clip); repaintChanged(); bridge.toast(t("pasted")); } else bridge.toast(t("noSel")); } },
+      { id: "pasteAsLayerBall", icon: "i-paste-layer", label: t("pasteAsLayerBall"), desc: t("pasteAsLayerBallDesc"), act: () => { void pasteClipboard("layer"); } },
+      { id: "pasteAsCanvasBall", icon: "i-paste-canvas", label: t("pasteAsCanvasBall"), desc: t("pasteAsCanvasBallDesc"), act: () => { void pasteClipboard("canvas"); } },
     ]),
   ];
   const selPage2: Item[] = [
-    { icon: "", label: "\u2039", act: () => setSelSub(null), guide: "sel-back" },
-    { icon: "i-fliph", label: t("sel.fliph"), act: () => { selOps.selOps.flip(d, SESSION.history, li, fi, true); repaintChanged(); } },
-    { icon: "i-flipv", label: t("sel.flipv"), act: () => { selOps.selOps.flip(d, SESSION.history, li, fi, false); repaintChanged(); } },
-    { icon: "i-sel-grow", label: t("sel.grow"), act: () => SESSION.maskOp("sel.grow", () => selOps.growSelection(d, 1)) },
-    { icon: "i-sel-shrink", label: t("sel.shrink"), act: () => SESSION.maskOp("sel.shrink", () => selOps.shrinkSelection(d, 1)) },
-    { icon: "i-fx-o1", label: t("sel.outline"), act: () => { selOps.outlineSelected(d, SESSION.history, li, fi, SESSION.color); repaintChanged(); } },
-    { icon: "i-fx-crop", label: t("selCrop"), desc: t("selCropDesc"), act: () => { if (SESSION.cropToSelection()) repaintChanged(); } },
-    { icon: "i-sel-del", label: t("sel.delete"), act: () => { SESSION.deleteSelection(); } },
+    { id: "sel-back", icon: "", label: "\u2039", act: () => setSelSub(null), guide: "sel-back" },
+    { id: "sel.fliph", icon: "i-fliph", label: t("sel.fliph"), act: () => { selOps.selOps.flip(d, SESSION.history, li, fi, true); repaintChanged(); } },
+    { id: "sel.flipv", icon: "i-flipv", label: t("sel.flipv"), act: () => { selOps.selOps.flip(d, SESSION.history, li, fi, false); repaintChanged(); } },
+    { id: "sel.grow", icon: "i-sel-grow", label: t("sel.grow"), act: () => SESSION.maskOp("sel.grow", () => selOps.growSelection(d, 1)) },
+    { id: "sel.shrink", icon: "i-sel-shrink", label: t("sel.shrink"), act: () => SESSION.maskOp("sel.shrink", () => selOps.shrinkSelection(d, 1)) },
+    { id: "sel.outline", icon: "i-fx-o1", label: t("sel.outline"), act: () => { selOps.outlineSelected(d, SESSION.history, li, fi, SESSION.color); repaintChanged(); } },
+    { id: "selCrop", icon: "i-fx-crop", label: t("selCrop"), desc: t("selCropDesc"), act: () => { if (SESSION.cropToSelection()) repaintChanged(); } },
+    { id: "sel.delete", icon: "i-sel-del", label: t("sel.delete"), act: () => { SESSION.deleteSelection(); } },
     ...(pcMode ? [] : [{
-      icon: "i-more", label: t("canvasMore"),
+      id: "sel-more", icon: "i-more", label: t("canvasMore"),
       desc: snap.lang === "zh" ? "更多：翻转 / 扩展 / 收缩 / 描边 / 裁切到选区 / 删除" : "More: flip / grow / shrink / outline / crop / delete",
       act: () => setSelSub("more"), guide: "sel-more",
     }]),
@@ -1351,7 +1374,7 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
     repaintChanged();
   };
   const fxI = (key: string, icon: string, labelZh: string, labelEn: string, descZh: string, descEn: string, act: () => void, active = false): Item => ({
-    icon, label: fxZh ? labelZh : labelEn, desc: fxZh ? descZh : descEn, act, ...(active ? { active: true } : {}),
+    id: "fx." + key, icon, label: fxZh ? labelZh : labelEn, desc: fxZh ? descZh : descEn, act, ...(active ? { active: true } : {}),
   });
   const fxItems: Item[] = [
     fxI("o1", "i-fx-o1", "描边", "Edge", "描边样式：宽度 / 位置（内·外·居中）/ 颜色，弹窗实时预览", "Outline style: width / position (outside, inside, center) / colour, live preview", () => openFx({
@@ -1440,20 +1463,20 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
   // fit / tiling, so the ring never gets crowded.
   // page 1 = everyday actions, page 2 = the rest; PC mode lays BOTH out at once
   const canvPage2: Item[] = [
-    { icon: "", label: "\u2039", act: () => setCanvSub(null), guide: "canv-back" },
-    { icon: "i-adjust", label: t("adjust"), desc: t("canvasAdjustDesc"), act: () => { closeCanv(); onCanvasAdjust(); } },
-    { icon: "i-export", label: t("export"), desc: t("canvasExportDesc"), act: () => { closeCanv(); onCanvasExport(); }, guide: "canv-export" },
-    { icon: "i-grid", label: t("canvasTile"), desc: t("canvasTileDesc"), act: () => { setCanv({ ...canv, open: false }); setCanvSub(null); setTileDlg(true); }, guide: "canv-tile" },
-    { icon: "i-rotate", label: t("canvasRotate"), desc: t("canvasRotateDesc"), act: () => { closeCanv(); SESSION.rotateCanvasContent(1); }, guide: "canv-rotate" },
-    { icon: "i-ref", label: t("canvasRef"), desc: t("canvasRefDesc"), act: () => { closeCanv(); onCanvasRef(); }, guide: "canv-ref" },
+    { id: "canv-back", icon: "", label: "\u2039", act: () => setCanvSub(null), guide: "canv-back" },
+    { id: "adjust", icon: "i-adjust", label: t("adjust"), desc: t("canvasAdjustDesc"), act: () => { closeCanv(); onCanvasAdjust(); } },
+    { id: "export", icon: "i-export", label: t("export"), desc: t("canvasExportDesc"), act: () => { closeCanv(); onCanvasExport(); }, guide: "canv-export" },
+    { id: "canvasTile", icon: "i-grid", label: t("canvasTile"), desc: t("canvasTileDesc"), act: () => { setCanv({ ...canv, open: false }); setCanvSub(null); setTileDlg(true); }, guide: "canv-tile" },
+    { id: "canvasRotate", icon: "i-rotate", label: t("canvasRotate"), desc: t("canvasRotateDesc"), act: () => { closeCanv(); SESSION.rotateCanvasContent(1); }, guide: "canv-rotate" },
+    { id: "canvasRef", icon: "i-ref", label: t("canvasRef"), desc: t("canvasRefDesc"), act: () => { closeCanv(); onCanvasRef(); }, guide: "canv-ref" },
     ...(SESSION.doc.layers.some((l) => !!l.ref)
-      ? [{ icon: "i-unlink", label: t("refAllRelease"), desc: t("refAllReleaseDesc"), act: () => { closeCanv(); SESSION.unrefAll(); } }]
+      ? [{ id: "refAllRelease", icon: "i-unlink", label: t("refAllRelease"), desc: t("refAllReleaseDesc"), act: () => { closeCanv(); SESSION.unrefAll(); } }]
       : []),
-    { icon: "i-extract", label: t("layerExtract"), desc: t("layerExtractDesc"), act: () => { closeCanv(); void SESSION.extractLayerToCanvas(); }, guide: "canv-extract" },
+    { id: "layerExtract", icon: "i-extract", label: t("layerExtract"), desc: t("layerExtractDesc"), act: () => { closeCanv(); void SESSION.extractLayerToCanvas(); }, guide: "canv-extract" },
   ];
   const canvPage1: Item[] = [
-    { icon: "i-plus", label: t("canvasNew"), desc: t("canvasNewDesc"), act: () => { closeCanv(); onCanvasNew(); } },
-    { icon: "i-rename", label: t("canvasRename"), desc: t("canvasRenameDesc"), act: () => {
+    { id: "canvasNew", icon: "i-plus", label: t("canvasNew"), desc: t("canvasNewDesc"), act: () => { closeCanv(); onCanvasNew(); } },
+    { id: "canvasRename", icon: "i-rename", label: t("canvasRename"), desc: t("canvasRenameDesc"), act: () => {
       closeCanv();
       void (async () => {
         const i = SESSION.docIdx;
@@ -1461,10 +1484,10 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
         if (v !== null) SESSION.renameCanvas(i, v);
       })();
     } },
-    { icon: "i-size", label: t("resizeTitle"), desc: t("canvasResizeDesc"), act: () => { closeCanv(); onCanvasSize(); } },
-    { icon: "i-resize-mode", label: t("canvasResizeMode"), desc: t("canvasResizeModeDesc"), active: SESSION.resizeModeOn, act: () => { closeCanv(); SESSION.toggleResizeMode(); } },
-    { icon: SESSION.isCanvasLocked() ? "i-pin" : "i-pin-off", label: t(SESSION.isCanvasLocked() ? "canvasUnlock" : "canvasLock"), desc: t("canvasLockDesc"), act: () => { closeCanv(); SESSION.toggleCanvasLock(); }, guide: "canv-lock" },
-    { icon: "i-x", label: t("canvasClose"), desc: t("canvasCloseDesc"), act: () => {
+    { id: "resizeTitle", icon: "i-size", label: t("resizeTitle"), desc: t("canvasResizeDesc"), act: () => { closeCanv(); onCanvasSize(); } },
+    { id: "canvasResizeMode", icon: "i-resize-mode", label: t("canvasResizeMode"), desc: t("canvasResizeModeDesc"), active: SESSION.resizeModeOn, act: () => { closeCanv(); SESSION.toggleResizeMode(); } },
+    { id: "canvasLock", icon: SESSION.isCanvasLocked() ? "i-pin" : "i-pin-off", label: t(SESSION.isCanvasLocked() ? "canvasUnlock" : "canvasLock"), desc: t("canvasLockDesc"), act: () => { closeCanv(); SESSION.toggleCanvasLock(); }, guide: "canv-lock" },
+    { id: "canvasClose", icon: "i-x", label: t("canvasClose"), desc: t("canvasCloseDesc"), act: () => {
       closeCanv();
       void (async () => {
         const i = SESSION.docIdx;
@@ -1473,7 +1496,7 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
         if (ok) SESSION.closeCanvas(i);
       })();
     } },
-    { icon: "i-more", label: t("canvasMore"), desc: t("canvasMoreDesc"), act: () => setCanvSub("more"), guide: "canv-more" },
+    { id: "canv-more", icon: "i-more", label: t("canvasMore"), desc: t("canvasMoreDesc"), act: () => setCanvSub("more"), guide: "canv-more" },
   ];
   // PC：鼠标点两下比翻页快，直接把两页铺成一个大环（去掉「返回」项）
   const canvItems: Item[] = pcMode
@@ -1482,19 +1505,19 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
 
   const mainItems: Item[] = sub
     ? [
-        { icon: "", label: "\u2039", act: () => setSub(null), guide: "tool-back" },
-        ...(sub === "shape" ? SHAPE_TOOLS : SELECT_TOOLS).map((dd) => ({ icon: dd.icon, label: t("tools." + dd.id), desc: td(dd.id), act: () => pickTool(sub, dd.id), active: snap.tool === dd.id, guide: "tool-" + dd.id })),
+        { id: "tool-back", icon: "", label: "\u2039", act: () => setSub(null), guide: "tool-back" },
+        ...(sub === "shape" ? SHAPE_TOOLS : SELECT_TOOLS).map((dd) => ({ id: "tool." + dd.id, icon: dd.icon, label: t("tools." + dd.id), desc: td(dd.id), act: () => pickTool(sub, dd.id), active: snap.tool === dd.id, guide: "tool-" + dd.id })),
       ]
     : [
-        ...CORE_TOOLS.map((dd) => ({ icon: dd.icon, label: t("tools." + dd.id), desc: td(dd.id), act: () => pickTool("core", dd.id), active: snap.tool === dd.id, guide: "tool-" + dd.id })),
+        ...CORE_TOOLS.map((dd) => ({ id: "tool." + dd.id, icon: dd.icon, label: t("tools." + dd.id), desc: td(dd.id), act: () => pickTool("core", dd.id), active: snap.tool === dd.id, guide: "tool-" + dd.id })),
         // ③ PC：鼠标没有“翻页”的耐心——把「图形 / 选区」两页的工具直接铺进同一个环
         ...(pcMode ? [
-          ...SHAPE_TOOLS.map((dd) => ({ icon: dd.icon, label: t("tools." + dd.id), desc: td(dd.id), act: () => pickTool("shape", dd.id), active: snap.tool === dd.id, guide: "tool-" + dd.id })),
-          ...SELECT_TOOLS.map((dd) => ({ icon: dd.icon, label: t("tools." + dd.id), desc: td(dd.id), act: () => pickTool("select", dd.id), active: snap.tool === dd.id, guide: "tool-" + dd.id })),
+          ...SHAPE_TOOLS.map((dd) => ({ id: "tool." + dd.id, icon: dd.icon, label: t("tools." + dd.id), desc: td(dd.id), act: () => pickTool("shape", dd.id), active: snap.tool === dd.id, guide: "tool-" + dd.id })),
+          ...SELECT_TOOLS.map((dd) => ({ id: "tool." + dd.id, icon: dd.icon, label: t("tools." + dd.id), desc: td(dd.id), act: () => pickTool("select", dd.id), active: snap.tool === dd.id, guide: "tool-" + dd.id })),
         ] : []),
         ...(pcMode ? [] : [
-        { icon: defOf(snap.shape)?.icon || "i-rect", label: t("shapeGroup"), desc: snap.lang === "zh" ? "图形工具：直线 / 矩形 / 椭圆" : "Shape tools: line / rect / ellipse", act: () => { setSub("shape"); if (sel && !pcMode) setSel({ ...sel, open: false }); }, active: isShapeTool(snap.tool), guide: "tool-shape-group" },
-        { icon: (snap.tool !== "line" && isSelectTool(snap.tool) ? defOf(snap.tool)?.icon : defOf(SESSION.currentSelect)?.icon) || "i-select", label: t("sel.active"), desc: snap.lang === "zh" ? "选区工具：框选 / 魔棒 / 套索" : "Select tools: rect / wand / lasso", act: () => { setSub("select"); if (sel && !pcMode) setSel({ ...sel, open: false }); }, active: isSelectTool(snap.tool), guide: "tool-select-group" },
+        { id: "tool-group-shape", icon: defOf(snap.shape)?.icon || "i-rect", label: t("shapeGroup"), desc: snap.lang === "zh" ? "图形工具：直线 / 矩形 / 椭圆" : "Shape tools: line / rect / ellipse", act: () => { setSub("shape"); if (sel && !pcMode) setSel({ ...sel, open: false }); }, active: isShapeTool(snap.tool), guide: "tool-shape-group" },
+        { id: "tool-group-select", icon: (snap.tool !== "line" && isSelectTool(snap.tool) ? defOf(snap.tool)?.icon : defOf(SESSION.currentSelect)?.icon) || "i-select", label: t("sel.active"), desc: snap.lang === "zh" ? "选区工具：框选 / 魔棒 / 套索" : "Select tools: rect / wand / lasso", act: () => { setSub("select"); if (sel && !pcMode) setSel({ ...sel, open: false }); }, active: isSelectTool(snap.tool), guide: "tool-select-group" },
         ]),
       ];
 
@@ -1503,12 +1526,22 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
       : isSelectTool(snap.tool) ? defOf(snap.tool)?.icon
       : defOf(snap.tool)?.icon) || "i-pencil";
 
+  // 把每个球的条目目录登记到 Session，界面定制面板据此列清单
+  useEffect(() => {
+    SESSION.registerOrbCatalog("main", mainItems.map((it) => ({ id: it.id, label: it.label })));
+    SESSION.registerOrbCatalog("sel", selItems.map((it) => ({ id: it.id, label: it.label })));
+    SESSION.registerOrbCatalog("fx", fxItems.map((it) => ({ id: it.id, label: it.label })));
+    SESSION.registerOrbCatalog("canv", canvItems.map((it) => ({ id: it.id, label: it.label })));
+    SESSION.registerOrbCatalog("pal", []);
+  });
+
   /** 饼菜单里显示哪些项：就是被装备那个球的子项（PC 模式已经全部铺开的版本） */
   const pieItemsFor = (ball: OrbId): Item[] => {
-    if (ball === "main") return mainItems.filter((it) => !it.guide || (it.guide !== "tool-back" && it.guide !== "tool-shape-group" && it.guide !== "tool-select-group"));
-    if (ball === "sel") return selItems;
-    if (ball === "fx") return fxItems;
-    if (ball === "canv") return canvItems.filter((it) => it.guide !== "canv-back");
+    const apply = (items: Item[]): Item[] => SESSION.orbItems(items, ball);
+    if (ball === "main") return apply(mainItems.filter((it) => !it.guide || (it.guide !== "tool-back" && it.guide !== "tool-shape-group" && it.guide !== "tool-select-group")));
+    if (ball === "sel") return apply(selItems);
+    if (ball === "fx") return apply(fxItems);
+    if (ball === "canv") return apply(canvItems.filter((it) => it.guide !== "canv-back"));
     return [];
   };
 
@@ -1974,14 +2007,14 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
         <div className="radial-back" onPointerDown={closeRadials} />
       )}
       {open && lockBtn("main", pos.x, pos.y)}
-      <Keep on={open} el={open ? ring(pos, mainItems) : null} />
-      <Keep on={!!sel && sel.open} el={sel && sel.open ? ring({ x: sel.x, y: sel.y }, selItems) : null} />
+      <Keep on={open} el={open ? ring(pos, SESSION.orbItems(mainItems, "main")) : null} />
+      <Keep on={!!sel && sel.open} el={sel && sel.open ? ring({ x: sel.x, y: sel.y }, SESSION.orbItems(selItems, "sel")) : null} />
       {sel && sel.open && lockBtn("sel", sel.x, sel.y)}
       <Keep on={pal.open} el={pal.open ? <PalBalls x={pal.x} y={pal.y} onDone={() => setPal({ ...pal, open: false })} /> : null} />
       {pal.open && lockBtn("pal", pal.x, pal.y)}
-      <Keep on={fx.open} el={fx.open ? ring({ x: fx.x, y: fx.y }, fxItems) : null} />
+      <Keep on={fx.open} el={fx.open ? ring({ x: fx.x, y: fx.y }, SESSION.orbItems(fxItems, "fx")) : null} />
       {fx.open && lockBtn("fx", fx.x, fx.y)}
-      <Keep on={canv.open} el={canv.open ? ring({ x: canv.x, y: canv.y }, canvItems) : null} />
+      <Keep on={canv.open} el={canv.open ? ring({ x: canv.x, y: canv.y }, SESSION.orbItems(canvItems, "canv")) : null} />
       {canv.open && lockBtn("canv", canv.x, canv.y)}
       <Keep on={tileDlg} el={tileDlg ? (
         <>
@@ -2122,24 +2155,41 @@ function ControlBar({ t, snap, onPanel, onAdjust, onFramePrev }: { t: ReturnType
   return (
     <section className={"ctrlbar" + (land ? " land" : "")}>
       <div className="cb-row">
-        <div className="colorpair" title={SESSION.colorTarget === "bg" ? t("bgActive") : t("fgActive")}>
-          <div className={"cp-front" + (SESSION.colorTarget === "fg" ? " on" : "")}>
-            <ColorHoldChip onClickTap={() => onPanel("palette")} />
-          </div>
-          <button className={"cp-switch" + (SESSION.colorTarget === "bg" ? " on" : "")}
-            title={SESSION.colorTarget === "bg" ? t("useFg") : t("useBg")}
-            aria-label={SESSION.colorTarget === "bg" ? t("useFg") : t("useBg")}
-            onClick={() => SESSION.setColorTarget(SESSION.colorTarget === "bg" ? "fg" : "bg")}
-            style={{ background: chipCss(SESSION.colorTarget === "bg" ? SESSION.fg : SESSION.bg) }} />
-        </div>
-        <Btn label="⇄" className="swap-color" title={t("swapColors")} onClick={() => SESSION.swapColors()} guide="btn-swap" />
-        <Btn icon="i-adjust" onClick={onAdjust} title={t("adjust")} guide="btn-adjust" />
-        <Btn label={SYM_GLYPH[sym]} active={sym !== "off"} title={t(symKey[sym])} desc={bd(snap.lang, "sym")} onClick={() => { const m = SESSION.cycleSym(); bridge.toast(t(symKey[m])); }} />
+        {/* 全局按钮来自 uibar 注册表（顺序/显隐同样可定制）；滑杆区是随工具变化的，保持自动 */}
+        {orderedActions(CBAR_ACTIONS, SESSION.prefs.barOrder, SESSION.prefs.barHidden).map((a) => {
+          if (a.id === "colors") {
+            return (
+              <div key={a.id} className="colorpair" data-guide="btn-colors" title={SESSION.colorTarget === "bg" ? t("bgActive") : t("fgActive")}>
+                <div className={"cp-front" + (SESSION.colorTarget === "fg" ? " on" : "")}>
+                  <ColorHoldChip onClickTap={() => onPanel("palette")} />
+                </div>
+                <button className={"cp-switch" + (SESSION.colorTarget === "bg" ? " on" : "")}
+                  title={SESSION.colorTarget === "bg" ? t("useFg") : t("useBg")}
+                  aria-label={SESSION.colorTarget === "bg" ? t("useFg") : t("useBg")}
+                  onClick={() => SESSION.setColorTarget(SESSION.colorTarget === "bg" ? "fg" : "bg")}
+                  style={{ background: chipCss(SESSION.colorTarget === "bg" ? SESSION.fg : SESSION.bg) }} />
+              </div>
+            );
+          }
+          if (a.id === "swap") {
+            return <Btn key={a.id} label="⇄" className="swap-color" title={t("swapColors")} onClick={() => SESSION.swapColors()} guide={a.guide} />;
+          }
+          if (a.id === "adjust") {
+            return <Btn key={a.id} icon={a.icon} onClick={onAdjust} title={t("adjust")} guide={a.guide} />;
+          }
+          if (a.id === "symmetry") {
+            return <Btn key={a.id} label={SYM_GLYPH[sym]} active={sym !== "off"} title={t(symKey[sym])} desc={bd(snap.lang, "sym")}
+              guide={a.guide} onClick={() => { const m = SESSION.cycleSym(); bridge.toast(t(symKey[m])); }} />;
+          }
+          if (a.id === "frameprev") {
+            return <Btn key={a.id} icon={a.icon} onClick={onFramePrev} title={t("framePreview")} guide={a.guide} />;
+          }
+          return null;
+        })}
       </div>
       <div className="cb-sliders">
         <HoldAdjust dir={dir} value={snap.brushSize} min={1} max={64} title={t("brushSize")} hint={bd(snap.lang, "brush")} format={(v) => "◉" + v} reset={1} onChange={(v) => SESSION.setBrushSize(v)} />
         <HoldAdjust dir={dir} value={snap.brushAlpha} min={0} max={255} title={t("opacity")} hint={bd(snap.lang, "alpha")} format={(v) => "◐" + v} reset={255} onChange={(v) => SESSION.setBrushAlpha(v)} />
-        <Btn icon="i-frameprev" onClick={onFramePrev} title={t("framePreview")} guide="btn-frameprev" />
         {(snap.tool === "pencil" || snap.tool === "eraser") && (
           <Btn label={SESSION.brushShape === "square" ? "■" : "●"} active={SESSION.brushShape === "square"}
             onClick={() => SESSION.setBrushShape(SESSION.brushShape === "square" ? "circle" : "square")}

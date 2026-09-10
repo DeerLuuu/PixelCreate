@@ -1106,6 +1106,25 @@ CSS 侧对应 `html[data-pc] .orb{62px}` 与 `html[data-pc] .orb-item{48px}`。
 - 调色盘已经打开时（`holdActive` 为真）填充拖拽不会启动，移动仍然调节色盘；
 - 因此不存在「拖到一半突然弹出调色盘」或「松手后什么都没发生」的中间态。
 
+### 18.7b1 可编辑界面 `app/uibar.ts`
+
+```ts
+interface UIAction { id: string; icon: string; label: string; desc?: string; guide?: string }
+TOPBAR_ACTIONS / CBAR_ACTIONS        // 顶栏与底栏（全局按钮）的注册表
+ORB_IDS                              // main / sel / pal / fx / canv
+LAYOUT_KEYS / DEFAULT_LAYOUT         // top / bar / timeline / dock / orbs / titles
+normalizeLayout(v) / isDefaultLayout(l)
+orderedActions(all, order?, hidden?) // 应用用户顺序与隐藏
+fullOrder(all, order?)               // 补全成完整 id 列表（新动作自动排到末尾）
+moveId(all, order, id, delta)        // 在完整列表里上下移动（隐藏项也占位）
+toggleHidden(hidden, id) / visibleCount(all, hidden)
+```
+
+存储模型：`prefs.barOrder` 保存**完整** id 顺序（含隐藏项），`prefs.barHidden` 保存被
+隐藏的 id，`prefs.orbPrefs[ball]` 是每个浮动球的 `{ order, hidden }`。因此隐藏再恢复
+位置不变，新版本新增的动作会自动出现在末尾而不会丢失。界面定制的入口是主菜单 →
+「界面定制」（`CustomiseModal`，布局/工具栏/浮动球三个分页）。
+
 ### 18.7c 快捷圆盘（Pie）`ui/pie-layout.ts`
 
 PC 专属的 Blender 式饼菜单：浮动球存储区边的**装备槽**里装备一个球，按住发动键
