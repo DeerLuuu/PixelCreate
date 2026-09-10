@@ -9,10 +9,10 @@ import { useKitPcMode } from "./kit";
 import { Dialog } from "./kit";
 
 /** keep in sync with android/AndroidManifest.xml versionName on every release */
-export const APP_VERSION = "1.0.9.8";
+export const APP_VERSION = "1.0.9.9";
 /** build stamp shown next to the version (support/debug: identifies the exact
  *  package a user is running when the version number itself does not change) */
-export const BUILD_TAG = "b4c175e";
+export const BUILD_TAG = "d653da3";
 
 export type ClgKind = "add" | "imp" | "fix";
 export interface ClgItem { kind: ClgKind; zh: string; en: string }
@@ -21,6 +21,13 @@ export interface ClgVersion { v: string; date: string; items: ClgItem[] }
 const it = (kind: ClgKind, zh: string, en: string): ClgItem => ({ kind, zh, en });
 
 export const CHANGELOG: ClgVersion[] = [
+  {
+    v: "1.0.9.9",
+    date: "2026-09-10",
+    items: [
+      it("imp", "上下吸附的两张画布挨得更近了：吸附后中间只留 18px（原来 28px）。以前这条空隙是专门给标题栏腾的位置，现在改成**标题栏自己让位**——上方紧贴着另一张画布时，它会收成紧凑的一条（16px 高，按钮与图标同步缩小），所以空隙变小也不会挡住任何一张画面；上方空着时仍是原来的大标题栏。上下吸附的触发距离也一起收了（48px → 38px，左右仍是 28px），不会离得老远就被吸住。已经吸在一起的老工程，打开时会自动收拢到新空隙。", "Stacked canvases sit closer together now: after a vertical snap the gap is 18px instead of 28px. That space used to be reserved for the title bar — now the bar gives way instead: with another canvas right above it, it shrinks to a compact strip (16px tall, smaller buttons and icons), so the tighter gap never covers either canvas, while a bar with nothing above it keeps its full size. The vertical snap range was tightened as well (48px → 38px; side-by-side stays 28px) so canvases no longer get caught from far away. Projects whose canvases were already snapped together tighten up automatically when opened."),
+    ],
+  },
   {
     v: "1.0.9.8",
     date: "2026-09-10",
