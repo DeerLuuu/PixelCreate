@@ -1,6 +1,6 @@
 // Radial quick menu ("pie") geometry: even spacing, angular focus and the dead
 // zone that lets you release the key without activating anything.
-import { PIE_DEAD, pieFocusIndex, pieRadius, pieSlot, pieSlotGap, pieSlots } from "../src/ui/pie-layout";
+import { PIE_DEAD, PIE_ITEM, pieFocusIndex, pieRadius, pieRadiusFor, pieSlot, pieSlotGap, pieSlots } from "../src/ui/pie-layout";
 import { TOOL_KEYS, shortcutFor } from "../src/app/shortcuts";
 import { eq, ok } from "./common";
 
@@ -24,8 +24,17 @@ export function testPie(): void {
     const off = slots.filter((s) => Math.abs(Math.hypot(s.x - 300, s.y - 300) - R) > 1e-6);
     eq("pie.slots.on-ring", off, []);
   }
-  // 24 items still have room (item is 48px on PC)
-  ok("pie.gap.24", pieSlotGap(24, pieRadius(1280, 800)) > 48, "gap=" + pieSlotGap(24, pieRadius(1280, 800)));
+  // 24 items still have room, and the fit-aware radius keeps them apart on a
+  // small window too (item grew to 58px)
+  eq("pie.item.size", PIE_ITEM, 58);
+  ok("pie.gap.24", pieSlotGap(24, pieRadiusFor(1280, 800, 24)) > PIE_ITEM + 4, "gap=" + pieSlotGap(24, pieRadiusFor(1280, 800, 24)));
+  ok("pie.gap.24-small", pieSlotGap(24, pieRadiusFor(900, 640, 24)) > PIE_ITEM, "gap=" + pieSlotGap(24, pieRadiusFor(900, 640, 24)));
+  ok("pie.gap.8-small", pieSlotGap(8, pieRadiusFor(600, 480, 8)) > PIE_ITEM, "gap=" + pieSlotGap(8, pieRadiusFor(600, 480, 8)));
+  // …while still fitting on screen (radius + half an item inside the viewport)
+  for (const [vw, vh] of [[600, 480], [900, 640], [1280, 800], [4000, 3000]]) {
+    const r = pieRadiusFor(vw, vh, 24);
+    ok("pie.fits." + vw + "x" + vh, r + PIE_ITEM / 2 <= Math.min(vw, vh) / 2, "r=" + r);
+  }
   ok("pie.radius.clamped", pieRadius(400, 300) >= 150 && pieRadius(4000, 3000) <= 380);
 
   // focus: pointing at an item selects it, wherever the pointer is beyond the zone

@@ -154,6 +154,7 @@ export const SHORTCUT_SHEET: SheetGroup[] = [
     zh: "视图", en: "View",
     items: [
       { keys: "滚轮", zh: "以光标为中心缩放", en: "Zoom around the cursor", mouse: true },
+      { keys: "Ctrl+滚轮", zh: "快速改笔刷大小", en: "Change the brush size", mouse: true },
       { keys: "Shift+滚轮 / Alt+滚轮", zh: "左右 / 上下平移", en: "Pan sideways / vertically", mouse: true },
       { keys: "左键在画布外拖动", zh: "平移视图", en: "Pan the view", mouse: true },
       { keys: "方向键", zh: "平移视图（有选区时改为微移选区）", en: "Pan the view (nudges the selection when there is one)", probe: { key: "ArrowLeft" }, action: "nudge" },

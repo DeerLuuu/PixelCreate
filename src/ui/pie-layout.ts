@@ -14,6 +14,9 @@ export interface PiePoint {
 /** how much of the radius is a dead zone (no item focused while inside) */
 export const PIE_DEAD = 0.34;
 
+/** diameter of one pie entry (`.pie-item` in style.css) */
+export const PIE_ITEM = 58;
+
 /** ring radius for a viewport: big enough for 24 items, never off-screen */
 export function pieRadius(vw: number, vh: number): number {
   return Math.max(150, Math.min(380, Math.round(Math.min(vw, vh) * 0.36)));
@@ -50,6 +53,18 @@ export function pieFocusIndex(px: number, py: number, cx: number, cy: number, co
   let t = (Math.atan2(dy, dx) + Math.PI / 2) / (Math.PI * 2);
   t = ((t % 1) + 1) % 1;
   return Math.round(t * count) % count;
+}
+
+/**
+ * Ring radius that both fits the screen and keeps `count` items of `item` px
+ * apart, so a 24-entry tool pie never overlaps on a small window.
+ */
+export function pieRadiusFor(vw: number, vh: number, count: number, item = PIE_ITEM): number {
+  const base = pieRadius(vw, vh);
+  if (count <= 2) return base;
+  const need = (item + 6) / (2 * Math.sin(Math.PI / count));
+  const max = Math.min(vw, vh) / 2 - item / 2 - 12;   // must stay on screen
+  return Math.round(Math.max(base, Math.min(need, Math.max(base, max))));
 }
 
 /** smallest gap between two neighbouring slots (used to keep items apart) */

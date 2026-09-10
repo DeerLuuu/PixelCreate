@@ -678,7 +678,7 @@ PC（鼠标）输入层在 `View` 内新增：
 
 | 输入 | 行为 |
 |---|---|
-| 滚轮 | 缩放（以光标为锚点）；`Shift+滚轮` 横向平移、`Alt+滚轮` 纵向平移。意图判定是纯函数 `render/wheel.ts` 的 `wheelIntent(e)` / `wheelZoomFactor(deltaY, deltaMode)`（指数曲线、归一化 `deltaMode`） |
+| 滚轮 | 缩放（以光标为锚点）；`Ctrl+滚轮` 改笔刷大小（按格累计，一格一步）；`Shift+滚轮` 横向平移、`Alt+滚轮` 纵向平移。意图判定是纯函数 `render/wheel.ts` 的 `wheelIntent(e)` / `wheelZoomFactor(deltaY, deltaMode)`（指数曲线、归一化 `deltaMode`） |
 | 中键拖动 / 空格+左键拖动 | 平移视图（`panBy`），不动像素；光标变 `grab`/`grabbing` |
 | 右键 | 用**另一个颜色槽**绘制（默认即背景色，`Session.secondaryColor()`），工具与左键完全一致 |
 | 空格键 | 由 `View.onSpaceKey` 监听（输入框内不生效、按钮上仍保留空格的激活行为） |
@@ -1097,6 +1097,8 @@ PC 专属的 Blender 式饼菜单：浮动球存储区边的**装备槽**里装�
 | 导出 | 签名 | 说明 |
 |---|---|---|
 | `pieRadius` | `(vw, vh) => number` | 环半径（屏幕短边 36%，夹在 150..380） |
+| `pieRadiusFor` | `(vw, vh, count, item?) => number` | 在上面的基础上保证 `count` 个子球互不重叠且不出屏 |
+| `PIE_ITEM` | `58` | 一个圆盘子球的直径（与 `.pie-item` 一致） |
 | `pieSlot` / `pieSlots` | `(index, count, cx, cy, radius)` | 均分槽位，第 0 项在正上方、顺时针 |
 | `pieFocusIndex` | `(px, py, cx, cy, count, radius) => number` | 聚焦项下标；`-1` = 死区（0.34R 内） |
 | `pieSlotGap` | `(count, radius) => number` | 相邻槽位间距（用于保证 24 项也不挤） |

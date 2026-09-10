@@ -12,7 +12,7 @@ import * as fxE from "../engine/effects";
 import * as compositor from "../render/compositor";
 import { HoldAdjust, ColorHoldChip } from "./hold";
 import { orbMetrics, palChipPos, chipBox, swatchHitsChip, ringLayout } from "./orb-layout";
-import { pieFocusIndex, pieRadius, pieSlots } from "./pie-layout";
+import { pieFocusIndex, pieRadiusFor, pieSlots } from "./pie-layout";
 import { ReplayOverlay } from "./replay";
 import * as bridge from "../io/bridge";
 import { writeClipboardPng } from "../io/clipboard";
@@ -1546,7 +1546,7 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
     };
     const focusAt = (x: number, y: number, ball: OrbId): number => {
       const cx = window.innerWidth / 2, cy = window.innerHeight / 2;
-      return pieFocusIndex(x, y, cx, cy, Math.max(1, pieCount(ball)), pieRadius(window.innerWidth, window.innerHeight));
+      return pieFocusIndex(x, y, cx, cy, Math.max(1, pieCount(ball)), pieRadiusFor(window.innerWidth, window.innerHeight, Math.max(1, pieCount(ball))));
     };
     const onDown = (e: KeyboardEvent) => {
       const open = pieRef.current;
@@ -1848,7 +1848,7 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
         const items = pieEntries(ball);
         const n = Math.max(1, ball === "pal" ? cols.length : items.length);
         const cx = window.innerWidth / 2, cy = window.innerHeight / 2;
-        const R = pieRadius(window.innerWidth, window.innerHeight);
+        const R = pieRadiusFor(window.innerWidth, window.innerHeight, n);
         const slots = pieSlots(n, cx, cy, R);
         const foc = pie.focus;
         const label = foc >= 0
@@ -1879,7 +1879,7 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
                   <span key={"pie" + i + it.label}
                     className={"pie-item" + (i === foc ? " on" : "")}
                     style={{ left: p0.x, top: p0.y } as React.CSSProperties}>
-                    <Icon id={it.icon || "i-more"} size={18} />
+                    <Icon id={it.icon || "i-more"} size={24} />
                   </span>
                 );
               })}

@@ -15,6 +15,7 @@ import { clamp } from "../engine/types";
 import { snapGapRect, type GapRect } from "../app/canvas-snap";
 import { canvasAtScreen as spaceCanvasAt, screenToCanvas } from "../app/canvas-space";
 import { wheelIntent } from "./wheel";
+import { takeNotches, wheelNotches } from "../engine/scrub";
 import { cursorAttr, cursorFor } from "./cursor";
 import { isPc } from "../io/pcmode";
 import { hexToRgba } from "../engine/color";
@@ -189,6 +190,8 @@ export class View {
   private altPaint = false;
   /** last logical pointer position (the cross-canvas drop preview needs it) */
   private lastPt: PxPoint | null = null;
+  /** Ctrl+滚轮改笔刷大小的滚轮累计（一格 = 一步） */
+  private wheelBrushAcc = 0;
   /** ⑦ 画布调整模式的拖动状态（ax/ay = 固定的那一侧） */
   private resizeDrag: {
     ax: -1 | 0 | 1; ay: -1 | 0 | 1;
@@ -299,6 +302,21 @@ export class View {
     e.preventDefault();
     const r = this.host.getBoundingClientRect();
     const pt = this.toLogical(e.clientX - r.left, e.clientY - r.top);
+    // Ctrl+滚轮＝快速改笔刷大小（按「格」累计，一格一步，跟调值那套一致）
+    if (e.ctrlKey || e.metaKey) {
+      const { steps, rest } = takeNotches(this.wheelBrushAcc + wheelNotches(e.deltaY, e.deltaMode));
+      this.wheelBrushAcc = rest;
+      if (steps) {
+        // setBrushSize 自己夹在 1..64
+        const next = this.session.brushSize - steps;
+        if (next !== this.session.brushSize) {
+          this.session.setBrushSize(next);
+          this.session.hapticTick("笔刷", 0.4);
+          this.drawOverlay();
+        }
+      }
+      return;
+    }
     const it = wheelIntent(e);
     if (it.kind === "pan") this.panBy(it.dx, it.dy);
     else this.zoomAt(this.zoom * it.factor, pt.x, pt.y);

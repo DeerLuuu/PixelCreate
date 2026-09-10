@@ -435,6 +435,23 @@ export function testView(): void {
       (v3 as unknown as { spaceDown: boolean }).spaceDown = false;
       ok("view.pc.space-is-not-pan", v3.ox === spaceOx && v3.oy === spaceOy, "d=" + (v3.ox - spaceOx) + "," + (v3.oy - spaceOy));
 
+      // Ctrl+滚轮＝快速改笔刷大小（一格一步，不缩放画布）
+      {
+        const z0 = v3.zoom, b0 = s3.brushSize;
+        fire("wheel", ev({ deltaY: -100, deltaMode: 0, ctrlKey: true, clientX: 160, clientY: 120 }));
+        eq("view.pc.ctrl-wheel.brush-up", s3.brushSize, b0 + 1);
+        eq("view.pc.ctrl-wheel.no-zoom", v3.zoom, z0);
+        fire("wheel", ev({ deltaY: 100, deltaMode: 0, ctrlKey: true, clientX: 160, clientY: 120 }));
+        eq("view.pc.ctrl-wheel.brush-down", s3.brushSize, b0);
+        // 一格滚轮被拆成很多事件时也只走一步
+        for (let i = 0; i < 20; i++) fire("wheel", ev({ deltaY: -5, deltaMode: 0, ctrlKey: true, clientX: 160, clientY: 120 }));
+        eq("view.pc.ctrl-wheel.smooth-one-step", s3.brushSize, b0 + 1);
+        // 夹在 1..64
+        for (let i = 0; i < 80; i++) fire("wheel", ev({ deltaY: -100, deltaMode: 0, ctrlKey: true, clientX: 160, clientY: 120 }));
+        eq("view.pc.ctrl-wheel.max", s3.brushSize, 64);
+        s3.setBrushSize(b0);
+      }
+
       // 右键＝另一个颜色槽（当前前景色绘制时就是背景色）
       s3.setFgColor([10, 20, 30, 255]);
       s3.bg = [200, 100, 50, 255];
