@@ -11,6 +11,7 @@ import { GESTURES, GESTURE_ACTIONS, gesturePath } from "./gestures";
 import * as bridge from "../io/bridge";
 import { applySafeArea } from "../io/safearea";
 import { applyTheme } from "../io/theme";
+import { applyPcMode, pcModeOf } from "../io/pcmode";
 
 export type SettingValue = boolean | number | string;
 export type SettingKind = "bool" | "int" | "enum" | "color";
@@ -519,6 +520,14 @@ const defs: SettingDef[] = [
     label: "uiTheme", desc: "uiThemeDesc", default: "dark", refresh: "none",
     options: [{ value: "dark", label: "themeDark" }, { value: "light", label: "themeLight" }],
     after: (_s, v) => { applyTheme(v); },
+  },
+  {
+    path: "display.pcMode", kind: "enum", group: "display",
+    label: "pcMode", desc: "pcModeDesc", default: "auto", refresh: "none",
+    options: [{ value: "auto", label: "pcModeAuto" }, { value: "on", label: "pcModeOn" }, { value: "off", label: "pcModeOff" }],
+    get: (s) => pcModeOf(s.prefs),
+    set: (s, v) => { s.prefs.pcMode = (v === "on" || v === "off") ? v : "auto"; },
+    after: (s) => { applyPcMode(pcModeOf(s.prefs)); },
   },
   {
     path: "display.previewBg", field: "previewBg", kind: "enum", group: "display",

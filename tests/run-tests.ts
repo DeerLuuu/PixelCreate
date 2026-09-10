@@ -20,6 +20,7 @@ import { testUiTokens } from "./ui-tokens.test";
 import { testFullscreen } from "./fullscreen.test";
 import { testCanvasSpace } from "./canvas-space.test";
 import { testColorDrag } from "./color-drag.test";
+import { testPcMode } from "./pc.test";
 import { testExpr } from "./expr.test";
 import { testEffects } from "./effects.test";
 import { testView } from "./view.test";
@@ -76,6 +77,8 @@ async function main(): Promise<void> {
   testCanvasSpace();
   console.log("--- colour drag ---");
   testColorDrag();
+  console.log("--- pc mode ---");
+  testPcMode();
   finish();
 }
 

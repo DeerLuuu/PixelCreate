@@ -29,6 +29,8 @@ import { snapToTargets, snapCandidates, snapGapRect, stackGap, type GapRect, typ
 
 export interface Prefs {
   lang: "zh" | "en";
+  /** desktop extras: auto (pointer media queries) | on | off */
+  pcMode: "auto" | "on" | "off";
   /** UI colour theme: dark (default) or the opt-in light palette */
   theme: "dark" | "light";
   /** helper grid: off | pixel grid (cell gridSize) | isometric grid (spacing gridSize) */
@@ -1221,7 +1223,7 @@ export class Session {
 
   private loadPrefs(): Prefs {
     const p: Prefs = {
-      lang: "zh", theme: "dark", gridMode: "off", gridSize: 1, magZoom: 12, loupe: true,
+      lang: "zh", theme: "dark", pcMode: "auto", gridMode: "off", gridSize: 1, magZoom: 12, loupe: true,
       onionOn: false, onionBefore: 1, onionAfter: 0, onionAlpha: 55, onionTint: true, onionWrap: true,
       autosave: true, autosaveMin: 5, recordHistory: true, newFrameCopy: false, railSwap: true, previewBg: "white", previewGray: false, tileMode: "off", tlH: 200, tlHv: 2,
       immersive: true, safeArea: true, safeExtra: 0,
@@ -1247,6 +1249,7 @@ export class Session {
       const saved = JSON.parse(localStorage.getItem("pc.prefs") ?? "{}");
       if (saved.lang === "en") p.lang = "en";
       if (saved.theme === "light" || saved.theme === "dark") p.theme = saved.theme;
+      if (saved.pcMode === "on" || saved.pcMode === "off" || saved.pcMode === "auto") p.pcMode = saved.pcMode;
       if (saved.gridMode === "pixel" || saved.gridMode === "iso") p.gridMode = saved.gridMode;
       else if (saved.grid === true) p.gridMode = "pixel"; // migrate the old checkbox
       if (typeof saved.gridSize === "number") p.gridSize = Math.max(1, Math.min(64, Math.round(saved.gridSize)));

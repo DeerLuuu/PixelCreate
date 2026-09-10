@@ -697,6 +697,22 @@ b64FromBytes(bytes): string; bytesFromB64(b64): Uint8Array
 震动统一走 `Session.hapticTick(tag, scale = 1)`：受设置 `gesture.haptic` 开关控制，脉冲长度取 `prefs.hapticLen`（30 / 60 / 100ms，默认 60；部分机型 30ms 以下无感）。
 `Session.runGestureAction()` 会为除 `pickColor`（取色时逐像素自行震动）之外的每个手势先发一次脉冲。
 
+### 16.1b2 PC 模式 `src/io/pcmode.ts`
+
+桌面增强（滚轮缩放、悬停提示、中键/空格平移、右键背景色绘制、键盘快捷键、放大的浮动球、桌面化尺寸）
+统一由这一个开关驱动，状态写在 `<html data-pc="1">`，React（`usePcMode()`）与非 React 层（`View`、CSS）读同一个答案。
+
+| 导出 | 说明 |
+|---|---|
+| `resolvePcMode(mode, finePointer, hover)` | 纯函数（有测试）：`auto` 需要「精细指针 **且** 支持悬停」，`on` / `off` 无视检测 |
+| `normalizePcMode(v)` | 把存储/导入的值规范成 `auto` |
+| `pointerCapabilities()` | 读 `(pointer: fine)` 与 `(hover: hover)` 两个媒体查询 |
+| `applyPcMode(mode)` / `isPc()` | 写 / 读 `<html data-pc>`；`applyPcMode` 返回解析后的状态 |
+| `watchPcCapabilities(getMode, cb?)` | 指针能力变化（插鼠标、切换平板模式）时重算 |
+| `pcModeOf(prefs)` | 从 `Prefs.pcMode` 取值（`session.ts` 新增字段，默认 `auto`） |
+
+设置项：`display.pcMode`（自动 / 强制开 / 强制关），启动时由 `main.tsx` 应用。
+
 ### 16.1c 全屏 `src/io/fullscreen.ts`
 
 浏览器会话（网页 / 已安装 PWA）下的全屏开关；APK 里由原生壳 `setImmersive` 负责隐藏系统栏，

@@ -96,6 +96,18 @@
   --sym-text:#1c7a5a; --sym-text-2:#2a8c69; --sym-bg-ro:#eef3f2; --sym-bg-on:#dff2ea;
 }
 /* ============================================================
+   1b/5  PC 模式（<html data-pc="1">）
+   由 src/io/pcmode.ts 写入；桌面化的尺寸/悬停态都挂在这里
+   ============================================================ */
+html[data-pc]{
+  --pc:1;
+  /* 桌面化：可点区域更大、字号 +1、行距更松（见 docs/UI.md §9） */
+  --fs-3:13px; --fs-4:14px; --fs-5:15px;
+  --ctl-h:40px;
+}
+html[data-pc] body{font-size:15px;line-height:1.5}
+
+/* ============================================================
    2/5  base — 重置与通用元素
    ============================================================ */
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;-webkit-touch-callout:none}

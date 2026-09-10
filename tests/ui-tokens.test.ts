@@ -101,7 +101,10 @@ export function testUiTokens(): void {
   const lightStart = css.indexOf('\n[data-theme="light"]{');
   ok("uitoken.sections", rootStart >= 0 && lightStart > rootStart, "root=" + rootStart + " light=" + lightStart);
   const root = css.slice(rootStart, lightStart);
-  const light = css.slice(lightStart, css.indexOf(BANNER));
+  // the light block must be sliced up to its OWN closing brace: anything after it
+  // (e.g. the html[data-pc] desktop overrides) is not part of the theme
+  const lightEnd = css.indexOf("\n}", lightStart);
+  const light = css.slice(lightStart, lightEnd < 0 ? css.indexOf(BANNER) : lightEnd);
   const keys = (s: string): Set<string> =>
     new Set([...s.matchAll(/(--[a-z0-9-]+)\s*:/g)].map((m) => m[1]));
   const rk = keys(root);
