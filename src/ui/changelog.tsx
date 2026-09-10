@@ -9,10 +9,10 @@ import { useKitPcMode } from "./kit";
 import { Dialog } from "./kit";
 
 /** keep in sync with android/AndroidManifest.xml versionName on every release */
-export const APP_VERSION = "1.0.8.7";
+export const APP_VERSION = "1.0.8.8";
 /** build stamp shown next to the version (support/debug: identifies the exact
  *  package a user is running when the version number itself does not change) */
-export const BUILD_TAG = "fc0adde";
+export const BUILD_TAG = "e916e3b";
 
 export type ClgKind = "add" | "imp" | "fix";
 export interface ClgItem { kind: ClgKind; zh: string; en: string }
@@ -21,6 +21,17 @@ export interface ClgVersion { v: string; date: string; items: ClgItem[] }
 const it = (kind: ClgKind, zh: string, en: string): ClgItem => ({ kind, zh, en });
 
 export const CHANGELOG: ClgVersion[] = [
+  {
+    v: "1.0.8.8",
+    date: "2026-09-10",
+    items: [
+      it("fix", "修掉导出系统的恶性 bug（就是那个让整个系统几乎瘫痪的）：GIF 导出时**每个像素都要把整条调色板扫一遍**，256×256 的八帧动画就要一亿次比较（实测光这一步 480 ms），一旦开了 8 倍放大就是上亿像素——标签页/手机直接被拖死。现在调色板查找表改成「洪水填充」全量覆盖，每个像素只做一次索引，同样的动画 42 ms 完成。另外加了导出预算闸门：单张超过 4096×4096 或动画总像素超限时直接给出中英提示而不是去申请一个上亿像素的画布；导出弹窗会实时显示「输出尺寸」，超限标红；导出中按钮变成「正在导出…」并禁用；任何导出失败都会说明原因（以前是 Promise 没 catch，点了没反应）；分图层导出超过 12 个文件前先确认，避免一次弹出几十个保存框把系统刷爆。", "The export system's malignant bug is fixed — the one that nearly paralysed everything: GIF export scanned the WHOLE palette for EVERY pixel (a 256x256 eight-frame animation meant 100 million comparisons, 480 ms in that step alone), and at 8x zoom that becomes hundreds of millions of pixels, which is enough to drag a tab or a phone to its knees. The palette lookup is now a flood-filled table covering the entire colour cube, so each pixel costs one array lookup — the same animation encodes in 42 ms. There is also an export budget now: a single image over 4096x4096 or an animation over the total pixel cap gets a clear message instead of allocating a gigantic canvas, the export dialog shows the live output size and turns red when it is over budget, the button becomes “Exporting...” and disables while it works, every failure explains itself (the promises had no catch before, so nothing seemed to happen) and exporting per layer asks first when it would write more than 12 files instead of firing dozens of save dialogs."),
+      it("imp", "导出更好找了：主菜单里新增「导出当前画布…」；导出弹窗里能看到这次会输出多大的图。另外选区浮动球新增「裁切画布到选区」，一键把画布缩到选区外接矩形（一条历史可撤销）。", "Export is easier to reach: the main menu now has “Export this canvas...”, the dialog shows exactly how big the output will be, and the selection orb gained “Crop canvas to selection” to shrink the canvas to the selection bounds in one undoable step."),
+      it("add", "新增「画布调整模式」（画布球里可以开关，快捷键 Ctrl+R）：打开后画布四条边和四个角会出现把手，直接拖就能改画布大小，拖动时实时显示新尺寸，松手才记一条历史；拖哪条边，对面那条边固定不动（内容不会被拉伸）。", "New resize mode (toggle it from the canvas orb or with Ctrl+R): handles appear on the four edges and corners of the canvas, and dragging them resizes it with a live size readout, committing one history step on release. The opposite edge stays put, so nothing is ever stretched."),
+      it("imp", "跨画布拖动选区不再卡：浮动内容改成缓存成一张离屏图，拖动时只做一次贴图（以前每个不透明像素都要单独画一次，全画布选区一秒就是几十万次绘制）；有跨画布落点时还会把「原位」那份裁在源画布内，内容不再糊在两张画布之间的空白上。", "Dragging a selection across canvases no longer stutters: the floating content is cached as an offscreen image and blitted in one call (it used to draw every opaque pixel individually, hundreds of thousands of calls per second for a full-canvas selection), and while a cross-canvas drop is targeted the original copy is clipped inside its own canvas so it no longer smears over the gap between canvases."),
+      it("fix", "细节修复：选区 / 套索 / 魔棒 / 轮廓填充工具在画布外的空白处按住鼠标拖动也能平移视图（和画笔工具一致）；锁定的浮动球不再被其他球挤走（PC 下拖动某个球也不会收起别人）；手机端选区球改成两页（常用 + 更多），PC 模式仍然一次全部铺开。", "Smaller fixes: with the marquee, lasso, wand or outline tool, dragging on the empty area outside the artwork pans the view like the brush tools do; a locked floating orb is no longer shoved around by the others (and dragging one orb on a computer keeps the rest open); and on a phone the selection orb is split into two pages (common actions plus a “more” page) while PC mode still lays everything out at once."),
+    ],
+  },
   {
     v: "1.0.8.7",
     date: "2026-09-10",

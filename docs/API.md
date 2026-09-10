@@ -471,6 +471,8 @@ toggleOnion() / setOnionOn(on) / setOnionBefore(n) / setOnionAfter(n)
 setOnionAlpha(n) / setOnionTint(on) / setOnionWrap(on)
 setGridMode("off"|"pixel"|"iso") / setGridSize(n)
 canvasSize(w, h, ax, ay) / spriteSize(w, h) / cropSmart()
+cropToSelection(): boolean              // 画布裁切到选区外接矩形（一条结构历史）
+resizeModeOn / setResizeMode(on) / toggleResizeMode()   // 拖画布四边改尺寸的模式
 sampleComposite(x, y): RGBA | null        // 取合成后的颜色
 ```
 
@@ -764,6 +766,18 @@ Session/View 调用：
 | 字母键 | 工具切换（`TOOL_KEYS`：B 铅笔、E 橡皮、G 油漆桶、I 取色、A 喷枪、L 直线、R 矩形、O 椭圆、C 圆形、P 多边形、Y 折线、U 曲线、M 选区、W 魔棒、Q 套索、H 轮廓填充） |
 
 在输入框里只放行 Ctrl/Cmd 组合（不会打断打字）；Alt 组合一律不处理（留给浏览器）。
+
+### 16.1b1c 导出预算 `src/io/exporters.ts`
+
+```ts
+MAX_IMAGE_PIXELS = 16 * 1024 * 1024   // 单图上限（≈4096×4096）
+MAX_TOTAL_PIXELS = 48 * 1024 * 1024   // 动画/精灵表总上限
+MAX_LAYER_FILES  = 12                 // 分图层导出超过这个数先确认
+exportBudgetError(w, h, scale, frames, kind): string | null   // 纯函数，超限返回原因 key
+yieldToUI(): Promise<void>            // 逐帧循环里让出事件循环
+```
+`encodeGIF` 的调色板映射用 5bit 色立方的**洪水填充查找表**（32768 格全部有值），
+每像素 O(1)；旧实现表命中后仍然完整扫描调色板，百万像素就是上亿次比较。
 
 ### 16.1b1b 快捷键一览 `SHORTCUT_SHEET`
 
