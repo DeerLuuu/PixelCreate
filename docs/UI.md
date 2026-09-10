@@ -228,11 +228,14 @@ import { Dialog } from "../kit";
 | `--fs-4` | 13px | `--z-dlg` | 50 |
 | `--fs-5` | 14px | `--z-panel` | 60 |
 | `--fs-6` | 16px | `--z-pop` | 70 |
-| `--sh-1` | 0 3px 10px rgba(0,0,0,.4) | `--z-toast` | 99 |
-| `--sh-2` | 0 6px 20px rgba(0,0,0,.5) | `--z-guide` | 70 |
-| `--sh-3` | 0 12px 40px rgba(0,0,0,.5) | `--z-top` | 300 |
-| `--sh-4` | 0 12px 60px rgba(0,0,0,.6) | `--sh-panel` | -8px 0 30px rgba(0,0,0,.4) |
-| `--sh-ring` | 0 0 0 1px rgba(0,0,0,.35) | `--sh-2b` | 0 10px 30px rgba(0,0,0,.55) |
+| `--sh-1` | 0 3px 10px rgba(0,0,0,.4) | `--z-mask` | 40 |
+| `--sh-2` | 0 6px 20px rgba(0,0,0,.5) | `--z-dlg` | 50 |
+| `--sh-3` | 0 12px 40px rgba(0,0,0,.45) | `--z-panel-mask` | 60 |
+| `--sh-4` | 0 12px 60px rgba(0,0,0,.6) | `--z-panel` | 61 |
+| `--sh-panel` | -8px 0 30px rgba(0,0,0,.4) | `--z-pop` | 70 |
+| `--sh-2b` | 0 10px 30px rgba(0,0,0,.55) | `--z-toast` | 99 |
+| `--sh-ring` | 0 0 0 1px rgba(0,0,0,.35) | `--z-tip` | 120 |
+| | | `--z-top` | 300 |
 
 ### 3.4 主题色令牌（**浅色主题必须逐个覆盖**）
 
@@ -261,6 +264,9 @@ import { Dialog } from "../kit";
 | `--surface-card` | `#1d2129` | `#ffffff` | 卡片（参考模式/帧格） |
 | `--surface-pop` | `#20242f` | `#ffffff` | 浮层（holdpop / 回放 HUD） |
 | `--surface-toast` | `#2a2d3a` | `#2f3442` | 轻提示底（浅色下保持深色） |
+| `--surface-anchor` | `#232736` | `#eef1f7` | 九宫格锚点底 |
+| `--surface-anchor-on` | `#2c3a66` | `#dbe6fb` | 锚点选中底 |
+| `--anchor-dot` | `#59607a` | `#b6bcc8` | 锚点圆点 |
 | `--accent` | `#5aa2f0` | `#2f6fd0` | 主色 |
 | `--accent-2` | `#5f83e8` | `#4a7fe0` | 主色变体（二级球） |
 | `--accent-3` | `#4f7cf7` | `#2f6fd0` | 主色变体（锚点选中） |
@@ -297,7 +303,7 @@ import { Dialog } from "../kit";
 | `--grad-title-1` / `-2` | `rgba(38,42,56,.96)` / `rgba(24,27,37,.96)` | 画布标题栏渐变 |
 | `--grad-title-on-1` / `-2` | `rgba(58,86,150,.96)` / `rgba(32,42,68,.96)` | 选中画布标题栏 |
 | `--sym` / `--sym-text` / `--sym-text-2` / `--sym-dot` / `--sym-bg-on` | `#7cf5c5` / `#b2ffe2` / `#9fe8cf` / `#5a9` / `#1d2a30` | 对称辅助色 |
-| `--sym-weak` / `--sym-mid` / `--sym-strong` | `rgba(126,255,214,.4)` / `.45` / `.9` | 对称辅助透明度 |
+| `--sym-weak` / `--sym-mid` / `--sym-faint` / `--sym-strong` | `rgba(126,255,214,.4)` / `.45` / `.14` / `.9` | 对称辅助透明度 |
 | `--ok` / `--info` / `--warn` | `#4ade80` / `#60a5fa` / `#fbbf24` | 更新日志 add/imp/fix 圆点、未链接图标 |
 | `--danger-1`…`--danger-4` | `#ff929b` / `#ff8d96` / `#ff7a7a` / `#ffb4b4` | 危险文字变体 |
 | `--danger-line` | `#8a5a5a` | 锁定画布边框 |
@@ -311,13 +317,13 @@ import { Dialog } from "../kit";
 
 | 合并后令牌 | 被合并的旧值 |
 |---|---|
-| `--line-2` | `#3a3f55`、`#3a4055` |
 | `--text-2` | `#dfe3f0`、`#dfe3ee`、`#dfe4f0`、`#dbe1ee` |
 | `--text-3` | `#cfd5e6`、`#cdd3e2`、`#c8cfdd` |
 | `--dim-2` | `#9aa3bd`、`#9aa0b0`、`#aab1c6` |
 | `--dim-3` | `#8a90a6`、`#8d94ab`、`#7f869a` |
 | `--hud-deep` | `#101116`、`#0d0f16` |
 | `--surface-pop` | `#20242f`、`#1c202b` |
+| `--text-4` | 主题底色上的 `#fff`（`.menuitem.on`、`.hist-row.cur`、`.ase-lcell.on .lname`、`.swatch.cur` 描边）——否则浅色主题下白字/白描边会消失 |
 | `--sh-1/2/3/4` | 原有 14 种阴影（模糊/透明度就近归一） |
 
 ### 3.7 主题切换

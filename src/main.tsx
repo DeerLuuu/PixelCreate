@@ -3,7 +3,10 @@ import { App } from "./ui/App";
 import { SESSION } from "./ui/singleton";
 import { makeT } from "./ui/i18n";
 import { backAction, type BackState } from "./ui/back";
+import { applyTheme } from "./io/theme";
 
+// colour theme before the first paint (prefs are read synchronously in Session)
+applyTheme(SESSION.prefs.theme);
 const host = document.getElementById("root");
 if (!host) throw new Error("no #root");
 createRoot(host).render(<App />);

@@ -42,10 +42,19 @@ export function stubEnv(): void {
     width: 0, height: 0, style: {}, getContext: () => ctx,
     getBoundingClientRect: () => ({ left: 0, top: 0, width: 320, height: 240 }),
   });
+  const rootAttrs: Record<string, string> = {};
   g.document = {
     createElement: (tag: string) => (tag === "canvas" ? makeCanvas() : { style: {}, appendChild: () => undefined }),
     addEventListener: () => undefined,
     removeEventListener: () => undefined,
+    // <html> stub: applyTheme (src/io/theme.ts) writes data-theme here
+    documentElement: {
+      style: {},
+      setAttribute: (k: string, v: string) => { rootAttrs[k] = String(v); },
+      removeAttribute: (k: string) => { delete rootAttrs[k]; },
+      getAttribute: (k: string) => (k in rootAttrs ? rootAttrs[k] : null),
+    },
+    querySelector: () => null,
   };
   g.ImageData = class { constructor(public data: Uint8ClampedArray, public width: number, public height: number) {} };
   // stateful in-memory localStorage so persistence round trips can be tested

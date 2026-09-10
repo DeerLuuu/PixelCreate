@@ -10,6 +10,7 @@ import type { Prefs, Session } from "./session";
 import { GESTURES, GESTURE_ACTIONS, gesturePath } from "./gestures";
 import * as bridge from "../io/bridge";
 import { applySafeArea } from "../io/safearea";
+import { applyTheme } from "../io/theme";
 
 export type SettingValue = boolean | number | string;
 export type SettingKind = "bool" | "int" | "enum" | "color";
@@ -513,6 +514,12 @@ const defs: SettingDef[] = [
   },
 
   // ------------------------------------------------------------ display
+  {
+    path: "display.theme", field: "theme", kind: "enum", group: "display",
+    label: "uiTheme", desc: "uiThemeDesc", default: "dark", refresh: "none",
+    options: [{ value: "dark", label: "themeDark" }, { value: "light", label: "themeLight" }],
+    after: (_s, v) => { applyTheme(v); },
+  },
   {
     path: "display.previewBg", field: "previewBg", kind: "enum", group: "display",
     label: "previewBg", default: "white", refresh: "changed",
