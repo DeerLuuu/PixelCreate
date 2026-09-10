@@ -1,5 +1,18 @@
-/* PixelCraft telemetry: POST js errors/logs to local dev server if reachable */
-(function () {
+/* PixelCraft telemetry: POST js errors/logs to a LOCAL dev server only.
+ *
+ * 部署在 GitHub Pages（https://…github.io/…）或跑在 APK 里（file:///android_asset/…）时
+ * 完全静默：不注册监听、不发任何请求，避免在正式站点上留下 /log 的 404 噪声。
+ * 只有本地 devserver（localhost / 127.0.0.1 / ::1 / 局域网 IP / *.local）才会上报。 */
+var PC_TEL_LOCAL = (function () {
+  try {
+    if (location.protocol === "file:") return false;     // APK 内部页面：无需上报
+    var h = location.hostname;
+    if (!h || h === "localhost" || h === "127.0.0.1" || h === "::1" || h === "[::1]") return true;
+    if (/^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(h)) return true;   // 局域网 devserver
+    return /\.local$/.test(h);
+  } catch (e) { return false; }
+})();
+if (PC_TEL_LOCAL) (function () {
   function send(kind, msg, extra) {
     try {
       const payload = { kind: kind, msg: String(msg || "").slice(0, 600), extra: extra || {} };
@@ -28,8 +41,8 @@
   window.__tel("boot", "page loaded " + location.href);
 })();
 
-/* layout diagnostics dumped shortly after load */
-(function () {
+/* layout diagnostics dumped shortly after load（同样只在本地 devserver 生效） */
+if (PC_TEL_LOCAL) (function () {
   function rect(sel) {
     var e = document.querySelector(sel);
     if (!e) return null;
