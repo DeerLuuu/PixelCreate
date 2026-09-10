@@ -11,7 +11,7 @@
   --sh-1:0 3px 10px rgba(0,0,0,.4); --sh-2:0 6px 20px rgba(0,0,0,.5); --sh-2b:0 10px 30px rgba(0,0,0,.55);
   --sh-3:0 12px 40px rgba(0,0,0,.45); --sh-4:0 12px 60px rgba(0,0,0,.6); --sh-panel:-8px 0 30px rgba(0,0,0,.4);
   --sh-ring:0 0 0 1px rgba(0,0,0,.35);
-  --z-mask:40; --z-dlg:50; --z-panel-mask:60; --z-panel:61; --z-pop:70; --z-toast:99; --z-tip:120; --z-top:300;
+  --z-mask:40; --z-dlg:50; --z-panel-mask:60; --z-panel:61; --z-pop:70; --z-toast:99; --z-tip:120; --z-top:300; --z-guide:400;
   --railw:46px; --barh:44px;
   /* safe-area insets: env() is the browser/ROM fallback, src/io/safearea.ts
      overwrites these with the exact values reported by the native shell */
@@ -836,12 +836,11 @@ input:-webkit-autofill{-webkit-box-shadow:0 0 0 1000px var(--input-bg) inset;-we
 /* zoom HUD: current zoom % + fit/reset button (bottom-right of the viewport) */
 .zoom-hud{position:absolute;right:10px;bottom:10px;z-index:8;display:flex;gap:6px;align-items:center;pointer-events:none}
 .zoom-hud .zoom-pct{font-size:12px;color:var(--dim-2);background:var(--hud-bg-2-dim);border:1px solid var(--line);border-radius:8px;padding:5px 8px;font-variant-numeric:tabular-nums}
-.zoom-hud 
-.zoom-hud 
 
 /* ---- onboarding guide (spotlight) ---- */
-.guide-layer{position:fixed;inset:0;z-index:70;touch-action:none}
-.guide-shade{position:absolute;inset:0;background:rgba(8,9,12,.68);animation:pcFadeIn .18s ease-out both}
+.guide-layer{position:fixed;inset:0;z-index:var(--z-guide);pointer-events:none}
+/* 只有遮罩与卡片接管触摸：高亮洞口内的目标控件仍然可以真正被点到 */
+.guide-shade{position:absolute;inset:0;background:var(--guide-shade);pointer-events:auto;touch-action:none;animation:pcFadeIn .18s ease-out both}
 .guide-hole{position:absolute;border-radius:12px;transition:left .18s ease,top .18s ease,width .18s ease,height .18s ease;
   box-shadow:0 0 0 2px var(--accent),0 0 0 9999px rgba(8,9,12,.68);animation:guidePulse 1.5s ease-in-out infinite}
 @keyframes guidePulse{
@@ -850,7 +849,7 @@ input:-webkit-autofill{-webkit-box-shadow:0 0 0 1000px var(--input-bg) inset;-we
 }
 /* a step that really opens a dialog keeps the backdrop light, so the dialog
    behind the spotlight stays readable */
-.guide-layer.peek .guide-shade{background:rgba(8,9,12,.3)}
+.guide-layer.peek .guide-shade{background:var(--guide-shade-soft)}
 .guide-layer.peek .guide-hole{box-shadow:0 0 0 2px var(--accent),0 0 0 9999px rgba(8,9,12,.3);animation-name:guidePulseSoft}
 @keyframes guidePulseSoft{
   0%,100%{box-shadow:0 0 0 2px var(--accent),0 0 0 9999px rgba(8,9,12,.3)}
@@ -858,7 +857,7 @@ input:-webkit-autofill{-webkit-box-shadow:0 0 0 1000px var(--input-bg) inset;-we
 }
 /* guide demos light up a real control without changing anything */
 .orb-item.guide-flash{background:var(--accent);color:var(--on-accent);border-color:var(--on-accent);transform:translate(-50%,-50%) scale(1.12)}
-.guide-bubble{position:absolute;background:var(--bg2);border:1px solid var(--line);border-radius:14px;
+.guide-bubble{position:absolute;pointer-events:auto;background:var(--bg2);border:1px solid var(--line);border-radius:14px;
   padding:12px 14px;box-shadow:var(--sh-4);animation:pcFadeIn .18s ease-out both}
 .guide-bubble{max-height:calc(100vh - 24px);overflow-y:auto}
 .guide-meta{display:flex;align-items:center;gap:8px;font-size:11px;color:var(--dim);margin-bottom:4px}

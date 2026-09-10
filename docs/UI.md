@@ -335,6 +335,18 @@ import { Dialog } from "../kit";
 - 实现：`src/io/theme.ts` 的 `applyTheme(mode)` 写 `document.documentElement.dataset.theme`，并同步 `<meta name="theme-color">`；
   启动时在 `main.tsx` 调用，设置项用 `after` 钩子调用。
 - 浅色主题是**新增可选项**，默认仍是暗色；画布工作区在浅色下为中性灰（`--ws-bg`），保证像素画对比度。
+### 3.8 层级与首启动顺序
+
+- `--z-guide`（400）**必须大于表内所有层级**：引导是一层全屏聚光遮罩，被别的浮层压住就会出现
+  「高亮框不见了 / 点不动」的问题。`tests/ui-tokens.test.ts` 断言了这一点，以及 `.guide-layer`
+  选择器必须干净（历史上有一行残缺选择器 `.zoom-hud ` 把 `.guide-layer{…}` 整条规则吃掉了，
+  导致引导层根本没有 `position/z-index`，任何弹窗、浮动球、Toast 都能盖住它）。
+- `pointer-events`：`.guide-layer` 自身 `none`，只由 `.guide-shade`（无洞口时挡触摸）与
+  `.guide-bubble`（卡片）接管；洞口内的目标控件因此仍能被真正点到。
+- 首启动顺序（`bootOverlay()`，见 `src/app/guide.ts`）：更新日志到期时**先显示更新日志**，
+  用户关掉它之后引导才开始；全新安装还要等第一张画布出现。两者同时出现会互相抢操作
+  （引导层会挡住更新日志的关闭按钮）。
+
 - **画布上的浮动控件跟随主题**：浮动球、环形菜单、停靠条、模式胶囊、长按浮标、缩放 HUD、颜色指示、
   对称提示、画布标题栏、长按提示气泡全部使用主题令牌（浅色下变亮，与浅色工作区一致）。
   只有**图像容器**例外并保持深色：预览窗 / 参考图窗底（`--hud-deep`、`--hud-on-image*`）与引导遮罩

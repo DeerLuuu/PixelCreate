@@ -385,3 +385,18 @@ export function guideProgress(index: number, total: number): string {
 export function guideActionsOf(list: GuideActionList | undefined): GuideAction[] {
   return !list ? [] : Array.isArray(list) ? list : [list];
 }
+
+/**
+ * Boot order between the two first-launch overlays.
+ *
+ * The release notes are shown once per version and own the screen until they
+ * are dismissed; the tour must NOT start underneath them (it is a full-screen
+ * spotlight that swallows taps, so the notes could never be closed). A brand
+ * new install also waits for the first canvas, otherwise every step would
+ * spotlight a control that is not on screen yet.
+ */
+export function bootOverlay(todoSteps: number, changelogDue: boolean, canvasCount: number): "changelog" | "guide" | "none" {
+  if (changelogDue) return "changelog";
+  if (todoSteps > 0 && canvasCount > 0) return "guide";
+  return "none";
+}

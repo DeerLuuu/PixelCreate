@@ -21,7 +21,7 @@ const SIZE_TOKENS = [
   "--fs-1", "--fs-2", "--fs-3", "--fs-4", "--fs-5", "--fs-6",
   "--ctl-h", "--tap",
   "--sh-1", "--sh-2", "--sh-2b", "--sh-3", "--sh-4", "--sh-panel", "--sh-ring",
-  "--z-mask", "--z-dlg", "--z-panel-mask", "--z-panel", "--z-pop", "--z-toast", "--z-tip", "--z-top",
+  "--z-mask", "--z-dlg", "--z-panel-mask", "--z-panel", "--z-pop", "--z-toast", "--z-tip", "--z-top", "--z-guide",
 ];
 /** colour tokens the light theme must override */
 const THEME_TOKENS = [
@@ -111,7 +111,8 @@ export function testUiTokens(): void {
   eq("uitoken.light has no fixed token", [...lk].filter((k) => THEME_TOKENS.indexOf(k) < 0), []);
   ok("uitoken.count", rk.size >= 100, "tokens=" + rk.size);
 
-  const body = css.slice(css.indexOf(BANNER));
+  // the slice starts inside the section banner comment: begin after its close
+  const body = css.slice(css.indexOf("*/", css.indexOf(BANNER)) + 2);
   const all = rules(body);
   ok("uitoken.rules", all.length > 300, "rules=" + all.length);
 
@@ -127,6 +128,32 @@ export function testUiTokens(): void {
   // 4) every referenced token is defined
   const used = new Set([...body.matchAll(/var\((--[a-z0-9-]+)\)/g)].map((m) => m[1]));
   eq("uitoken.all-referenced-defined", [...used].filter((k) => !rk.has(k)).sort(), []);
+
+  // the onboarding tour is the topmost layer: nothing may sit above it, or the
+  // notes / confirm prompts it covers could never be tapped
+  {
+    const z = (name: string): number => Number(new RegExp(name + ":(\\d+)").exec(root)?.[1] ?? "-1");
+    const guide = z("--z-guide");
+    const others = ["--z-mask", "--z-dlg", "--z-panel", "--z-pop", "--z-toast", "--z-tip", "--z-top"].map(z);
+    ok("uitoken.guide-topmost", guide > Math.max(...others), "guide=" + guide + " max=" + Math.max(...others));
+    const layer = all.filter((r) => r.sel.indexOf(".guide-layer") === 0 && r.decls.indexOf("z-index") >= 0);
+    ok("uitoken.guide-layer-token",
+      layer.length === 1 && layer[0].sel === ".guide-layer" && layer[0].decls.indexOf("z-index:var(--z-guide)") >= 0,
+      "n=" + layer.length + " sel=" + (layer[0] ? JSON.stringify(layer[0].sel) : "-"));
+    // a stray selector fragment (a selector with no declaration block) swallows
+    // the NEXT rule: `.zoom-hud\n.zoom-hud\n.guide-layer{…}` silently killed the
+    // guide layer's position/z-index that way, so no selector may span lines
+    const multiline = all.filter((r) => r.sel.indexOf("\n") >= 0).map((r) => JSON.stringify(r.sel.slice(0, 60)));
+    eq("uitoken.selectors-single-line", multiline, []);
+    // the layer itself must stay transparent to touch (only the shade and the
+    // card take it) so a highlighted control can still be tapped for real
+    ok("uitoken.guide-passthrough", layer[0].decls.indexOf("pointer-events:none") >= 0, layer[0].decls);
+    const shade = all.filter((r) => r.sel === ".guide-shade");
+    ok("uitoken.guide-shade-blocks", shade.length === 1 && shade[0].decls.indexOf("pointer-events:auto") >= 0);
+    const bubble = all.filter((r) => r.sel === ".guide-bubble");
+    ok("uitoken.guide-bubble-tappable", bubble.some((r) => r.decls.indexOf("pointer-events:auto") >= 0),
+      "rules=" + bubble.length);
+  }
 
   // the switch added for boolean settings must be theme-aware: every colour it
   // paints comes from a token (accent when on, the surface colour when off)

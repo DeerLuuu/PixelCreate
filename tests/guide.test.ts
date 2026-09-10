@@ -1,7 +1,4 @@
-import {
-  GUIDE, GUIDE_MODULES, guideActionsOf, guideProgress, guideStepsFor, guideStepsOfModule, versionGte,
-  type GuideActionList,
-} from "../src/app/guide";
+import { GUIDE, GUIDE_MODULES, bootOverlay, guideActionsOf, guideProgress, guideStepsFor, guideStepsOfModule, type GuideActionList, versionGte} from "../src/app/guide";
 import { eq, ok } from "./common";
 
 export function testGuide(): void {
@@ -172,6 +169,15 @@ export function testGuide(): void {
     const onion = GUIDE.find((s) => s.id === "timeline.onion");
     ok("guide.demo.onion-frame", !!onion && acts(onion.before).includes("demoOnionFrame"));
     ok("guide.demo.onion-no-double-toggle", !!onion && !onion.click);
+  }
+
+  // --- boot order: release notes first, the tour after they are dismissed ---
+  {
+    eq("guide.boot.changelog-first", bootOverlay(9, true, 1), "changelog");
+    eq("guide.boot.changelog-beats-empty", bootOverlay(9, true, 0), "changelog");
+    eq("guide.boot.guide-after-changelog", bootOverlay(9, false, 1), "guide");
+    eq("guide.boot.waits-for-canvas", bootOverlay(9, false, 0), "none");
+    eq("guide.boot.nothing-to-show", bootOverlay(0, false, 1), "none");
   }
 
   // --- targets: every selector is a plain CSS selector string ---

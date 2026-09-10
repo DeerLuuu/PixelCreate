@@ -26,7 +26,7 @@ import { FxParamDialog, fxDefaults, type FxRun, type FxVals } from "./fxparam";
 import { CanvasTitles } from "./canvas";
 import { ChangelogModal, changelogNeedsShow } from "./changelog";
 import { watchSafeArea } from "../io/safearea";
-import { GUIDE, guideStepsFor, type GuideAction, type GuideStep } from "../app/guide";
+import { GUIDE, bootOverlay, guideStepsFor, type GuideAction, type GuideStep } from "../app/guide";
 import { GuideOverlay, simulateTap } from "./guide";
 import type { ModalId, SizeMode, SheetData } from "./modals";
 import { Dialog } from "./kit";
@@ -86,9 +86,13 @@ export function App() {
   // across rotation (the settings registry re-applies them on change too)
   useEffect(() => watchSafeArea(() => SESSION.prefs), []);
 
-  // first launch after an update: auto-show the release notes
+  // first launch after an update: auto-show the release notes. While they are
+  // due (or still open) the tour below waits: the guide is a full-screen
+  // spotlight that swallows taps, so starting both would trap the user behind
+  // the notes (see bootOverlay in src/app/guide.ts).
+  const [clgBlock, setClgBlock] = useState<boolean>(() => changelogNeedsShow());
   useEffect(() => {
-    if (changelogNeedsShow()) setModal("changelog");
+    if (clgBlock) setModal("changelog");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -109,14 +113,13 @@ export function App() {
     } catch { /* ignore */ }
     const todo = guideStepsFor(seen, fresh);
     if (!todo.length) return;
+    // release notes first (they are dismissed by the user), then the tour
+    if (bootOverlay(todo.length, clgBlock, snap.canvasCount) !== "guide") return;
     guideState.current = { tlOn, onionOn: SESSION.prefs.onionOn };
-    // nothing is open on a fresh install: wait until the first canvas exists,
-    // otherwise every step would spotlight a control that is not on screen
-    if (snap.canvasCount === 0) return;
     const id = window.setTimeout(() => setGuide(todo), 900);
     return () => window.clearTimeout(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [snap.canvasCount > 0]);
+  }, [snap.canvasCount > 0, clgBlock]);
 
   /** selection demonstrated for the selection-orb step, restored afterwards */
   const selBackup = useRef<{ had: boolean; mask: Uint8Array | null } | null>(null);
@@ -490,7 +493,7 @@ export function App() {
       <Keep on={modal === "history"} el={modal === "history" ? <HistoryModal t={t} snap={snap} onClose={() => setModal(null)} onReplay={() => { setModal(null); setReplayOn(true); }} /> : null} />
       <Keep on={modal === "framePrev"} el={modal === "framePrev" ? <FramePreviewModal t={t} onClose={() => setModal(null)} /> : null} />
       <Keep on={modal === "canvasRef"} el={modal === "canvasRef" ? <CanvasRefModal t={t} onClose={() => setModal(null)} /> : null} />
-      <Keep on={modal === "changelog"} el={modal === "changelog" ? <ChangelogModal onClose={() => setModal(null)} /> : null} />
+      <Keep on={modal === "changelog"} el={modal === "changelog" ? <ChangelogModal onClose={() => { setModal(null); setClgBlock(false); }} /> : null} />
       {guide && <GuideOverlay steps={guide} actions={guideActions} onDone={finishGuide} />}
       {textQ && (
         <div className="cfm-layer">

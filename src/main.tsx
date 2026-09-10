@@ -43,8 +43,11 @@ window.addEventListener("pc-toast", ((e: Event) => {
 //    press within two seconds actually leaves the app
 const backState: BackState = { warnAt: 0 };
 (window as unknown as { __pc_back: () => boolean }).__pc_back = () => {
+  // the onboarding tour is the topmost layer and answers pc-back itself, so a
+  // dialog underneath it must not swallow the press first
+  const guiding = !!document.querySelector(".guide-layer");
   // overlays with a mask are simply clicked shut
-  const mask = document.querySelector<HTMLElement>(".dlg-mask, .panel-mask, .fly-mask");
+  const mask = guiding ? null : document.querySelector<HTMLElement>(".dlg-mask, .panel-mask, .fly-mask");
   if (mask) {
     mask.click();
     backAction(true, backState, Date.now());
