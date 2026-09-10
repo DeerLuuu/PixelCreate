@@ -26,6 +26,7 @@ export const CHANGELOG: ClgVersion[] = [
     date: "2026-09-10",
     items: [
       it("imp", "拖着颜色球去画布上油漆桶填充之后，色板球不再自动收起来了：可以接着换一个颜色继续填，想收起来点一下色板球本身（电脑上按 Esc 也行）。轻点色球仍然是「取色并收起」，两条路互不影响。", "The palette fan no longer closes itself after you drag a colour ball onto the canvas to bucket-fill: you can keep filling with other colours, and tapping the palette ball (or pressing Esc on a computer) puts it away. Tapping a swatch still picks the colour and closes the fan, so neither gesture gets in the way of the other."),
+      it("fix", "修掉「导出失败：Invalid code/color length, must be power of 2 and 2..256」：GIF 的调色板以前直接用「图里出现过的颜色数」，而 GIF 规范要求调色板长度必须是 2 的幂（2/4/8/…/256），所以只有 1、3、5、7… 种颜色的图一导出就报这个错。现在会自动补齐到下一个 2 的幂（多出来的位置填黑色，透明色下标不变），1 种颜色到 256 种颜色都能正常导出。新增的端到端测试用真正的 GIF 编码器 + 解码器跑 1/2/3/5/7/9/200 色与透明像素，缺少补齐时这些用例会直接复现你看到的报错。", "Fixed “export failed: Invalid code/color length, must be power of 2 and 2..256”: the GIF palette used to be sized by how many colours appear in the artwork, but the GIF spec requires a power-of-two palette length (2/4/8/.../256), so any image with 1, 3, 5, 7... colours failed instantly. The palette is now padded up to the next power of two (extra slots filled with black, the transparent index stays valid), so everything from 1 colour to 256 exports correctly. The new end-to-end test runs the real GIF encoder and decoder over 1/2/3/5/7/9/200 colours plus transparency, and reproduces that exact error message when the padding is missing."),
     ],
   },
   {

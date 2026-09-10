@@ -208,6 +208,11 @@ export function encodeGIF(frames: FrameData[], w: number, h: number, opts: { tra
   const palInt = palette.map((c) => (c[0] << 16) | (c[1] << 8) | c[2]);
   const TI: number = hasTrans ? palette.length : 0;
   if (hasTrans) palInt.push(0);
+  // omggif 要求调色板长度**必须是 2 的幂且 2..256**（check_palette_and_num_colors），
+  // 而我们的调色板是「图里出现过的颜色数（+1 个透明色）」，3 / 5 / 7 个颜色
+  // 都会直接抛 "Invalid code/color length"。这里补齐到下一个 2 的幂（多出来的
+  // 位置填黑色，透明色下标 TI 不变，仍然有效）。
+  while (palInt.length < 2 || (palInt.length & (palInt.length - 1)) !== 0) palInt.push(0);
   const perFrame = w * h * 2 + 64;
   const buf = new Uint8Array(4096 + perFrame * frames.length);
   const g = new window.GifWriter(buf, w, h, { palette: palInt, loop: 0 });
