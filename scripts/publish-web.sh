@@ -1,15 +1,17 @@
 #!/usr/bin/env bash
-# 把 Web 构建产物同步到 main 分支并提交。
+# 把 Web 构建产物同步到 main 分支（main = 只放部署用的静态站点）。
 #
-# 约定：master = 全部源码（APK + Web 共用）；main = 只放部署用的静态站点，
-# 由本脚本从 master 的 app2/www 生成，不要手工编辑 main 上的文件。
+# 约定：master = 全部源码（APK + Web 共用）；main = 部署分支，内容由本脚本生成。
+# 生成 main 时用「临时索引 + commit-tree」的 plumbing 方式，不切分支、不碰工作区，
+# 也不用 git worktree（仓库在 FUSE 路径上时 worktree add 会卡住）。
 #
-#   sh scripts/publish-web.sh            # 构建 + 同步 + 提交（不推送）
+#   sh scripts/publish-web.sh            # 构建 + 生成 main 的新提交（不推送）
 #   sh scripts/publish-web.sh --push     # 再多一步 git push origin main
 set -e
 cd "$(dirname "$0")/.."
 ROOT="$PWD"
-WT="${PCB_WEB_WORKTREE:-/tmp/pcb-web}"
+STAGE="${PCB_WEB_STAGE:-/tmp/pcb-web-stage}"
+IDX="${PCB_WEB_INDEX:-/tmp/pcb-web-index}"
 PUSH=0
 [ "$1" = "--push" ] && PUSH=1
 
@@ -23,43 +25,42 @@ for f in app2/www/index.html app2/www/js/app.js app2/www/css/style.css; do
   [ -f "$f" ] || { echo "缺少 $f —— 请先在能构建的环境里跑一次 npm run build" >&2; exit 1; }
 done
 
-# ------------------------------------------------------- 2) main 的工作树
-if git show-ref --verify --quiet refs/heads/main; then
-  if [ -d "$WT/.git" ] || [ -f "$WT/.git" ]; then git worktree remove --force "$WT" >/dev/null 2>&1 || true; fi
-  rm -rf "$WT"
-  git worktree add --force --detach "$WT" main >/dev/null
-  cd "$WT" && git checkout --quiet main
-else
-  rm -rf "$WT"
-  git worktree add --force --detach "$WT" >/dev/null
-  cd "$WT"
-  git checkout --quiet --orphan main
-fi
+# --------------------------------------------- 2) 组装 main 的目录内容
+rm -rf "$STAGE"
+mkdir -p "$STAGE"
+cp -r app2/www/. "$STAGE/"
+rm -f "$STAGE/ui-demo.html" "$STAGE/js/ui-demo.js"      # 开发用演示页不进部署分支
+mkdir -p "$STAGE/.github/workflows"
+cp web/pages.yml "$STAGE/.github/workflows/pages.yml"
+cp web/README.md "$STAGE/README.md"
+cp web/.nojekyll "$STAGE/.nojekyll"
 
-# ------------------------------------------------- 3) 同步站点（保留 Pages 配置）
-# 保留：.github/（Pages workflow）、README.md、.nojekyll；其余按 app2/www 重建
-find . -mindepth 1 -maxdepth 1 \
-  ! -name .git ! -name .github ! -name README.md ! -name .nojekyll \
-  -exec rm -rf {} +
-cp -r "$ROOT/app2/www/." .
-rm -f ui-demo.html js/ui-demo.js          # 开发用演示页不进部署分支
-[ -f .nojekyll ] || : > .nojekyll
+# ------------------------------------- 3) 用临时索引写成一次提交（不动工作区）
+rm -f "$IDX"
+GIT_DIR="$ROOT/.git" GIT_WORK_TREE="$STAGE" GIT_INDEX_FILE="$IDX" git add -A -f
+TREE="$(GIT_DIR="$ROOT/.git" GIT_INDEX_FILE="$IDX" git write-tree)"
+SRC="$(git rev-parse --short HEAD)"
+MSG="chore(web): 同步 Web 构建产物（源提交 $SRC）
 
-# ------------------------------------------------------------------ 4) 提交
-git add -A
-if git diff --cached --quiet; then
-  echo "main 分支没有变化（产物与上次一致）"
-else
-  git commit --quiet -m "chore(web): 同步 Web 构建产物 $(date +%Y-%m-%d\ %H:%M)
-
-- 由 master 的 scripts/publish-web.sh 生成，源提交 $(git -C "$ROOT" rev-parse --short HEAD)
+- 由 master 的 scripts/publish-web.sh 生成，源提交 $SRC
 - 静态站点：index.html + js/ + css/ + icons/ + manifest.webmanifest（不含开发用 ui-demo）
-- app.js $(wc -c < js/app.js) bytes · style.css $(wc -c < css/style.css) bytes"
-  echo "main 分支已提交：$(git log --oneline -1)"
+- app.js $(wc -c < "$STAGE/js/app.js") bytes · style.css $(wc -c < "$STAGE/css/style.css") bytes"
+OLD="$(git rev-parse --verify --quiet refs/heads/main || true)"
+if [ -n "$OLD" ]; then
+  NEW="$(git commit-tree "$TREE" -p "$OLD" -m "$MSG")"
+  if [ "$OLD" = "$(git rev-parse --verify --quiet refs/heads/main)" ] && [ "$(git diff-tree --no-commit-id --name-only -r "$OLD" "$NEW" | wc -l)" = "0" ]; then
+    echo "main 分支内容无变化（产物与上次一致）"
+    exit 0
+  fi
+else
+  NEW="$(git commit-tree "$TREE" -m "$MSG")"
 fi
-cd "$ROOT"
+git update-ref refs/heads/main "$NEW" ${OLD:+"$OLD"}
+echo "main 已更新："
+git --no-pager log --oneline -1 main
+git --no-pager show --stat --oneline main | head -20
 
-# ------------------------------------------------------------------ 5) 推送
+# ------------------------------------------------------------------ 4) 推送
 if [ "$PUSH" = "1" ]; then
   git push origin main
 fi
