@@ -189,6 +189,15 @@ export class View {
   private altPaint = false;
   /** last logical pointer position (the cross-canvas drop preview needs it) */
   private lastPt: PxPoint | null = null;
+  /** ⑦ 画布调整模式的拖动状态（ax/ay = 固定的那一侧） */
+  private resizeDrag: {
+    ax: -1 | 0 | 1; ay: -1 | 0 | 1;
+    x0: number; y0: number; w0: number; h0: number;
+    w: number; h: number; moved: boolean;
+  } | null = null;
+  /** 浮动选区内容的离屏缓存（拖动时一次 drawImage 代替逐像素 fillRect） */
+  private floatCv: HTMLCanvasElement | null = null;
+  private floatKey = "";
   private selDrag: { kind: "rect" | "move" | "lasso"; x0: number; y0: number; x1: number; y1: number; before: Uint8ClampedArray | null; b: { x: number; y: number; w: number; h: number }; moved: boolean; sx: number; sy: number; mv?: MoveState | null; pts?: [number, number][]; dx?: number; dy?: number; cut?: boolean } | null = null;
   private longT: number | null = null;
   /** freehand outline tool: collected path, filled with the current colour on release */
@@ -884,6 +893,39 @@ export class View {
       ctx.fill();
       ctx.restore();
     }
+    // ⑦ 画布调整模式：四条边 + 四个角的把手，拖动时显示新尺寸
+    if (this.session.resizeModeOn) {
+      const doc = this.session.doc;
+      const g = this.resizeDrag;
+      const pvW = (g ? g.w : doc.w) * z, pvH = (g ? g.h : doc.h) * z;
+      ctx.save();
+      // 边框 + 四角
+      ctx.strokeStyle = "#63f5c5";
+      ctx.lineWidth = 2;
+      ctx.setLineDash(g ? [8, 6] : [6, 5]);
+      ctx.strokeRect(this.ox - 0.5, this.oy - 0.5, pvW + 1, pvH + 1);
+      ctx.setLineDash([]);
+      ctx.fillStyle = "#63f5c5";
+      const hs = 9;
+      const xs = [this.ox, this.ox + pvW / 2, this.ox + pvW];
+      const ys = [this.oy, this.oy + pvH / 2, this.oy + pvH];
+      for (const hx of xs) {
+        for (const hy of ys) {
+          if (hx === xs[1] && hy === ys[1]) continue;   // 中间不画
+          ctx.fillRect(hx - hs / 2, hy - hs / 2, hs, hs);
+        }
+      }
+      // 尺寸读数
+      ctx.font = "600 13px system-ui, sans-serif";
+      ctx.fillStyle = "rgba(0,0,0,.65)";
+      const label = (g ? g.w : doc.w) + " × " + (g ? g.h : doc.h);
+      const tw = ctx.measureText(label).width + 14;
+      const lx2 = this.ox + pvW / 2 - tw / 2, ly2 = this.oy + pvH + 10;
+      ctx.fillRect(lx2, ly2, tw, 22);
+      ctx.fillStyle = "#eaf0ff";
+      ctx.fillText(label, lx2 + 7, ly2 + 16);
+      ctx.restore();
+    }
     this.drawSelTransform();
     this.drawFlash(ctx);
     this.drawOutlinePreview(ctx);
@@ -894,21 +936,36 @@ export class View {
       const mv = fg.mv, content = mv.content;
       const gox = mv.ox + (fg.dx || 0), goy = mv.oy + (fg.dy || 0);
       const zz = Math.max(1, z);
+      const dropNow = fg.mv ? this.dropTargetOf({ mv: fg.mv, dx: fg.dx, dy: fg.dy }) : null;
+      const srcDoc = this.session.doc;
+      const cv = this.floatImage(srcDoc, content);
       ctx.save();
-      for (let y = 0; y < content.h; y++) {
-        for (let x = 0; x < content.w; x++) {
-          const si = content.idx(x, y);
-          const a = content.data[si + 3];
-          if (a === 0) continue;
-          ctx.globalAlpha = a / 255;
-          ctx.fillStyle = "rgb(" + content.data[si] + "," + content.data[si + 1] + "," + content.data[si + 2] + ")";
-          ctx.fillRect(this.ox + (gox + x) * z, this.oy + (goy + y) * z, zz, zz);
+      // 有跨画布落点时把「原位」那份裁在源画布内，免得内容糊在画布之间的空白上
+      if (dropNow) {
+        ctx.beginPath();
+        ctx.rect(this.ox, this.oy, srcDoc.w * z, srcDoc.h * z);
+        ctx.clip();
+      }
+      if (cv) {
+        ctx.imageSmoothingEnabled = false;
+        ctx.drawImage(cv, this.ox + gox * z, this.oy + goy * z, content.w * z, content.h * z);
+      } else {
+        for (let y = 0; y < content.h; y++) {
+          for (let x = 0; x < content.w; x++) {
+            const si = content.idx(x, y);
+            const a = content.data[si + 3];
+            if (a === 0) continue;
+            ctx.globalAlpha = a / 255;
+            ctx.fillStyle = "rgb(" + content.data[si] + "," + content.data[si + 1] + "," + content.data[si + 2] + ")";
+            ctx.fillRect(this.ox + (gox + x) * z, this.oy + (goy + y) * z, zz, zz);
+          }
         }
       }
       ctx.restore();
       // ① 拖到别的画布上时：实时把内容画在那个位置（半透明幽灵），并给目标画布
       //    描一圈虚线，松手前就看得到落点
       const drop = fg.mv ? this.dropTargetOf({ mv: fg.mv, dx: fg.dx, dy: fg.dy }) : null;
+      const srcDocRef = this.session.doc;
       if (drop) {
         const dstE = this.session.docs[drop.index];
         const focusE = this.session.docs[this.session.docIdx];
@@ -920,16 +977,24 @@ export class View {
           ctx.rect(ox + (dstE.x - focusE.x) * z, oy + (dstE.y - focusE.y) * z, dstE.doc.w * z, dstE.doc.h * z);
           ctx.clip();
           ctx.globalAlpha = 0.72;
-          for (let y = 0; y < content.h; y++) {
-            for (let x = 0; x < content.w; x++) {
-              const si = content.idx(x, y);
-              const a = content.data[si + 3];
-              if (a === 0) continue;
-              ctx.globalAlpha = (a / 255) * 0.72;
-              ctx.fillStyle = "rgb(" + content.data[si] + "," + content.data[si + 1] + "," + content.data[si + 2] + ")";
-              ctx.fillRect(
-                ox + (dstE.x - focusE.x + drop.x + x) * z,
-                oy + (dstE.y - focusE.y + drop.y + y) * z, zz2, zz2);
+          const ghost = this.floatImage(srcDocRef, content);
+          if (ghost) {
+            ctx.imageSmoothingEnabled = false;
+            ctx.drawImage(ghost,
+              ox + (dstE.x - focusE.x + drop.x) * z, oy + (dstE.y - focusE.y + drop.y) * z,
+              content.w * z, content.h * z);
+          } else {
+            for (let y = 0; y < content.h; y++) {
+              for (let x = 0; x < content.w; x++) {
+                const si = content.idx(x, y);
+                const a = content.data[si + 3];
+                if (a === 0) continue;
+                ctx.globalAlpha = (a / 255) * 0.72;
+                ctx.fillStyle = "rgb(" + content.data[si] + "," + content.data[si + 1] + "," + content.data[si + 2] + ")";
+                ctx.fillRect(
+                  ox + (dstE.x - focusE.x + drop.x + x) * z,
+                  oy + (dstE.y - focusE.y + drop.y + y) * z, zz2, zz2);
+              }
             }
           }
           ctx.restore();
@@ -1675,6 +1740,28 @@ export class View {
     this.samplePickCell(x, y, true);
   }
 
+  /** ⑦ 画布调整模式：命中哪条边/哪个角（返回固定的那一侧 ax/ay，null = 没命中） */
+  private resizeHit(pt: PxPoint): { ax: -1 | 0 | 1; ay: -1 | 0 | 1 } | null {
+    const doc = this.session.doc;
+    if (!this.session.resizeModeOn) return null;
+    const z = this.zoom;
+    const W = doc.w * z, H = doc.h * z;
+    const TOL = 12;
+    // 画布在逻辑坐标里的矩形是 (ox, oy, W, H)：先换成以画布左上角为原点的局部坐标
+    const lx = pt.x - this.ox, ly = pt.y - this.oy;
+    const nearL = lx >= -TOL && lx <= TOL;
+    const nearR = lx >= W - TOL && lx <= W + TOL;
+    const nearT = ly >= -TOL && ly <= TOL;
+    const nearB = ly >= H - TOL && ly <= H + TOL;
+    const inX = lx >= -TOL && lx <= W + TOL;
+    const inY = ly >= -TOL && ly <= H + TOL;
+    if (!inX || !inY) return null;
+    const ax: -1 | 0 | 1 = nearL ? 1 : nearR ? -1 : 0;   // 拖左边＝右边固定
+    const ay: -1 | 0 | 1 = nearT ? 1 : nearB ? -1 : 0;
+    if (ax === 0 && ay === 0) return null;
+    return { ax, ay };
+  }
+
   private onDown(e: PointerEvent): void {
     e.preventDefault();
     this.lastPt = this.evPt(e);
@@ -1826,10 +1913,32 @@ export class View {
     const doc = s.doc;
     // 点画布＝Delete 键重新作用于选区内容（而不是上次点的标题 / 图层 / 帧）
     s.setDelTarget("selection");
+    // ⑦ 画布调整模式：按下即接管，拖动四条边/四个角改尺寸（不绘制、不选择）
+    if (s.resizeModeOn) {
+      const hit = this.resizeHit(pt);
+      if (hit) {
+        this.resizeDrag = {
+          ...hit, x0: pt.x, y0: pt.y,
+          w0: doc.w, h0: doc.h, w: doc.w, h: doc.h, moved: false,
+        };
+      }
+      return;
+    }
     // Alt+单击：快速取色（与触屏长按取色等价，PC 上更顺手）
     if (e.altKey && e.pointerType === "mouse" && e.button === 0) {
       const c = s.sampleComposite(pp.x, pp.y);
       if (c) { s.setFgColor(c); s.hapticTick("取色", 0.8); s.repaint(); }
+      return;
+    }
+    // ① 选区类工具（框选 / 套索 / 魔棒 / 轮廓填充）在画布外的空白处按下＝平移视图，
+    //    与画笔工具一致：不用先切工具就能拖着看画布
+    const outsideDoc = pp.x < 0 || pp.y < 0 || pp.x >= doc.w || pp.y >= doc.h;
+    const blankPan = isPc() && e.pointerType === "mouse" &&
+      (tool === "select" || tool === "lasso" || tool === "wand" || tool === "outline");
+    if (blankPan && outsideDoc) {
+      this.panLast = pt;
+      this.gestureMoved = false;
+      this.syncCursor();
       return;
     }
     if (tool === "outline") {
@@ -1936,6 +2045,17 @@ export class View {
     this.lastPt = pt;
     const wasDown = this.pointers.has(e.pointerId);
     if (wasDown) this.pointers.set(e.pointerId, pt);
+    // ⑦ 画布调整模式拖动中：换算成画布像素后预览新尺寸
+    if (this.resizeDrag) {
+      const g = this.resizeDrag;
+      const z = Math.max(0.01, this.zoom);
+      const dx = (pt.x - g.x0) / z, dy = (pt.y - g.y0) / z;
+      const nw = Math.max(1, Math.min(1024, Math.round(g.w0 + (g.ax === 1 ? -dx : g.ax === -1 ? dx : 0))));
+      const nh = Math.max(1, Math.min(1024, Math.round(g.h0 + (g.ay === 1 ? -dy : g.ay === -1 ? dy : 0))));
+      if (nw !== g.w || nh !== g.h) { g.w = nw; g.h = nh; g.moved = true; }
+      this.drawOverlay();
+      return;
+    }
     // Alt 按住＝取色模式：光标跟着换成吸管（鼠标没有别的提示手段）
     if (e.pointerType === "mouse" && this.altDown !== e.altKey) {
       this.altDown = e.altKey;
@@ -2119,6 +2239,17 @@ export class View {
     }
     if (this.pointers.size < 2) this.pinchBase = null;
     if (this.hold && this.pointers.size < this.hold.n) this.cancelHold();
+    if (this.pointers.size === 0 && this.resizeDrag) {
+      const g = this.resizeDrag;
+      this.resizeDrag = null;
+      if (g.moved) {
+        // 一条历史：canvasSize 用「固定哪一侧」的锚点语义
+        this.session.canvasSize(g.w, g.h, g.ax, g.ay);
+        this.session.hapticTick("画布尺寸", 0.7);
+      }
+      this.session.repaintAll();
+      return;
+    }
     if (this.pointers.size === 0 && this.path) {
       // a tap added a point: drop the rubber band, keep the path pending
       this.path.cur = null;
@@ -2355,6 +2486,7 @@ export class View {
 
   private onCancel(e: PointerEvent): void {
     this.pointers.delete(e.pointerId);
+    if (this.resizeDrag) { this.resizeDrag = null; this.drawOverlay(); }
     if (this.outline) this.endOutline(false);
     // a stationary two-finger hold cancelled by the OS usually means the phone
     // claimed the gesture for its own screen recognition: tell the user once
@@ -2913,6 +3045,31 @@ export class View {
       // the cut changes pixels once; after that only the floating overlay moves
       if (firstCut) this.session.repaint();
       else this.drawOverlay();
+    }
+  }
+
+  /**
+   * 把浮动选区内容缓存成一张离屏画布：拖动时只做一次 drawImage。
+   * （以前每帧都要对选区里的每个不透明像素来一次 fillRect —— 全画布选区
+   *   一秒就是几十万次调用，这正是「跨画布拖动很卡」的原因。）
+   * 环境不支持 ImageData 时返回 null，调用方回退到逐像素绘制。
+   */
+  private floatImage(doc: Doc, content: { w: number; h: number; data: Uint8ClampedArray }): HTMLCanvasElement | null {
+    const key = doc.key(0, 0) + "|" + content.w + "x" + content.h + "|" + content.data.length + "|" + content.data[3] + "|" + content.data[content.data.length - 1];
+    if (this.floatCv && this.floatKey === key) return this.floatCv;
+    if (typeof ImageData === "undefined" || typeof document === "undefined") return null;
+    try {
+      const cv = document.createElement("canvas");
+      cv.width = content.w;
+      cv.height = content.h;
+      const cx = cv.getContext("2d");
+      if (!cx) return null;
+      cx.putImageData(new ImageData(new Uint8ClampedArray(content.data), content.w, content.h), 0, 0);
+      this.floatCv = cv;
+      this.floatKey = key;
+      return cv;
+    } catch {
+      return null;
     }
   }
 

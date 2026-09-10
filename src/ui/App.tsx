@@ -206,6 +206,7 @@ export function App() {
         case "toggleUI": e.preventDefault(); setUiHidden((on) => !on); break;
         case "tool": e.preventDefault(); SESSION.setTool(hit.tool as ToolId); break;
         case "swapColors": e.preventDefault(); SESSION.swapColors(); break;
+        case "resizeMode": e.preventDefault(); SESSION.toggleResizeMode(); break;
         case "openFile": e.preventDefault(); void openFlow("new"); break;
         case "newDoc": e.preventDefault(); setModal("newdoc"); break;
         case "exportFile": e.preventDefault(); setModal("export"); break;
@@ -1109,20 +1110,23 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
       setPos(p);
       try { localStorage.setItem(orbKey, JSON.stringify(p)); } catch { /* ignore */ }
     } else if (which === "sel") {
-      setSel({ x: p.x, y: p.y, open: false });
+      // ⑤ PC 模式拖动一个球不再收起它自己/别人的环
+      setSel((g) => (g ? { ...g, x: p.x, y: p.y, open: pcMode ? g.open : false } : g));
     } else if (which === "pal") {
-      setPal((g) => ({ ...g, x: p.x, y: p.y, open: false }));
+      setPal((g) => ({ ...g, x: p.x, y: p.y, open: pcMode ? g.open : false }));
     } else if (which === "canv") {
-      setCanv((g) => ({ ...g, x: p.x, y: p.y, open: false }));
+      setCanv((g) => ({ ...g, x: p.x, y: p.y, open: pcMode ? g.open : false }));
     } else {
-      setFx((g) => ({ ...g, x: p.x, y: p.y, open: false }));
+      setFx((g) => ({ ...g, x: p.x, y: p.y, open: pcMode ? g.open : false }));
     }
-    setOpen(false);
-    setSub(null);
-    if (sel && which !== "sel") setSel((s) => (s ? { ...s, open: false } : s));
-    if (pal && which !== "pal") setPal((g) => (g ? { ...g, open: false } : g));
-    if (which !== "fx") setFx((g) => (g ? { ...g, open: false } : g));
-    if (which !== "canv") setCanv((g) => (g ? { ...g, open: false } : g));
+    if (!pcMode) {
+      setOpen(false);
+      setSub(null);
+      if (sel && which !== "sel") setSel((s) => (s ? { ...s, open: false } : s));
+      if (pal && which !== "pal") setPal((g) => (g ? { ...g, open: false } : g));
+      if (which !== "fx") setFx((g) => (g ? { ...g, open: false } : g));
+      if (which !== "canv") setCanv((g) => (g ? { ...g, open: false } : g));
+    }
   };
 
   type Item = { icon: string; label: string; act: () => void; active?: boolean; desc?: string; guide?: string };
@@ -1153,7 +1157,9 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
   const li = snap.layerIdx, fi = snap.frameIdx;
   const d = SESSION.doc;
   const repaintChanged = () => { SESSION.repaint(); SESSION.changedUI(); };
-  const selItems: Item[] = [
+  // ⑥ 手机端：选区球分两页（常用在前，其余在「更多」里），PC 模式一次全铺开
+  const [selSub, setSelSub] = useState<null | "more">(null);
+  const selPage1: Item[] = [
     { icon: "i-sel-all", label: t("sel.all"), act: () => { selOps.selOps.selectAll(d); SESSION.repaint(); } },
     { icon: "i-sel-invert", label: t("sel.invert"), act: () => SESSION.maskOp("sel.invert", () => selOps.selOps.invert(d)) },
     { icon: "i-sel-none", label: t("sel.clear"), act: () => { selOps.selOps.clear(d); SESSION.repaint(); } },
@@ -1167,13 +1173,25 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
       { icon: "i-layers", label: t("pasteAsLayerBall"), desc: t("pasteAsLayerBallDesc"), act: () => { void pasteClipboard("layer"); } },
       { icon: "i-canvas", label: t("pasteAsCanvasBall"), desc: t("pasteAsCanvasBallDesc"), act: () => { void pasteClipboard("canvas"); } },
     ]),
+  ];
+  const selPage2: Item[] = [
+    { icon: "", label: "\u2039", act: () => setSelSub(null), guide: "sel-back" },
     { icon: "i-fliph", label: t("sel.fliph"), act: () => { selOps.selOps.flip(d, SESSION.history, li, fi, true); repaintChanged(); } },
     { icon: "i-flipv", label: t("sel.flipv"), act: () => { selOps.selOps.flip(d, SESSION.history, li, fi, false); repaintChanged(); } },
     { icon: "i-plus", label: t("sel.grow"), act: () => SESSION.maskOp("sel.grow", () => selOps.growSelection(d, 1)) },
     { icon: "i-minus", label: t("sel.shrink"), act: () => SESSION.maskOp("sel.shrink", () => selOps.shrinkSelection(d, 1)) },
     { icon: "i-fx-o1", label: t("sel.outline"), act: () => { selOps.outlineSelected(d, SESSION.history, li, fi, SESSION.color); repaintChanged(); } },
+    { icon: "i-fx-crop", label: t("selCrop"), desc: t("selCropDesc"), act: () => { if (SESSION.cropToSelection()) repaintChanged(); } },
     { icon: "i-sel-del", label: t("sel.delete"), act: () => { SESSION.deleteSelection(); } },
+    ...(pcMode ? [] : [{
+      icon: "i-more", label: t("canvasMore"),
+      desc: snap.lang === "zh" ? "更多：翻转 / 扩展 / 收缩 / 描边 / 裁切到选区 / 删除" : "More: flip / grow / shrink / outline / crop / delete",
+      act: () => setSelSub("more"), guide: "sel-more",
+    }]),
   ];
+  const selItems: Item[] = pcMode || selSub === "more"
+    ? [...selPage1.filter((it) => it.guide !== "sel-more"), ...selPage2.filter((it) => it.guide !== "sel-back")]
+    : selPage1;
 
   // ---- parameterised FX: live preview on a snapshot, one history step on OK
   const [fxDlg, setFxDlg] = useState<{ run: FxRun; vals: FxVals } | null>(null);
@@ -1368,6 +1386,7 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
       })();
     } },
     { icon: "i-size", label: t("resizeTitle"), desc: t("canvasResizeDesc"), act: () => { closeCanv(); onCanvasSize(); } },
+    { icon: "i-size", label: t("canvasResizeMode"), desc: t("canvasResizeModeDesc"), active: SESSION.resizeModeOn, act: () => { closeCanv(); SESSION.toggleResizeMode(); } },
     { icon: SESSION.isCanvasLocked() ? "i-pin" : "i-pin-off", label: t(SESSION.isCanvasLocked() ? "canvasUnlock" : "canvasLock"), desc: t("canvasLockDesc"), act: () => { closeCanv(); SESSION.toggleCanvasLock(); }, guide: "canv-lock" },
     { icon: "i-x", label: t("canvasClose"), desc: t("canvasCloseDesc"), act: () => {
       closeCanv();
@@ -1544,7 +1563,7 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
       })}
       <Keep on={!!sel} el={sel ? renderBall("sel", { x: sel.x, y: sel.y }, "i-select", sel.open, t("sel.active"), bd(snap.lang, "selBall"), () => {
         if (!pcMode) { setOpen(false); setSub(null); }
-        if (!sel.open) {
+        if (!sel.open && !lockOf("main")) {   // ② 锁定的球不被别人挤走
           const np = clearRingOf({ x: sel.x, y: sel.y }, pos);
           if (np && (np.x !== pos.x || np.y !== pos.y)) {
             setPos(np);
@@ -1563,7 +1582,7 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
       }) : null} />
       {!dockedById("pal") && renderBall("pal", { x: pal.x, y: pal.y }, "i-palette", pal.open, t("palette"), bd(snap.lang, "palette"), () => {
         if (!pcMode) { setOpen(false); setSub(null); setSel((g) => (g ? { ...g, open: false } : g)); }
-        if (!pal.open) {
+        if (!pal.open && !lockOf("main")) {
           const np = clearRingOf({ x: pal.x, y: pal.y }, pos);
           if (np && (np.x !== pos.x || np.y !== pos.y)) {
             setPos(np);
@@ -1587,7 +1606,7 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
           if (sel) setSel({ ...sel, open: false });
           if (pal) setPal({ ...pal, open: false });
         }
-        if (!fx.open) {
+        if (!fx.open && !lockOf("main")) {
           const np = clearRingOf({ x: fx.x, y: fx.y }, pos);
           if (np && (np.x !== pos.x || np.y !== pos.y)) {
             setPos(np);
@@ -1612,7 +1631,7 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
           if (pal) setPal({ ...pal, open: false });
           if (fx) setFx({ ...fx, open: false });
         }
-        if (!canv.open) {
+        if (!canv.open && !lockOf("main")) {
           const np = clearRingOf({ x: canv.x, y: canv.y }, pos);
           if (np && (np.x !== pos.x || np.y !== pos.y)) {
             setPos(np);

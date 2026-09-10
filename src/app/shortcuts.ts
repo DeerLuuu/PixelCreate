@@ -6,7 +6,7 @@
 export type ShortcutAction =
   | "undo" | "redo" | "save" | "openFile" | "newDoc" | "exportFile"
   | "copy" | "cut" | "paste" | "delete" | "escape"
-  | "pasteLayer" | "pasteCanvas" | "swapColors" | "shortcutHelp"
+  | "pasteLayer" | "pasteCanvas" | "swapColors" | "shortcutHelp" | "resizeMode"
   | "framePrev" | "frameNext" | "layerPrev" | "layerNext"
   | "zoomIn" | "zoomOut" | "fit" | "toggleUI"
   | "tool" | "nudge";
@@ -82,6 +82,7 @@ export function shortcutFor(e: ShortcutKey, typing = false): ShortcutHit | null 
       case "x": return { action: "cut" };
       case "v": return { action: e.shiftKey ? "pasteLayer" : "paste" };
       case "F1": return { action: "shortcutHelp" };
+      case "r": return { action: "resizeMode" };
       case "ArrowLeft": return { action: "framePrev" };
       case "ArrowRight": return { action: "frameNext" };
       case "ArrowUp": return { action: "layerPrev" };
@@ -182,6 +183,7 @@ export const SHORTCUT_SHEET: SheetGroup[] = [
       { keys: "Alt+单击", zh: "吸取该像素颜色", en: "Pick the colour under the pixel", mouse: true },
       { keys: "悬停滚轮", zh: "在数字框 / 长按按钮上调值", en: "Adjust a number field or hold-button", mouse: true },
       { keys: "Ctrl+F1", zh: "打开这份快捷键一览", en: "Open this cheat sheet", probe: { key: "F1", ctrlKey: true }, action: "shortcutHelp" },
+      { keys: "Ctrl+R", zh: "画布调整模式（拖四条边改尺寸）", en: "Resize mode (drag the canvas edges)", probe: { key: "r", ctrlKey: true }, action: "resizeMode" },
       { keys: "B / E / G / I / L / R / O / M / W / Q", zh: "铅笔 / 橡皮 / 油漆桶 / 取色 / 直线 / 矩形 / 椭圆 / 选区 / 魔棒 / 套索", en: "Pencil / eraser / bucket / picker / line / rect / ellipse / marquee / wand / lasso", probe: { key: "b" }, action: "tool" },
     ],
   },

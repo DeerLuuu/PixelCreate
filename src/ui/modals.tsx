@@ -359,6 +359,7 @@ export function MenuModal({ t, snap, onClose, onOpen, onSheet, onRef, onGuide }:
         {!sub ? (<>
           {go("newproject")(t("newProject"), "i-new", "menu-new")}
           {act(t("save"), "i-save", () => void saveProject(), "menu-save")}
+          {go("export")(t("exportCanvas"), "i-export", "menu-export")}
           {act(t("open"), "i-open", () => void openFlow("new"), "menu-open")}
           <Btn label={t("import")} icon="i-import" className="menuitem" guide="menu-import" onClick={() => setSub("import")} />
           {go("settings")(t("settings"), "i-gear", "menu-settings")}

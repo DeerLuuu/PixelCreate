@@ -3094,6 +3094,40 @@ export class Session {
     this.struct("sprite-size", () => ops.scaleDocSprite(this.doc, nw, nh));
   }
 
+  /**
+   * ⑤ 把画布裁切到当前选区（选区外的一律丢掉），画布尺寸＝选区外接矩形。
+   * 没有选区时什么都不做；选区已经等于整张画布时直接返回。
+   */
+  cropToSelection(): boolean {
+    const doc = this.doc;
+    const b = doc.sel && doc.sel.hasAny() ? doc.sel.bounds() : null;
+    if (!b) {
+      toastFn(this.prefs.lang === "en" ? "Make a selection first" : "请先建立选区");
+      return false;
+    }
+    if (b.w === doc.w && b.h === doc.h && b.x === 0 && b.y === 0) return false;
+    this.struct("crop-sel", () => ops.resizeDocCanvas(doc, b.w, b.h, -b.x, -b.y));
+    return true;
+  }
+
+  // ---------- ⑦ 画布调整模式（直接拖四条边/四个角改画布大小）----------
+  /** true while the interactive resize mode is on: the view shows edge handles
+   *  and dragging them changes the canvas size instead of painting */
+  resizeModeOn = false;
+  setResizeMode(on: boolean): void {
+    if (this.resizeModeOn === on) return;
+    this.resizeModeOn = on;
+    this.view_?.invalidate();
+    this.changedUI();
+  }
+  toggleResizeMode(): void {
+    this.setResizeMode(!this.resizeModeOn);
+    const en = this.prefs.lang === "en";
+    toastFn(en
+      ? (this.resizeModeOn ? "Resize mode: drag an edge or corner of the canvas" : "Resize mode off")
+      : (this.resizeModeOn ? "画布调整模式：拖动画布的四条边或四个角" : "已退出画布调整模式"));
+  }
+
   /** smart crop: shrink the canvas to the union of all drawn content */
   cropSmart(): void {
     const b = ops.contentBounds(this.doc);
