@@ -15,6 +15,8 @@ import { testRender } from "./render.test";
 import { testExport } from "./export.test";
 import { testBack } from "./back.test";
 import { testI18n } from "./i18n.test";
+import { testUiKit } from "./ui-kit.test";
+import { testUiTokens } from "./ui-tokens.test";
 import { testExpr } from "./expr.test";
 import { testEffects } from "./effects.test";
 import { testView } from "./view.test";
@@ -61,6 +63,10 @@ async function main(): Promise<void> {
   testExpr();
   console.log("--- i18n ---");
   testI18n();
+  console.log("--- ui kit ---");
+  testUiKit();
+  console.log("--- ui tokens ---");
+  testUiTokens();
   finish();
 }
 

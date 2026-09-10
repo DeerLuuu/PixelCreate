@@ -3,10 +3,11 @@
     "module": "commonjs",
     "target": "es2019",
     "lib": [
-      "es2019",
+      "es2020",
       "dom"
     ],
     "moduleResolution": "node",
+    "jsx": "react-jsx",
     "esModuleInterop": true,
     "skipLibCheck": true,
     "strict": false,
@@ -15,6 +16,8 @@
   },
   "include": [
     "../tests/run-tests.ts",
+    "../tests/ui-kit.test.tsx",
+    "../tests/ui-tokens.test.ts",
     "../tests/common.ts",
     "../tests/history.test.ts",
     "../tests/ops.test.ts",
