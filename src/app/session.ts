@@ -2190,6 +2190,53 @@ export class Session {
     return true;
   }
 
+  /** what the Delete key acts on; the UI updates it as the user picks areas */
+  delTarget: "selection" | "frames" | "layer" | "canvas" = "selection";
+  setDelTarget(t: "selection" | "frames" | "layer" | "canvas"): void {
+    if (this.delTarget === t) return;
+    this.delTarget = t;
+    this.changedUI();
+  }
+  /**
+   * The Delete key: always deletes "the thing you last picked" — selected
+   * pixels, picked frames, the current layer, or the current canvas (which asks
+   * for confirmation like every other canvas-close path does).
+   */
+  async deleteKeyAction(): Promise<void> {
+    const en = this.prefs.lang === "en";
+    switch (this.delTarget) {
+      case "canvas": {
+        if (this.docs.length <= 1) { toastFn(en ? "The last canvas cannot be deleted" : "最后一张画布不能删除"); return; }
+        const i = this.docIdx;
+        const name = this.doc.name || "untitled";
+        const ok = await this.askConfirm({
+          msg: (en ? "Close the canvas " : "关闭画布 ") + name + (en ? "? Undo can bring it back." : "？可以撤销找回。"),
+          yes: en ? "Close" : "关闭",
+          no: en ? "Cancel" : "取消",
+        });
+        if (ok) this.closeCanvas(i);
+        return;
+      }
+      case "frames": {
+        if (this.frameSelOn && this.frameSel.size) {
+          const n = this.framesDeleteSelected();
+          toastFn(n ? (en ? "Deleted " + n + " frames" : "已删除 " + n + " 帧") : (en ? "At least one frame must stay" : "至少要保留一帧"));
+          return;
+        }
+        if (this.doc.frames.length <= 1) { toastFn(en ? "The last frame cannot be deleted" : "最后一帧不能删除"); return; }
+        this.frameDelete();
+        return;
+      }
+      case "layer": {
+        if (this.doc.layers.length <= 1) { toastFn(en ? "The last layer cannot be deleted" : "最后一个图层不能删除"); return; }
+        this.layerDelete();
+        return;
+      }
+      default:
+        this.deleteSelection();
+    }
+  }
+
   deleteSelection(): void {
     const doc = this.doc;
     if (!doc.sel || !doc.sel.hasAny()) { toastFn(this.prefs.lang === "en" ? "No selection" : "请先建立选区"); return; }
@@ -2911,10 +2958,27 @@ export class Session {
     if (!on) this.frameSel.clear();
     this.changed();
   }
+  /** frame the Shift+click range selection grows from */
+  frameAnchor: number | null = null;
   toggleFrameSel(fi: number): void {
     if (fi < 0 || fi >= this.doc.frames.length) return;
     if (this.frameSel.has(fi)) this.frameSel.delete(fi);
     else this.frameSel.add(fi);
+    this.frameAnchor = fi;
+    this.changed();
+  }
+  /**
+   * Shift+click: pick every frame between the anchor (the last frame picked, or
+   * the current one) and `fi`, inclusive. Enters pick-frames mode if needed.
+   */
+  pickFrameRange(fi: number): void {
+    const n = this.doc.frames.length;
+    if (fi < 0 || fi >= n) return;
+    const a = this.frameAnchor === null ? this.curFrame() : this.frameAnchor;
+    const lo = Math.min(a, fi), hi = Math.max(a, fi);
+    this.frameSelOn = true;
+    for (let i = lo; i <= hi; i++) this.frameSel.add(i);
+    this.frameAnchor = fi;
     this.changed();
   }
   clearFrameSel(): void {

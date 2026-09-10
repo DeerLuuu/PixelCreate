@@ -1784,6 +1784,8 @@ export class View {
     const tool = s.tool;
     const pp = this.screenToPixel(pt.x, pt.y);
     const doc = s.doc;
+    // 点画布＝Delete 键重新作用于选区内容（而不是上次点的标题 / 图层 / 帧）
+    s.setDelTarget("selection");
     // Alt+单击：快速取色（与触屏长按取色等价，PC 上更顺手）
     if (e.altKey && e.pointerType === "mouse" && e.button === 0) {
       const c = s.sampleComposite(pp.x, pp.y);

@@ -30,7 +30,7 @@ export function CanvasTitles({ view, tick }: { view: View | null; tick: number }
     if (tipT.current !== null) { window.clearTimeout(tipT.current); tipT.current = null; }
     hideTip();
   };
-  if (!view || SESSION.docs.length <= 1) return null;
+  if (!view) return null;   // ⑳ 单画布也显示标题栏（以前只有多画布才显示）
   const focus = SESSION.docs[SESSION.docIdx];
   if (!focus) return null;
   const z = view.zoom;
@@ -76,10 +76,24 @@ export function CanvasTitles({ view, tick }: { view: View | null; tick: number }
             style={{ left, top, width }}
             data-guide={"canvas-title-" + i}
             title={on ? t("canvasFocused") : t("canvasFocusHint")}
+            onDoubleClick={(ev) => {
+              // ⑪ 双击标题＝重命名（双击画布本身仍然是「聚焦并适配」）
+              if ((ev.target as HTMLElement).closest("button")) return;
+              ev.preventDefault();
+              ev.stopPropagation();
+              stopTip();
+              const idx = i;
+              void (async () => {
+                const v = await SESSION.askText({ title: t("canvasRename"), value: SESSION.docs[idx]?.doc.name ?? "", ok: t("ok"), cancel: t("cancel") });
+                if (v !== null) SESSION.renameCanvas(idx, v);
+              })();
+            }}
             onPointerDown={(ev) => {
               ev.preventDefault();
               ev.stopPropagation();
               stopTip();
+              // Delete 键的目标：选中的标题（按 Del 关画布，仍会弹确认）
+              SESSION.setDelTarget("canvas");
               // only the buttons inside own the press; the name/labels drag
               if ((ev.target as HTMLElement).closest("button")) return;
               try { (ev.currentTarget as HTMLElement).setPointerCapture(ev.pointerId); } catch { /* ignore */ }

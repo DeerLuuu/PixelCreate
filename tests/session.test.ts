@@ -1566,6 +1566,69 @@ export async function testSession(): Promise<void> {
     }
   }
 
+  // --- ⑲ Del 键：作用于「最后选中的目标」---
+  {
+    const d = new Session();
+    // 默认＝选区内容
+    eq("del.target.default", d.delTarget, "selection");
+    d.doc.ensureCel(0, 0);
+    const cel0 = d.doc.celAt(0, 0)!;
+    const at = cel0.idx(3, 3);
+    cel0.data[at] = 9; cel0.data[at + 1] = 9; cel0.data[at + 2] = 9; cel0.data[at + 3] = 255;
+    selOps.selOps.setRect(d.doc, 3, 3, 3, 3);
+    await d.deleteKeyAction();
+    eq("del.selection.cleared", d.doc.celAt(0, 0)!.data[at + 3], 0);
+    // 帧：多选时删掉选中的帧，未多选时删当前帧（至少留一帧）
+    const f0 = d.doc.frames.length;
+    d.setDelTarget("frames");
+    d.frameAdd();
+    eq("del.frames.added", d.doc.frames.length, f0 + 1);
+    await d.deleteKeyAction();
+    eq("del.frames.removed", d.doc.frames.length, f0);
+    d.frameDelete();
+    eq("del.frames.keep-one", d.doc.frames.length, 1);
+    // 图层：只有一个图层时不动
+    d.setDelTarget("layer");
+    eq("del.layer.single", d.doc.layers.length, 1);
+    await d.deleteKeyAction();
+    eq("del.layer.single-kept", d.doc.layers.length, 1);
+    d.layerAdd();
+    eq("del.layer.added", d.doc.layers.length, 2);
+    await d.deleteKeyAction();
+    eq("del.layer.removed", d.doc.layers.length, 1);
+    // 画布：最后一张不动；多于一张时走确认（测试里没有对话框＝拒绝，所以不删）
+    d.setDelTarget("canvas");
+    await d.deleteKeyAction();
+    eq("del.canvas.last-kept", d.docs.length, 1);
+    const bi = d.addCanvas(new Doc(8, 8, "B"));
+    d.focusCanvas(bi);
+    eq("del.canvas.two", d.docs.length, 2);
+    await d.deleteKeyAction();
+    eq("del.canvas.needs-confirm", d.docs.length, 2);
+    d.setDelTarget("selection");
+    eq("del.target.back", d.delTarget, "selection");
+  }
+
+  // --- ⑰ Shift+左键区间选帧 ---
+  {
+    const d = new Session();
+    d.frameAdd(); d.frameAdd(); d.frameAdd();   // 4 frames
+    eq("framesel.range.count", d.doc.frames.length, 4);
+    d.toggleFrameSel(0);
+    d.pickFrameRange(3);
+    eq("framesel.range.list", d.frameSelList(), [0, 1, 2, 3]);
+    eq("framesel.range.mode-on", d.frameSelOn, true);
+    eq("framesel.range.anchor", d.frameAnchor, 3);
+    // 反向区间（从锚点往回）
+    d.setFrameSelMode(false);
+    d.setFrame(3);
+    d.toggleFrameSel(3);
+    d.pickFrameRange(1);
+    eq("framesel.range.backwards", d.frameSelList(), [1, 2, 3]);
+    d.setFrameSelMode(false);
+    eq("framesel.range.cleared", d.frameSelList(), []);
+  }
+
   // --- project files keep layer ids: a per-layer reference survives a reload ---
   {
     (globalThis as unknown as { localStorage: { clear(): void } }).localStorage.clear();

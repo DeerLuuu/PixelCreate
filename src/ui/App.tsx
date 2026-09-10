@@ -190,7 +190,7 @@ export function App() {
           void pasteClipboard(hit.action === "pasteLayer" ? "layer" : hit.action === "pasteCanvas" ? "canvas" : "inPlace");
           break;
         }
-        case "delete": e.preventDefault(); SESSION.deleteSelection(); break;
+        case "delete": e.preventDefault(); void SESSION.deleteKeyAction(); break;
         case "escape": if (SESSION.doc.sel?.hasAny()) { SESSION.doc.sel.clear(); SESSION.repaint(); } break;
         case "zoomIn": e.preventDefault(); if (v) { v.zoomAt(v.zoom * 1.25, v.vpW() / 2, v.vpH() / 2); SESSION.changedUI(); } break;
         case "zoomOut": e.preventDefault(); if (v) { v.zoomAt(v.zoom / 1.25, v.vpW() / 2, v.vpH() / 2); SESSION.changedUI(); } break;

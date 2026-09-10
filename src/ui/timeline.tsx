@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { SESSION } from "./singleton";
+import { isPc } from "../io/pcmode";
 import { makeT } from "./i18n";
 import type { Snapshot } from "../app/session";
 import { Btn, Icon, useLandscape } from "./base";
@@ -29,7 +30,7 @@ export function TimelineBar({ t, snap, onFrameDlg }: { t: ReturnType<typeof make
 
   // drag a frame NUMBER cell to reorder frames (long-press then drag)
   const [dl, setDl] = useState<{ from: number; to: number; dx: number } | null>(null);
-  const gRef = useRef<{ from: number; x: number; y: number; armed: boolean; moved: boolean; dead: boolean; captured?: boolean } | null>(null);
+  const gRef = useRef<{ from: number; x: number; y: number; armed: boolean; moved: boolean; dead: boolean; captured?: boolean; pc?: boolean } | null>(null);
   const tmRef = useRef<number | null>(null);
   const clearTm = () => { if (tmRef.current !== null) { window.clearTimeout(tmRef.current); tmRef.current = null; } };
   const reset = () => { clearTm(); gRef.current = null; setDl(null); };
@@ -47,7 +48,10 @@ export function TimelineBar({ t, snap, onFrameDlg }: { t: ReturnType<typeof make
     // never capture/preventDefault before the long-press arms, so a plain swipe
     // scrolls the matrix instead of dragging frames
     clearTm();
-    gRef.current = { from: fi, x: e.clientX, y: e.clientY, armed: false, moved: false, dead: false, captured: false };
+    // ⑩ 电脑模式：鼠标按下即可拖动排序，不再等 300ms 长按
+    const pcMouse = isPc() && e.pointerType === "mouse";
+    gRef.current = { from: fi, x: e.clientX, y: e.clientY, armed: pcMouse, moved: false, dead: false, captured: false, pc: pcMouse };
+    if (pcMouse) return;
     tmRef.current = window.setTimeout(() => {
       tmRef.current = null;
       const g = gRef.current;
@@ -84,21 +88,32 @@ export function TimelineBar({ t, snap, onFrameDlg }: { t: ReturnType<typeof make
     try { e.currentTarget.releasePointerCapture(e.pointerId); } catch { /* ignore */ }
     if (g.dead || fi !== g.from) { setDl(null); return; }
     if (g.armed) {
-      if (!g.moved) { setDl(null); onFrameDlg(g.from); return; }
+      if (!g.moved) {
+        setDl(null);
+        // PC: a plain click just selects; touch keeps "tap = frame settings"
+        if (isPc() && g.pc) { pickFrame(fi, e.shiftKey); return; }
+        onFrameDlg(g.from);
+        return;
+      }
       const to = numDropAt(e, g.from);
       setDl(null);
       SESSION.frameMoveTo(g.from, to);
       return;
     }
     setDl(null);
-    // in pick-frames mode a tap toggles the frame instead of switching to it
+    pickFrame(fi, e.shiftKey);
+  };
+  /** ⑰ Shift+左键＝区间选中；否则普通点选（多选模式下切换该帧） */
+  const pickFrame = (fi: number, range: boolean): void => {
+    SESSION.setDelTarget("frames");
+    if (range) { SESSION.pickFrameRange(fi); return; }
     if (SESSION.frameSelOn) SESSION.toggleFrameSel(fi);
     else SESSION.setFrame(fi);
   };
 
   // drag a layer row vertically to reorder layers (long-press then drag)
   const [ldl, setLdl] = useState<{ from: number; to: number; dy: number } | null>(null);
-  const lgRef = useRef<{ from: number; x: number; y: number; armed: boolean; moved: boolean; dead: boolean; captured?: boolean } | null>(null);
+  const lgRef = useRef<{ from: number; x: number; y: number; armed: boolean; moved: boolean; dead: boolean; captured?: boolean; pc?: boolean } | null>(null);
   const ltmRef = useRef<number | null>(null);
   const clearLtm = () => { if (ltmRef.current !== null) { window.clearTimeout(ltmRef.current); ltmRef.current = null; } };
   const resetL = () => { clearLtm(); lgRef.current = null; setLdl(null); };
@@ -117,7 +132,9 @@ export function TimelineBar({ t, snap, onFrameDlg }: { t: ReturnType<typeof make
     // the eye / lock buttons keep their own tap behaviour
     if (el.closest(".eye") || el.closest(".lock")) return;
     clearLtm();
-    lgRef.current = { from: li, x: e.clientX, y: e.clientY, armed: false, moved: false, dead: false, captured: false };
+    const pcMouse = isPc() && e.pointerType === "mouse";
+    lgRef.current = { from: li, x: e.clientX, y: e.clientY, armed: pcMouse, moved: false, dead: false, captured: false, pc: pcMouse };
+    if (pcMouse) { SESSION.setDelTarget("layer"); return; }
     ltmRef.current = window.setTimeout(() => {
       ltmRef.current = null;
       const g = lgRef.current;
@@ -251,10 +268,15 @@ export function TimelineBar({ t, snap, onFrameDlg }: { t: ReturnType<typeof make
   // renaming happens in its own dialog, only reachable for the selected layer
   const [ren, setRen] = useState(false);
   const [renName, setRenName] = useState("");
+  /** layer the rename dialog edits (double-click a row picks that one) */
+  const [renLi, setRenLi] = useState<number | null>(null);
   const commitRen = () => {
     const v = renName.trim();
-    if (curL && v && v !== curL.name) SESSION.renameLayer(curLi, v);
+    const li = renLi ?? curLi;
+    const L = layers[li];
+    if (L && v && v !== L.name) SESSION.renameLayer(li, v);
     setRen(false);
+    setRenLi(null);
   };
 
   const dropBox = (() => {
@@ -319,7 +341,8 @@ export function TimelineBar({ t, snap, onFrameDlg }: { t: ReturnType<typeof make
               className={"ase-cell ase-numcell" + (fi === snap.frameIdx ? " on" : "") + (snap.frameSel.includes(fi) ? " picked" : "") + (isDrag ? " dragging" : "") + (isDrop ? " drop" : "")}
               style={{ gridColumn: fi + 2, gridRow: 1, transform: isDrag && dl ? "translateX(" + dl.dx + "px) translateY(-2px)" : undefined }}
               data-guide={"frame-" + fi}
-              onPointerDown={numDown(fi)} onPointerMove={numMove(fi)} onPointerUp={numUp(fi)} onPointerCancel={reset}>
+              onPointerDown={numDown(fi)} onPointerMove={numMove(fi)} onPointerUp={numUp(fi)} onPointerCancel={reset}
+              onContextMenu={(e) => { e.preventDefault(); SESSION.setDelTarget("frames"); SESSION.setFrame(fi); onFrameDlg(fi); }}>
               <span>{fi + 1}</span>
             </div>
           );
@@ -351,7 +374,8 @@ export function TimelineBar({ t, snap, onFrameDlg }: { t: ReturnType<typeof make
               </button>
               <button className={"lname" + (L.ref ? " ref" : "")}
                 title={L.ref ? refTip(li) : L.name}
-                onClick={(e) => { e.stopPropagation(); SESSION.setLayer(li); }}>{L.ref ? "\u26ad " : ""}{L.name}</button>
+                onDoubleClick={(e) => { e.stopPropagation(); SESSION.setLayer(li); setRenLi(li); setRenName(L.name); setRen(true); }}
+                onClick={(e) => { e.stopPropagation(); SESSION.setDelTarget("layer"); SESSION.setLayer(li); }}>{L.ref ? "\u26ad " : ""}{L.name}</button>
             </div>
           );
         })}
@@ -391,7 +415,7 @@ export function TimelineBar({ t, snap, onFrameDlg }: { t: ReturnType<typeof make
             <span className="bname">{t("blends." + curL.blend)}</span><i className="bchev">▾</i>
           </button>
           <div className="tl-btns">
-            <Btn icon="i-rename" className="mini" title={t("layerRename")} onClick={() => { setRenName(curL.name); setRen(true); }} />
+            <Btn icon="i-rename" className="mini" title={t("layerRename")} onClick={() => { setRenLi(curLi); setRenName(curL.name); setRen(true); }} />
             <Btn icon="i-plus" className="mini primary" title={t("layerAdd")} onClick={() => SESSION.layerAdd()} />
             <Btn icon="i-up" className="mini" title={t("layerUp")} onClick={() => SESSION.layerUp()} />
             <Btn icon="i-down" className="mini" title={t("layerDown")} onClick={() => SESSION.layerDown()} />
@@ -415,7 +439,7 @@ export function TimelineBar({ t, snap, onFrameDlg }: { t: ReturnType<typeof make
             ))}
           </Dialog>
         </>, document.body)}
-      {ren && curL && createPortal(
+      {ren && (renLi === null ? curL : layers[renLi]) && createPortal(
         <>
           <Dialog title={t("layerRename")} onClose={() => setRen(false)} className="dlg-top" footer={<><Btn label={t("cancel")} onClick={() => setRen(false)} /> <Btn label={t("ok")} className="primary" onClick={commitRen} /></>}>
             <Row label={t("name")}>
