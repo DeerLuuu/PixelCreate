@@ -1077,19 +1077,19 @@ html[data-pc] .sc-dlg{width:min(92vw,760px)}
 /* 导出尺寸提示：超预算时标红（见 ExportModal） */
 .row-note.warn{color:var(--danger);font-weight:600}
 
-/* ---- 浮动球存储区里的「装备槽」+ 饼菜单（Pie，仅 PC）---- */
-.bdock .bd-equip{width:30px;height:30px;border-radius:9px;flex:0 0 auto;display:flex;align-items:center;justify-content:center;
-  background:var(--surface-item);border:1px dashed var(--line);color:var(--dim-2);font-size:13px;font-weight:700;position:relative}
-.bdock .bd-equip.on{border-style:solid;border-color:var(--accent);color:var(--text)}
-.bdock .bd-equip.on::after{content:"F";position:absolute;right:-2px;bottom:-3px;font-size:9px;line-height:1;padding:1px 2px;
-  border-radius:4px;background:var(--accent);color:var(--on-accent);font-weight:800}
-.bdock .bd-equip:hover{background:var(--surface-item-active)}
-.bdock .bd-pick{display:flex;flex-wrap:wrap;gap:4px;justify-content:center;padding-top:2px;border-top:1px solid var(--ctl-line-soft)}
-.bdock .bd-pick button{width:26px;height:26px;border-radius:8px;background:var(--surface-item);border:1px solid transparent;
-  color:var(--text-3);display:flex;align-items:center;justify-content:center}
-.bdock .bd-pick button.on{border-color:var(--accent);color:var(--text)}
-.bdock .bd-pick button:hover{background:var(--surface-item-active)}
-.bdock.horiz .bd-pick{border-top:0;border-left:1px solid var(--ctl-line-soft);padding:0 0 0 4px}
+/* ---- 存储区边上的「装备槽」+ 饼菜单（Pie，仅 PC）---- */
+.pie-slot{position:fixed;right:80px;top:50%;transform:translateY(-50%);z-index:34;
+  width:38px;height:38px;border-radius:12px;display:flex;align-items:center;justify-content:center;
+  background:var(--surface-item);border:1px dashed var(--line);color:var(--dim-2);
+  cursor:pointer;user-select:none;-webkit-user-select:none;touch-action:none;transition:transform .1s,background .12s,border-color .12s}
+.pie-slot:hover{background:var(--surface-item-active)}
+.pie-slot.on{border-style:solid;border-color:var(--accent);color:var(--text)}
+.pie-slot.armed{border-color:var(--accent);background:var(--accent-soft);transform:translateY(-50%) scale(1.14)}
+.pie-slot-plus{font-size:18px;font-weight:700;line-height:1}
+.pie-slot-key{position:absolute;right:-3px;bottom:-4px;font-size:9px;font-weight:800;line-height:1;padding:2px 3px;border-radius:5px;
+  background:var(--accent);color:var(--on-accent)}
+.bdock.horiz ~ .pie-slot{right:auto;top:6px;left:calc(50% + 152px);transform:none}
+@media (max-width:520px){.pie-slot{right:74px}}
 
 .pie-layer{position:fixed;inset:0;z-index:var(--z-pop);cursor:none;background:var(--pie-mask);animation:pieIn .12s ease both}
 @keyframes pieIn{from{opacity:0}to{opacity:1}}
