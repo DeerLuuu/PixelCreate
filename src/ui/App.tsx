@@ -985,6 +985,52 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
     setDockOpen(true);
     dockCollapse(900);
   };
+  /** 装备槽（存储区**边上**的独立一格）：把球拖进去就是装备它 */
+  const pieSlotRef = useRef<HTMLDivElement | null>(null);
+  const overPieSlot = (x: number, y: number): boolean => {
+    const el = pieSlotRef.current;
+    if (!el) return false;
+    const r = el.getBoundingClientRect();
+    return x >= r.left - 6 && x <= r.right + 6 && y >= r.top - 6 && y <= r.bottom + 6;
+  };
+  /** 把某个球放进装备槽；原来装着的球弹回屏幕，槽里同时只能有一个 */
+  const equipBall = (id: OrbId) => {
+    const prev = pieEquip;
+    setDocked((d) => d.filter((e) => (e.id as string) !== (id as string)));
+    if (prev && prev !== id) {
+      // 被换下来的球回到屏幕上（原来的位置）
+      const back = prev === "main" ? pos : prev === "pal" ? { x: pal.x, y: pal.y } : prev === "canv" ? { x: canv.x, y: canv.y } : { x: fx.x, y: fx.y };
+      const np = clampXY(back);
+      if (prev === "main") setPos(np);
+      else if (prev === "pal") setPal({ x: np.x, y: np.y, open: false });
+      else if (prev === "canv") setCanv({ x: np.x, y: np.y, open: false });
+      else setFx({ x: np.x, y: np.y, open: false });
+    }
+    setPieEquip(id);
+    setOpen(false);
+    setSub(null);
+    setPal((g) => (g ? { ...g, open: false } : g));
+    setFx((g) => (g ? { ...g, open: false } : g));
+    setCanv((g) => (g ? { ...g, open: false } : g));
+    bridge.toast(t("pieEquipped") + " " + ballLabel(id));
+    SESSION.hapticTick("装备", 0.8);
+  };
+  /** 从槽里把球取出（点一下槽，或拖出来） */
+  const unequipBall = (at?: { x: number; y: number }) => {
+    const id = pieEquip;
+    if (!id) return;
+    setPieEquip(null);
+    const cur = id === "main" ? pos : id === "pal" ? { x: pal.x, y: pal.y } : id === "canv" ? { x: canv.x, y: canv.y } : { x: fx.x, y: fx.y };
+    const np = clampXY(at ? { x: at.x, y: at.y } : cur);
+    if (id === "main") { setPos(np); try { localStorage.setItem(orbKey, JSON.stringify(np)); } catch { /* ignore */ } }
+    else if (id === "pal") setPal({ x: np.x, y: np.y, open: false });
+    else if (id === "canv") setCanv({ x: np.x, y: np.y, open: false });
+    else if (id === "sel") setSel((g) => ({ x: np.x, y: np.y, open: false }));
+    else setFx({ x: np.x, y: np.y, open: false });
+  };
+  /** 球是否已经不在屏幕上（停靠进存储区，或装进了装备槽） */
+  const hiddenById = (id: BallId): boolean => dockedById(id) || pieEquip === id;
+
   const popDock = (idx: number, at?: { x: number; y: number }) => {
     const d = docked[idx];
     if (!d) return;
@@ -1147,7 +1193,9 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
     } catch { return null; }
   };
   const [pieEquip, setPieEquip] = useState<OrbId | null>(loadPie);
-  const [piePick, setPiePick] = useState(false);
+  /** 拖动中的球是否正悬在装备槽上（松手即装备） */
+  const slotRef = useRef<OrbId | null>(null);
+  const [slotArmed, setSlotArmed] = useState(false);
   /** open pie: which ball's items are shown and which one the pointer focuses */
   const [pie, setPie] = useState<{ ball: OrbId; focus: number; cancelled: boolean } | null>(null);
   const pieRef = useRef<{ ball: OrbId; focus: number; cancelled: boolean } | null>(null);
@@ -1593,10 +1641,13 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
           stopTip();
           moveBall(which, ev.clientX - dr.dx, ev.clientY - dr.dy);
           const near = inDockZone(ev.clientX, ev.clientY);
-          const parked = overDockPanel(ev.clientX, ev.clientY);
+          const onSlot = overPieSlot(ev.clientX, ev.clientY);
+          const parked = !onSlot && overDockPanel(ev.clientX, ev.clientY);
+          slotRef.current = onSlot ? which : null;
           parkRef.current = parked ? ({ id: which as never }) : null;
           if (near) { dockClear(); setDockOpen(true); }
           setDockArmed(parked);
+          setSlotArmed(onSlot);
         };
         const detach = () => {
           window.removeEventListener("pointermove", onWinMove);
@@ -1613,6 +1664,15 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
         setDockArmed(false);
         const dr = drag.current;
         if (dr && dr.which === which) {
+          // 拖到装备槽上松手＝把这个球装进去（而不是停靠进存储区）
+          if (slotRef.current === which) {
+            slotRef.current = null;
+            setSlotArmed(false);
+            parkRef.current = null;
+            drag.current = null;
+            equipBall(which);
+            return;
+          }
           if (parkRef.current && (parkRef.current.id as string) === (which as string)) {
             parkRef.current = null;
             park(which as never);
@@ -1661,7 +1721,7 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
 
   return (
     <>
-      {!dockedById("main") && renderBall("main", pos, baseIcon, open, t("menu"), bd(snap.lang, "orb"), () => {
+      {!hiddenById("main") && renderBall("main", pos, baseIcon, open, t("menu"), bd(snap.lang, "orb"), () => {
         if (open) { setOpen(false); setSub(null); setRingLock((m) => ({ ...m, main: false })); return; }
         if (sel) {
           const pushed = clearRingOf(pos, { x: sel.x, y: sel.y });
@@ -1678,7 +1738,7 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
         SESSION.hapticTick("工具栏", 0.7);
         setOpen(true);
       })}
-      <Keep on={!!sel} el={sel ? renderBall("sel", { x: sel.x, y: sel.y }, "i-select", sel.open, t("sel.active"), bd(snap.lang, "selBall"), () => {
+      <Keep on={!!sel && pieEquip !== "sel"} el={sel ? renderBall("sel", { x: sel.x, y: sel.y }, "i-select", sel.open, t("sel.active"), bd(snap.lang, "selBall"), () => {
         if (!pcMode) { setOpen(false); setSub(null); }
         if (!sel.open && !lockOf("main")) {   // ② 锁定的球不被别人挤走
           const np = clearRingOf({ x: sel.x, y: sel.y }, pos);
@@ -1697,7 +1757,7 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
         }
         setSel({ ...sel, open: !sel.open });
       }) : null} />
-      {!dockedById("pal") && renderBall("pal", { x: pal.x, y: pal.y }, "i-palette", pal.open, t("palette"), bd(snap.lang, "palette"), () => {
+      {!hiddenById("pal") && renderBall("pal", { x: pal.x, y: pal.y }, "i-palette", pal.open, t("palette"), bd(snap.lang, "palette"), () => {
         if (!pcMode) { setOpen(false); setSub(null); setSel((g) => (g ? { ...g, open: false } : g)); }
         if (!pal.open && !lockOf("main")) {
           const np = clearRingOf({ x: pal.x, y: pal.y }, pos);
@@ -1716,7 +1776,7 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
         }
         setPal({ ...pal, open: !pal.open });
       })}
-      {!dockedById("fx") && renderBall("fx", { x: fx.x, y: fx.y }, "i-star", fx.open, t("fxOrb"), bd(snap.lang, "fx"), () => {
+      {!hiddenById("fx") && renderBall("fx", { x: fx.x, y: fx.y }, "i-star", fx.open, t("fxOrb"), bd(snap.lang, "fx"), () => {
         if (!pcMode) {
           setOpen(false);
           setSub(null);
@@ -1740,7 +1800,7 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
         }
         setFx({ ...fx, open: !fx.open });
       })}
-      {!dockedById("canv") && renderBall("canv", { x: canv.x, y: canv.y }, "i-canvas", canv.open, t("canvasOrb"), bd(snap.lang, "canv"), () => {
+      {!hiddenById("canv") && renderBall("canv", { x: canv.x, y: canv.y }, "i-canvas", canv.open, t("canvasOrb"), bd(snap.lang, "canv"), () => {
         if (!pcMode) {
           setOpen(false);
           setSub(null);
@@ -1766,6 +1826,22 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
         setCanvSub(null);
         setCanv({ ...canv, open: !canv.open });
       })}
+      {/* 装备槽：在存储区**边上**的独立一格；把一个浮动球拖进来就装备它（只装备一个）。
+          点一下槽＝把球取出放回屏幕。按住 F 发动它的快捷圆盘。 */}
+      {pcMode && (
+        <div ref={pieSlotRef} className={"pie-slot" + (pieEquip ? " on" : "") + (slotArmed ? " armed" : "")}
+          data-guide="pie-equip"
+          title={pieEquip ? t("pieEquipDesc") + " · " + ballLabel(pieEquip) + "\n" + t("pieUnequipHint") : t("pieEquip")}
+          onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); }}
+          onClick={() => {
+            if (!pieEquip) { bridge.toast(t("pieEquipDrop")); return; }
+            unequipBall({ x: window.innerWidth - 120, y: window.innerHeight / 2 });
+          }}>
+          {pieEquip ? <Icon id={iconOfBall(pieEquip as BallId)} size={16} /> : <span className="pie-slot-plus">+</span>}
+          <span className="pie-slot-key">F</span>
+        </div>
+      )}
+
       {pie && (() => {
         const ball = pie.ball;
         const cols = pieColours(ball);
@@ -1880,28 +1956,6 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
               <Icon id={d.id === "main" ? baseIcon : iconOfBall(d.id)} size={15} />
             </span>
           ))}
-          {/* 装备槽：按住 F 发动这个球的饼菜单（PC 专属，只装备一个） */}
-          {pcMode && (
-            <span className={"bd-equip" + (pieEquip ? " on" : "")} data-guide="pie-equip"
-              title={pieEquip ? t("pieEquipDesc") + " · " + ballLabel(pieEquip) : t("pieEquip")}
-              onPointerDown={(e) => { e.stopPropagation(); e.preventDefault(); setDockOpen(true); setPiePick((v) => !v); }}
-              onPointerUp={(e) => e.stopPropagation()}>
-              {pieEquip ? <Icon id={iconOfBall(pieEquip as BallId)} size={15} /> : "+"}
-            </span>
-          )}
-          {pcMode && piePick && (
-            <span className="bd-pick" onPointerDown={(e) => e.stopPropagation()} onPointerUp={(e) => e.stopPropagation()}>
-              {(["main", "sel", "pal", "fx", "canv"] as OrbId[]).map((id) => (
-                <button key={id} className={pieEquip === id ? "on" : ""} title={ballLabel(id)}
-                  onClick={() => { setPieEquip(id); setPiePick(false); }}>
-                  <Icon id={iconOfBall(id as BallId)} size={14} />
-                </button>
-              ))}
-              <button title={t("pieUnequip")} onClick={() => { setPieEquip(null); setPiePick(false); }}>
-                <Icon id="i-x" size={14} />
-              </button>
-            </span>
-          )}
         </div>
       )}
       {!pcMode && (open || (sel && sel.open) || pal.open || fx.open || canv.open) && (
