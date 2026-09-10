@@ -1072,6 +1072,15 @@ html[data-pc] .sc-dlg{width:min(92vw,760px)}
 .sc-keys{flex:0 0 auto;min-width:132px;padding:3px 8px;border-radius:6px;background:var(--bg);border:1px solid var(--line);
   font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;color:var(--text);text-align:center}
 .sc-desc{flex:1 1 auto;font-size:13px;line-height:1.45;color:var(--text)}
+/* 可改键：按键本身就是按钮 */
+.sc-keybtn{cursor:pointer;font:inherit;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}
+.sc-keybtn:hover{background:var(--surface-item-active);border-color:var(--accent)}
+.sc-keybtn.custom{border-color:var(--accent);color:var(--text)}
+.sc-keybtn.capturing{background:var(--accent);color:var(--on-accent);border-color:var(--on-accent)}
+.sc-row.capturing{outline:1px solid var(--accent);outline-offset:1px}
+.sc-reset{width:26px;height:26px;border-radius:8px;flex:0 0 auto;background:var(--surface-item);color:var(--text-3);
+  border:1px solid transparent;display:flex;align-items:center;justify-content:center}
+.sc-reset:hover{background:var(--surface-item-active);color:var(--text)}
 @media (max-width:560px){html[data-pc] .sc-dlg{width:94vw}}
 
 /* 导出尺寸提示：超预算时标红（见 ExportModal） */
