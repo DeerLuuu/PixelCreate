@@ -1005,7 +1005,7 @@ export async function testSession(): Promise<void> {
       const down = c.addCanvas(new Doc(64, 64, "D"), { x: base.x, y: base.y + base.doc.h + 200 });
       const near = c.snapPosition(down, base.x, base.y + base.doc.h + 6, 12);
       eq("canvas.snap.stacked-gap", [near.x, near.y - (base.y + base.doc.h), near.hit],
-        [base.x, 8 + 20, 0]);
+        [base.x, 8 + 10, 0]);
       ok("canvas.snap.stacked-snapped", near.hit !== null);
       c.moveCanvas(down, near.x, near.y);
       c.finishCanvasDrag(down, near.hit);
@@ -1014,6 +1014,28 @@ export async function testSession(): Promise<void> {
       // side-by-side keeps the plain 8px gap
       const side = c.snapPosition(down, base.x + base.doc.w + 6, base.y, 12);
       eq("canvas.snap.side-gap", side.x - (base.x + base.doc.w), 8);
+    }
+
+    // 一次性迁移：老工程里成组的叠放画布还停在旧的（更宽的）空隙上，
+    // 打开工程时收拢到新空隙，免得升级后看起来「什么都没变」
+    {
+      const s = new Session();
+      const base = s.docs[0];
+      const down = s.addCanvas(new Doc(64, 64, "D"), { x: base.x, y: base.y + base.doc.h + 200 });
+      // 旧版本存下来的样子：已经成组，但空隙是旧的 8+20
+      s.moveCanvas(down, base.x, base.y + base.doc.h + 8 + 20);
+      s.linkCanvas(0, down);
+      ok("canvas.legacy.grouped", !!s.docs[down].group);
+      eq("canvas.legacy.gap-before", s.docs[down].y - (base.y + base.doc.h), 8 + 20);
+      const text = await s.serializeProject({ cels: "rle" });
+      const fresh = new Session();
+      await fresh.loadProjectText(text, { ask: false });
+      eq("canvas.legacy.gap-tightened", fresh.docs[1].y - (fresh.docs[0].y + fresh.docs[0].doc.h), 8 + 10);
+      ok("canvas.legacy.group-kept", !!fresh.docs[1].group);
+      // 迁移是幂等的：再存再读一次，位置不再变
+      const again = new Session();
+      await again.loadProjectText(await fresh.serializeProject({ cels: "rle" }), { ask: false });
+      eq("canvas.legacy.idempotent", again.docs[1].y, fresh.docs[1].y);
     }
   }
 

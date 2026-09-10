@@ -12,7 +12,7 @@ import { selOps, lassoFill, beginMove, xformFloating, floatDropInto, type MoveSt
 import type { Session } from "../app/session";
 import type { GestureActionId } from "../app/gesture-ids";
 import { clamp } from "../engine/types";
-import { snapGapRect, type GapRect } from "../app/canvas-snap";
+import { LEGACY_TITLE_EXTRA, TITLE_EXTRA, snapGapRect, type GapRect } from "../app/canvas-snap";
 import { canvasAtScreen as spaceCanvasAt, screenToCanvas } from "../app/canvas-space";
 import { wheelIntent } from "./wheel";
 import { takeNotches, wheelNotches } from "../engine/scrub";
@@ -44,7 +44,10 @@ const UNLOCK_D = "M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6h2c0-1.66 1.34-3 3-3s3 
 const FOUR_MOVE_PX_DEFAULT = 15;
 /** layer-switch flash duration in ms */
 const FLASH_MS = 420;
-
+/** how far the gap tint tolerates an off-canonical gap: pairs snapped by an
+ *  older build keep the wider stacked gap (LEGACY_TITLE_EXTRA 20 vs 10) and
+ *  must still light up as snapped */
+const LEGACY_TOL = LEGACY_TITLE_EXTRA - TITLE_EXTRA + 2;
 /** Selection scale follows Aseprite's transform: free (non-integer) scale
  *  factor, anchored at the handle opposite the one being dragged, rasterised
  *  via affine inverse mapping with trunkating nearest-neighbour sampling. */
@@ -1387,11 +1390,12 @@ export class View {
       for (let j = i + 1; j < docs.length; j++) {
         const b = docs[j];
         if (b.group !== a.group) continue;
-        // tolerant: a group snapped with an older gap still shows its gap
+        // tolerant: a group snapped with an older (wider) stacked gap still shows
+        // its gap — LEGACY_TITLE_EXTRA was 20, the current extra is 10
         const g = snapGapRect(
           { x: a.x, y: a.y, w: a.doc.w, h: a.doc.h },
           { x: b.x, y: b.y, w: b.doc.w, h: b.doc.h },
-          gapPx, 8);
+          gapPx, LEGACY_TOL);
         if (!g) continue;
         const x0 = g.x0, y0 = g.y0, x1 = g.x1, y1 = g.y1;
         ctx.fillRect(sx(x0), sy(y0), (x1 - x0) * z, (y1 - y0) * z);
@@ -1435,7 +1439,7 @@ export class View {
       const fade = 1 - k;
       for (const [ia, ib] of u.pairs) {
         const a = this.docsAt(ia), b = this.docsAt(ib);
-        const g = a && b ? snapGapRect({ x: a.x, y: a.y, w: a.doc.w, h: a.doc.h }, { x: b.x, y: b.y, w: b.doc.w, h: b.doc.h }, gapPx, 8) : null;
+        const g = a && b ? snapGapRect({ x: a.x, y: a.y, w: a.doc.w, h: a.doc.h }, { x: b.x, y: b.y, w: b.doc.w, h: b.doc.h }, gapPx, LEGACY_TOL) : null;
         if (!g) continue;
         const x = sx(g.x0), y = sy(g.y0);
         const w = (g.x1 - g.x0) * z, h = (g.y1 - g.y0) * z;

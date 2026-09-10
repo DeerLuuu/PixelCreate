@@ -12,8 +12,15 @@ export const SNAP_GAP = 8;
 
 /** extra space left between two STACKED canvases (doc pixels): the title bar of
  *  the lower one has to fit in the gap, otherwise it would be painted over one
- *  of the two canvases. 8 + 20 = 28 ≥ 26 (bar height) + 1px margins. */
-export const TITLE_EXTRA = 20;
+ *  of the two canvases. The bar switches to its COMPACT form (`TITLE_H_TIGHT`,
+ *  16px) while it sits inside such a gap, so 8 + 10 = 18 ≥ 16 + 1px margins.
+ *  (It used to be 20 → a 28px stack gap, which read as a wide empty band; the
+ *  bar now shrinks instead of the canvases standing further apart.) */
+export const TITLE_EXTRA = 10;
+
+/** the gap older builds left between stacked canvases (TITLE_EXTRA was 20) —
+ *  only used by the one-off `tightenLegacyStack` migration */
+export const LEGACY_TITLE_EXTRA = 20;
 
 /** vertical snap gap (stacked canvases) */
 export const SNAP_GAP_V = SNAP_GAP + TITLE_EXTRA;
@@ -21,6 +28,42 @@ export const SNAP_GAP_V = SNAP_GAP + TITLE_EXTRA;
 /** the vertical gap for a configured horizontal gap */
 export function stackGap(gap: number): number {
   return gap + TITLE_EXTRA;
+}
+
+/**
+ * One-off migration for projects saved while the stacked gap was still
+ * `LEGACY_TITLE_EXTRA` px larger: every GROUPED canvas that sits directly below
+ * a group-mate at exactly that legacy gap moves up, so the stack tightens
+ * without touching anything the user placed by hand. A chain of three (or a
+ * grid) moves by a multiple of the delta — the canvas below a moved canvas has
+ * to close its own gap as well — which is what the depth memo computes. Pure:
+ * returns the new y of each rect, in the input order. Idempotent — after the
+ * first save nothing matches the legacy gap any more.
+ */
+export function tightenLegacyStack<T extends SnapRect & { group?: unknown }>(
+  items: readonly T[], gap: number, delta = LEGACY_TITLE_EXTRA - TITLE_EXTRA,
+): number[] {
+  if (delta <= 0) return items.map((e) => e.y);
+  const legacyV = stackGap(gap) + delta;
+  // top-to-bottom (then left-to-right) so a mate above is always solved first
+  const order = items.map((_, i) => i).sort((a, b) => items[a].y - items[b].y || items[a].x - items[b].x);
+  const depth = items.map(() => 0);
+  const out = items.map((e) => e.y);
+  for (const i of order) {
+    const e = items[i];
+    if (!e.group) continue;
+    let below = 0;
+    for (const j of order) {
+      if (j === i) continue;
+      const o = items[j];
+      if (!o.group || o.group !== e.group) continue;
+      if (!(o.x < e.x + e.w && e.x < o.x + o.w)) continue;          // stacked: columns overlap
+      if (Math.abs(e.y - (o.y + o.h) - legacyV) >= 0.5) continue;   // exactly the old gap
+      below = Math.max(below, depth[j] + 1);
+    }
+    if (below > 0) { depth[i] = below; out[i] = e.y - delta * below; }
+  }
+  return out;
 }
 
 export interface SnapRect {
@@ -199,6 +242,9 @@ export function snapToTargets<T>(moving: SnapRect, targets: Array<SnapTarget<T>>
 // ---------------------------------------------------------------- title bar
 /** height of a canvas title bar (CSS px, `.cv-title`) */
 export const TITLE_H = 26;
+/** height of the compact bar (`.cv-title.tight`): the form taken while the bar
+ *  has to sit inside a stacked gap, so the gap can stay small */
+export const TITLE_H_TIGHT = 16;
 /** how far above its canvas the bar sits when nothing is in the way */
 export const TITLE_LIFT = 30;
 
@@ -207,17 +253,18 @@ export const TITLE_LIFT = 30;
  * directly above (snapped or merely placed) the bar must fit in the gap between
  * the two: `obstacleBottom` is the lowest edge of everything above it
  * (null = nothing in the way). Stacked canvases snap TITLE_EXTRA px further
- * apart so the bar clears BOTH canvases.
+ * apart so the compact bar clears BOTH canvases; a pair that was snapped by an
+ * older build keeps its wider gap and the bar then uses its full height.
  */
-export function titleTop(canvasTop: number, obstacleBottom: number | null, lift = TITLE_LIFT, pad = 1): number {
+export function titleTop(canvasTop: number, obstacleBottom: number | null, lift = TITLE_LIFT, pad = 1, barH = TITLE_H): number {
   const want = canvasTop - lift;
   if (obstacleBottom === null) return want;
   // inside the gap: below the neighbour and above our own canvas. The vertical
-  // snap gap (TITLE_EXTRA px wider) leaves room for exactly that; a pair that
-  // was snapped by an older build keeps its 8px gap and the bar then clears the
+  // snap gap leaves room for exactly the compact bar; when the gap is even
+  // tighter (an older pair, or a hand-placed neighbour) the bar clears the
   // NEIGHBOUR first (covering a sliver of its own canvas is the lesser evil).
   const floor = obstacleBottom + pad;
-  const ceil = canvasTop - TITLE_H - pad;
+  const ceil = canvasTop - barH - pad;
   const top = Math.max(want, floor);
   return ceil >= floor ? Math.min(top, ceil) : floor;
 }

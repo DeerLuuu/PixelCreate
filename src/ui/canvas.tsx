@@ -11,7 +11,7 @@ import { useSession, Icon } from "./base";
 import { showTip, hideTip } from "./tooltip";
 import type { Lang } from "./i18n";
 import type { View } from "../render/view";
-import { titleObstacle, titleTop } from "../app/canvas-snap";
+import { TITLE_H, TITLE_H_TIGHT, titleObstacle, titleTop } from "../app/canvas-snap";
 
 /** fallback magnetic range in screen px (Settings -> Canvas -> snap range) */
 const SNAP_SCREEN_PX = 14;
@@ -67,12 +67,17 @@ export function CanvasTitles({ view, tick }: { view: View | null; tick: number }
         // own horizontal extent is what must not overlap (it is wider than a
         // narrow canvas), so pass the bar rect rather than the canvas box.
         const bar = { x: left, y: minY, w: width, h: 0 };
-        const top = titleTop(minY, titleObstacle(bar, boxes.filter((_, j) => j !== i)));
+        const obstacle = titleObstacle(bar, boxes.filter((_, j) => j !== i));
+        // squeezed into a gap → compact bar (16px), which is what keeps the
+        // stacked gap small; a free-standing bar keeps its full height
+        const tight = obstacle !== null;
+        const barH = tight ? TITLE_H_TIGHT : TITLE_H;
+        const top = titleTop(minY, obstacle, undefined, undefined, barH);
         const on = i === SESSION.docIdx;
         return (
           <div
             key={i}
-            className={"cv-title" + (on ? " on" : "") + (e.locked ? " locked" : "")}
+            className={"cv-title" + (on ? " on" : "") + (tight ? " tight" : "") + (e.locked ? " locked" : "")}
             style={{ left, top, width }}
             data-guide={"canvas-title-" + i}
             title={on ? t("canvasFocused") : t("canvasFocusHint")}
@@ -167,17 +172,17 @@ export function CanvasTitles({ view, tick }: { view: View | null; tick: number }
               title={SESSION.hasPreview(i) ? t("canvasPreviewOff") : t("canvasPreview")}
               onPointerDown={(ev) => ev.stopPropagation()}
               onClick={(ev) => { ev.stopPropagation(); SESSION.togglePreview(i); }}>
-              <Icon id="i-preview" size={13} />
+              <Icon id="i-preview" size={tight ? 10 : 13} />
             </button>
             )}
             {narrow ? null : <span className="cv-dot" />}
             <span className="cv-name">{e.doc.name || "untitled"}</span>
-            {!narrow && e.locked && <span className="cv-lock" title={t("canvasLocked")}><Icon id="i-pin" size={11} /></span>}
+            {!narrow && e.locked && <span className="cv-lock" title={t("canvasLocked")}><Icon id="i-pin" size={tight ? 9 : 11} /></span>}
             {!narrow && e.group && (
               <button className="cv-btn cv-unlink" title={t("canvasUnlink")}
                 onPointerDown={(ev) => ev.stopPropagation()}
                 onClick={(ev) => { ev.stopPropagation(); SESSION.unlinkCanvas(i); }}>
-                <Icon id="i-unlink" size={13} />
+                <Icon id="i-unlink" size={tight ? 10 : 13} />
               </button>
             )}
           </div>

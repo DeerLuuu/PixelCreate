@@ -307,6 +307,12 @@ html[data-pc] .view-canvas[data-cursor="pick"]{cursor:url("data:image/svg+xml;ut
   touch-action:none}
 .cv-title.on{border-color:var(--accent);color:var(--text-4);background:linear-gradient(180deg,var(--grad-title-on-1),var(--grad-title-on-2))}
 .cv-title:active{cursor:grabbing}
+/* 上方紧贴着另一张画布时要挤进那条空隙：收成紧凑态（16px）。
+   空隙因此只需要 18px —— 让位的是标题栏，不再是两张画布之间的距离
+   （对应 canvas-snap.ts 的 TITLE_EXTRA / TITLE_H_TIGHT） */
+.cv-title.tight{height:16px;font-size:11px;font-weight:600;padding:0 6px;gap:4px;border-radius:6px 6px 3px 3px}
+.cv-title.tight .cv-btn{width:14px;height:14px;border-radius:4px}
+.cv-title.tight .cv-dot{width:6px;height:6px}
 .cv-dot{width:7px;height:7px;border-radius:50%;background:var(--sym-dot);flex:0 0 auto}
 .cv-btn{width:18px;height:18px;border-radius:5px;background:var(--ctl-bg-soft);border:1px solid transparent;
   color:var(--text-3);display:flex;align-items:center;justify-content:center;padding:0;flex:0 0 auto}

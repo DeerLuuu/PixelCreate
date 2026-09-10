@@ -30,7 +30,7 @@ import { mirrorMaskInPlace } from "../engine/symmetry";
 import { adjustPixel, type HslAdj } from "../engine/adjust";
 import { type LoopMode, nextLoopMode, nextPlayFrame, startPlayDir, startPlayFrame } from "./playback";
 import { SETTINGS_BY_PATH, normalizeSetting, type SettingValue } from "./settings";
-import { snapToTargets, snapCandidates, snapGapRect, stackGap, type GapRect, type SnapTarget } from "./canvas-snap";
+import { snapToTargets, snapCandidates, snapGapRect, stackGap, tightenLegacyStack, type GapRect, type SnapTarget } from "./canvas-snap";
 
 export interface Prefs {
   lang: "zh" | "en";
@@ -2481,6 +2481,9 @@ export class Session {
     }));
     this.docIdx = parsed.focus;
     this.applyHistoryLimit();
+    // 老工程里成组的叠放画布还停在旧的（更宽的）空隙上：一次性收拢，
+    // 免得升级后看起来「什么都没变」（见 canvas-snap.tightenLegacyStack）
+    this.tightenLegacyStackGaps();
     // one shared stack; steps name the canvas they edited
     this.history.clear();
     const dump = parsed.history
@@ -2642,6 +2645,17 @@ export class Session {
       if (g) zones.push({ a: i, b: c.id, ...g });
     }
     return { x: r.x, y: r.y, hit: r.hit, zones };
+  }
+  /** 一次性迁移：成组的叠放画布若还停在旧的（更宽的）空隙上就收拢一下。
+      旧空隙 = 当前配置空隙 + LEGACY_TITLE_EXTRA，只动成组的、且正好卡在旧空隙上的
+      画布——手动摆的位置一根指头都不碰。幂等：存过一次之后就不再有匹配的间隙。 */
+  private tightenLegacyStackGaps(): void {
+    if (this.docs.length < 2) return;
+    const gap = Math.max(0, Math.round(this.prefs.snapGap));
+    const ys = tightenLegacyStack(
+      this.docs.map((e) => ({ x: e.x, y: e.y, w: e.doc.w, h: e.doc.h, group: e.group ?? null })),
+      gap);
+    for (let i = 0; i < this.docs.length; i++) if (ys[i] !== this.docs[i].y) this.docs[i].y = ys[i];
   }
   /** true when two canvases are neighbours with exactly the snap gap between */
   private canvasesTouch(a: CanvasEntry, b: CanvasEntry): boolean {

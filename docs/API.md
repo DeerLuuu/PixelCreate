@@ -1189,11 +1189,22 @@ PC 专属的 Blender 式饼菜单：浮动球存储区边的**装备槽**里装�
 | 导出 | 说明 |
 |---|---|
 | `SNAP_GAP` (8) | 左右并排时两张画布之间的空隙 |
-| `TITLE_EXTRA` (20) | **上下叠放**时额外留出的空隙：下面那张的标题栏要放进这段空隙里 |
-| `SNAP_GAP_V` (28) / `stackGap(gap)` | 叠放空隙 = 配置空隙 + `TITLE_EXTRA`（28 ≥ 标题栏 26px + 两侧各 1px） |
+| `TITLE_EXTRA` (10) | **上下叠放**时额外留出的空隙：下面那张的标题栏要放进这段空隙里 |
+| `SNAP_GAP_V` (18) / `stackGap(gap)` | 叠放空隙 = 配置空隙 + `TITLE_EXTRA`（18 ≥ 紧凑标题栏 16px + 两侧各 1px） |
+| `LEGACY_TITLE_EXTRA` (20) | 旧版本的这个常量（曾让叠放空隙到 28px），只给一次性迁移用 |
+| `tightenLegacyStack(items, gap, delta?)` | 一次性迁移：把还停在旧叠放空隙上的**成组**画布往上收（链式/网格按层数累加），返回每个矩形的新 `y`；纯函数、幂等 |
 | `titleObstacle(self, others, lift)` | 找出「位于正上方、横向会被标题栏压到」的画布里最深的下边缘（`null` = 无遮挡） |
-| `titleTop(canvasTop, obstacleBottom, lift, pad)` | 标题栏纵向位置：空闲时 `上沿 − 30`，有遮挡时落在空隙内（既不压邻居也不压自己） |
-| `TITLE_H` (26) / `TITLE_LIFT` (30) | 标题栏高度与默认抬升量 |
+| `titleTop(canvasTop, obstacleBottom, lift, pad, barH)` | 标题栏纵向位置：空闲时 `上沿 − 30`，有遮挡时落在空隙内（既不压邻居也不压自己） |
+| `TITLE_H` (26) / `TITLE_H_TIGHT` (16) / `TITLE_LIFT` (30) | 标题栏高度（常规 / 挤进叠放空隙时的紧凑态）与默认抬升量 |
+
+上下叠放的空隙之所以比左右大，是为了把下面那张的标题栏放进空隙里。**让位的是标题栏**：
+`titleObstacle` 一旦报出上方有邻居，`CanvasTitles` 就给它加 `.tight`（16px 高、按钮 14px、图标缩小），
+于是叠放空隙只需要 18px（原来是 28px）。老工程里停在旧空隙上的成组画布由 `loadProjectText` 调
+`tightenLegacyStack` 收拢一次——只动成组的、且正好卡在旧空隙上的画布，手动摆的位置不碰，幂等。
+
+叠放方向的两个「贴边」候选允许更大的容差（`touchOk`）：把两张画布**推开**的修正量可以比 `snapRange`
+多 `TITLE_EXTRA`，否则拖到邻居身边时永远够不到更大的叠放空隙。`Session.canvasesTouch` 也用
+`stackGap()` 判断，保证叠放后能正常成组。
 
 叠放方向的两个「贴边」候选允许更大的容差（`touchOk`）：把两张画布**推开**的修正量可以比 `snapRange`
 多 `TITLE_EXTRA`，否则拖到邻居身边时永远够不到更大的叠放空隙。`Session.canvasesTouch` 也用
