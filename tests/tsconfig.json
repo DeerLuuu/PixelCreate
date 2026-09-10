@@ -20,6 +20,7 @@
     "../tests/ui-tokens.test.ts",
     "../tests/fullscreen.test.ts",
     "../tests/canvas-space.test.ts",
+    "../tests/color-drag.test.ts",
     "../tests/common.ts",
     "../tests/history.test.ts",
     "../tests/ops.test.ts",

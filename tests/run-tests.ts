@@ -19,6 +19,7 @@ import { testUiKit } from "./ui-kit.test";
 import { testUiTokens } from "./ui-tokens.test";
 import { testFullscreen } from "./fullscreen.test";
 import { testCanvasSpace } from "./canvas-space.test";
+import { testColorDrag } from "./color-drag.test";
 import { testExpr } from "./expr.test";
 import { testEffects } from "./effects.test";
 import { testView } from "./view.test";
@@ -73,6 +74,8 @@ async function main(): Promise<void> {
   testFullscreen();
   console.log("--- canvas space ---");
   testCanvasSpace();
+  console.log("--- colour drag ---");
+  testColorDrag();
   finish();
 }
 

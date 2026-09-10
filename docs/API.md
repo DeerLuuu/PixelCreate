@@ -954,6 +954,20 @@ view.fitAnimated(ms = 220) / animateTo(z, ox, oy, ms)  // 缓动适配（双击�
 | `ui/preview.tsx` | `PreviewBox`：按 `SESSION.previews` 渲染多个预览框，每个绑定一张画布 |
 | `ui/base.tsx` | `ScrubNum` 支持算式与运算符浮条 |
 
+### 18.7a 颜色拖拽填充 `ui/color-drag.tsx`
+
+调色球扇形里的颜色小球与底栏颜色块共用同一个手势实现：按下后**在长按计时器触发之前**移动超过 8px
+即为拖拽，跟手显示一枚同色幽灵球，松手落在画布上就用该颜色执行一次油漆桶填充（`Session.quickFill`）。
+
+| 导出 | 说明 |
+|---|---|
+| `useColorDragFill({ color, tip?, holdMs?, onFilled? })` | 返回 `{ ghost, dragging, begin, move, end, cancel }`；`ghost` 是要渲染的幽灵球 |
+| `gestureIntent(moved, elapsed, holdMs, threshold)` | 纯函数：`hold`（长按动作优先）/ `drag`（提前移动）/ `pending` |
+| `DRAG_START` (8) / `TIP_MS` (450) | 拖拽阈值 / 长按提示延迟 |
+
+底栏颜色块本身还有长按=快捷调色盘（`hold.tsx` 的 `HOLD_MS = 330`），所以 `holdMs` 传 `HOLD_MS`：
+超时后手势归调色盘，未超时就移动则是填充拖拽，两者不会互相抢。
+
 ### 18.7b 画布空间命中测试 `app/canvas-space.ts`
 
 纯函数，视图变换以**聚焦画布**为锚点（它的矩形恒为 `0,0..w,h`），所以屏幕点要先换算成空间坐标：
