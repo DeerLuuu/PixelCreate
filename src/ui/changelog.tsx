@@ -9,10 +9,10 @@ import { useKitPcMode } from "./kit";
 import { Dialog } from "./kit";
 
 /** keep in sync with android/AndroidManifest.xml versionName on every release */
-export const APP_VERSION = "1.0.9.7";
+export const APP_VERSION = "1.0.9.8";
 /** build stamp shown next to the version (support/debug: identifies the exact
  *  package a user is running when the version number itself does not change) */
-export const BUILD_TAG = "5c4f0c5";
+export const BUILD_TAG = "b4c175e";
 
 export type ClgKind = "add" | "imp" | "fix";
 export interface ClgItem { kind: ClgKind; zh: string; en: string }
@@ -21,6 +21,14 @@ export interface ClgVersion { v: string; date: string; items: ClgItem[] }
 const it = (kind: ClgKind, zh: string, en: string): ClgItem => ({ kind, zh, en });
 
 export const CHANGELOG: ClgVersion[] = [
+  {
+    v: "1.0.9.8",
+    date: "2026-09-10",
+    items: [
+      it("imp", "「界面定制」的类别栏不再是一排没样式的裸按钮：电脑模式换成左侧竖列（和设置面板完全同一套外观），手机上换成一排可换行的标签（和调色板包、符号面板一样）。顺手修好这个弹窗的一个毛病——小方块清单在内容多时会被弹窗高度裁掉而且滚不动，现在左右两栏各自滚动。", "The Customise UI category bar is no longer a row of unstyled bare buttons: on desktop it is the left-hand column (exactly the same look as the settings panel) and on a phone it is a wrapping tag row (like the palette packs and the symbol panel). This also fixes a flaw in that dialog — a long tile list used to be clipped by the dialog height with no way to scroll; both columns scroll on their own now."),
+      it("imp", "装备槽（快捷圆盘）**只在电脑模式出现**了：手机上不再渲染装备槽，设置里也不再出现「圆盘尺寸 / 圆盘半径」两项（它们都要靠键盘发动，手机上只是白占位置）。之前装备过的球在手机上会照常浮在屏幕上，不会被藏起来；回到电脑模式装备状态照旧。", "The equip slot (quick pie) is **desktop-only** now: a phone no longer renders the slot, and the pie size / pie radius settings no longer show up there either (both need a keyboard to fire, so on a phone they only took up room). A ball that was equipped before still floats on screen on a phone instead of being hidden, and the equipment comes back when you return to desktop mode."),
+    ],
+  },
   {
     v: "1.0.9.7",
     date: "2026-09-10",
