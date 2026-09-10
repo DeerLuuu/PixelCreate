@@ -15,6 +15,7 @@ import { clamp } from "../engine/types";
 import { snapGapRect, type GapRect } from "../app/canvas-snap";
 import { canvasAtScreen as spaceCanvasAt, screenToCanvas } from "../app/canvas-space";
 import { wheelIntent } from "./wheel";
+import { cursorAttr, cursorFor } from "./cursor";
 import { isPc } from "../io/pcmode";
 import { hexToRgba } from "../engine/color";
 
@@ -298,6 +299,22 @@ export class View {
     this.refresh(false);
   }
 
+  /** 统一同步鼠标光标（工具 / 锁定 / 平移 / 取色） */
+  private syncCursor(): void {
+    const host = this.host as HTMLElement;
+    const id = cursorFor({
+      tool: this.session.tool,
+      locked: this.session.layerLocked(),
+      panning: this.mousePan,
+      spaceHeld: this.spaceDown,
+      picking: this.pickMode,
+    });
+    // 测试环境里的 host 是精简桩，dataset / style 可能不存在
+    const ds = (host as unknown as { dataset?: Record<string, string> }).dataset;
+    if (ds) ds.cursor = cursorAttr(id);
+    if (host.style) host.style.cursor = "";   // 交给 CSS 规则（data-cursor）
+  }
+
   /** 空格键按下＝临时抓手：空格+左键拖动平移（PC 模式） */
   private onSpaceKey = (e: KeyboardEvent): void => {
     if (!isPc()) return;
@@ -309,7 +326,7 @@ export class View {
     if (down && t && t.tagName === "BUTTON") return;   // 空格仍然激活聚焦的按钮
     if (this.spaceDown === down) return;
     this.spaceDown = down;
-    if (this.pointers.size === 0) this.host.style.cursor = down ? "grab" : "";
+    if (this.pointers.size === 0) this.syncCursor();
     if (down) e.preventDefault();
   };
 
@@ -1620,7 +1637,7 @@ export class View {
       if (e.button === 1 || (e.button === 0 && this.spaceDown)) {
         this.mousePan = true;
         this.panLast = pt;
-        this.host.style.cursor = "grabbing";
+        this.syncCursor();
         return;
       }
       this.mousePan = false;
@@ -1959,7 +1976,7 @@ export class View {
       this.clampView();
       this.panLast = pt;
       this.refresh(false);
-      if (this.mousePan) { this.mousePan = false; this.panLast = null; this.host.style.cursor = this.spaceDown ? "grab" : ""; }
+      if (this.mousePan) { this.mousePan = false; this.panLast = null; this.syncCursor(); }
       return;
     }
     if (this.xf) {
@@ -2007,6 +2024,18 @@ export class View {
     this.cursor = drawing && inView
       ? { x: ppx.x, y: ppx.y, size: this.session.brushSize }
       : null;
+    if (e.pointerType === "mouse") this.syncCursor();
+    // PC：把光标下的像素与颜色发布给状态栏读数（只在真正换像素时更新）
+    if (isPc()) {
+      const inside = ppx.x >= 0 && ppx.y >= 0 && ppx.x < this.session.doc.w && ppx.y < this.session.doc.h;
+      const h = this.session.hover;
+      if (!inside) {
+        if (h) this.session.setHover(null);
+      } else if (!h || h.x !== ppx.x || h.y !== ppx.y) {
+        const c = this.session.sampleComposite(ppx.x, ppx.y);
+        this.session.setHover({ x: ppx.x, y: ppx.y, color: c ? [c[0], c[1], c[2], c[3]] : null });
+      }
+    }
     this.drawOverlay();
   }
 

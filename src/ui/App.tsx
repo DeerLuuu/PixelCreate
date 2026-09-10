@@ -1701,6 +1701,17 @@ function Viewport({ onColorClick, refImg, onRefClose, onFramePrev }: { onColorCl
         </div>
       )}
       <div className="zoom-hud">
+        {/* PC：光标下的像素坐标与颜色（悬停在画布外时隐藏） */}
+        {SESSION.hover && (() => {
+          const h = SESSION.hover!;
+          return (
+            <span className="zoom-hover" title={tv("hoverReadHint")}>
+              {h.x},{h.y}
+              {h.color ? <i className="zh-dot" style={{ background: chipCss([h.color[0], h.color[1], h.color[2], h.color[3]]) }} /> : null}
+              {h.color ? <span className="zh-hex">{rgbaToHex([h.color[0], h.color[1], h.color[2], h.color[3]])}</span> : null}
+            </span>
+          );
+        })()}
         <span className="zoom-pct">{Math.round((viewRef.current?.zoom ?? 8) * 100)}%</span>
       </div>
       {visible && (

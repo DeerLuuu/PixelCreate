@@ -237,6 +237,16 @@ input[type=range]{width:64px;height:22px;accent-color:var(--accent)}
 
 /* canvas color indicator (current selected color box) */
 .view-canvas{position:absolute;inset:0}
+/* PC 光标：按工具/状态切换（data-cursor 由 View.syncCursor 写入） */
+html[data-pc] .view-canvas[data-cursor="draw"]{cursor:crosshair}
+html[data-pc] .view-canvas[data-cursor="move"]{cursor:default}
+html[data-pc] .view-canvas[data-cursor="grab"]{cursor:grab}
+html[data-pc] .view-canvas[data-cursor="grabbing"]{cursor:grabbing}
+html[data-pc] .view-canvas[data-cursor="lock"]{cursor:not-allowed}
+html[data-pc] .view-canvas[data-cursor="pick"]{cursor:url("data:image/svg+xml;utf8,\
+  <svg xmlns=%22http://www.w3.org/2000/svg%22 width=%2224%22 height=%2224%22 viewBox=%220 0 24 24%22>\
+  <path d=%22M4 20l3.2-.6 9.6-9.6-2.6-2.6-9.6 9.6z%22 fill=%22%23fff%22 stroke=%22%23000%22 stroke-width=%221.4%22/>\
+  <path d=%22M13.2 6.6l2.6 2.6 2-2a1.8 1.8 0 0 0-2.6-2.6z%22 fill=%22%23fff%22 stroke=%22%23000%22 stroke-width=%221.4%22/></svg>") 3 21, crosshair}
 /* empty-space screen: no canvas open at all */
 .empty-canvas{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;padding:20px}
 .ec-card{max-width:340px;width:100%;background:var(--bg2);border:1px solid var(--line);border-radius:16px;
@@ -857,6 +867,11 @@ input:-webkit-autofill{-webkit-box-shadow:0 0 0 1000px var(--input-bg) inset;-we
 .fp-thumb{image-rendering:pixelated;display:block;border-radius:6px;width:132px;height:132px}
 /* zoom HUD: current zoom % + fit/reset button (bottom-right of the viewport) */
 .zoom-hud{position:absolute;right:10px;bottom:10px;z-index:8;display:flex;gap:6px;align-items:center;pointer-events:none}
+.zoom-hud .zoom-hover{display:inline-flex;align-items:center;gap:5px;font-size:var(--fs-3);color:var(--dim-2);
+  background:var(--hud-bg-2-dim);border:1px solid var(--line);border-radius:var(--r-2);padding:5px 8px;
+  font-variant-numeric:tabular-nums;pointer-events:auto}
+.zoom-hud .zh-dot{width:11px;height:11px;border-radius:3px;border:1px solid var(--swatch-line);flex:0 0 auto}
+.zoom-hud .zh-hex{font-family:monospace;color:var(--text-3)}
 .zoom-hud .zoom-pct{font-size:12px;color:var(--dim-2);background:var(--hud-bg-2-dim);border:1px solid var(--line);border-radius:8px;padding:5px 8px;font-variant-numeric:tabular-nums}
 
 /* ---- onboarding guide (spotlight) ---- */

@@ -799,6 +799,18 @@ export class Session {
   curFrame(): number {
     return Math.max(0, Math.min(this.doc.frames.length - 1, this.frameIdx));
   }
+  /** PC：鼠标下的像素与颜色（状态栏读数用；null = 不在画布上） */
+  hover: { x: number; y: number; color: RGBA | null } | null = null;
+  setHover(h: { x: number; y: number; color: RGBA | null } | null): void {
+    const cur = this.hover;
+    if (h === null && cur === null) return;
+    if (h && cur && cur.x === h.x && cur.y === h.y
+      && (!cur.color === !h.color)
+      && (!cur.color || (h.color && cur.color[0] === h.color[0] && cur.color[1] === h.color[1] && cur.color[2] === h.color[2]))) return;
+    this.hover = h;
+    this.changedUI();
+  }
+
   /** 另一个颜色槽的颜色（右键绘制用；当前用前景色时就是背景色） */
   secondaryColor(): RGBA {
     return this.colorTarget === "bg" ? this.fg : this.bg;

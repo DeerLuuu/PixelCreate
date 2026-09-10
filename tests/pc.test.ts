@@ -2,6 +2,7 @@
 // "which environment am I in" rules behind the desktop extras.
 import { normalizePcMode, resolvePcMode } from "../src/io/pcmode";
 import { normalizeWheelDelta, wheelIntent, wheelZoomFactor } from "../src/render/wheel";
+import { cursorFor } from "../src/render/cursor";
 import { eq, ok } from "./common";
 
 export function testPcMode(): void {
@@ -51,5 +52,21 @@ export function testPcMode(): void {
     // 横向滚动事件（触控板）在 shift 下会叠加 deltaX
     const both = wheelIntent({ deltaY: 40, deltaX: 25, shiftKey: true });
     eq("wheel.intent.shift-with-deltax", both.kind === "pan" ? both.dx : 0, -65);
+  }
+
+  // ---- 鼠标光标：按工具 / 状态（纯函数）----
+  {
+    eq("cursor.pencil", cursorFor({ tool: "pencil", locked: false }), "draw");
+    eq("cursor.bucket", cursorFor({ tool: "bucket", locked: false }), "draw");
+    eq("cursor.curve", cursorFor({ tool: "curve", locked: false }), "draw");
+    eq("cursor.picker", cursorFor({ tool: "picker", locked: false }), "pick");
+    eq("cursor.other-tool", cursorFor({ tool: "unknown-tool", locked: false }), "move");
+    // 平移优先于一切
+    eq("cursor.panning-beats-tool", cursorFor({ tool: "pencil", locked: false, panning: true }), "grabbing");
+    eq("cursor.space-beats-lock", cursorFor({ tool: "pencil", locked: true, spaceHeld: true }), "grab");
+    // 锁定图层：禁止（但仍比平移低一级）
+    eq("cursor.locked", cursorFor({ tool: "pencil", locked: true }), "lock");
+    // 长按取色模式也有吸管
+    eq("cursor.picking-mode", cursorFor({ tool: "pencil", locked: false, picking: true }), "pick");
   }
 }
