@@ -25,7 +25,7 @@ import { mirrorMaskInPlace } from "../engine/symmetry";
 import { adjustPixel, type HslAdj } from "../engine/adjust";
 import { type LoopMode, nextLoopMode, nextPlayFrame, startPlayDir, startPlayFrame } from "./playback";
 import { SETTINGS_BY_PATH, normalizeSetting, type SettingValue } from "./settings";
-import { snapToTargets, snapCandidates, snapGapRect, type GapRect, type SnapTarget } from "./canvas-snap";
+import { snapToTargets, snapCandidates, snapGapRect, stackGap, type GapRect, type SnapTarget } from "./canvas-snap";
 
 export interface Prefs {
   lang: "zh" | "en";
@@ -2372,8 +2372,9 @@ export class Session {
     const gap = Math.max(0, Math.round(this.prefs.snapGap));
     const ax1 = a.x + a.doc.w, ay1 = a.y + a.doc.h;
     const bx1 = b.x + b.doc.w, by1 = b.y + b.doc.h;
+    const gapV = stackGap(gap);   // stacked neighbours keep room for the title bar
     const sideBySide = (ax1 + gap === b.x || bx1 + gap === a.x) && a.y < by1 && b.y < ay1;
-    const stacked = (ay1 + gap === b.y || by1 + gap === a.y) && a.x < bx1 && b.x < ax1;
+    const stacked = (ay1 + gapV === b.y || by1 + gapV === a.y) && a.x < bx1 && b.x < ax1;
     return sideBySide || stacked;
   }
   /** a drag ended on canvas `hit`: snap them together when they really touch */

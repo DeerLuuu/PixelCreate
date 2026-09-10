@@ -995,6 +995,24 @@ export async function testSession(): Promise<void> {
     ok("canvas.preview.toggle-has", c.hasPreview(0));
     eq("canvas.preview.toggle-close", c.togglePreview(0), false);
     ok("canvas.preview.toggle-gone", !c.hasPreview(0));
+
+    // stacked canvases snap TITLE_EXTRA px further apart (the gap has to fit the
+    // lower canvas' title bar) and still group on release
+    {
+      const base = c.docs[0];
+      const down = c.addCanvas(new Doc(64, 64, "D"), { x: base.x, y: base.y + base.doc.h + 200 });
+      const near = c.snapPosition(down, base.x, base.y + base.doc.h + 6, 12);
+      eq("canvas.snap.stacked-gap", [near.x, near.y - (base.y + base.doc.h), near.hit],
+        [base.x, 8 + 20, 0]);
+      ok("canvas.snap.stacked-snapped", near.hit !== null);
+      c.moveCanvas(down, near.x, near.y);
+      c.finishCanvasDrag(down, near.hit);
+      ok("canvas.snap.stacked-grouped", !!c.docs[down].group && c.docs[down].group === base.group);
+      c.unlinkCanvas(down);
+      // side-by-side keeps the plain 8px gap
+      const side = c.snapPosition(down, base.x + base.doc.w + 6, base.y, 12);
+      eq("canvas.snap.side-gap", side.x - (base.x + base.doc.w), 8);
+    }
   }
 
   // --- reference layers are MIRRORED into their own cel (live preview) ---

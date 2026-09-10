@@ -7,8 +7,21 @@
 // Pure and unit-tested: the host passes the proposed position and the other
 // canvases, and gets back the adjusted position plus the canvas it snapped to.
 
-/** empty space kept between two snapped canvases (doc pixels) */
+/** empty space kept between two side-by-side snapped canvases (doc pixels) */
 export const SNAP_GAP = 8;
+
+/** extra space left between two STACKED canvases (doc pixels): the title bar of
+ *  the lower one has to fit in the gap, otherwise it would be painted over one
+ *  of the two canvases. 8 + 20 = 28 ≥ 26 (bar height) + 1px margins. */
+export const TITLE_EXTRA = 20;
+
+/** vertical snap gap (stacked canvases) */
+export const SNAP_GAP_V = SNAP_GAP + TITLE_EXTRA;
+
+/** the vertical gap for a configured horizontal gap */
+export function stackGap(gap: number): number {
+  return gap + TITLE_EXTRA;
+}
 
 export interface SnapRect {
   x: number;
@@ -43,6 +56,17 @@ export interface SnapResult<T> {
   hit: T | null;
 }
 
+/**
+ * Acceptance rule for the two vertical "touch" candidates. Stacked canvases end
+ * up TITLE_EXTRA px further apart than side-by-side ones, so a correction that
+ * only pushes the two canvases APART must be accepted from that much further —
+ * otherwise dragging a canvas close to its neighbour would never reach the
+ * larger stacked gap and vertical snapping would feel broken.
+ */
+function touchOk(d: number, tol: number, outward: boolean): boolean {
+  return Math.abs(d) <= tol + (outward ? TITLE_EXTRA : 0);
+}
+
 /** distance between two 1D intervals (0 when they touch or overlap) */
 function axisGap(a0: number, a1: number, b0: number, b1: number): number {
   return Math.max(0, Math.max(a0 - b1, b0 - a1));
@@ -59,15 +83,17 @@ export function snapGapRect(a: SnapRect, b: SnapRect, gap = SNAP_GAP, tol = 0): 
   if (near(dRight - gap) && a.y < by1 && b.y < ay1) return { x0: ax1, y0: Math.max(a.y, b.y), x1: b.x, y1: Math.min(ay1, by1) };
   const dLeft = a.x - bx1;
   if (near(dLeft - gap) && a.y < by1 && b.y < ay1) return { x0: bx1, y0: Math.max(a.y, b.y), x1: a.x, y1: Math.min(ay1, by1) };
+  const gapV = stackGap(gap);
   const dDown = b.y - ay1;
-  if (near(dDown - gap) && a.x < bx1 && b.x < ax1) return { x0: Math.max(a.x, b.x), y0: ay1, x1: Math.min(ax1, bx1), y1: b.y };
+  if (near(dDown - gapV) && a.x < bx1 && b.x < ax1) return { x0: Math.max(a.x, b.x), y0: ay1, x1: Math.min(ax1, bx1), y1: b.y };
   const dUp = a.y - by1;
-  if (near(dUp - gap) && a.x < bx1 && b.x < ax1) return { x0: Math.max(a.x, b.x), y0: by1, x1: Math.min(ax1, bx1), y1: a.y };
+  if (near(dUp - gapV) && a.x < bx1 && b.x < ax1) return { x0: Math.max(a.x, b.x), y0: by1, x1: Math.min(ax1, bx1), y1: a.y };
   return null;
 }
 
 /** per-target snap deltas: the best x and y candidate of ONE target */
 function bestDeltas<T>(moving: SnapRect, t: SnapTarget<T>, tol: number, gap: number): { dx: number; dy: number; any: boolean } {
+  const gapV = stackGap(gap);   // stacked canvases keep room for the title bar
   const mx1 = moving.x + moving.w;
   const my1 = moving.y + moving.h;
   const tx1 = t.x + t.w;
@@ -83,8 +109,13 @@ function bestDeltas<T>(moving: SnapRect, t: SnapTarget<T>, tol: number, gap: num
     }
   }
   if (hGap <= tol * 2) {
-    for (const d of [t.y - gap - my1, ty1 + gap - moving.y, t.y - moving.y, ty1 - my1]) {
-      if (Math.abs(d) > tol) continue;
+    const below = ty1 + gapV - moving.y;      // push our top edge down to the gap
+    const above = t.y - gapV - my1;           // push our bottom edge up to the gap
+    const cands: number[] = [];
+    if (touchOk(below, tol, below > 0)) cands.push(below);
+    if (touchOk(above, tol, above < 0)) cands.push(above);
+    for (const d of [t.y - moving.y, ty1 - my1]) if (Math.abs(d) <= tol) cands.push(d);
+    for (const d of cands) {
       if (!any || Math.abs(d) < Math.abs(dy)) dy = d;
       any = true;
     }
@@ -123,6 +154,7 @@ export function snapToTargets<T>(moving: SnapRect, targets: Array<SnapTarget<T>>
   const my1 = moving.y + moving.h;
   let bestX: { d: number; id: T } | null = null;
   let bestY: { d: number; id: T } | null = null;
+  const gapV = stackGap(gap);   // stacked canvases keep room for the title bar
   for (const t of targets) {
     const tx1 = t.x + t.w;
     const ty1 = t.y + t.h;
@@ -141,14 +173,14 @@ export function snapToTargets<T>(moving: SnapRect, targets: Array<SnapTarget<T>>
       }
     }
     if (hGap <= tol * 2) {
-      const cands: number[] = [
-        t.y - gap - my1,        // our bottom edge sits `gap` above their top edge
-        ty1 + gap - moving.y,   // our top edge sits `gap` below their bottom edge
-        t.y - moving.y,         // top edges aligned
-        ty1 - my1,              // bottom edges aligned
-      ];
+      const below = ty1 + gapV - moving.y;   // our top edge sits `gapV` below their bottom edge
+      const above = t.y - gapV - my1;        // our bottom edge sits `gapV` above their top edge
+      const cands: number[] = [];
+      if (touchOk(below, tol, below > 0)) cands.push(below);
+      if (touchOk(above, tol, above < 0)) cands.push(above);
+      if (Math.abs(t.y - moving.y) <= tol) cands.push(t.y - moving.y);   // top edges aligned
+      if (Math.abs(ty1 - my1) <= tol) cands.push(ty1 - my1);             // bottom edges aligned
       for (const d of cands) {
-        if (Math.abs(d) > tol) continue;
         if (!bestY || Math.abs(d) < Math.abs(bestY.d)) bestY = { d, id: t.id };
       }
     }
@@ -172,15 +204,22 @@ export const TITLE_LIFT = 30;
 
 /**
  * The bar is drawn `lift` px above its canvas. When another canvas sits
- * directly above (snapped or merely placed), that gap is smaller than the bar,
- * so the bar would be painted over the neighbour. `obstacleBottom` is the
- * lowest edge of everything above it (null = nothing in the way) and the bar
- * slides down just enough to clear it.
+ * directly above (snapped or merely placed) the bar must fit in the gap between
+ * the two: `obstacleBottom` is the lowest edge of everything above it
+ * (null = nothing in the way). Stacked canvases snap TITLE_EXTRA px further
+ * apart so the bar clears BOTH canvases.
  */
-export function titleTop(canvasTop: number, obstacleBottom: number | null, lift = TITLE_LIFT, pad = 2): number {
+export function titleTop(canvasTop: number, obstacleBottom: number | null, lift = TITLE_LIFT, pad = 1): number {
   const want = canvasTop - lift;
   if (obstacleBottom === null) return want;
-  return Math.max(want, obstacleBottom + pad);
+  // inside the gap: below the neighbour and above our own canvas. The vertical
+  // snap gap (TITLE_EXTRA px wider) leaves room for exactly that; a pair that
+  // was snapped by an older build keeps its 8px gap and the bar then clears the
+  // NEIGHBOUR first (covering a sliver of its own canvas is the lesser evil).
+  const floor = obstacleBottom + pad;
+  const ceil = canvasTop - TITLE_H - pad;
+  const top = Math.max(want, floor);
+  return ceil >= floor ? Math.min(top, ceil) : floor;
 }
 
 /**

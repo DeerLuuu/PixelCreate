@@ -954,6 +954,21 @@ view.fitAnimated(ms = 220) / animateTo(z, ox, oy, ms)  // 缓动适配（双击�
 `canvas.snapOn`（总开关）、`canvas.snapRange`（4–48 屏幕像素）、`canvas.snapGap`（0–48 画布像素）、
 `canvas.snapInColor` / `canvas.snapOutColor`（`kind: "color"`，`#rrggbb`，非法值被拒绝）。
 
+`src/app/canvas-snap.ts` 另外导出：
+
+| 导出 | 说明 |
+|---|---|
+| `SNAP_GAP` (8) | 左右并排时两张画布之间的空隙 |
+| `TITLE_EXTRA` (20) | **上下叠放**时额外留出的空隙：下面那张的标题栏要放进这段空隙里 |
+| `SNAP_GAP_V` (28) / `stackGap(gap)` | 叠放空隙 = 配置空隙 + `TITLE_EXTRA`（28 ≥ 标题栏 26px + 两侧各 1px） |
+| `titleObstacle(self, others, lift)` | 找出「位于正上方、横向会被标题栏压到」的画布里最深的下边缘（`null` = 无遮挡） |
+| `titleTop(canvasTop, obstacleBottom, lift, pad)` | 标题栏纵向位置：空闲时 `上沿 − 30`，有遮挡时落在空隙内（既不压邻居也不压自己） |
+| `TITLE_H` (26) / `TITLE_LIFT` (30) | 标题栏高度与默认抬升量 |
+
+叠放方向的两个「贴边」候选允许更大的容差（`touchOk`）：把两张画布**推开**的修正量可以比 `snapRange`
+多 `TITLE_EXTRA`，否则拖到邻居身边时永远够不到更大的叠放空隙。`Session.canvasesTouch` 也用
+`stackGap()` 判断，保证叠放后能正常成组。
+
 ### 18.9 新增设置项
 
 `tools.bucketGrad` / `tools.bucketGradMode`（油漆桶渐变与颗粒）、
