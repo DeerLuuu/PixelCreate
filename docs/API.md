@@ -708,6 +708,25 @@ b64FromBytes(bytes): string; bytesFromB64(b64): Uint8Array
 震动统一走 `Session.hapticTick(tag, scale = 1)`：受设置 `gesture.haptic` 开关控制，脉冲长度取 `prefs.hapticLen`（30 / 60 / 100ms，默认 60；部分机型 30ms 以下无感）。
 `Session.runGestureAction()` 会为除 `pickColor`（取色时逐像素自行震动）之外的每个手势先发一次脉冲。
 
+### 16.1b1 键盘快捷键 `src/app/shortcuts.ts`
+
+PC 模式的键位映射是纯函数 `shortcutFor(key, typing)`，宿主（`App.tsx` 的一个全局 keydown 监听）把它翻译成
+Session/View 调用：
+
+| 键 | 动作 |
+|---|---|
+| Ctrl+Z / Ctrl+Shift+Z（或 Ctrl+Y） | 撤销 / 重做 |
+| Ctrl+S | 保存工程 |
+| Ctrl+C / Ctrl+V | 复制选区 / 从剪贴板粘贴 |
+| Delete / Backspace | 删除选区内容 |
+| Esc | 取消选区（弹窗的 Esc 关闭由 Dialog 自己处理） |
+| `+` / `-` / `0` | 放大 / 缩小 / 适配画布 |
+| Tab | 隐藏界面（专注模式，`.app-root.chrome-off`） |
+| 方向键（Shift 加速到 10px） | 平移选区框；没有选区时轻微平移视图 |
+| 字母键 | 工具切换（`TOOL_KEYS`：B 铅笔、E 橡皮、G 油漆桶、I 取色、A 喷枪、L 直线、R 矩形、O 椭圆、C 圆形、P 多边形、Y 折线、U 曲线、M 选区、W 魔棒、Q 套索、H 轮廓填充） |
+
+在输入框里只放行 Ctrl/Cmd 组合（不会打断打字）；Alt 组合一律不处理（留给浏览器）。
+
 ### 16.1b2 PC 模式 `src/io/pcmode.ts`
 
 桌面增强（滚轮缩放、悬停提示、中键/空格平移、右键背景色绘制、键盘快捷键、放大的浮动球、桌面化尺寸）

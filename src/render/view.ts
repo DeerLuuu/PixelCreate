@@ -65,10 +65,10 @@ export class View {
   rot: 0 | 90 | 180 | 270 = 0;
 
   /** logical viewport width (swaps with the height when rotated by 90/270) */
-  private vpW(): number {
+  vpW(): number {
     return this.rot % 180 ? this.host.clientHeight : this.host.clientWidth;
   }
-  private vpH(): number {
+  vpH(): number {
     return this.rot % 180 ? this.host.clientWidth : this.host.clientHeight;
   }
   /** canvas transform: logical viewport rect -> the real (surface) canvas */
@@ -292,7 +292,7 @@ export class View {
   }
 
   /** 平移视图（滚轮 / 中键 / 空格拖动共用） */
-  private panBy(dx: number, dy: number): void {
+  panBy(dx: number, dy: number): void {
     this.ox += dx;
     this.oy += dy;
     this.clampView();

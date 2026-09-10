@@ -3,7 +3,11 @@
 import { normalizePcMode, resolvePcMode } from "../src/io/pcmode";
 import { normalizeWheelDelta, wheelIntent, wheelZoomFactor } from "../src/render/wheel";
 import { cursorFor } from "../src/render/cursor";
+import { NUDGE_STEP, NUDGE_STEP_FAST, TOOL_KEYS, shortcutFor } from "../src/app/shortcuts";
 import { eq, ok } from "./common";
+import { CORE_TOOLS, SHAPE_TOOLS, SELECT_TOOLS } from "../src/tools/registry";
+
+const CORE_IDS: Set<string> = new Set<string>([...CORE_TOOLS, ...SHAPE_TOOLS, ...SELECT_TOOLS].map((t) => t.id as string));
 
 export function testPcMode(): void {
   // auto: only a pointer that is both precise AND able to hover counts as a PC
@@ -68,5 +72,54 @@ export function testPcMode(): void {
     eq("cursor.locked", cursorFor({ tool: "pencil", locked: true }), "lock");
     // 长按取色模式也有吸管
     eq("cursor.picking-mode", cursorFor({ tool: "pencil", locked: false, picking: true }), "pick");
+  }
+
+  // ---- 键盘快捷键映射（纯函数）----
+  {
+    const K = (key: string, mods: Record<string, boolean> = {}) => shortcutFor({ key, ...mods });
+    eq("key.undo", K("z", { ctrlKey: true })?.action, "undo");
+    eq("key.redo.shift", K("Z", { ctrlKey: true, shiftKey: true })?.action, "redo");
+    eq("key.redo.y", K("y", { ctrlKey: true })?.action, "redo");
+    eq("key.save", K("s", { ctrlKey: true })?.action, "save");
+    eq("key.copy", K("c", { ctrlKey: true })?.action, "copy");
+    eq("key.paste", K("v", { ctrlKey: true })?.action, "paste");
+    // 大写（Shift 按下）也能识别 Ctrl 组合
+    eq("key.undo.uppercase", K("Z", { ctrlKey: true })?.action, "undo");
+    // 纯 Ctrl 组合在输入框里仍然生效，普通按键不抢
+    eq("key.typing.undo", shortcutFor({ key: "z", ctrlKey: true }, true)?.action, "undo");
+    eq("key.typing.plain-b", shortcutFor({ key: "b" }, true), null);
+    eq("key.typing.delete", shortcutFor({ key: "Delete" }, true), null);
+
+    eq("key.delete", K("Delete")?.action, "delete");
+    eq("key.backspace", K("Backspace")?.action, "delete");
+    eq("key.escape", K("Escape")?.action, "escape");
+    eq("key.zoom.in", K("+")?.action, "zoomIn");
+    eq("key.zoom.in.equals", K("=")?.action, "zoomIn");
+    eq("key.zoom.out", K("-")?.action, "zoomOut");
+    eq("key.fit", K("0")?.action, "fit");
+    eq("key.tab", K("Tab")?.action, "toggleUI");
+
+    // 方向键微移：1px，Shift 10px
+    eq("key.nudge.left", [K("ArrowLeft")?.dx, K("ArrowLeft")?.dy], [-NUDGE_STEP, 0]);
+    eq("key.nudge.down.fast", [K("ArrowDown", { shiftKey: true })?.dx, K("ArrowDown", { shiftKey: true })?.dy], [0, NUDGE_STEP_FAST]);
+    eq("key.nudge.up", K("ArrowUp")?.dy, -NUDGE_STEP);
+
+    // 工具键
+    eq("key.tool.b", K("b")?.tool, "pencil");
+    eq("key.tool.e", K("e")?.tool, "eraser");
+    eq("key.tool.g", K("g")?.tool, "bucket");
+    eq("key.tool.i", K("i")?.tool, "picker");
+    eq("key.tool.m", K("m")?.tool, "select");
+    eq("key.tool.w", K("w")?.tool, "wand");
+    eq("key.tool.uppercase", K("B")?.tool, "pencil");
+    ok("key.tool.table", Object.keys(TOOL_KEYS).length >= 12, "keys=" + Object.keys(TOOL_KEYS).length);
+    // 每个工具键都指向真实存在的工具 id（与 registry 对齐）
+    for (const id of Object.values(TOOL_KEYS)) {
+      ok("key.tool.exists." + id, CORE_IDS.has(id), "tool=" + id);
+    }
+    // Alt/未知键不产生动作
+    eq("key.alt.ignored", K("b", { altKey: true }), null);
+    eq("key.unknown", K("F5"), null);
+    eq("key.ctrl.unknown", K("q", { ctrlKey: true }), null);
   }
 }

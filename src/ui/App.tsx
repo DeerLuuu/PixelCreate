@@ -28,6 +28,8 @@ import { CanvasTitles } from "./canvas";
 import { ChangelogModal, changelogNeedsShow } from "./changelog";
 import { watchSafeArea } from "../io/safearea";
 import { fullscreenIcon, fullscreenToggleVisible, isFullscreen, toggleFullscreen, watchFullscreen } from "../io/fullscreen";
+import { shortcutFor } from "../app/shortcuts";
+import { isPc } from "../io/pcmode";
 import { GUIDE, bootOverlay, guideStepsFor, type GuideAction, type GuideStep } from "../app/guide";
 import { GuideOverlay, simulateTap } from "./guide";
 import type { ModalId, SizeMode, SheetData } from "./modals";
@@ -92,9 +94,49 @@ export function App() {
   // due (or still open) the tour below waits: the guide is a full-screen
   // spotlight that swallows taps, so starting both would trap the user behind
   // the notes (see bootOverlay in src/app/guide.ts).
+  // PC：Tab 隐藏界面（专注画画）
+  const [uiHidden, setUiHidden] = useState(false);
   const [clgBlock, setClgBlock] = useState<boolean>(() => changelogNeedsShow());
   useEffect(() => {
     if (clgBlock) setModal("changelog");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // PC 键盘快捷键（全部动作集中在这里，映射表在 app/shortcuts.ts 里是纯函数）
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!isPc()) return;
+      const el = e.target as HTMLElement | null;
+      const typing = !!el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable);
+      const hit = shortcutFor({
+        key: e.key, code: e.code,
+        ctrlKey: e.ctrlKey || e.metaKey, metaKey: e.metaKey,
+        shiftKey: e.shiftKey, altKey: e.altKey,
+      }, typing);
+      if (!hit) return;
+      const v = SESSION.view;
+      switch (hit.action) {
+        case "undo": e.preventDefault(); SESSION.undo(); break;
+        case "redo": e.preventDefault(); SESSION.redo(); break;
+        case "save": e.preventDefault(); void saveProject(); break;
+        case "delete": e.preventDefault(); SESSION.deleteSelection(); break;
+        case "escape": if (SESSION.doc.sel?.hasAny()) { SESSION.doc.sel.clear(); SESSION.repaint(); } break;
+        case "zoomIn": e.preventDefault(); if (v) { v.zoomAt(v.zoom * 1.25, v.vpW() / 2, v.vpH() / 2); SESSION.changedUI(); } break;
+        case "zoomOut": e.preventDefault(); if (v) { v.zoomAt(v.zoom / 1.25, v.vpW() / 2, v.vpH() / 2); SESSION.changedUI(); } break;
+        case "fit": e.preventDefault(); SESSION.fitCanvas(); break;
+        case "toggleUI": e.preventDefault(); setUiHidden((on) => !on); break;
+        case "tool": e.preventDefault(); SESSION.setTool(hit.tool as ToolId); break;
+        case "nudge": {
+          e.preventDefault();
+          const dx = hit.dx ?? 0, dy = hit.dy ?? 0;
+          if (!SESSION.nudgeSelection(dx, dy) && v) v.panBy(-dx * 8, -dy * 8);
+          break;
+        }
+        default: break;
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -440,7 +482,7 @@ export function App() {
   };
 
   return (
-    <div className={"app-root" + (SESSION.prefs.railSwap ? " rails-swap" : "") + (tlOn ? " has-tl" : "")} onContextMenu={(e) => e.preventDefault()} onDragStart={(e) => e.preventDefault()}>
+    <div className={"app-root" + (SESSION.prefs.railSwap ? " rails-swap" : "") + (tlOn ? " has-tl" : "") + (uiHidden ? " chrome-off" : "")} onContextMenu={(e) => e.preventDefault()} onDragStart={(e) => e.preventDefault()}>
       <TopBar t={t} snap={snap} tlOn={tlOn} noCanvas={snap.canvasCount === 0} onToggleTl={() => {
         if (tlClosing) return;
         if (tlOn) {

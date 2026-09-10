@@ -127,6 +127,8 @@ button{background:none;border:none;color:inherit;padding:0;font:inherit;cursor:p
 input,select{font:inherit;color:var(--text)}
 
 .app-root{display:flex;flex-direction:column;height:100%;width:100%;min-width:0;min-height:0}
+/* PC：Tab 隐藏界面，只留画布（专注模式） */
+html[data-pc] .app-root.chrome-off > .topbar,html[data-pc] .app-root.chrome-off > .ctrlbar,html[data-pc] .app-root.chrome-off > .tline-wrap,html[data-pc] .app-root.chrome-off > .tl-grip{display:none}
 
 /* ---------- buttons ---------- */
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-width:34px;

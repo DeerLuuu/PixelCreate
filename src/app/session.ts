@@ -2093,6 +2093,37 @@ export class Session {
   }
 
   /** Clear the pixels inside the current selection to transparent (keeps the selection). */
+  /**
+   * PC 方向键：平移选区框（掩膜整体位移，画布外裁剪）。没有选区时返回 false，
+   * 由调用方改成轻微平移视图。
+   */
+  nudgeSelection(dx: number, dy: number): boolean {
+    const doc = this.doc;
+    if (!doc.sel || !doc.sel.hasAny() || (!dx && !dy)) return false;
+    const w = doc.w, h = doc.h;
+    const src = doc.sel.mask;
+    const out = new Uint8Array(w * h);
+    let any = false;
+    for (let y = 0; y < h; y++) {
+      const sy = y - dy;
+      if (sy < 0 || sy >= h) continue;
+      for (let x = 0; x < w; x++) {
+        if (!src[sy * w + x]) continue;
+        const sx = x - dx;
+        if (sx < 0 || sx >= w) continue;
+        out[y * w + sx] = 1;
+        any = true;
+      }
+    }
+    if (!any) return false;
+    this.history.pushStruct("sel-nudge", doc, () => {
+      doc.sel!.mask = out;
+      doc.sel!.bump();
+    });
+    this.changed();
+    return true;
+  }
+
   deleteSelection(): void {
     const doc = this.doc;
     if (!doc.sel || !doc.sel.hasAny()) { toastFn(this.prefs.lang === "en" ? "No selection" : "请先建立选区"); return; }
