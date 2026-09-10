@@ -184,6 +184,7 @@ export const SHORTCUT_SHEET: SheetGroup[] = [
       { keys: "悬停滚轮", zh: "在数字框 / 长按按钮上调值", en: "Adjust a number field or hold-button", mouse: true },
       { keys: "Ctrl+F1", zh: "打开这份快捷键一览", en: "Open this cheat sheet", probe: { key: "F1", ctrlKey: true }, action: "shortcutHelp" },
       { keys: "Ctrl+R", zh: "画布调整模式（拖四条边改尺寸）", en: "Resize mode (drag the canvas edges)", probe: { key: "r", ctrlKey: true }, action: "resizeMode" },
+      { keys: "按住 F", zh: "发动快捷圆盘（先装备一个球）", en: "Launch the quick pie (equip a ball first)", mouse: true },
       { keys: "B / E / G / I / L / R / O / M / W / Q", zh: "铅笔 / 橡皮 / 油漆桶 / 取色 / 直线 / 矩形 / 椭圆 / 选区 / 魔棒 / 套索", en: "Pencil / eraser / bucket / picker / line / rect / ellipse / marquee / wand / lasso", probe: { key: "b" }, action: "tool" },
     ],
   },

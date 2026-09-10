@@ -1088,6 +1088,21 @@ CSS 侧对应 `html[data-pc] .orb{62px}` 与 `html[data-pc] .orb-item{48px}`。
 - 调色盘已经打开时（`holdActive` 为真）填充拖拽不会启动，移动仍然调节色盘；
 - 因此不存在「拖到一半突然弹出调色盘」或「松手后什么都没发生」的中间态。
 
+### 18.7c 快捷圆盘（Pie）`ui/pie-layout.ts`
+
+PC 专属的 Blender 式饼菜单：浮动球存储区边的**装备槽**里装备一个球，按住发动键
+（默认 **F**）时该球所有子项以圆环铺在屏幕正中、鼠标隐藏，鼠标方向决定聚焦项，
+松开激活、中间死区松手即取消、Esc 取消。
+
+| 导出 | 签名 | 说明 |
+|---|---|---|
+| `pieRadius` | `(vw, vh) => number` | 环半径（屏幕短边 36%，夹在 150..380） |
+| `pieSlot` / `pieSlots` | `(index, count, cx, cy, radius)` | 均分槽位，第 0 项在正上方、顺时针 |
+| `pieFocusIndex` | `(px, py, cx, cy, count, radius) => number` | 聚焦项下标；`-1` = 死区（0.34R 内） |
+| `pieSlotGap` | `(count, radius) => number` | 相邻槽位间距（用于保证 24 项也不挤） |
+
+`PIE_DEAD = 0.34` 是死区比例。装备状态存在 `localStorage["pc.pie.ball"]`。
+
 ### 18.7b 画布空间命中测试 `app/canvas-space.ts`
 
 纯函数，视图变换以**聚焦画布**为锚点（它的矩形恒为 `0,0..w,h`），所以屏幕点要先换算成空间坐标：
