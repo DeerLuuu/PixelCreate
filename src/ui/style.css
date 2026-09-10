@@ -236,6 +236,17 @@ input[type=range]{width:64px;height:22px;accent-color:var(--accent)}
   max-height:min(86vh, calc(100vh - var(--sat) - var(--sab) - 16px));box-shadow:var(--sh-4)}
 .dlg-head{display:flex;align-items:center;gap:8px;padding:13px 16px;border-bottom:1px solid var(--line);font-weight:700}
 .dlg-body{padding:12px 16px;overflow-y:auto}
+/* ⑭ 菜单/弹窗滚动条鬼畜：PC 下停用菜单错峰入场动画（hover 时不再重排），
+   并预留滚动条槽位，避免滚动条出现/消失导致宽度跳动 */
+html[data-pc] .dlg-body{scrollbar-gutter:stable}
+html[data-pc] .dlg-body.col .menuitem{animation:none}
+html[data-pc] .menuitem{transition:background .12s ease}
+html[data-pc] .menuitem:hover{background:var(--bg4)}
+html[data-pc] .btn:hover{background:var(--bg3);color:var(--text)}
+html[data-pc] .chip:hover{background:var(--bg4)}
+html[data-pc] .tab:hover,.html[data-pc] .tabbar-tab:hover{color:var(--text)}
+html[data-pc] .set-grouphead:hover{background:var(--bg3)}
+html[data-pc] .hist-row:hover{background:var(--bg3)}
 .dlg-body.col{display:flex;flex-direction:column;gap:6px}
 .dlg-foot{display:flex;gap:8px;padding:12px 16px;border-top:1px solid var(--line);justify-content:flex-end}
 .menuitem{width:100%;justify-content:flex-start;background:var(--bg3);padding:10px 12px;border-radius:10px;color:var(--text);display:flex;align-items:center;gap:8px}

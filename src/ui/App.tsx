@@ -1370,22 +1370,32 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
         e.preventDefault();
         startTip(title, tipDesc)(e);
         drag.current = { which, dx: e.clientX - p.x, dy: e.clientY - p.y, moved: false };
-      }}
-      onPointerMove={(e) => {
-        guardTip(e);
-        const dr = drag.current;
-        if (!dr || dr.which !== which) return;
-        if (Math.abs(e.clientX - p.x - dr.dx) > 4 || Math.abs(e.clientY - p.y - dr.dy) > 4) dr.moved = true;
-        if (dr.moved) {
+        // ⑬ 鼠标移动比触摸快得多，元素级 pointermove 会在光标离开球体时丢事件：
+        //    捕获指针并把 move/up 挂到 window，快速甩动也不会掉出拖动状态
+        try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); } catch { /* ignore */ }
+        const onWinMove = (ev: PointerEvent) => {
+          const dr = drag.current;
+          if (!dr || dr.which !== which || ev.pointerId !== e.pointerId) return;
+          if (Math.abs(ev.clientX - p.x - dr.dx) > 4 || Math.abs(ev.clientY - p.y - dr.dy) > 4) dr.moved = true;
+          if (!dr.moved) return;
           stopTip();
-          moveBall(which, e.clientX - dr.dx, e.clientY - dr.dy);
-          const near = inDockZone(e.clientX, e.clientY);
-          const parked = overDockPanel(e.clientX, e.clientY);
+          moveBall(which, ev.clientX - dr.dx, ev.clientY - dr.dy);
+          const near = inDockZone(ev.clientX, ev.clientY);
+          const parked = overDockPanel(ev.clientX, ev.clientY);
           parkRef.current = parked ? ({ id: which as never }) : null;
-          if (near) { dockClear(); setDockOpen(true); } // panel pops up while approaching the edge
-          setDockArmed(parked); // highlight only when it would actually park
-        }
+          if (near) { dockClear(); setDockOpen(true); }
+          setDockArmed(parked);
+        };
+        const detach = () => {
+          window.removeEventListener("pointermove", onWinMove);
+          window.removeEventListener("pointerup", detach);
+          window.removeEventListener("pointercancel", detach);
+        };
+        window.addEventListener("pointermove", onWinMove);
+        window.addEventListener("pointerup", detach);
+        window.addEventListener("pointercancel", detach);
       }}
+      onPointerMove={(e) => { guardTip(e); }}
       onPointerUp={() => {
         stopTip();
         setDockArmed(false);
