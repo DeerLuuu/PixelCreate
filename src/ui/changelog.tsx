@@ -8,10 +8,10 @@ import { TabBar } from "./tabs";
 import { Dialog } from "./kit";
 
 /** keep in sync with android/AndroidManifest.xml versionName on every release */
-export const APP_VERSION = "1.0.8.4";
+export const APP_VERSION = "1.0.8.5";
 /** build stamp shown next to the version (support/debug: identifies the exact
  *  package a user is running when the version number itself does not change) */
-export const BUILD_TAG = "8b0130";
+export const BUILD_TAG = "60aee2";
 
 export type ClgKind = "add" | "imp" | "fix";
 export interface ClgItem { kind: ClgKind; zh: string; en: string }
@@ -20,6 +20,18 @@ export interface ClgVersion { v: string; date: string; items: ClgItem[] }
 const it = (kind: ClgKind, zh: string, en: string): ClgItem => ({ kind, zh, en });
 
 export const CHANGELOG: ClgVersion[] = [
+  {
+    v: "1.0.8.5",
+    date: "2026-09-10",
+    items: [
+      it("add", "新增「电脑模式」：用鼠标打开时自动启用（也可以在设置 → 显示与取色里强制开 / 关）。开启后整套桌面操作生效：滚轮缩放（以光标为中心）、Shift+滚轮左右移动、Alt+滚轮上下移动、中键拖动或空格+左键拖动平移画布、右键用另一个颜色槽绘制（默认就是背景色）。关掉或没有鼠标时行为与以前完全一致。", "New PC mode: enabled automatically when a mouse is present (force it on or off in Settings -> Display & Colour). It brings the whole desktop vocabulary: wheel zoom centred on the cursor, Shift+wheel to pan sideways, Alt+wheel to pan vertically, middle-drag or Space+left-drag to pan, and right-click to paint with the other colour slot (the background colour by default). With the mode off, or without a mouse, everything behaves exactly as before."),
+      it("add", "鼠标悬停立刻显示说明气泡（0ms、跟着光标走、移开即消失），不再需要长按；光标也会随工具变化：画笔画笔是十字、取色器是吸管、平移是抓手、图层锁定时是禁止符号。悬停在画布上时，右下角还会显示当前像素坐标、颜色方块与十六进制色值，笔刷落点框也一直跟着光标。", "Hovering a control now shows its tooltip immediately (following the cursor, gone the moment you leave) instead of requiring a long press, and the cursor reflects the tool: crosshair for drawing, eyedropper for the picker, a hand while panning and a no-entry sign on a locked layer. Hovering the canvas also shows the current pixel coordinates with a colour swatch and hex value in the bottom-right corner, while the brush footprint keeps tracking the cursor."),
+      it("add", "电脑模式的键盘快捷键：Ctrl+Z / Ctrl+Shift+Z 撤销重做、Ctrl+S 保存、Ctrl+C / Ctrl+V 复制粘贴、Delete 删除选区内容、Esc 取消选区、+ - 0 缩放与适配、Tab 隐藏界面（专注画画）、方向键平移选区框（按住 Shift 一次 10 像素）、字母键切换工具（B 铅笔、E 橡皮、G 油漆桶、I 取色、L 直线、R 矩形、O 椭圆、M 选区、W 魔棒、Q 套索等）。在输入框里只会响应 Ctrl 组合，不会打断打字。", "Keyboard shortcuts for PC mode: Ctrl+Z / Ctrl+Shift+Z undo and redo, Ctrl+S save, Ctrl+C / Ctrl+V copy and paste, Delete to clear the selection, Esc to drop it, + - 0 to zoom and fit, Tab to hide the interface and concentrate on the artwork, arrow keys to nudge the selection (10px with Shift) and letter keys for the tools (B pencil, E eraser, G bucket, I picker, L line, R rectangle, O ellipse, M marquee, W wand, Q lasso and more). Inside a text field only the Ctrl combinations fire, so typing is never interrupted."),
+      it("add", "把文件直接拖进窗口就能打开（.pxc 工程 / PNG / GIF），拖动时窗口有虚线高亮提示；Ctrl+V 还能把系统剪贴板里的图片粘贴成新内容，配合 Ctrl+C 把选区写进系统剪贴板，形成闭环。", "Dropping a file anywhere on the window opens it (.pxc project / PNG / GIF) with a dashed highlight while you drag, and Ctrl+V pastes an image from the system clipboard, closing the loop with Ctrl+C which copies the selection into it."),
+      it("imp", "浮动球在电脑模式下整体放大到 1.2 倍、环形菜单排得更开，更好点；同时新增「展开锁定」：球展开时右上角出现一把小锁（只在展开时显示），锁定后点画布或切换别的球都不会把它收起来，再点一次解锁。桌面模式下按钮的可点区域放大到 40px、字号加 1、行距更松；触屏那些快捷手势（长按取色、双击画布适配、三击缩放）在电脑模式下不再触发，全部由滚轮与快捷键替代。", "In PC mode the floating orb scales up to 1.2x with its ring spread wider for easier clicking, and a new expand-lock appears: while the ring is open a small padlock shows in its corner (only then) and, once locked, tapping the canvas or another ball no longer closes it — tap again to unlock. Desktop mode also grows the tap targets to 40px, bumps the font by one step and loosens the line height, while the touch-only gestures (long-press colour picking, double-tap to fit, triple-tap zoom) are switched off and replaced by the wheel and the keyboard."),
+      it("imp", "网页版体积优化：Web 包默认压缩（约 1.2MB → 730KB，GitHub Pages 走 gzip 后约 180KB），同时在正式站点上关闭调试遥测（只在本地 devserver 上报），浏览器的控制台里不再出现无效请求。", "Leaner web build: the bundle is minified by default (about 1.2MB -> 730KB, around 180KB over the wire once GitHub Pages gzips it), and the debug telemetry only reports to a local dev server, so the deployed site no longer produces failed requests in the browser console."),
+    ],
+  },
   {
     v: "1.0.8.4",
     date: "2026-09-10",
