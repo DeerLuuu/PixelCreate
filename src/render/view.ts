@@ -41,8 +41,6 @@ const UNLOCK_D = "M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6h2c0-1.66 1.34-3 3-3s3 
  *  four fingers settling, small enough that any deliberate slide arms it. */
 /** fallback when a caller has no session yet (never used in the app) */
 const FOUR_MOVE_PX_DEFAULT = 15;
-/** 空格长按交换颜色时，鼠标移动超过这个距离就当成「要平移」（滤掉手抖） */
-const SPACE_MOVE_PX = 6;
 /** layer-switch flash duration in ms */
 const FLASH_MS = 420;
 
@@ -181,12 +179,10 @@ export class View {
   private pinchBase: { mx: number; my: number; dist: number; ox: number; oy: number; zoom: number } | null = null;
   private stroke: Stroke | null = null;
   private panLast: PxPoint | null = null;
-  /** PC 输入：空格键按下（空格+左键拖动＝平移） */
+  /** PC 输入：空格键按住＝临时用另一个色槽（背景色）绘制 */
   private spaceDown = false;
-  /** PC 输入：空格长按（鼠标基本不动）＝交换前/背景色，计时器与锚点 */
-  private spaceHoldT: number | null = null;
-  private spaceAnchor: PxPoint | null = null;
-  private spaceSwapped = false;
+  /** PC 输入：Alt 按住＝下一次单击取色（光标也变成吸管） */
+  private altDown = false;
   /** PC 输入：中键拖动平移中 */
   private mousePan = false;
   /** PC 输入：这一笔用另一个颜色槽（右键绘制） */
@@ -281,7 +277,6 @@ export class View {
     this.anim = 0;
     if (this.raf) window.cancelAnimationFrame(this.raf);
     this.raf = 0;
-    this.cancelSpaceSwap();
     window.removeEventListener("keydown", this.onSpaceKey);
     window.removeEventListener("keyup", this.onSpaceKey);
     this.host.replaceChildren();
@@ -298,7 +293,7 @@ export class View {
     else this.zoomAt(this.zoom * it.factor, pt.x, pt.y);
   }
 
-  /** 平移视图（滚轮 / 中键 / 空格拖动共用） */
+  /** 平移视图（滚轮 / 画布外拖动 / 方向键共用） */
   panBy(dx: number, dy: number): void {
     this.ox += dx;
     this.oy += dy;
@@ -313,7 +308,7 @@ export class View {
       tool: this.session.tool,
       locked: this.session.layerLocked(),
       panning: this.mousePan,
-      spaceHeld: this.spaceDown,
+      altPick: this.altDown,
       picking: this.pickMode,
     });
     // 测试环境里的 host 是精简桩，dataset / style 可能不存在
@@ -322,50 +317,29 @@ export class View {
     if (host.style) host.style.cursor = "";   // 交给 CSS 规则（data-cursor）
   }
 
-  /** 空格键按下＝临时抓手：空格+左键拖动平移（PC 模式），按住不动则交换前/背景色 */
+  /**
+   * PC 修饰键：空格按住＝临时用另一个色槽（默认背景色）绘制；Alt 按住＝下一次
+   * 单击取色（光标换成吸管）。平移不再占用空格：画布外左键拖动或方向键即可。
+   */
   private onSpaceKey = (e: KeyboardEvent): void => {
     if (!isPc()) return;
-    if (e.code !== "Space" && e.key !== " ") return;
     const t = e.target as HTMLElement | null;
     const typing = !!t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable);
     const down = e.type === "keydown";
+    if (e.key === "Alt" || e.code === "AltLeft" || e.code === "AltRight") {
+      if (this.altDown === down) return;
+      this.altDown = down;
+      if (down) e.preventDefault();              // 别让浏览器把焦点抢到菜单栏
+      if (this.pointers.size === 0) this.syncCursor();
+      return;
+    }
+    if (e.code !== "Space" && e.key !== " ") return;
     if (typing) return;
     if (down && t && t.tagName === "BUTTON") return;   // 空格仍然激活聚焦的按钮
     if (this.spaceDown === down) return;
     this.spaceDown = down;
-    if (this.pointers.size === 0) this.syncCursor();
-    if (down) {
-      // 按住不动 = 交换前/背景色（鼠标一动就取消，改回平移语义，见 onMove）
-      this.spaceAnchor = null;
-      this.spaceSwapped = false;
-      this.cancelSpaceSwap();
-      const ms = clamp(this.session.prefs.longPressMs, 200, 800);
-      this.spaceHoldT = window.setTimeout(() => { this.spaceHoldT = null; this.swapColorsByHold(); }, ms);
-      e.preventDefault();
-    } else {
-      this.cancelSpaceSwap();
-      this.spaceAnchor = null;
-      this.spaceSwapped = false;
-    }
+    if (down) e.preventDefault();
   };
-
-  /** 取消待触发的「空格长按交换颜色」 */
-  private cancelSpaceSwap(): void {
-    if (this.spaceHoldT !== null) {
-      window.clearTimeout(this.spaceHoldT);
-      this.spaceHoldT = null;
-    }
-  }
-
-  /** 空格按住不动到点：交换前景/背景色（触屏上的等价物是色块长按） */
-  private swapColorsByHold(): void {
-    if (this.spaceSwapped) return;
-    this.spaceSwapped = true;
-    const s = this.session;
-    s.swapColors();
-    s.hapticTick("交换颜色", 0.8);
-    s.note("已交换前景 / 背景色", "Swapped foreground and background");
-  }
 
   // ---------------------------------------------------------------- sizing
   resize(): void {
@@ -1574,7 +1548,7 @@ export class View {
         this.drawOverlay();
       }
     });
-    // ---- PC（鼠标 / 触控板）：滚轮缩放、Shift 横向、Alt 纵向，空格或中键拖动平移
+    // ---- PC（鼠标 / 触控板）：滚轮缩放、Shift 横向、Alt 纵向平移
     host.addEventListener("wheel", (e) => this.onWheel(e), { passive: false });
     window.addEventListener("keydown", this.onSpaceKey);
     window.addEventListener("keyup", this.onSpaceKey);
@@ -1668,11 +1642,9 @@ export class View {
       this.host.setPointerCapture && this.host.setPointerCapture(e.pointerId);
     } catch { /* ignore */ }
     const pt = this.evPt(e);
-    // ---- PC 鼠标：中键 / 空格+左键 = 平移，右键 = 用另一个颜色槽绘制
+    // ---- PC 鼠标：中键＝聚焦适配，右键 / 空格+左键＝用另一个色槽绘制
     this.altPaint = false;
     if (e.pointerType === "mouse") {
-      // 空格按住时按下鼠标＝要平移/操作，不再算「长按交换颜色」
-      this.cancelSpaceSwap();
       // 中键：等价于触屏的双击画布（聚焦并适配），不再用于平移
       if (e.button === 1) {
         const hitIdx = this.canvasAtScreen(pt.x, pt.y);
@@ -1683,15 +1655,10 @@ export class View {
         }
         return;
       }
-      if (e.button === 0 && this.spaceDown) {
-        this.mousePan = true;
-        this.panLast = pt;
-        this.syncCursor();
-        return;
-      }
       this.mousePan = false;
-      this.altPaint = e.button === 2;
-      if (this.altPaint) this.pointers.set(e.pointerId, pt);
+      // 右键，或按住空格＋左键：用另一个色槽（默认背景色）绘制
+      this.altPaint = e.button === 2 || (e.button === 0 && this.spaceDown);
+      if (e.button === 2 || this.altPaint) this.pointers.set(e.pointerId, pt);
     }
     this.pointers.set(e.pointerId, pt);
     // remember each finger's touchdown point — a finger counts as "sliding"
@@ -1926,10 +1893,10 @@ export class View {
     const pt = this.evPt(e);
     const wasDown = this.pointers.has(e.pointerId);
     if (wasDown) this.pointers.set(e.pointerId, pt);
-    // 空格按住期间的鼠标移动＝平移意图（阈值内的小抖动不算），取消交换颜色
-    if (this.spaceDown && this.spaceHoldT !== null && e.pointerType === "mouse") {
-      if (!this.spaceAnchor) this.spaceAnchor = pt;
-      else if (Math.hypot(pt.x - this.spaceAnchor.x, pt.y - this.spaceAnchor.y) > SPACE_MOVE_PX) this.cancelSpaceSwap();
+    // Alt 按住＝取色模式：光标跟着换成吸管（鼠标没有别的提示手段）
+    if (e.pointerType === "mouse" && this.altDown !== e.altKey) {
+      this.altDown = e.altKey;
+      this.syncCursor();
     }
     // a pending multi-finger long press dies the moment a finger slides
     if (this.hold && this.holdMoved()) this.cancelHold();

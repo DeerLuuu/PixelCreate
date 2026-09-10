@@ -363,7 +363,7 @@ export function testView(): void {
       const s3 = new Session();
       const handlers: Record<string, Array<(e: unknown) => void>> = {};
       const st3 = {
-        clientWidth: 320, clientHeight: 240, style: {} as Record<string, string>,
+        clientWidth: 320, clientHeight: 240, style: {} as Record<string, string>, dataset: {} as Record<string, string>,
         appendChild: () => undefined, replaceChildren: () => undefined,
         getBoundingClientRect: () => ({ left: 0, top: 0, width: 320, height: 240 }),
         setPointerCapture: () => undefined, releasePointerCapture: () => undefined,
@@ -416,15 +416,24 @@ export function testView(): void {
       void zZoomed; void focusBefore;
       eq("view.pc.middle-focus.no-paint", s3.doc.celAt(s3.curLayer(), s3.curFrame()), celBefore);
       void ox2; void oy2;
-      // 空格+左键拖动仍然平移
-      (v3 as unknown as { spaceDown: boolean }).spaceDown = true;
+      // 平移：左键在画布外（空白处）拖动 —— 空格不再参与平移
+      s3.focusCanvas(0);
       const ox3 = v3.ox, oy3 = v3.oy;
-      fire("pointerdown", ev({ button: 0, buttons: 1, clientX: 100, clientY: 100 }));
-      fire("pointermove", ev({ button: 0, buttons: 1, clientX: 130, clientY: 120 }));
-      fire("pointerup", ev({ button: 0, clientX: 130, clientY: 120 }));
+      const blank = { x: v3.ox + s3.doc.w * v3.zoom + 40, y: v3.oy + s3.doc.h * v3.zoom + 40 };
+      fire("pointerdown", ev({ button: 0, buttons: 1, clientX: blank.x, clientY: blank.y }));
+      fire("pointermove", ev({ button: 0, buttons: 1, clientX: blank.x + 30, clientY: blank.y + 20 }));
+      fire("pointerup", ev({ button: 0, clientX: blank.x + 30, clientY: blank.y + 20 }));
       // 视图可能被 clampView 限制幅度，这里只验证「确实朝该方向平移了」
-      ok("view.pc.space-pan", v3.ox > ox3 && v3.oy > oy3, "d=" + (v3.ox - ox3) + "," + (v3.oy - oy3));
+      ok("view.pc.outside-drag-pans", v3.ox > ox3 && v3.oy > oy3, "d=" + (v3.ox - ox3) + "," + (v3.oy - oy3));
+      // 空格按住时在画布内按下＝绘制（背景色），绝不会变成平移
+      const spaceOx = v3.ox, spaceOy = v3.oy;
+      const inDoc = { clientX: v3.ox + 3.5 * v3.zoom, clientY: v3.oy + 3.5 * v3.zoom };
+      (v3 as unknown as { spaceDown: boolean }).spaceDown = true;
+      fire("pointerdown", ev({ button: 0, buttons: 1, ...inDoc }));
+      fire("pointermove", ev({ button: 0, buttons: 1, clientX: inDoc.clientX + 12, clientY: inDoc.clientY }));
+      fire("pointerup", ev({ button: 0, clientX: inDoc.clientX + 12, clientY: inDoc.clientY }));
       (v3 as unknown as { spaceDown: boolean }).spaceDown = false;
+      ok("view.pc.space-is-not-pan", v3.ox === spaceOx && v3.oy === spaceOy, "d=" + (v3.ox - spaceOx) + "," + (v3.oy - spaceOy));
 
       // 右键＝另一个颜色槽（当前前景色绘制时就是背景色）
       s3.setFgColor([10, 20, 30, 255]);
@@ -447,52 +456,56 @@ export function testView(): void {
       const off2 = (20 * s3.doc.w + 20) * 4;
       eq("view.pc.left.paints-fg", cel4 ? [cel4.data[off2], cel4.data[off2 + 1], cel4.data[off2 + 2]] : null, [10, 20, 30]);
 
-      // ---- 空格长按（鼠标不动）＝交换前景/背景色；鼠标一动就取消，回到平移 ----
+      // ---- 空格按住＝临时用另一个色槽绘制；Alt 按住＝吸管光标 ----
       {
-        type SpacePriv = {
+        type ModPriv = {
           onSpaceKey(e: KeyboardEvent): void;
-          spaceHoldT: number | null;
-          spaceSwapped: boolean;
-          swapColorsByHold(): void;
+          spaceDown: boolean;
+          altDown: boolean;
+          syncCursor(): void;
         };
-        const sp = v3 as unknown as SpacePriv;
-        const key = (type: string): KeyboardEvent => ({
-          code: "Space", key: " ", type, target: null,
+        const sp = v3 as unknown as ModPriv;
+        const key = (k: string, type: string): KeyboardEvent => ({
+          key: k, code: k === " " ? "Space" : k, type, target: null,
           preventDefault: () => undefined,
         } as unknown as KeyboardEvent);
-        const fg0 = [s3.fg[0], s3.fg[1], s3.fg[2], s3.fg[3]];
-        const bg0 = [s3.bg[0], s3.bg[1], s3.bg[2], s3.bg[3]];
-        // 按下空格：计时器待命；抬手取消（没有换色）
-        sp.onSpaceKey(key("keydown"));
-        ok("view.pc.space-hold.armed", sp.spaceHoldT !== null);
-        sp.onSpaceKey(key("keyup"));
-        ok("view.pc.space-hold.disarmed", sp.spaceHoldT === null);
-        eq("view.pc.space-hold.no-swap-on-tap", [s3.fg[0], s3.fg[1], s3.fg[2], s3.fg[3]], fg0);
-        // 按住到点（这里直接触发到点的动作）：前景/背景互换，且同一次长按只换一次
-        sp.onSpaceKey(key("keydown"));
-        sp.swapColorsByHold();
-        eq("view.pc.space-hold.swaps-fg", [s3.fg[0], s3.fg[1], s3.fg[2], s3.fg[3]], bg0);
-        eq("view.pc.space-hold.swaps-bg", [s3.bg[0], s3.bg[1], s3.bg[2], s3.bg[3]], fg0);
-        const fgOnce = [s3.fg[0], s3.fg[1], s3.fg[2], s3.fg[3]];
-        sp.swapColorsByHold();
-        eq("view.pc.space-hold.once-per-hold", [s3.fg[0], s3.fg[1], s3.fg[2], s3.fg[3]], fgOnce);
-        sp.onSpaceKey(key("keyup"));
-        // 鼠标没动（阈值内抖动）不取消
-        sp.onSpaceKey(key("keydown"));
-        fire("pointermove", ev({ button: 0, clientX: 100, clientY: 100 }));
-        fire("pointermove", ev({ button: 0, clientX: 102, clientY: 101 }));
-        ok("view.pc.space-hold.jitter-keeps-armed", sp.spaceHoldT !== null);
-        // 超过 6px＝平移意图，取消交换
-        fire("pointermove", ev({ button: 0, clientX: 140, clientY: 100 }));
-        ok("view.pc.space-hold.cancelled-by-move", sp.spaceHoldT === null);
-        ok("view.pc.space-hold.still-pans", sp.spaceHoldT === null && !!((v3 as unknown as { spaceDown: boolean }).spaceDown));
-        // 空格按住时按下鼠标（要平移）同样取消
-        sp.onSpaceKey(key("keyup"));
-        sp.onSpaceKey(key("keydown"));
-        fire("pointerdown", ev({ button: 0, buttons: 1, clientX: 100, clientY: 100 }));
-        fire("pointerup", ev({ button: 0, clientX: 100, clientY: 100 }));
-        ok("view.pc.space-hold.cancelled-by-click", sp.spaceHoldT === null);
-        sp.onSpaceKey(key("keyup"));
+        // 空格按住 → 左键用背景色绘制
+        s3.setFgColor([10, 20, 30, 255]);
+        s3.bg = [200, 100, 50, 255];
+        sp.onSpaceKey(key(" ", "keydown"));
+        ok("view.pc.space-held", sp.spaceDown === true);
+        const spot = { clientX: v3.ox + 9.5 * v3.zoom, clientY: v3.oy + 9.5 * v3.zoom };
+        fire("pointerdown", ev({ button: 0, buttons: 1, ...spot }));
+        fire("pointerup", ev({ button: 0, ...spot }));
+        {
+          const cel = s3.doc.celAt(s3.curLayer(), s3.curFrame());
+          const o = (9 * s3.doc.w + 9) * 4;
+          eq("view.pc.space-paints-bg", cel ? [cel.data[o], cel.data[o + 1], cel.data[o + 2]] : null, [200, 100, 50]);
+        }
+        sp.onSpaceKey(key(" ", "keyup"));
+        ok("view.pc.space-released", sp.spaceDown === false);
+        // 松开后回到前景色（换一个远处的像素，避免被判成双击）
+        const spot2 = { clientX: v3.ox + 24.5 * v3.zoom, clientY: v3.oy + 24.5 * v3.zoom };
+        fire("pointerdown", ev({ button: 0, buttons: 1, ...spot2 }));
+        fire("pointerup", ev({ button: 0, ...spot2 }));
+        {
+          const cel = s3.doc.celAt(s3.curLayer(), s3.curFrame());
+          const o = (24 * s3.doc.w + 24) * 4;
+          eq("view.pc.space-release-paints-fg", cel ? [cel.data[o], cel.data[o + 1], cel.data[o + 2]] : null, [10, 20, 30]);
+        }
+        // Alt 按住 → 光标变吸管（data-cursor=pick）
+        const host3 = st3 as unknown as { dataset: Record<string, string> };
+        sp.onSpaceKey(key("Alt", "keydown"));
+        sp.syncCursor();
+        eq("view.pc.alt-cursor", host3.dataset.cursor, "pick");
+        sp.onSpaceKey(key("Alt", "keyup"));
+        sp.syncCursor();
+        eq("view.pc.alt-cursor-off", host3.dataset.cursor, "draw");
+        // 鼠标移动时 altKey 变化也会同步光标
+        fire("pointermove", ev({ button: 0, clientX: 120, clientY: 120, altKey: true, pointerType: "mouse" }));
+        eq("view.pc.alt-cursor-move", host3.dataset.cursor, "pick");
+        fire("pointermove", ev({ button: 0, clientX: 121, clientY: 120, altKey: false, pointerType: "mouse" }));
+        eq("view.pc.alt-cursor-move-off", host3.dataset.cursor, "draw");
       }
 
       v3.destroy();

@@ -8,6 +8,7 @@ import { showTip, hideTip } from "./tooltip";
 import type { RGBA } from "../engine/types";
 import { chipCss } from "../engine/color";
 import { isPc } from "../io/pcmode";
+import { takeNotches, wheelNotches } from "../engine/scrub";
 
 export function hsvToRgb(h: number, s: number, v: number): [number, number, number] {
   h = ((h % 360) + 360) % 360;
@@ -59,17 +60,27 @@ export function HoldAdjust({
   reset?: number;
 }) {
   const wheelRef = useRef<HTMLButtonElement | null>(null);
+  /** 滚轮累计（一个滚轮格会被浏览器拆成几十个事件，必须按格累计） */
+  const wheelAcc = useRef(0);
+  /** 同一帧内连续事件用的最新值（props 的 value 要等重渲染才更新） */
+  const wheelVal = useRef<number | null>(null);
   /** ⑦ PC：鼠标悬停在长按按钮上滚动滚轮＝调值（原生监听，才能 preventDefault） */
   useEffect(() => {
     const el = wheelRef.current;
     if (!el) return;
+    wheelVal.current = null;   // props 变了：以 props 为准
     const onWheel = (e: WheelEvent) => {
       if (!isPc()) return;
       e.preventDefault();
+      e.stopPropagation();
+      const { steps, rest } = takeNotches(wheelAcc.current + wheelNotches(e.deltaY, e.deltaMode));
+      wheelAcc.current = rest;
+      if (!steps) return;
       const span = max - min;
       const step = span > 200 ? 5 : span > 50 ? 2 : 1;
-      const next = Math.max(min, Math.min(max, value + (e.deltaY < 0 ? step : -step)));
-      if (next !== value) onChange(next);
+      const cur = wheelVal.current ?? value;
+      const next = Math.max(min, Math.min(max, cur - steps * step));
+      if (next !== cur) { wheelVal.current = next; onChange(next); }
     };
     el.addEventListener("wheel", onWheel, { passive: false });
     return () => el.removeEventListener("wheel", onWheel);

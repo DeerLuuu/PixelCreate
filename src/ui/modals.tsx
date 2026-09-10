@@ -20,8 +20,9 @@ import { canVibrate, hapticReport } from "../io/bridge";
 import { detectInsets } from "../io/safearea";
 import type { RefImg } from "./refimg";
 import { Dialog, Row, RowActions, NumberField, ColorField, ChipGroup, Segmented, Switch, useKitPcMode } from "./kit";
+import { SHORTCUT_SHEET } from "../app/shortcuts";
 
-export type ModalId = "menu" | "changelog" | "newdoc" | "newproject" | "export" | "adjust" | "settings" | "frame" | "framePrev" | "size" | "sheet" | "history" | "canvasRef" | null;
+export type ModalId = "menu" | "changelog" | "newdoc" | "newproject" | "export" | "adjust" | "settings" | "frame" | "framePrev" | "size" | "sheet" | "history" | "canvasRef" | "shortcuts" | null;
 export type SizeMode = "canvas" | "sprite";
 export type SheetData = { w: number; h: number; px: Uint8ClampedArray; name: string };
 
@@ -803,6 +804,50 @@ export function histName(label: string, t: ReturnType<typeof makeT>, lang: strin
   const tr = t(label);
   return tr === label ? label : tr;
 }
+/**
+ * Ctrl+F1 cheat sheet: every keyboard chord the app handles plus the mouse
+ * vocabulary (the touch-only gestures are listed on the mobile side, where the
+ * sheet also opens from the main menu). Content lives in app/shortcuts.ts.
+ */
+export function ShortcutHelpModal({ t, onClose }: { t: ReturnType<typeof makeT>; onClose: () => void }) {
+  const en = SESSION.prefs.lang === "en";
+  const pc = useKitPcMode();
+  const [pick, setPick] = useState(0);
+  const groups = SHORTCUT_SHEET;
+  const g = groups[Math.min(pick, groups.length - 1)];
+  return (
+    <Dialog title={t("shortcutHelp")} onClose={onClose} className={"sc-dlg" + (pc ? " sc-dlg-pc" : "")} bodyClass="sc-body"
+      extra={<div className="row-note">{t("shortcutHelpHint")}</div>}
+      footer={<Btn label={t("close")} onClick={onClose} />}>
+      {pc ? (
+        <div className="sc-split">
+          <div className="sc-cats">
+            {groups.map((grp, i) => (
+              <button key={grp.en} className={"sc-cat" + (i === pick ? " on" : "")} onClick={() => setPick(i)}>{en ? grp.en : grp.zh}</button>
+            ))}
+          </div>
+          <div className="sc-pane">
+            {g.items.map((it) => (
+              <div key={it.keys} className="sc-row"><kbd className="sc-keys">{it.keys}</kbd><span className="sc-desc">{en ? it.en : it.zh}</span></div>
+            ))}
+          </div>
+        </div>
+      ) : (
+        <div className="sc-flat">
+          {groups.map((grp) => (
+            <div key={grp.en} className="sc-group">
+              <div className="sc-gtitle">{en ? grp.en : grp.zh}</div>
+              {grp.items.map((it) => (
+                <div key={it.keys} className="sc-row"><kbd className="sc-keys">{it.keys}</kbd><span className="sc-desc">{en ? it.en : it.zh}</span></div>
+              ))}
+            </div>
+          ))}
+        </div>
+      )}
+    </Dialog>
+  );
+}
+
 export function HistoryModal({ t, snap, onClose, onReplay }: { t: ReturnType<typeof makeT>; snap: Snapshot; onClose: () => void; onReplay: () => void }) {
   const { labels, index } = SESSION.history.list();
   const rows = [{ key: 0, label: t("historyStart") } as { key: number; label: string }].concat(labels.map((lb, i) => ({ key: i + 1, label: histName(lb, t, snap.lang) })));

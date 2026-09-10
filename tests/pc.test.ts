@@ -68,7 +68,9 @@ export function testPcMode(): void {
     eq("cursor.other-tool", cursorFor({ tool: "unknown-tool", locked: false }), "move");
     // 平移优先于一切
     eq("cursor.panning-beats-tool", cursorFor({ tool: "pencil", locked: false, panning: true }), "grabbing");
-    eq("cursor.space-beats-lock", cursorFor({ tool: "pencil", locked: true, spaceHeld: true }), "grab");
+    // Alt 按住＝吸管（比锁定提示更具体，但比平移低一级）
+    eq("cursor.alt-pick", cursorFor({ tool: "pencil", locked: true, altPick: true }), "pick");
+    eq("cursor.alt-pick-beats-tool", cursorFor({ tool: "bucket", locked: false, altPick: true }), "pick");
     // 锁定图层：禁止（但仍比平移低一级）
     eq("cursor.locked", cursorFor({ tool: "pencil", locked: true }), "lock");
     // 长按取色模式也有吸管

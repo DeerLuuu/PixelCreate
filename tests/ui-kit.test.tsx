@@ -161,7 +161,7 @@ export function testUiKit(): void {
   ok("ui.demo.sections", (demo.match(/demo-h/g) || []).length >= 6);
 
   // --------------------------------------------------------- kit purity
-  // docs/UI.md §1.1: kit files may only import react / react-dom / engine/expr
+  // docs/UI.md §1.1: kit files may only import react / react-dom / pure engine/*
   const kitDir = path.resolve(__dirname, "../../../src/ui/kit");
   const kitFiles = fs.readdirSync(kitDir).filter((f: string) => /\.(ts|tsx)$/.test(f));
   ok("ui.kit.sources", kitFiles.length >= 5, "files=" + kitFiles.length);
@@ -173,7 +173,8 @@ export function testUiKit(): void {
       const mod = m[1];
       const okMod = mod === "react" || mod === "react-dom" || mod === "react-dom/server"
         || mod === "react-dom/client"
-        || mod.indexOf("./") === 0 || mod === "../../engine/expr" || mod === "../tooltip";
+        || mod.indexOf("./") === 0 || mod === "../../engine/expr" || mod === "../../engine/scrub"
+        || mod === "../tooltip";
       if (!okMod || banned.test('from "' + mod + '"')) offenders.push(f + " -> " + mod);
     }
   }

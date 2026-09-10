@@ -5,6 +5,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { evalExpr } from "../../engine/expr";
+import { SCRUB_DEAD_PX, scrubValue, takeNotches, wheelNotches } from "../../engine/scrub";
 
 export interface ScrubNumProps {
   value: string | number;
@@ -23,9 +24,9 @@ export interface ScrubNumProps {
 
 /**
  * Numeric input with a scrub gesture: long-press (no typing) then slide
- * up/down or left/right to change the value. The per-step magnitude is
- * derived from the bounds ((max-min)/100, minimum 1) or defaults to 1 when a
- * bound is missing.
+ * up/down or left/right to change the value. The magnitude per pixel follows
+ * the bounds (the whole range takes ~600px, see engine/scrub.ts) so a light
+ * flick can no longer jump across the field.
  *
  * The field also accepts a formula: while it has focus the text is kept
  * verbatim ("64*2+8") and evaluated live (see src/engine/expr.ts). A small
@@ -38,7 +39,10 @@ export function ScrubNum({
   const elRef = useRef<HTMLInputElement | null>(null);
   const armT = useRef<number | null>(null);
   const anchor = useRef<{ x: number; y: number; n: number } | null>(null);
-  const unit = step != null ? step : (min != null && max != null ? Math.max(1, Math.round((max - min) / 100)) : 1);
+  /** leftover wheel travel (a notch is delivered as many small events) */
+  const wheelAcc = useRef(0);
+  /** newest value applied inside one frame (props lag until re-render) */
+  const wheelVal = useRef<number | null>(null);
   /** raw text while focused (null = show the committed value) */
   const [text, setText] = useState<string | null>(null);
   /** screen position of the operator pad while focused */
@@ -67,7 +71,8 @@ export function ScrubNum({
     const dx = ev.clientX - a.x;
     const dy = ev.clientY - a.y;
     const d = Math.abs(dy) > Math.abs(dx) ? -dy : dx; // drag up or right increases
-    onChange(String(Math.round(clampN(a.n + (d / 3) * unit))));
+    if (Math.abs(d) < SCRUB_DEAD_PX) return;          // ignore the arming wobble
+    onChange(String(scrubValue(a.n, d, min, max, step)));
   };
   const down = (e: React.PointerEvent<HTMLInputElement>) => {
     const el = e.currentTarget;
@@ -120,13 +125,19 @@ export function ScrubNum({
   useEffect(() => {
     const el = elRef.current;
     if (!el) return;
+    wheelVal.current = null;   // props 变了：以 props 为准
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
+      e.stopPropagation();
+      // accumulate: one step per mouse notch, however many events it arrives in
+      const { steps, rest } = takeNotches(wheelAcc.current + wheelNotches(e.deltaY, e.deltaMode));
+      wheelAcc.current = rest;
+      if (!steps) return;
       const span = min != null && max != null ? max - min : 0;
-      const stepN = step != null ? step : span > 200 ? 5 : span > 50 ? 1 : 1;
-      const cur = numeric();
-      const next = clampN(cur + (e.deltaY < 0 ? stepN : -stepN));
-      if (next !== cur) commit(next);
+      const stepN = step != null ? step : span > 200 ? 5 : 1;
+      const cur = wheelVal.current ?? numeric();
+      const next = clampN(cur - steps * stepN);
+      if (next !== cur) { wheelVal.current = next; commit(next); }
     };
     el.addEventListener("wheel", onWheel, { passive: false });
     return () => el.removeEventListener("wheel", onWheel);

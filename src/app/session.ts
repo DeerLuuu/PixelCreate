@@ -21,6 +21,7 @@ import { GESTURES, isActionAllowed, type GestureActionId } from "./gestures";
 import { isShapeTool, nextSym, SYM_ANGLES } from "../tools/registry";
 import type { View } from "../render/view";
 import * as selM from "../tools/select";
+import { pasteRaw } from "../tools/select";
 import { mirrorMaskInPlace } from "../engine/symmetry";
 import { adjustPixel, type HslAdj } from "../engine/adjust";
 import { type LoopMode, nextLoopMode, nextPlayFrame, startPlayDir, startPlayFrame } from "./playback";
@@ -2128,6 +2129,63 @@ export class Session {
       doc.sel!.mask = out;
       doc.sel!.bump();
     });
+    this.changed();
+    return true;
+  }
+
+  /**
+   * Paste the clipboard as a BRAND-NEW layer on the focused canvas
+   * (Ctrl+Shift+V). The layer lands above the current one, becomes current and
+   * holds the clip centred; the whole thing is one undo step.
+   */
+  pasteAsNewLayer(clip: import("../engine/cel").Cel | null): boolean {
+    const doc = this.doc;
+    if (!clip || !clip.w || !clip.h) return false;
+    const at = Math.min(doc.layers.length, this.curLayer() + 1);
+    const fi = this.curFrame();
+    this.struct("paste-layer", () => {
+      ops.addLayer(doc, at);
+      pasteRaw(doc, at, fi, clip, {
+        x: Math.max(0, Math.floor((doc.w - clip.w) / 2)),
+        y: Math.max(0, Math.floor((doc.h - clip.h) / 2)),
+      });
+    });
+    this.layerIdx = Math.max(0, Math.min(doc.layers.length - 1, at));
+    this.repaintAll();
+    this.changed();
+    this.scheduleAutosave();
+    return true;
+  }
+
+  /** Paste the clipboard as a brand-new canvas sized to the clip (Ctrl+Alt+V). */
+  pasteAsNewCanvas(clip: import("../engine/cel").Cel | null): number {
+    if (!clip || !clip.w || !clip.h) return -1;
+    const en = this.prefs.lang === "en";
+    const doc = new Doc(clip.w, clip.h, (this.doc.name || "art") + (en ? "_pasted" : "_粘贴"));
+    doc.palette = this.prefs.palette.length ? this.prefs.palette.map((hex) => hexToRgba(hex)) : defaultPalette();
+    doc.bg = null;
+    const cel = doc.ensureCel(0, 0);
+    if (cel) cel.data.set(clip.data);
+    const idx = this.addCanvas(doc);
+    this.scheduleAutosave();
+    return idx;
+  }
+
+  /** Paste the clipboard into every picked frame of the current layer at once. */
+  pasteIntoFrames(clip: import("../engine/cel").Cel | null, li: number, frames: number[]): boolean {
+    const doc = this.doc;
+    if (!clip || !clip.w || !clip.h || !frames.length || doc.layers[li]?.locked) return false;
+    const fi = this.curFrame();
+    const at = doc.sel && doc.sel.hasAny() && doc.sel.bounds()
+      ? { x: doc.sel.bounds()!.x, y: doc.sel.bounds()!.y }
+      : { x: Math.max(0, Math.floor((doc.w - clip.w) / 2)), y: Math.max(0, Math.floor((doc.h - clip.h) / 2)) };
+    const list = [...new Set([...frames, fi])].filter((i) => i >= 0 && i < doc.frames.length).sort((a, b) => a - b);
+    let any = false;
+    this.struct("paste-frames", () => {
+      for (const i of list) if (pasteRaw(doc, li, i, clip, at)) any = true;
+    });
+    if (!any) return false;
+    this.repaintAll();
     this.changed();
     return true;
   }

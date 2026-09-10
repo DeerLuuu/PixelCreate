@@ -22,10 +22,11 @@ import { TimelineBar } from "./timeline";
 import { PreviewBox } from "./preview";
 import { RefImageBox } from "./refimg";
 import type { RefImg } from "./refimg";
-import { PalettePanel, MenuModal, SizeModal, SheetModal, NewDocModal, ExportModal, AdjustModal, SettingsModal, FrameModal, FramePreviewModal, CanvasRefModal, HistoryModal, histName, importFlow, saveProject, openFileBytes } from "./modals";
+import { PalettePanel, MenuModal, SizeModal, SheetModal, NewDocModal, ExportModal, AdjustModal, SettingsModal, FrameModal, FramePreviewModal, CanvasRefModal, HistoryModal, ShortcutHelpModal, histName, importFlow, saveProject, openFileBytes } from "./modals";
 import { FxParamDialog, fxDefaults, type FxRun, type FxVals } from "./fxparam";
 import { CanvasTitles } from "./canvas";
 import { ChangelogModal, changelogNeedsShow } from "./changelog";
+import { Cel } from "../engine/cel";
 import { watchSafeArea } from "../io/safearea";
 import { fullscreenIcon, fullscreenToggleVisible, isFullscreen, toggleFullscreen, watchFullscreen } from "../io/fullscreen";
 import { shortcutFor } from "../app/shortcuts";
@@ -144,6 +145,62 @@ export function App() {
 
   // PC 键盘快捷键（全部动作集中在这里，映射表在 app/shortcuts.ts 里是纯函数）
   useEffect(() => {
+    /** clipboard -> Cel: prefer a system-clipboard image, else the in-app clip */
+    const readClip = async (): Promise<{ clip: Cel | null; fromSystem: boolean }> => {
+      try {
+        const items = await navigator.clipboard?.read?.();
+        for (const it of items ?? []) {
+          const type = it.types.find((x) => x.startsWith("image/"));
+          if (!type) continue;
+          const blob = await it.getType(type);
+          const bmp = await createImageBitmap(blob);
+          const cv = document.createElement("canvas");
+          cv.width = bmp.width; cv.height = bmp.height;
+          const cx = cv.getContext("2d");
+          if (!cx) continue;
+          cx.drawImage(bmp, 0, 0);
+          const px = cx.getImageData(0, 0, bmp.width, bmp.height).data;
+          // a real Cel: the paste path indexes it with cel.idx()
+          const cel = new Cel(bmp.width, bmp.height);
+          cel.data.set(px);
+          return { clip: cel, fromSystem: true };
+        }
+      } catch { /* the browser may refuse clipboard access */ }
+      return { clip: SESSION.clip, fromSystem: false };
+    };
+    /** Ctrl+V / Ctrl+Shift+V / Ctrl+Alt+V */
+    const runPaste = async (mode: "inPlace" | "layer" | "canvas"): Promise<void> => {
+      const t = makeT(SESSION.prefs.lang as Lang);
+      try {
+        const { clip, fromSystem } = await readClip();
+        if (!clip) { bridge.toast(t("pasteEmpty")); return; }
+        SESSION.clip = clip;
+        if (mode === "layer") {
+          if (SESSION.pasteAsNewLayer(clip)) bridge.toast(t("pasteAsLayer"));
+          else bridge.toast(t("pasteEmpty"));
+          return;
+        }
+        if (mode === "canvas") {
+          if (SESSION.pasteAsNewCanvas(clip) >= 0) bridge.toast(t("pasteAsCanvas"));
+          else bridge.toast(t("pasteEmpty"));
+          return;
+        }
+        const d1 = SESSION.doc, li1 = SESSION.curLayer(), fi1 = SESSION.curFrame();
+        // timeline frames picked -> paste into every one of them
+        const picked = SESSION.frameSelOn ? SESSION.frameSelList() : [];
+        if (picked.length) {
+          if (SESSION.pasteIntoFrames(clip, li1, picked)) bridge.toast(t("pasteFrames"));
+          else bridge.toast(t("pasteEmpty"));
+          return;
+        }
+        selOps.selOps.paste(d1, SESSION.history, li1, fi1, clip);
+        SESSION.repaint();
+        bridge.toast(t(fromSystem ? "pasteFromSystem" : "sel.paste"));
+      } catch {
+        bridge.toast(t("pasteEmpty"));
+      }
+    };
+
     const onKey = (e: KeyboardEvent) => {
       if (!isPc()) return;
       const el = e.target as HTMLElement | null;
@@ -182,38 +239,12 @@ export function App() {
         case "frameNext": e.preventDefault(); SESSION.stepFrame(1); break;
         case "layerPrev": e.preventDefault(); SESSION.cycleLayer(-1); break;
         case "layerNext": e.preventDefault(); SESSION.cycleLayer(1); break;
-        case "paste": {
+        case "paste":
+        case "pasteLayer":
+        case "pasteCanvas": {
           e.preventDefault();
-          const d1 = SESSION.doc, li1 = SESSION.curLayer(), fi1 = SESSION.curFrame();
-          void (async () => {
-            const t = makeT(SESSION.prefs.lang as Lang);
-            // 优先用系统剪贴板里的图片，取不到再退回应用内剪切板
-            let clip = SESSION.clip;
-            let fromSystem = false;
-            try {
-              const items = await navigator.clipboard?.read?.();
-              for (const it of items ?? []) {
-                const type = it.types.find((x) => x.startsWith("image/"));
-                if (!type) continue;
-                const blob = await it.getType(type);
-                const bmp = await createImageBitmap(blob);
-                const cv = document.createElement("canvas");
-                cv.width = bmp.width; cv.height = bmp.height;
-                const cx = cv.getContext("2d");
-                if (!cx) continue;
-                cx.drawImage(bmp, 0, 0);
-                const px = cx.getImageData(0, 0, bmp.width, bmp.height).data;
-                clip = { w: bmp.width, h: bmp.height, data: px } as unknown as typeof clip;
-                fromSystem = true;
-                break;
-              }
-            } catch { /* 浏览器可能拒绝读取剪贴板 */ }
-            if (!clip) { bridge.toast(t("pasteEmpty")); return; }
-            selOps.selOps.paste(d1, SESSION.history, li1, fi1, clip);
-            SESSION.clip = clip;
-            SESSION.repaint();
-            bridge.toast(t(fromSystem ? "pasteFromSystem" : "sel.paste"));
-          })();
+          const mode = hit.action === "pasteLayer" ? "layer" : hit.action === "pasteCanvas" ? "canvas" : "inPlace";
+          void runPaste(mode);
           break;
         }
         case "delete": e.preventDefault(); SESSION.deleteSelection(); break;
@@ -223,6 +254,8 @@ export function App() {
         case "fit": e.preventDefault(); SESSION.fitCanvas(); break;
         case "toggleUI": e.preventDefault(); setUiHidden((on) => !on); break;
         case "tool": e.preventDefault(); SESSION.setTool(hit.tool as ToolId); break;
+        case "swapColors": e.preventDefault(); SESSION.swapColors(); break;
+        case "shortcutHelp": e.preventDefault(); setModal("shortcuts"); break;
         case "nudge": {
           e.preventDefault();
           const dx = hit.dx ?? 0, dy = hit.dy ?? 0;
@@ -634,6 +667,7 @@ export function App() {
       <Keep on={modal === "history"} el={modal === "history" ? <HistoryModal t={t} snap={snap} onClose={() => setModal(null)} onReplay={() => { setModal(null); setReplayOn(true); }} /> : null} />
       <Keep on={modal === "framePrev"} el={modal === "framePrev" ? <FramePreviewModal t={t} onClose={() => setModal(null)} /> : null} />
       <Keep on={modal === "canvasRef"} el={modal === "canvasRef" ? <CanvasRefModal t={t} onClose={() => setModal(null)} /> : null} />
+      <Keep on={modal === "shortcuts"} el={modal === "shortcuts" ? <ShortcutHelpModal t={t} onClose={() => setModal(null)} /> : null} />
       <Keep on={modal === "changelog"} el={modal === "changelog" ? <ChangelogModal onClose={() => { setModal(null); setClgBlock(false); }} /> : null} />
       {guide && <GuideOverlay steps={guide} actions={guideActions} onDone={finishGuide} />}
       {textQ && (

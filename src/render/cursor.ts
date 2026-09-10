@@ -15,12 +15,14 @@ export function cursorFor(opts: {
   tool: string;
   locked: boolean;
   panning?: boolean;
-  spaceHeld?: boolean;
+  /** Alt is held: the next click samples the colour (eyedropper cursor) */
+  altPick?: boolean;
   picking?: boolean;
 }): CursorId {
   // panning wins over everything (it is an explicit temporary mode)
   if (opts.panning) return "grabbing";
-  if (opts.spaceHeld) return "grab";
+  // Alt+click samples whatever is under the cursor, whatever the tool is
+  if (opts.altPick) return "pick";
   if (opts.locked) return "lock";
   if (opts.picking || opts.tool === "picker") return "pick";
   return DRAW_TOOLS.has(opts.tool) ? "draw" : "move";

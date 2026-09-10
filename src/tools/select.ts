@@ -304,26 +304,8 @@ export const selOps = {
   },
   paste(doc: Doc, history: History, li: number, fi: number, clip: Cel, at?: { x: number; y: number }): void {
     if (doc.layers[li]?.locked || !clip) return;
-    const b = doc.sel?.bounds();
-    const px = at ? at.x : b ? b.x : Math.max(0, Math.floor((doc.w - clip.w) / 2));
-    const py = at ? at.y : b ? b.y : Math.max(0, Math.floor((doc.h - clip.h) / 2));
-    const ox = Math.max(0, px), oy = Math.max(0, py);
-    const ow = Math.min(clip.w, doc.w - ox), oh = Math.min(clip.h, doc.h - oy);
-    if (ow <= 0 || oh <= 0) return;
-    const cel = doc.ensureCel(li, fi);
-    const before = new Uint8ClampedArray(cel.data);
-    for (let y = 0; y < oh; y++) {
-      for (let x = 0; x < ow; x++) {
-        const si = clip.idx(x, y);
-        if (clip.data[si + 3] > 0) {
-          const c: RGBA = [clip.data[si], clip.data[si + 1], clip.data[si + 2], clip.data[si + 3]];
-          blendOver(cel.data, cel.idx(ox + x, oy + y), c);
-        }
-      }
-    }
-    if (!doc.sel) doc.sel = new Sel(doc.w, doc.h, false);
-    doc.sel.clear();
-    for (let y = 0; y < oh; y++) for (let x = 0; x < ow; x++) doc.sel!.set(ox + x, oy + y, 1);
+    const before = new Uint8ClampedArray(doc.ensureCel(li, fi).data);
+    if (!pasteRaw(doc, li, fi, clip, at)) return;
     record(doc, history, li, fi, before, "paste");
   },
   flip(doc: Doc, history: History, li: number, fi: number, horizontal: boolean): void {
@@ -471,6 +453,39 @@ export const selOps = {
     doc.sel.bump();
   },
 };
+
+/**
+ * Blit a clip into a cel at an exact position WITHOUT touching the history and
+ * set that document's selection to the pasted rectangle. Used by `selOps.paste`
+ * (which records the step itself) and by the "paste as new layer / new canvas /
+ * into every picked frame" flows, where a single structural step covers it all.
+ *
+ * @param at top-left of the clip; defaults to the selection bounds, else centred
+ * @returns true when at least one pixel row/column landed inside the canvas
+ */
+export function pasteRaw(doc: Doc, li: number, fi: number, clip: Cel, at?: { x: number; y: number }): boolean {
+  if (!clip || !clip.w || !clip.h || doc.layers[li]?.locked) return false;
+  const b = doc.sel?.bounds();
+  const px = at ? at.x : b ? b.x : Math.max(0, Math.floor((doc.w - clip.w) / 2));
+  const py = at ? at.y : b ? b.y : Math.max(0, Math.floor((doc.h - clip.h) / 2));
+  const ox = Math.max(0, px), oy = Math.max(0, py);
+  const ow = Math.min(clip.w, doc.w - ox), oh = Math.min(clip.h, doc.h - oy);
+  if (ow <= 0 || oh <= 0) return false;
+  const cel = doc.ensureCel(li, fi);
+  for (let y = 0; y < oh; y++) {
+    for (let x = 0; x < ow; x++) {
+      const si = clip.idx(x, y);
+      if (clip.data[si + 3] > 0) {
+        const c: RGBA = [clip.data[si], clip.data[si + 1], clip.data[si + 2], clip.data[si + 3]];
+        blendOver(cel.data, cel.idx(ox + x, oy + y), c);
+      }
+    }
+  }
+  if (!doc.sel) doc.sel = new Sel(doc.w, doc.h, false);
+  doc.sel.clear();
+  for (let y = 0; y < oh; y++) for (let x = 0; x < ow; x++) doc.sel!.set(ox + x, oy + y, 1);
+  return true;
+}
 
 /**
  * Drop a floating selection into ANOTHER document — the cross-canvas move.
