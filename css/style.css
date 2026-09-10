@@ -96,6 +96,18 @@
   --sym-text:#1c7a5a; --sym-text-2:#2a8c69; --sym-bg-ro:#eef3f2; --sym-bg-on:#dff2ea;
 }
 /* ============================================================
+   1b/5  PC 模式（<html data-pc="1">）
+   由 src/io/pcmode.ts 写入；桌面化的尺寸/悬停态都挂在这里
+   ============================================================ */
+html[data-pc]{
+  --pc:1;
+  /* 桌面化：可点区域更大、字号 +1、行距更松（见 docs/UI.md §9） */
+  --fs-3:13px; --fs-4:14px; --fs-5:15px;
+  --ctl-h:40px;
+}
+html[data-pc] body{font-size:15px;line-height:1.5}
+
+/* ============================================================
    2/5  base — 重置与通用元素
    ============================================================ */
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;-webkit-touch-callout:none}
@@ -115,6 +127,8 @@ button{background:none;border:none;color:inherit;padding:0;font:inherit;cursor:p
 input,select{font:inherit;color:var(--text)}
 
 .app-root{display:flex;flex-direction:column;height:100%;width:100%;min-width:0;min-height:0}
+/* PC：Tab 隐藏界面，只留画布（专注模式） */
+html[data-pc] .app-root.chrome-off > .topbar,html[data-pc] .app-root.chrome-off > .ctrlbar,html[data-pc] .app-root.chrome-off > .tline-wrap,html[data-pc] .app-root.chrome-off > .tl-grip{display:none}
 
 /* ---------- buttons ---------- */
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-width:34px;
@@ -225,6 +239,16 @@ input[type=range]{width:64px;height:22px;accent-color:var(--accent)}
 
 /* canvas color indicator (current selected color box) */
 .view-canvas{position:absolute;inset:0}
+/* PC 光标：按工具/状态切换（data-cursor 由 View.syncCursor 写入） */
+html[data-pc] .view-canvas[data-cursor="draw"]{cursor:crosshair}
+html[data-pc] .view-canvas[data-cursor="move"]{cursor:default}
+html[data-pc] .view-canvas[data-cursor="grab"]{cursor:grab}
+html[data-pc] .view-canvas[data-cursor="grabbing"]{cursor:grabbing}
+html[data-pc] .view-canvas[data-cursor="lock"]{cursor:not-allowed}
+html[data-pc] .view-canvas[data-cursor="pick"]{cursor:url("data:image/svg+xml;utf8,\
+  <svg xmlns=%22http://www.w3.org/2000/svg%22 width=%2224%22 height=%2224%22 viewBox=%220 0 24 24%22>\
+  <path d=%22M4 20l3.2-.6 9.6-9.6-2.6-2.6-9.6 9.6z%22 fill=%22%23fff%22 stroke=%22%23000%22 stroke-width=%221.4%22/>\
+  <path d=%22M13.2 6.6l2.6 2.6 2-2a1.8 1.8 0 0 0-2.6-2.6z%22 fill=%22%23fff%22 stroke=%22%23000%22 stroke-width=%221.4%22/></svg>") 3 21, crosshair}
 /* empty-space screen: no canvas open at all */
 .empty-canvas{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;padding:20px}
 .ec-card{max-width:340px;width:100%;background:var(--bg2);border:1px solid var(--line);border-radius:16px;
@@ -475,6 +499,12 @@ input[type=range]{width:64px;height:22px;accent-color:var(--accent)}
   box-shadow:var(--sh-2);animation:tiph .18s ease-out}
 .tip-host .th-title{font-size:14px;font-weight:800;color:var(--text-4);margin-bottom:2px}
 .tip-host .th-desc{font-size:12px;line-height:1.45;color:var(--tip-fg)}
+/* PC 悬停提示：跟随光标的浮层面板（0ms 显示，离开控件即消失） */
+.htip{position:fixed;z-index:var(--z-tip);max-width:min(280px,60vw);pointer-events:none;
+  background:var(--surface-pop);border:1px solid var(--line-2);border-radius:var(--r-4);
+  padding:7px 11px;box-shadow:var(--sh-2);animation:pcFadeIn .1s ease-out both}
+.htip-title{font-size:var(--fs-4);font-weight:800;color:var(--text-4);white-space:nowrap}
+.htip-desc{font-size:var(--fs-3);line-height:1.45;color:var(--tip-fg);margin-top:2px}
 @keyframes tiph{from{opacity:0;transform:translate(-50%,6px)}to{opacity:1;transform:translate(-50%,0)}}
 .hist-body{max-height:min(60vh,420px);overflow-y:auto;display:flex;flex-direction:column;gap:3px}
 .hist-row{display:flex;align-items:center;gap:8px;padding:6px 10px;border-radius:8px;border:1px solid transparent;
@@ -839,6 +869,11 @@ input:-webkit-autofill{-webkit-box-shadow:0 0 0 1000px var(--input-bg) inset;-we
 .fp-thumb{image-rendering:pixelated;display:block;border-radius:6px;width:132px;height:132px}
 /* zoom HUD: current zoom % + fit/reset button (bottom-right of the viewport) */
 .zoom-hud{position:absolute;right:10px;bottom:10px;z-index:8;display:flex;gap:6px;align-items:center;pointer-events:none}
+.zoom-hud .zoom-hover{display:inline-flex;align-items:center;gap:5px;font-size:var(--fs-3);color:var(--dim-2);
+  background:var(--hud-bg-2-dim);border:1px solid var(--line);border-radius:var(--r-2);padding:5px 8px;
+  font-variant-numeric:tabular-nums;pointer-events:auto}
+.zoom-hud .zh-dot{width:11px;height:11px;border-radius:3px;border:1px solid var(--swatch-line);flex:0 0 auto}
+.zoom-hud .zh-hex{font-family:monospace;color:var(--text-3)}
 .zoom-hud .zoom-pct{font-size:12px;color:var(--dim-2);background:var(--hud-bg-2-dim);border:1px solid var(--line);border-radius:8px;padding:5px 8px;font-variant-numeric:tabular-nums}
 
 /* ---- onboarding guide (spotlight) ---- */
