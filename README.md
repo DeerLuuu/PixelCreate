@@ -97,6 +97,23 @@ toolchain/       开发辅助脚本（devserver 静态服务、make-icon 图标�
 
 ---
 
+## 5. Web 版部署（GitHub Pages）
+
+仓库用双分支模型：**`master` = 全部源码**（APK 与 Web 共用同一套），**`main` = 只放部署用的静态站点**。
+
+- 在线地址：<https://deerluuu.github.io/PixelCreate/>
+- `main` 的内容是构建产物，**不要手工编辑**；改完源码后在 `master` 执行：
+
+  ```sh
+  sh scripts/publish-web.sh --push     # 重新构建 app2/www → 生成 main 的新提交 → 推送
+  ```
+
+- `main` 上的 `.github/workflows/pages.yml`（源文件在 `master` 的 `web/pages.yml`）会在推送后
+  自动发布到 Pages；仓库 Settings → Pages → Source 需选 **GitHub Actions**。
+- 构建命令与本地一致（`scripts/build-web.sh`），产物与 APK 里那份 `app.js` 完全相同。
+
+---
+
 ## 5. 平台说明
 
 - **全屏**：网页 / PWA 打开时顶部工具栏末尾多一个全屏按钮（进入 / 退出全屏，随 `fullscreenchange` 同步状态）；APK 里由原生壳隐藏系统栏，该按钮不渲染。

@@ -100,6 +100,14 @@ java -jar /root/pk/apksigner.jar verify --print-certs /sdcard/Download/PixelCraf
 - 小改动只递增第四段（`1.0.7.9 → 1.0.7.10`），且**只在用户要求出包时才改**；`versionCode` 每次出包 +1。
 - `android/AndroidManifest.xml` 的 `versionName` 与 `src/ui/changelog.tsx` 的 `APP_VERSION` **必须一致**，并同步加一条中英双语更新日志。
 
+### 5.1b 分支模型（2026-09-10 起）
+- **`master`**：全部源码（APK + Web 共用），唯一的开发分支。
+- **`main`**：**只放部署用的静态站点**（GitHub Pages 发布根目录），内容全部由
+  `scripts/publish-web.sh` 从 `app2/www` + `web/` 生成，**不要在这个分支上手工改文件**。
+- 远程：`origin = git@github.com:DeerLuuu/PixelCreate.git`（SSH，容器内密钥在 `~/.ssh/id_ed25519`）。
+- 更新线上站点：`sh scripts/publish-web.sh --push`；Pages 的 Source 必须是 “GitHub Actions”。
+- 部署文件（workflow / 部署分支 README / `.nojekyll`）的唯一来源是 `master` 的 `web/`。
+
 ### 5.2 声明式优先
 - 设置项写进 `src/app/settings.ts`（一条声明 + i18n 文案），设置界面自动生成；
 - 引导步骤写进 `src/app/guide.ts`；手势映射写进 `src/app/gestures.ts`；
