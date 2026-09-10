@@ -36,6 +36,27 @@ export async function pngBytes(canvas: HTMLCanvasElement): Promise<Uint8Array | 
   return new Uint8Array(buf);
 }
 
+/** 单张图片 / 精灵表允许的最大像素数（16.8M ≈ 4096×4096） */
+export const MAX_IMAGE_PIXELS = 16 * 1024 * 1024;
+/** GIF / 精灵表所有帧加起来允许的最大像素数 */
+export const MAX_TOTAL_PIXELS = 48 * 1024 * 1024;
+/** 一次「分图层导出」最多写多少个文件（超过要用户确认） */
+export const MAX_LAYER_FILES = 12;
+
+/**
+ * 预算检查（纯函数）。超限时返回原因 key，调用方负责提示；返回 null 表示可以导出。
+ * 以前没有这道闸：8× 放大的精灵表会去 new 一个上亿像素的 canvas，
+ * 直接把标签页/手机拖到几乎无响应。
+ */
+export function exportBudgetError(w: number, h: number, scale: number, frames: number, kind: "image" | "anim"): string | null {
+  const sc = Math.max(1, Math.round(scale || 1));
+  const px = Math.max(1, w) * Math.max(1, h) * sc * sc;
+  const total = px * Math.max(1, frames);
+  if (px > MAX_IMAGE_PIXELS) return "tooBigImage";
+  if (kind === "anim" && total > MAX_TOTAL_PIXELS) return "tooBigAnim";
+  return null;
+}
+
 export interface ExportOpts {
   bg?: RGBA | null;
   scale?: number;
@@ -147,20 +168,34 @@ export function encodeGIF(frames: FrameData[], w: number, h: number, opts: { tra
   }
   const cap = hasTrans ? 255 : 256;
   const palette: [number, number, number][] = colors.length <= cap ? colors : medianCut(colors, cap);
+  // 5bit 色立方查找表：先用调色板自己的格子做种子，再向邻居「洪水填充」，
+  // 于是 32768 个格子**全部**都有值 —— 每个像素只做一次数组索引，
+  // 再也不用为每个像素扫描整条调色板（旧实现 = 像素数 × 调色板项数）。
   const table = new Int16Array(1 << 15).fill(-1);
+  const queue: number[] = [];
   for (let i = 0; i < palette.length; i++) {
     const c = palette[i];
-    const r5 = c[0] >> 3, g5 = c[1] >> 3, b5 = c[2] >> 3;
-    for (let dr = -1; dr <= 1; dr++) for (let dg = -1; dg <= 1; dg++) for (let db = -1; db <= 1; db++) {
-      const rr = r5 + dr, gg = g5 + dg, bb = b5 + db;
-      if (rr < 0 || rr > 31 || gg < 0 || gg > 31 || bb < 0 || bb > 31) continue;
-      const ci = (rr << 10) | (gg << 5) | bb;
-      if (table[ci] < 0) table[ci] = i;
-    }
+    const ci = ((c[0] >> 3) << 10) | ((c[1] >> 3) << 5) | (c[2] >> 3);
+    if (table[ci] < 0) { table[ci] = i; queue.push(ci); }
+  }
+  for (let qi = 0; qi < queue.length; qi++) {
+    const ci = queue[qi];
+    const own = table[ci];
+    const r = ci >> 10, g = (ci >> 5) & 31, b = ci & 31;
+    if (r > 0) { const n = ci - 1024; if (table[n] < 0) { table[n] = own; queue.push(n); } }
+    if (r < 31) { const n = ci + 1024; if (table[n] < 0) { table[n] = own; queue.push(n); } }
+    if (g > 0) { const n = ci - 32; if (table[n] < 0) { table[n] = own; queue.push(n); } }
+    if (g < 31) { const n = ci + 32; if (table[n] < 0) { table[n] = own; queue.push(n); } }
+    if (b > 0) { const n = ci - 1; if (table[n] < 0) { table[n] = own; queue.push(n); } }
+    if (b < 31) { const n = ci + 1; if (table[n] < 0) { table[n] = own; queue.push(n); } }
   }
   const mapFn = (r: number, g: number, b: number): number => {
-    let best = table[((r >> 3) << 10) | ((g >> 3) << 5) | (b >> 3)];
-    if (best < 0) best = 0;
+    // 快路径：洪水填充后每个格子都有值，正常情况永远命中。
+    // （以前的实现在表命中后仍然完整扫描一遍调色板：每个像素 ×256 次比较，
+    //   一百万像素的 GIF 就是 2.5 亿次运算，界面直接卡死。）
+    const hit = table[((r >> 3) << 10) | ((g >> 3) << 5) | (b >> 3)];
+    if (hit >= 0) return hit;
+    let best = 0;
     let dmin = Infinity;
     for (let i = 0; i < palette.length; i++) {
       const c = palette[i];
@@ -194,6 +229,10 @@ export function encodeGIF(frames: FrameData[], w: number, h: number, opts: { tra
 }
 
 export async function exportPNG(doc: Doc, fi: number, o: ExportOpts = {}): Promise<{ bytes: Uint8Array; name: string } | null> {
+  const bw = o.bounds && o.bounds.w > 0 ? o.bounds.w : doc.w;
+  const bh = o.bounds && o.bounds.h > 0 ? o.bounds.h : doc.h;
+  const budget = exportBudgetError(bw, bh, o.scale || 1, 1, "image");
+  if (budget) throw new Error(budget);
   const c = rawExportCanvas(doc, fi, o);
   const bytes = await pngBytes(c);
   if (!bytes) return null;
@@ -201,12 +240,21 @@ export async function exportPNG(doc: Doc, fi: number, o: ExportOpts = {}): Promi
   return { bytes, name: sanitizeName(doc.name) + suffix + ".png" };
 }
 
+/** 让浏览器喘口气：长循环里每帧调一次，界面不会被冻住 */
+export function yieldToUI(): Promise<void> {
+  return new Promise((res) => setTimeout(res, 0));
+}
+
 export async function exportGIF(doc: Doc, o: ExportOpts = {}): Promise<{ bytes: Uint8Array; name: string }> {
   const r = frameRange(o, doc.frames.length);
+  const sc = Math.max(1, Math.round(o.scale || 1));
+  const budget = exportBudgetError(doc.w, doc.h, sc, r.n, "anim");
+  if (budget) throw new Error(budget);
   const frames: FrameData[] = [];
   for (let fi = r.from; fi <= r.to; fi++) {
     const c = rawExportCanvas(doc, fi, o);
     frames.push({ data: c.getContext("2d")!.getImageData(0, 0, c.width, c.height).data, delayMs: doc.frames[fi].durationMs });
+    await yieldToUI();               // 一帧一让，界面和大列表都不会卡死
   }
   const first = rawExportCanvas(doc, r.from, o);
   const bytes = encodeGIF(frames, first.width, first.height, { transparent: o.bg == null });
@@ -218,6 +266,9 @@ export async function exportSheet(doc: Doc, o: ExportOpts & { cols?: number } = 
   const r = frameRange(o, doc.frames.length);
   const cols = Math.max(1, Math.min(r.n, o.cols || r.n));
   const rows = Math.ceil(r.n / cols);
+  const sc = Math.max(1, Math.round(o.scale || 1));
+  const budget = exportBudgetError(doc.w * cols, doc.h * rows, sc, 1, "image");
+  if (budget) throw new Error(budget);
   const frame0 = rawExportCanvas(doc, r.from, o);
   const fw = frame0.width, fh = frame0.height;
   const c = document.createElement("canvas");
@@ -229,7 +280,9 @@ export async function exportSheet(doc: Doc, o: ExportOpts & { cols?: number } = 
     const k = fi - r.from;
     const fr = rawExportCanvas(doc, fi, o);
     x.drawImage(fr, (k % cols) * fw, Math.floor(k / cols) * fh);
+    await yieldToUI();
   }
+  await yieldToUI();   // 让 toBlob 之前的最后一帧先画上屏
   const base = sanitizeName(doc.name);
   const suffix = (o.bounds ? "_sel" : o.li != null ? "_l" + (o.li + 1) : "") + (r.n < doc.frames.length ? "_f" + (r.from + 1) + "-" + (r.to + 1) : "");
   const frames = doc.frames.slice(r.from, r.to + 1).map((f, k) => ({

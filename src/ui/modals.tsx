@@ -464,6 +464,8 @@ export function ExportModal({ t, snap, onClose }: { t: ReturnType<typeof makeT>;
   const [scale, setScale] = useState(1);
   const [bgMode, setBgMode] = useState<"transparent" | "white">("transparent");
   const [cols, setCols] = useState(Math.min(8, snap.frameCount));
+  /** 导出进行中（按钮禁用 + 文案提示），避免重复点击与「点了没反应」 */
+  const [busy, setBusy] = useState(false);
   // frame range for the multi-frame formats (GIF / spritesheet / per layer)
   const [rFrom, setRFrom] = useState(1);
   const [rTo, setRTo] = useState(snap.frameCount);
@@ -474,6 +476,15 @@ export function ExportModal({ t, snap, onClose }: { t: ReturnType<typeof makeT>;
     new Promise<boolean>((res) => bridge.saveBytes(name, mime, bytes, (ok) => res(ok)));
   const exportLayersFlow = async () => {
     const doc = SESSION.doc;
+    // 每个图层 × 每帧都会弹一次保存框：文件太多先问一句，别把系统刷爆
+    const fileCount = doc.layers.length * (range[1] - range[0] + 1);
+    if (fileCount > exporters.MAX_LAYER_FILES) {
+      const ok = await SESSION.askConfirm({
+        msg: t("exportLayerManyA") + fileCount + t("exportLayerManyB"),
+        yes: t("ok"), no: t("cancel"),
+      });
+      if (!ok) return;
+    }
     const bg: [number, number, number, number] | null = bgMode === "white" ? [255, 255, 255, 255] : null;
     const o = { bg, scale, range };
     const multi = doc.frames.length > 1;
@@ -493,20 +504,52 @@ export function ExportModal({ t, snap, onClose }: { t: ReturnType<typeof makeT>;
     // the tour may have forced the GIF tab just to show the range row
     return () => { delete (window as unknown as { __pcGuideExportTab?: string }).__pcGuideExportTab; };
   }, []);
+  // 导出的每一步都包一层：忙状态 + 失败原因提示（以前 Promise 没有 catch，
+  // 出错时界面完全没反应，用户只会觉得「点了没动静」）
+  const reason = (e: unknown): string => {
+    const m = e instanceof Error ? e.message : String(e);
+    if (m === "tooBigImage") return t("exportTooBig");
+    if (m === "tooBigAnim") return t("exportTooBigAnim");
+    if (m === "gif-writer-missing") return t("exportFailed") + " (GIF)";
+    return t("exportFailed") + ": " + m;
+  };
+  const run = async (fn: () => Promise<void>): Promise<void> => {
+    if (busy) return;
+    setBusy(true);
+    try { await fn(); } catch (e) { bridge.toast(reason(e)); } finally { setBusy(false); }
+  };
   const doExport = () => {
     const doc = SESSION.doc;
     const li = scope === "layer" ? SESSION.curLayer() : null;
     const b = scope === "sel" && doc.sel ? doc.sel.bounds() : null;
     const bg: [number, number, number, number] | null = bgMode === "white" ? [255, 255, 255, 255] : null;
-    const o = { bg, scale, li, bounds: b };
-    if (tab === "png") { void exporters.exportPNG(doc, snap.frameIdx, o).then((r) => { if (r) bridge.saveBytes(r.name, "image/png", r.bytes, (ok) => bridge.toast(ok ? t("exported") : t("saveCancel"))); }); }
-    else if (tab === "gif") { void exporters.exportGIF(doc, { ...o, range }).then((r) => { bridge.saveBytes(r.name, "image/gif", r.bytes, (ok) => bridge.toast(ok ? t("exported") : t("saveCancel"))); }); }
-    else if (tab === "sheet") { void exporters.exportSheet(doc, { ...o, cols, range }).then((r) => { if (!r) return; bridge.saveBytes(r.name, "image/png", r.png, (ok1) => { if (ok1) bridge.saveBytes(r.jsonName, "application/json", r.json, (ok2) => bridge.toast(ok2 ? t("exported") : t("saveCancel"))); else bridge.toast(t("saveCancel")); }); }); }
-    else { void exportLayersFlow(); }
+    const o = { bg, scale, li, bounds: b, range };
+    if (tab === "png") {
+      void run(async () => {
+        const r = await exporters.exportPNG(doc, snap.frameIdx, o);
+        if (r) bridge.saveBytes(r.name, "image/png", r.bytes, (ok) => bridge.toast(ok ? t("exported") : t("saveCancel")));
+      });
+    } else if (tab === "gif") {
+      void run(async () => {
+        const r = await exporters.exportGIF(doc, { ...o, range });
+        bridge.saveBytes(r.name, "image/gif", r.bytes, (ok) => bridge.toast(ok ? t("exported") : t("saveCancel")));
+      });
+    } else if (tab === "sheet") {
+      void run(async () => {
+        const r = await exporters.exportSheet(doc, { ...o, cols, range });
+        if (!r) return;
+        bridge.saveBytes(r.name, "image/png", r.png, (ok1) => {
+          if (ok1) bridge.saveBytes(r.jsonName, "application/json", r.json, (ok2) => bridge.toast(ok2 ? t("exported") : t("saveCancel")));
+          else bridge.toast(t("saveCancel"));
+        });
+      });
+    } else {
+      void run(exportLayersFlow);
+    }
   };
   return (
     <>
-      <Dialog title={t("export")} onClose={onClose} guide="dlg-export" footer={<><Btn label={t("cancel")} onClick={onClose} /><Btn label={t("export")} onClick={doExport} className="primary" /></>}>
+      <Dialog title={t("export")} onClose={onClose} guide="dlg-export" footer={<><Btn label={t("cancel")} onClick={onClose} /><Btn label={busy ? t("exporting") : t("export")} onClick={doExport} className="primary" /></>}>
         <Segmented value={tab} onChange={setTab} options={[
           { id: "png", label: "PNG" },
           { id: "gif", label: "GIF" },
@@ -558,6 +601,26 @@ export function ExportModal({ t, snap, onClose }: { t: ReturnType<typeof makeT>;
         </>)}
         {tab === "sheet" && <NumberField label={t("columns")} min={1} max={rTo - rFrom + 1} value={cols}
           onChange={(v) => setCols(Math.max(1, Math.min(rTo - rFrom + 1, Number(v) || 1)))} />}
+        {/* 输出尺寸 + 预算检查：超大导出在点之前就拦住（以前会把标签页/手机拖死） */}
+        {(() => {
+          const doc = SESSION.doc;
+          const bounds = scope === "sel" && doc.sel ? doc.sel.bounds() : null;
+          const fw = (bounds && bounds.w > 0 ? bounds.w : doc.w) * scale;
+          const fh = (bounds && bounds.h > 0 ? bounds.h : doc.h) * scale;
+          const n = tab === "png" ? 1 : rTo - rFrom + 1;
+          const colsN = tab === "sheet" ? Math.max(1, Math.min(n, cols)) : 1;
+          const rowsN = tab === "sheet" ? Math.ceil(n / colsN) : 1;
+          const outW = fw * colsN, outH = fh * rowsN;
+          const err = exporters.exportBudgetError(outW, outH, 1, 1, "image") ||
+            (tab === "png" ? null : exporters.exportBudgetError(fw, fh, 1, n, "anim"));
+          return (
+            <div className={"row-note" + (err ? " warn" : "")} data-guide="exp-size">
+              {t("exportSize")}: <b>{outW}×{outH}</b>
+              {tab === "png" ? "" : " · " + n + " " + t("frames")}
+              {err ? " · " + t(err === "tooBigAnim" ? "exportTooBigAnim" : "exportTooBig") : ""}
+            </div>
+          );
+        })()}
       </Dialog>
     </>
   );
