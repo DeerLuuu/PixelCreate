@@ -770,9 +770,23 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
   const ORB = M.orb;
   const MINC = ORB + 16;
   /** 展开锁定：锁定后外部点击/其它球不会再收起主球环 */
-  const [ringLock, setRingLock] = useState(false);
-  const ringLockRef = useRef(false);
+  /** ⑤ 每个展开的球都能单独锁定：id → 是否锁定 */
+  const [ringLock, setRingLock] = useState<Record<string, boolean>>({});
+  const ringLockRef = useRef<Record<string, boolean>>({});
   ringLockRef.current = ringLock;
+  const lockOf = (id: string): boolean => !!ringLock[id];
+  const toggleLock = (id: string): void => setRingLock((m) => ({ ...m, [id]: !m[id] }));
+  /** 每个球展开时右上角的小锁（仅展开时显示） */
+  const lockBtn = (id: string, x: number, y: number) => (
+    <button type="button" key={"lock-" + id} className={"orb-lock" + (lockOf(id) ? " on" : "")}
+      data-guide={"orb-lock-" + id}
+      style={{ left: x + ORB - 13, top: y - 13 }}
+      title={t(lockOf(id) ? "orbUnlockRing" : "orbLockRing")}
+      onPointerDown={(e) => e.stopPropagation()}
+      onClick={(e) => { e.stopPropagation(); SESSION.hapticTick("工具栏", 0.6); toggleLock(id); }}>
+      <Icon id={lockOf(id) ? "i-lock" : "i-unlock"} size={15} />
+    </button>
+  );
   const clampXY = (p: { x: number; y: number }) => ({
     x: Math.max(8, Math.min(window.innerWidth - ORB - 8, p.x)),
     y: Math.max(8, Math.min(window.innerHeight - ORB - 8, p.y)),
@@ -1017,13 +1031,12 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
   const closeCanv = () => { setCanv((g) => (g ? { ...g, open: false } : g)); setCanvSub(null); };
 
   const closeRadials = () => {
-    if (ringLockRef.current) return;   // 展开已锁定：忽略外部点击
-    setOpen(false);
-    setSub(null);
-    if (sel) setSel({ ...sel, open: false });
-    if (pal) setPal({ ...pal, open: false });
-    setFx((g) => (g ? { ...g, open: false } : g));
-    closeCanv();
+    const L = ringLockRef.current;
+    if (!L.main) { setOpen(false); setSub(null); }          // 锁定的球忽略外部点击
+    if (sel && !L.sel) setSel({ ...sel, open: false });
+    if (pal && !L.pal) setPal({ ...pal, open: false });
+    if (!L.fx) setFx((g) => (g ? { ...g, open: false } : g));
+    if (!L.canv) closeCanv();
   };
 
   const separate = (m: { x: number; y: number }, o: { x: number; y: number } | null) => {
@@ -1450,7 +1463,7 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
   return (
     <>
       {!dockedById("main") && renderBall("main", pos, baseIcon, open, t("menu"), bd(snap.lang, "orb"), () => {
-        if (open) { setOpen(false); setSub(null); setRingLock(false); return; }
+        if (open) { setOpen(false); setSub(null); setRingLock((m) => ({ ...m, main: false })); return; }
         if (sel) {
           const pushed = clearRingOf(pos, { x: sel.x, y: sel.y });
           if (pushed) setSel({ ...pushed, open: false });
@@ -1622,21 +1635,16 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
       {(open || (sel && sel.open) || pal.open || fx.open || canv.open) && (
         <div className="radial-back" onPointerDown={closeRadials} />
       )}
-      {open && (
-        <button type="button" className={"orb-lock" + (ringLock ? " on" : "")}
-          data-guide="orb-ring-lock"
-          style={{ left: pos.x + ORB - 13, top: pos.y - 13 }}
-          title={t(ringLock ? "orbUnlockRing" : "orbLockRing")}
-          onPointerDown={(e) => e.stopPropagation()}
-          onClick={(e) => { e.stopPropagation(); SESSION.hapticTick("工具栏", 0.6); setRingLock((v) => !v); }}>
-          <Icon id={ringLock ? "i-lock" : "i-unlock"} size={15} />
-        </button>
-      )}
+      {open && lockBtn("main", pos.x, pos.y)}
       <Keep on={open} el={open ? ring(pos, mainItems) : null} />
       <Keep on={!!sel && sel.open} el={sel && sel.open ? ring({ x: sel.x, y: sel.y }, selItems) : null} />
+      {sel && sel.open && lockBtn("sel", sel.x, sel.y)}
       <Keep on={pal.open} el={pal.open ? <PalBalls x={pal.x} y={pal.y} onDone={() => setPal({ ...pal, open: false })} /> : null} />
+      {pal.open && lockBtn("pal", pal.x, pal.y)}
       <Keep on={fx.open} el={fx.open ? ring({ x: fx.x, y: fx.y }, fxItems) : null} />
+      {fx.open && lockBtn("fx", fx.x, fx.y)}
       <Keep on={canv.open} el={canv.open ? ring({ x: canv.x, y: canv.y }, canvItems) : null} />
+      {canv.open && lockBtn("canv", canv.x, canv.y)}
       <Keep on={tileDlg} el={tileDlg ? (
         <>
           <Dialog title={t("canvasTilePick")} onClose={() => setTileDlg(false)} className="tile-dlg" bodyClass="col" footer={<><Btn label={t("close")} onClick={() => setTileDlg(false)} /></>}>
