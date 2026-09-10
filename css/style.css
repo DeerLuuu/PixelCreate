@@ -1094,7 +1094,7 @@ html[data-pc] .sc-dlg{width:min(92vw,760px)}
 .pie-layer{position:fixed;inset:0;z-index:var(--z-pop);cursor:none;background:var(--pie-mask);animation:pieIn .12s ease both}
 @keyframes pieIn{from{opacity:0}to{opacity:1}}
 .pie-line{position:absolute;inset:0;pointer-events:none}
-.pie-item{position:fixed;width:48px;height:48px;border-radius:50%;transform:translate(-50%,-50%);
+.pie-item{position:fixed;width:58px;height:58px;border-radius:50%;transform:translate(-50%,-50%);
   background:var(--surface-item);border:1px solid var(--ctl-line-soft);color:var(--text-3);
   display:flex;align-items:center;justify-content:center;pointer-events:none;transition:transform .08s ease,background .08s}
 .pie-item.on{background:var(--accent);border-color:var(--on-accent);color:var(--on-accent);transform:translate(-50%,-50%) scale(1.18)}
