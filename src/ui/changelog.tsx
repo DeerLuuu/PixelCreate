@@ -8,10 +8,10 @@ import { TabBar } from "./tabs";
 import { Dialog } from "./kit";
 
 /** keep in sync with android/AndroidManifest.xml versionName on every release */
-export const APP_VERSION = "1.0.8.2";
+export const APP_VERSION = "1.0.8.4";
 /** build stamp shown next to the version (support/debug: identifies the exact
  *  package a user is running when the version number itself does not change) */
-export const BUILD_TAG = "f74bbf";
+export const BUILD_TAG = "8b0130";
 
 export type ClgKind = "add" | "imp" | "fix";
 export interface ClgItem { kind: ClgKind; zh: string; en: string }
@@ -20,6 +20,16 @@ export interface ClgVersion { v: string; date: string; items: ClgItem[] }
 const it = (kind: ClgKind, zh: string, en: string): ClgItem => ({ kind, zh, en });
 
 export const CHANGELOG: ClgVersion[] = [
+  {
+    v: "1.0.8.4",
+    date: "2026-09-10",
+    items: [
+      it("add", "颜色球可以直接拖着填色：在取色球扇形里按住某个颜色小球，拖到画布上松手，就用这个颜色对落点做一次油漆桶填充（跟手有一颗同色小球）。填充沿用了和正常点击完全相同的规则——相似色容差、填充缝隙、索引色吸附、平铺环绕、选区裁剪、引用图层重定向都生效，只记一条历史；拖到旁边另一张画布上也能填，会自动切换到那张画布。原地松手仍是原来那样取色并关闭扇形。", "Colour balls can now be dragged straight onto the canvas: hold one in the palette fan, drag it over the artwork and release to bucket-fill that spot with it (a same-coloured ball follows your finger). The fill uses exactly the same rules as a normal tap — similar-colour tolerance, gap closing, indexed-colour snapping, tiled wrap, selection clipping and reference-layer redirect all apply — and lands as a single history step. Dropping it on ANOTHER canvas fills there and focuses that canvas. Releasing in place still picks the colour and closes the fan, as before."),
+      it("add", "底部工具栏的颜色块也支持同一个手势：按住后直接拖走＝快速填充，按住不动＝原来的快捷调色盘，轻点＝打开调色板。三种手势互不干扰：只要手指移动超过阈值或离开颜色块，就不会再呼出快捷调色盘，而是变成填充拖拽。", "The toolbar colour chip supports the same gesture: press and drag away to fill, press and hold for the quick colour wheel, tap to open the palette. The three never fight: once the finger moves past the threshold or leaves the chip, the wheel is no longer summoned and the gesture becomes a fill drag instead."),
+      it("fix", "上下叠放吸附时多留 20px：两张画布上下吸附后，下面那张的标题栏刚好落在加宽后的空隙里，既不会压住上面那张画布，也不会压住自己的画面（左右并排的空隙仍是 8px，可在设置 → 画布与网格里调整）。", "Stacked canvases now keep 20px more: after snapping one canvas above another, the lower canvas' title bar sits exactly in the wider gap, covering neither the canvas above nor its own artwork. Side-by-side snapping still keeps the configured gap (8px by default, adjustable in Settings -> Canvas & Grid)."),
+      it("add", "用浏览器打开（网页 / 已安装 PWA）时，顶部工具栏末尾会多一个全屏按钮，可以在浏览器里进入 / 退出全屏；软件版（APK）由系统栏自动隐藏，不需要这个按钮，因此不会显示。", "Opened in a browser (web page or installed PWA), the toolbar gains a fullscreen toggle at the end so you can enter and leave fullscreen right there. The app build hides the system bars itself, so it does not need the button and never shows it."),
+    ],
+  },
   {
     v: "1.0.8.2",
     date: "2026-09-10",
