@@ -16,6 +16,7 @@ tests/.ts-out/
 /toolchain/*
 !/toolchain/devserver.js
 !/toolchain/make-icon.js
+!/toolchain/check-bundle.mjs
 
 # ---- self-contained web build deps (npm install in repo root) ----
 node_modules/

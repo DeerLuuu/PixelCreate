@@ -1,5 +1,10 @@
-// Generates legacy launcher icons (pixel-art quadrant palette motif) as PNGs.
-// Usage: node make-icon.js <outdir>
+// Generates the launcher / PWA icons (pixel-art quadrant palette motif) as PNGs.
+//
+//   node make-icon.js <outdir>          Android launcher icons (mipmap-* 48…192)
+//   node make-icon.js --pwa <outdir>    PWA / manifest icons (icon-192, icon-512)
+//
+// The --pwa sizes must match manifest.webmanifest, otherwise Chrome logs
+// "Resource size is not correct - typo in the Manifest?" and drops the icon.
 const fs = require("fs");
 const zlib = require("zlib");
 const path = require("path");
@@ -98,11 +103,25 @@ function scale16toN(px16, n) {
 }
 
 const art = design16();
-const outdir = process.argv[2] || ".";
-const sizes = { "mipmap-mdpi": 48, "mipmap-hdpi": 72, "mipmap-xhdpi": 96, "mipmap-xxhdpi": 144, "mipmap-xxxhdpi": 192 };
-for (const [d, n] of Object.entries(sizes)) {
-  const dir = path.join(outdir, d);
+const args = process.argv.slice(2);
+const pwaIdx = args.indexOf("--pwa");
+
+if (pwaIdx >= 0) {
+  // PWA icons: exactly the sizes manifest.webmanifest declares
+  const dir = args[pwaIdx + 1] || ".";
   fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(path.join(dir, "ic_launcher.png"), writePng(n, n, scale16toN(art, n)));
-  console.log("wrote", path.join(dir, "ic_launcher.png"), n + "x" + n);
+  for (const n of [192, 512]) {
+    const file = path.join(dir, "icon-" + n + ".png");
+    fs.writeFileSync(file, writePng(n, n, scale16toN(art, n)));
+    console.log("wrote", file, n + "x" + n);
+  }
+} else {
+  const outdir = args[0] || ".";
+  const sizes = { "mipmap-mdpi": 48, "mipmap-hdpi": 72, "mipmap-xhdpi": 96, "mipmap-xxhdpi": 144, "mipmap-xxxhdpi": 192 };
+  for (const [d, n] of Object.entries(sizes)) {
+    const dir = path.join(outdir, d);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, "ic_launcher.png"), writePng(n, n, scale16toN(art, n)));
+    console.log("wrote", path.join(dir, "ic_launcher.png"), n + "x" + n);
+  }
 }

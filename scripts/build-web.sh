@@ -23,4 +23,18 @@ node_modules/.bin/esbuild src/main.tsx \
   $MIN \
   --outfile=app2/www/js/app.js --log-level=info
 cp src/ui/style.css app2/www/css/style.css
+
+# 产物自检：把打好的包装进最小 DOM 桩里跑一遍。esbuild 是按「源文件往上最近的
+# tsconfig.json」决定 JSX 变换的，一旦我在临时构建目录里留下别的 tsconfig.json，
+# 就会打出引用全局 React 的包：构建成功、体积正常、页面白屏。见 toolchain/check-bundle.mjs
+if node toolchain/check-bundle.mjs app2/www/js/app.js; then
+  :
+else
+  code=$?
+  if [ "$code" = "1" ]; then
+    echo "产物自检失败：这个包不能在浏览器里运行，已中止" >&2
+    exit 1
+  fi
+  echo "提示：产物自检返回 $code（可能只是 DOM 桩不够，请人工确认）" >&2
+fi
 echo "web build OK -> app2/www/js/app.js ($(wc -c < app2/www/js/app.js) bytes, minify=${MINIFY:-1})"

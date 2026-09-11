@@ -40,7 +40,7 @@ docs/          API.md / COMPARISON.md
 - **容器内（实际出包环境）**：`node_modules` 在 `/root/pcbuild`（FUSE 上装不上时在容器私有区安装后回拷）；同步目录 `/root/pcbuild/app/src`、`/root/pcbuild/app/tests`。
 - `aapt2` 在本容器是 Android/x86 二进制、**跑不起来**，所以打包走「`javac` + `d8` → 往模板 APK 里塞」的路线（见 §6）。
 - 浏览器调试：`node toolchain/devserver.js`（`app2/www`，端口 8090；`app2/www/js/telemetry.js` 会把错误与布局信息 POST 到 `/log`）。
-- `toolchain/` 只保留自写脚本（`devserver.js`、`make-icon.js`，后者用 `node toolchain/make-icon.js <outdir>` 重新生成启动图标）；SDK 下载物已清理。
+- `toolchain/` 只保留自写脚本（`devserver.js`、`make-icon.js`、`check-bundle.mjs`）：`node toolchain/make-icon.js <outdir>` 生成 Android 启动图标，`node toolchain/make-icon.js --pwa app2/www/icons` 生成 manifest 用的 192/512 图标（尺寸必须和 `manifest.webmanifest` 一致，否则 Chrome 报 “Resource size is not correct”），`node toolchain/check-bundle.mjs [bundle]` 把 Web 产物放进最小 DOM 桩里真跑一遍（**esbuild 按「源文件往上最近的 tsconfig.json」决定 JSX 变换：构建目录里多出一份没有 `"jsx": "react-jsx"` 的 tsconfig，就会打出引用全局 React 的白屏包**；`scripts/build-web.sh` 已内置这道自检）；SDK 下载物已清理。
 - 大改动可用 git 回滚（仓库已有 90+ 提交）。
 
 ---
@@ -239,6 +239,8 @@ java -jar /root/pk/apksigner.jar verify --print-certs /sdcard/Download/PixelCraf
 | 新包体积和上一版一模一样 | 签名块按 4096 对齐，压缩差值被吸收 | **用 app.js 的 md5 判断**，别凭体积判断是否打进新代码 |
 | 覆盖安装失败 / 签名冲突 | 换了 keystore | 必须用 `/root/pk/debug.keystore` |
 | 装完版本号没变 | 忘同步 `AndroidManifest.xml` 与 `APP_VERSION` | 见 §6.1 |
+| 页面白屏、控制台 `React is not defined` | 构建目录里（或其上层）多出一份没有 `"jsx": "react-jsx"` 的 tsconfig.json，esbuild 就近采用它、退回经典 JSX 变换 | 在仓库根构建（`scripts/build-web.sh`），它内置 `toolchain/check-bundle.mjs` 自检，会把这种包判为构建失败 |
+| 控制台 `Manifest: Resource size is not correct` | `app2/www/icons/*.png` 的实际尺寸与 `manifest.webmanifest` 声明不一致 | `node toolchain/make-icon.js --pwa app2/www/icons` 按声明尺寸重新生成 |
 
 ---
 
