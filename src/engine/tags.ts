@@ -81,3 +81,25 @@ export function tagsAfterRemove(tags: FrameTag[], fi: number, count: number): Fr
 export function tagRangeLabel(t: { from: number; to: number }): string {
   return t.from === t.to ? String(t.from + 1) : t.from + 1 + "–" + (t.to + 1);
 }
+
+/**
+ * Pack tags into horizontal lanes so overlapping ranges are drawn on separate
+ * rows instead of on top of each other: a tag goes into the first lane whose
+ * last tag ends before it starts, otherwise a new lane opens.
+ * Returns the lane count (at least 1 when there are tags) and id → lane.
+ */
+export function tagLanes(tags: FrameTag[]): { lanes: number; laneOf: Map<string, number> } {
+  const laneOf = new Map<string, number>();
+  const ends: number[] = []; // last `to` occupied in each lane
+  for (const t of [...tags].sort((a, b) => (a.from - b.from) || (a.to - b.to))) {
+    let lane = ends.findIndex((to) => to < t.from);
+    if (lane < 0) {
+      lane = ends.length;
+      ends.push(t.to);
+    } else {
+      ends[lane] = t.to;
+    }
+    laneOf.set(t.id, lane);
+  }
+  return { lanes: Math.max(1, ends.length), laneOf };
+}

@@ -7,13 +7,18 @@ import type { Snapshot } from "../app/session";
 import { Btn, Icon, useLandscape } from "./base";
 import { HoldAdjust } from "./hold";
 import { BLEND_MODES } from "../engine/types";
-import { tagRangeLabel } from "../engine/tags";
+import { tagLanes, tagRangeLabel } from "../engine/tags";
+import type { LoopMode } from "../app/playback";
 import * as bridge from "../io/bridge";
 import { Dialog, Row } from "./kit";
 export function TimelineBar({ t, snap, onFrameDlg, onTagDlg }: { t: ReturnType<typeof makeT>; snap: Snapshot; onFrameDlg: (fi: number | "batch") => void; onTagDlg: (id: string) => void }) {
   const HEAD = 20, ROW = 24, CELL = 30, LEFT = 96;
-  /** animation tags add one thin row between the frame numbers and the layers */
+  /** animation tags add one thin row per lane between the numbers and the layers */
   const TAGH = 15;
+  /** each playback mode gets its own glyph, so the button says what it does */
+  const LOOP_ICON: Record<LoopMode, string> = {
+    once: "i-loop-once", loop: "i-loop", pingpong: "i-loop-pingpong", reverse: "i-loop-reverse",
+  };
   const land = useLandscape();
   // landscape: measure matrix height so rows can grow to fill the footer
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -31,10 +36,13 @@ export function TimelineBar({ t, snap, onFrameDlg, onTagDlg }: { t: ReturnType<t
   const layers = SESSION.doc.layers;
   const doc = SESSION.doc;
   // tag bar: drawn only when the document has tags, so the usual layout keeps
-  // its old height; rows below it shift by one track
+  // its old height; overlapping tags get their own lane (row) instead of being
+  // painted on top of each other
   const tags = snap.tags;
   const tagRow = tags.length > 0;
-  const rowOff = tagRow ? 3 : 2;
+  const tagInfo = tagLanes(tags);
+  const tagRows = tagRow ? tagInfo.lanes : 0;
+  const rowOff = 2 + tagRows;
 
   // drag a frame NUMBER cell to reorder frames (long-press then drag)
   const [dl, setDl] = useState<{ from: number; to: number; dx: number } | null>(null);
@@ -297,13 +305,14 @@ export function TimelineBar({ t, snap, onFrameDlg, onTagDlg }: { t: ReturnType<t
   // landscape: enlarge every layer row so the matrix fills the footer height
   let rowPx = ROW;
   if (land && availH > 0 && layers.length > 0) {
-    const required = HEAD + (tagRow ? TAGH + 1 : 0) + layers.length * (ROW + 1); // +1px gaps between row tracks
+    const required = HEAD + tagRows * (TAGH + 1) + layers.length * (ROW + 1); // +1px gaps between row tracks
     const grow = availH > required ? Math.floor((availH - required) / layers.length) : 0;
     rowPx = ROW + Math.min(64, Math.max(0, grow));
   }
   // trailing 1fr track + a full-width filler cell: when the panel is taller than
   // the layer rows, the empty area below them is painted like the cells
-  const gtr = (tagRow ? HEAD + "px " + TAGH + "px" : HEAD + "px")
+  const gtr = HEAD + "px"
+    + Array.from({ length: tagRows }, () => " " + TAGH + "px").join("")
     + Array.from({ length: layers.length }, () => " " + rowPx + "px").join("") + " 1fr";
 
   return (
@@ -314,7 +323,7 @@ export function TimelineBar({ t, snap, onFrameDlg, onTagDlg }: { t: ReturnType<t
       <div className="tlctrl">
         <Btn icon="i-prev" onClick={() => SESSION.setFrame(snap.frameIdx - 1)} title={t("framePrev")} />
         <Btn icon={snap.playing ? "i-pause" : "i-play"} onClick={() => SESSION.togglePlay()} title={t(snap.playing ? "pause" : "play")} />
-        <Btn icon="i-loop" onClick={() => { const m = SESSION.cycleLoopMode(); bridge.toast(t("loopModes." + m)); }}
+        <Btn icon={LOOP_ICON[snap.loopMode]} onClick={() => { const m = SESSION.cycleLoopMode(); bridge.toast(t("loopModes." + m)); }}
           active={snap.loopMode !== "once"} title={t("loop") + " · " + t("loopModes." + snap.loopMode)} />
         <Btn icon="i-next" onClick={() => SESSION.setFrame(snap.frameIdx + 1)} title={t("frameNext")} />
         <Btn icon="i-plus" onClick={() => SESSION.frameAdd()} title={t("frameAdd")} />
@@ -371,16 +380,19 @@ export function TimelineBar({ t, snap, onFrameDlg, onTagDlg }: { t: ReturnType<t
             </div>
           );
         })}
-        {/* animation tags: one bar per tag, spanning its frames */}
+        {/* animation tags: one bar per tag, spanning its frames; overlapping
+            ranges live in separate lanes so both stay readable */}
         {tagRow && tags.map((tg) => {
           const active = !!snap.activeTag && snap.activeTag.id === tg.id;
           const playing = !!snap.playTag && snap.playTag.id === tg.id && snap.playing;
+          const lane = tagInfo.laneOf.get(tg.id) ?? 0;
           return (
             <button key={"t" + tg.id}
               className={"ase-cell ase-tagcell" + (active ? " on" : "") + (playing ? " playing" : "")}
               style={{
                 gridColumn: (tg.from + 2) + " / " + (tg.to + 3),
-                gridRow: 2,
+                gridRow: 2 + lane,
+                top: HEAD + lane * (TAGH + 1),
                 background: tg.color || "#3ad6e8",
               }}
               title={t("tagTip").replace("{name}", tg.name).replace("{range}", tagRangeLabel(tg))}

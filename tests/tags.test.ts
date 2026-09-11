@@ -6,7 +6,7 @@ import { Session } from "../src/app/session";
 import { Doc } from "../src/engine/doc";
 import * as ops from "../src/engine/ops";
 import {
-  clampRange, nextTagName, normalizeTags, tagAt, tagById, tagRangeLabel,
+  clampRange, nextTagName, normalizeTags, tagAt, tagById, tagLanes, tagRangeLabel,
   tagsAfterInsert, tagsAfterRemove,
 } from "../src/engine/tags";
 import { fullWindow, nextPlayFrameIn, startPlayFrameIn, windowOf } from "../src/app/playback";
@@ -150,6 +150,32 @@ export function testTags(): void {
   // a one-frame window never advances (and stops in "once")
   eq("play.single.window", nextPlayFrameIn("loop", 6, 1, windowOf(tag(6, 6), 8)), { fi: 6, dir: 1, stop: true });
 
+  // ---------------- overlapping tags get their own lane ----------------
+  {
+    const lanes = tagLanes([{ ...tag(0, 2, "a") }, { ...tag(5, 7, "b") }, { ...tag(9, 9, "c") }]);
+    eq("tag.lanes.disjoint", [lanes.lanes, lanes.laneOf.get("a"), lanes.laneOf.get("b"), lanes.laneOf.get("c")], [1, 0, 0, 0]);
+  }
+  {
+    // touching ranges (0-1 and 2-3) do not overlap: same lane
+    const lanes = tagLanes([{ ...tag(0, 1, "a") }, { ...tag(2, 3, "b") }]);
+    eq("tag.lanes.touching", [lanes.lanes, lanes.laneOf.get("b")], [1, 0]);
+  }
+  {
+    const lanes = tagLanes([{ ...tag(1, 4, "walk") }, { ...tag(3, 6, "run") }]);
+    eq("tag.lanes.overlap", [lanes.lanes, lanes.laneOf.get("walk"), lanes.laneOf.get("run")], [2, 0, 1]);
+  }
+  {
+    // nested + a third tag that can reuse the first lane again
+    const lanes = tagLanes([{ ...tag(0, 9, "all") }, { ...tag(2, 3, "x") }, { ...tag(4, 5, "y") }]);
+    eq("tag.lanes.nested", [lanes.lanes, lanes.laneOf.get("all"), lanes.laneOf.get("x"), lanes.laneOf.get("y")], [2, 0, 1, 1]);
+  }
+  eq("tag.lanes.empty", tagLanes([]).lanes, 1);
+  {
+    // input order must not change the packing
+    const lanes = tagLanes([{ ...tag(3, 6, "run") }, { ...tag(1, 4, "walk") }]);
+    eq("tag.lanes.order-independent", [lanes.laneOf.get("walk"), lanes.laneOf.get("run")], [0, 1]);
+  }
+
   // ---------------- Session API ----------------
   stubEnv();
   const s = new Session();
@@ -221,6 +247,29 @@ export function testTags(): void {
   loose.startPlayback();
   eq("session.play.outside.tag", loose.playingTag(), null);
   eq("session.play.outside.window", windowOf(loose.playingTag(), loose.doc.frames.length), { from: 0, to: 4 });
+
+  // clicking another tag's frame while playing switches the running loop to it
+  {
+    const d = new Session();
+    for (let i = 0; i < 6; i++) d.frameAdd();        // 7 frames
+    const a = d.tagAdd("walk", 1, 2)!;
+    const b = d.tagAdd("run", 4, 6)!;
+    d.setFrame(1);
+    d.startPlayback();
+    eq("session.switch.play-a", d.playingTag()?.id, a.id);
+    d.setFrame(5);                                   // click a frame of "run"
+    eq("session.switch.state", [d.playing, d.playingTag()?.id], [true, b.id]);
+    eq("session.switch.window", windowOf(d.playingTag(), d.doc.frames.length), { from: 4, to: 6 });
+    d.setFrame(3);                                   // untagged frame: whole timeline
+    eq("session.switch.untagged", [d.playing, d.playingTag()], [true, null]);
+    eq("session.switch.untagged-window", windowOf(d.playingTag(), d.doc.frames.length), { from: 0, to: 6 });
+    d.setFrame(1);                                   // back into "walk"
+    eq("session.switch.back", d.playingTag()?.id, a.id);
+    ok("session.switch.recorded", d.history.canUndo());   // a user click is undoable
+    d.stopPlayback();
+    d.setFrame(5);                                   // stopped: clicking only moves the playhead
+    eq("session.switch.stopped", d.playingTag(), null);
+  }
   // "once" inside a tag rewinds to the tag's FIRST frame, not frame 1
   loose.stopPlayback();
   loose.tagSetRange(far!.id, 2, 3);

@@ -978,6 +978,7 @@ normalizeTags(tags, count): FrameTag[]            // 丢掉空标签、夹范围
 tagsAfterInsert(tags, at): void                   // 插入帧：后面的标签整体后移，跨过的标签变长
 tagsAfterRemove(tags, fi, count): FrameTag[]      // 删除帧：标签缩短，只剩一帧的标签消失
 tagRangeLabel({from,to}): string                  // "3–7"（1 基，跟时间轴一致）
+tagLanes(tags): { lanes, laneOf: Map<id, lane> }  // 重叠的标签分层排（时间轴每条标签一行），不叠在一起
 ```
 
 `Doc.tags` 参与 `capture()` / `restore()`（结构历史可撤销）、`.pxc` 的 `tags` 字段、
@@ -998,7 +999,12 @@ nextPlayFrameIn(mode, fi, dir, w): PlayStep                    // 循环/乒乓�
 
 `Session.startPlayback()` 用**当前帧所在的标签**当窗口（没有就整条），存进 `playTag`；
 `tickPlay()` 每帧按该窗口推进，所以「从标签内的帧起播＝只循环这一段」。播放窗口只影响播放，
-手动切帧/时间轴浏览不受限制。`Snapshot` 暴露 `tags`、`activeTag`（当前帧所在标签）、`playTag`（正在播放的窗口）。
+手动切帧/时间轴浏览不受限制。**播放中点到别的标签的帧**（`setFrame` 在 `playing` 时会调
+`retargetPlay`）会把窗口换成那个标签并重新计时，也就是「切动画」；点到没有标签的帧则回到整条时间轴。
+`Snapshot` 暴露 `tags`、`activeTag`（当前帧所在标签）、`playTag`（正在播放的窗口）。
+
+时间轴上的循环按钮按模式换图标：`once` → `i-loop-once`、`loop` → `i-loop`、
+`pingpong` → `i-loop-pingpong`、`reverse` → `i-loop-reverse`（都在 `app2/www/index.html` 的 symbol 里）。
 
 ---
 

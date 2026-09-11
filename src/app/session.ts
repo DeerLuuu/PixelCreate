@@ -2111,6 +2111,24 @@ export class Session {
       }, { k: "frame-switch", fi: next, prev }, this.doc);
     }
     this.applyFrame(next);
+    // while an animation is playing, jumping to another tag's frame switches
+    // the running loop to THAT animation (Aseprite behaves the same way)
+    if (this.playing) this.retargetPlay(next);
+  }
+  /**
+   * Playback is running and the user picked a different frame: keep playing,
+   * but from the tag that frame belongs to (or the whole timeline when it is
+   * outside every tag), and restart the dwell so the new frame is visible.
+   */
+  private retargetPlay(fi: number): void {
+    this.playTag = this.tagAt(fi);
+    this.playDir = startPlayDir(this.loopMode);
+    if (this.playTimer !== null) {
+      window.clearTimeout(this.playTimer);
+      this.playTimer = null;
+    }
+    this.changed();
+    this.tickPlay();
   }
   /** apply a frame index without touching the history stack */
   private applyFrame(fi: number): void {

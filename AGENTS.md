@@ -261,6 +261,7 @@ PC 桌面化第 2 批（1.0.8.7）：粘贴流程重做（`ui/paste.ts` + `Sessi
 PC 桌面化（1.0.8.5 / 1.0.8.6 批）：UI 规范与 `src/ui/kit` 控件库（Dialog/Form/primitives/scrub/HoverTip）+ 设计令牌与浅色主题、18 个弹窗与全部表单行迁移；PC 模式识别（`io/pcmode.ts`）与全套桌面输入（滚轮缩放/平移、中键＝聚焦适配、右键＝背景色、Alt+单击取色、窗口拖放导入、剪贴板、快捷键、Tab 专注）；浮动球桌面几何与全展开+锁定；设置/更新日志左右分栏；帧预览面板加宽；**选区跨画布移动**（`selOps.floatDropInto`）。
 Aseprite 兼容：`io/aseread.ts` / `io/asewrite.ts` / `io/zlib.ts`（自写同步 inflate；读 RGBA/灰度/索引色 + 图层/帧/链接 cel/调色板/标签，写 .aseprite 供 Aseprite 打开），打开流程按魔数识别、导出弹窗加 Aseprite 页签。
 动画标签：`engine/tags.ts`（命名帧区间的纯函数，帧结构操作在 `engine/ops.ts` 里统一维护范围）+ `app/playback.ts` 的 `PlayWindow`（从标签内的帧起播＝只循环这一段，起点不在标签里＝整条时间轴）+ 时间轴标签条（`ui/timeline.tsx`，点开 `TagModal` 改名/改范围/换色/删除/播放这一段）+ `.pxc` / `.aseprite` 双向存取。
+标签细节（同日追加）：循环按钮按模式换图标（`i-loop` / `i-loop-once` / `i-loop-pingpong` / `i-loop-reverse`）；播放中点其它标签的帧＝`Session.retargetPlay` 切换正在播的动画（点到无标签的帧＝回到整条时间轴）；重叠标签用 `tagLanes` 分层显示（每条一行，时间轴的标签区行数随之变化）。
 
 ---
 
