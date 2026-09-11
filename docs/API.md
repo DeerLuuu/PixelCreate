@@ -1006,6 +1006,12 @@ nextPlayFrameIn(mode, fi, dir, w): PlayStep                    // 循环/乒乓�
 时间轴上的循环按钮按模式换图标：`once` → `i-loop-once`、`loop` → `i-loop`、
 `pingpong` → `i-loop-pingpong`、`reverse` → `i-loop-reverse`（都在 `app2/www/index.html` 的 symbol 里）。
 
+标签条的手势（`ui/timeline.tsx`）：**左键/轻点 = 播放这一段**（`Session.tagPlay`）、
+**拖左右边缘 = 改范围**（`Session.tagSetRange`，一次拖动只记一条历史）、
+**右键 / 长按 = 打开 `TagModal`**（改名 / 颜色 / 删除 / 选中这些帧）。
+边缘判定用标签条自身的 `getBoundingClientRect()`（两侧各 10px，短标签最多占 1/3 宽），
+拖动时按 `.ase-numcell` 的列矩形换算目标帧（`frameAtX`），左右边不交叉、越界夹到时间轴两端。
+
 ---
 
 ## 17. UI 层与事件契约

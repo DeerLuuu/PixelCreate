@@ -127,6 +127,90 @@ export function TimelineBar({ t, snap, onFrameDlg, onTagDlg }: { t: ReturnType<t
     else SESSION.setFrame(fi);
   };
 
+  // ---- animation tag bar: tap plays, edge-drag resizes, right-click /
+  // long-press opens the editor -------------------------------------------
+  /** live preview of an edge drag (committed on release as ONE history step) */
+  const [tdl, setTdl] = useState<{ id: string; from: number; to: number; edge: 0 | 1 } | null>(null);
+  const tgRef = useRef<{ id: string; edge: 0 | 1; from: number; to: number; x: number; moved: boolean; held: boolean; captured: boolean } | null>(null);
+  const tgTm = useRef<number | null>(null);
+  const tagReset = () => {
+    if (tgTm.current !== null) { window.clearTimeout(tgTm.current); tgTm.current = null; }
+    tgRef.current = null;
+    setTdl(null);
+  };
+  /** which frame column the pointer is over (nearest when between columns) */
+  const frameAtX = (clientX: number): number => {
+    const els = Array.from(document.querySelectorAll(".ase-numcell")) as HTMLElement[];
+    let best = 0;
+    let bestD = Infinity;
+    for (let i = 0; i < els.length; i++) {
+      const r = els[i].getBoundingClientRect();
+      if (clientX >= r.left && clientX <= r.right) return i;
+      const d = Math.min(Math.abs(clientX - r.left), Math.abs(clientX - r.right));
+      if (d < bestD) { bestD = d; best = i; }
+    }
+    return Math.max(0, Math.min(frames.length - 1, best));
+  };
+  const tagDown = (tg: Snapshot["tags"][number]) => (e: React.PointerEvent<HTMLButtonElement>) => {
+    if (tgTm.current !== null) { window.clearTimeout(tgTm.current); tgTm.current = null; }
+    const rect = e.currentTarget.getBoundingClientRect();
+    // edge zone: a real grip, but never more than a third of a short bar
+    const grip = Math.max(5, Math.min(10, rect.width / 3));
+    const edge: 0 | 1 = e.clientX - rect.left <= grip ? 0 : (rect.right - e.clientX <= grip ? 1 : 0);
+    const onEdge = e.clientX - rect.left <= grip || rect.right - e.clientX <= grip;
+    tgRef.current = { id: tg.id, edge, from: tg.from, to: tg.to, x: e.clientX, moved: false, held: false, captured: false };
+    if (!onEdge) {
+      // not on a grip: a touch long-press opens the editor, a mouse click plays
+      const pcMouse = isPc() && e.pointerType === "mouse";
+      if (!pcMouse) {
+        tgTm.current = window.setTimeout(() => {
+          tgTm.current = null;
+          const g = tgRef.current;
+          if (!g || g.moved || g.id !== tg.id) return;
+          g.held = true;
+          SESSION.hapticTick("标签", 0.7);
+          onTagDlg(tg.id);
+        }, SESSION.prefs.longPressMs);
+      }
+      return;
+    }
+    // grabbing an edge: take the pointer so the drag survives leaving the bar
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* ignore */ }
+    tgRef.current.captured = true;
+    e.preventDefault();
+    SESSION.hapticTick("标签", 0.6);
+    setTdl({ id: tg.id, from: tg.from, to: tg.to, edge });
+  };
+  const tagMove = (tg: Snapshot["tags"][number]) => (e: React.PointerEvent<HTMLButtonElement>) => {
+    const g = tgRef.current;
+    if (!g || g.id !== tg.id) return;
+    if (Math.abs(e.clientX - g.x) > 3) g.moved = true;
+    if (!g.captured) {
+      // a plain swipe over the bar scrolls the matrix (nothing to drag)
+      if (g.moved && tgTm.current !== null) { window.clearTimeout(tgTm.current); tgTm.current = null; }
+      return;
+    }
+    e.preventDefault();
+    const fi = frameAtX(e.clientX);
+    // the edges never cross: dragging past the other side just stops there
+    if (g.edge === 0) g.from = Math.max(0, Math.min(g.to, fi));
+    else g.to = Math.min(frames.length - 1, Math.max(g.from, fi));
+    setTdl({ id: g.id, from: g.from, to: g.to, edge: g.edge });
+  };
+  const tagUp = (tg: Snapshot["tags"][number]) => (e: React.PointerEvent<HTMLButtonElement>) => {
+    const g = tgRef.current;
+    if (tgTm.current !== null) { window.clearTimeout(tgTm.current); tgTm.current = null; }
+    tgRef.current = null;
+    try { e.currentTarget.releasePointerCapture(e.pointerId); } catch { /* ignore */ }
+    setTdl(null);
+    if (!g || g.id !== tg.id) return;
+    if (g.held) return;                              // long-press already opened the editor
+    const changed = g.captured && g.moved && (g.from !== tg.from || g.to !== tg.to);
+    if (changed) { SESSION.tagSetRange(tg.id, g.from, g.to); return; }  // one undoable step
+    if (g.moved) return;                             // that was a scroll, not a tap
+    SESSION.tagPlay(tg.id);                          // tap = play this animation
+  };
+
   // drag a layer row vertically to reorder layers (long-press then drag)
   const [ldl, setLdl] = useState<{ from: number; to: number; dy: number } | null>(null);
   const lgRef = useRef<{ from: number; x: number; y: number; armed: boolean; moved: boolean; dead: boolean; captured?: boolean; pc?: boolean } | null>(null);
@@ -205,7 +289,7 @@ export function TimelineBar({ t, snap, onFrameDlg, onTagDlg }: { t: ReturnType<t
   const panT = useRef(0);
   const matDown = (e: React.PointerEvent<HTMLDivElement>) => {
     const tgt = e.target as HTMLElement;
-    if (tgt.closest(".ase-numcell") || tgt.closest(".ase-lcell")) return;
+    if (tgt.closest(".ase-numcell") || tgt.closest(".ase-lcell") || tgt.closest(".ase-tagcell")) return;
     panRef.current = { x: e.clientX, y: e.clientY, sl: e.currentTarget.scrollLeft, st: e.currentTarget.scrollTop, moved: false };
   };
   const matMove = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -381,23 +465,30 @@ export function TimelineBar({ t, snap, onFrameDlg, onTagDlg }: { t: ReturnType<t
           );
         })}
         {/* animation tags: one bar per tag, spanning its frames; overlapping
-            ranges live in separate lanes so both stay readable */}
+            ranges live in separate lanes so both stay readable.
+            tap = play this tag · drag an edge = resize · right-click / long-press = edit */}
         {tagRow && tags.map((tg) => {
           const active = !!snap.activeTag && snap.activeTag.id === tg.id;
           const playing = !!snap.playTag && snap.playTag.id === tg.id && snap.playing;
           const lane = tagInfo.laneOf.get(tg.id) ?? 0;
+          const resizing = tdl !== null && tdl.id === tg.id;
+          const from = resizing ? tdl.from : tg.from;
+          const to = resizing ? tdl.to : tg.to;
           return (
             <button key={"t" + tg.id}
-              className={"ase-cell ase-tagcell" + (active ? " on" : "") + (playing ? " playing" : "")}
+              className={"ase-cell ase-tagcell" + (active ? " on" : "") + (playing ? " playing" : "") + (resizing ? " resizing" : "")}
               style={{
-                gridColumn: (tg.from + 2) + " / " + (tg.to + 3),
+                gridColumn: (from + 2) + " / " + (to + 3),
                 gridRow: 2 + lane,
                 top: HEAD + lane * (TAGH + 1),
                 background: tg.color || "#3ad6e8",
               }}
-              title={t("tagTip").replace("{name}", tg.name).replace("{range}", tagRangeLabel(tg))}
-              onClick={() => onTagDlg(tg.id)}>
+              title={t("tagTip").replace("{name}", tg.name).replace("{range}", tagRangeLabel({ from, to }))}
+              onPointerDown={tagDown(tg)} onPointerMove={tagMove(tg)} onPointerUp={tagUp(tg)} onPointerCancel={tagReset}
+              onContextMenu={(e) => { e.preventDefault(); tagReset(); onTagDlg(tg.id); }}>
               <span>{tg.name}</span>
+              <i className="tag-grip left" />
+              <i className="tag-grip right" />
             </button>
           );
         })}

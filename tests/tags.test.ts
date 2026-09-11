@@ -269,6 +269,15 @@ export function testTags(): void {
     d.stopPlayback();
     d.setFrame(5);                                   // stopped: clicking only moves the playhead
     eq("session.switch.stopped", d.playingTag(), null);
+
+    // tapping a tag bar plays exactly that animation from its first frame
+    d.stopPlayback();
+    d.tagPlay(b.id);
+    eq("session.tagplay.jump", d.curFrame(), 4);
+    eq("session.tagplay.scope", [d.playing, d.playingTag()?.id], [true, b.id]);
+    d.tagPlay(a.id);                                  // …and switches straight to another one
+    eq("session.tagplay.other", [d.curFrame(), d.playingTag()?.id], [1, a.id]);
+    d.stopPlayback();
   }
   // "once" inside a tag rewinds to the tag's FIRST frame, not frame 1
   loose.stopPlayback();

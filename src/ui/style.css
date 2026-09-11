@@ -377,10 +377,20 @@ html[data-pc] .orb-item{width:48px;height:48px}
 /* animation tags: a thin sticky bar above the layers, one cell per tag */
 .ase-tagcell{position:sticky;top:20px;z-index:3;height:15px;border-radius:4px;margin:0 1px;
   font-size:10px;font-weight:700;color:var(--hud-deep);overflow:hidden;white-space:nowrap;cursor:pointer;
-  border:0;padding:0 4px;justify-content:flex-start;opacity:.82}
+  border:0;padding:0 11px;justify-content:flex-start;opacity:.82;touch-action:none}
 .ase-tagcell.on{opacity:1;box-shadow:0 0 0 2px var(--on-accent),0 0 0 3px var(--mask)}
 .ase-tagcell.playing{animation:tagPulse 1s ease-in-out infinite}
-.ase-tagcell span{overflow:hidden;text-overflow:ellipsis}
+.ase-tagcell.resizing{opacity:1;box-shadow:0 0 0 2px var(--on-accent)}
+.ase-tagcell span{overflow:hidden;text-overflow:ellipsis;pointer-events:none}
+/* edge grips: drag either one to change the tag's range (the handler lives on
+   the bar itself, the grips only provide the ew-resize cursor) */
+.tag-grip{position:absolute;top:0;bottom:0;width:10px;cursor:ew-resize}
+.tag-grip::after{content:"";position:absolute;top:2px;bottom:2px;left:4px;width:2px;border-radius:1px;
+  background:var(--hud-deep);opacity:.35}
+.tag-grip.left{left:0}
+.tag-grip.right{right:0}
+.tag-grip.right::after{left:auto;right:4px}
+.ase-tagcell:hover .tag-grip::after,.ase-tagcell.resizing .tag-grip::after{opacity:.75}
 @keyframes tagPulse{0%,100%{opacity:1}50%{opacity:.55}}
 .tag-chip{display:inline-flex;align-items:center;gap:3px;max-width:110px;height:22px;padding:0 7px;border-radius:11px;
   background:var(--bg3);border:1px solid var(--line);color:var(--text);font-size:11px;font-weight:700;cursor:pointer}
