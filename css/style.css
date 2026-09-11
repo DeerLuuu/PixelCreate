@@ -374,6 +374,21 @@ html[data-pc] .orb-item{width:48px;height:48px}
 .ase-cell{display:flex;align-items:center;justify-content:center;background:var(--bg2);min-width:0;position:relative}
 .ase-corner{position:sticky;left:0;top:0;z-index:5;background:var(--bg3)}
 .ase-numcell{position:sticky;top:0;z-index:3;font-size:11px;color:var(--dim);cursor:pointer;touch-action:none;user-select:none}
+/* animation tags: a thin sticky bar above the layers, one cell per tag */
+.ase-tagcell{position:sticky;top:20px;z-index:3;height:15px;border-radius:4px;margin:0 1px;
+  font-size:10px;font-weight:700;color:var(--hud-deep);overflow:hidden;white-space:nowrap;cursor:pointer;
+  border:0;padding:0 4px;justify-content:flex-start;opacity:.82}
+.ase-tagcell.on{opacity:1;box-shadow:0 0 0 2px var(--on-accent),0 0 0 3px var(--mask)}
+.ase-tagcell.playing{animation:tagPulse 1s ease-in-out infinite}
+.ase-tagcell span{overflow:hidden;text-overflow:ellipsis}
+@keyframes tagPulse{0%,100%{opacity:1}50%{opacity:.55}}
+.tag-chip{display:inline-flex;align-items:center;gap:3px;max-width:110px;height:22px;padding:0 7px;border-radius:11px;
+  background:var(--bg3);border:1px solid var(--line);color:var(--text);font-size:11px;font-weight:700;cursor:pointer}
+.tag-chip span,.tag-chip{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tag-chip.playing{border-color:var(--accent);color:var(--accent)}
+.tag-colors{display:flex;gap:6px;align-items:center}
+.tag-dot{width:22px;height:22px;border-radius:50%;border:2px solid transparent;cursor:pointer;padding:0}
+.tag-dot.on{border-color:var(--text);box-shadow:0 0 0 2px var(--bg2) inset}
 .ase-numcell.on{color:var(--accent);font-weight:800}
 /* multi-frame picking: picked frame numbers are filled and ticked */
 .ase-numcell.picked{background:var(--accent);color:var(--on-accent);font-weight:800}
