@@ -9,10 +9,10 @@ import { useKitPcMode } from "./kit";
 import { Dialog } from "./kit";
 
 /** keep in sync with android/AndroidManifest.xml versionName on every release */
-export const APP_VERSION = "1.0.9.9";
+export const APP_VERSION = "1.1.0.0";
 /** build stamp shown next to the version (support/debug: identifies the exact
  *  package a user is running when the version number itself does not change) */
-export const BUILD_TAG = "d653da3";
+export const BUILD_TAG = "7bb01ab";
 
 export type ClgKind = "add" | "imp" | "fix";
 export interface ClgItem { kind: ClgKind; zh: string; en: string }
@@ -21,6 +21,16 @@ export interface ClgVersion { v: string; date: string; items: ClgItem[] }
 const it = (kind: ClgKind, zh: string, en: string): ClgItem => ({ kind, zh, en });
 
 export const CHANGELOG: ClgVersion[] = [
+  {
+    v: "1.1.0.0",
+    date: "2026-09-12",
+    items: [
+      it("add", "**Aseprite 文件兼容**：现在能直接打开 `.ase` / `.aseprite`（RGBA / 灰度 / 索引色都行），图层、帧、帧时长、混合模式、不透明度、链接帧、调色板与**动画标签**都会还原成工程；也能把画布导出成 `.aseprite`（按内容裁剪 + zlib 压缩的 cel），Aseprite 打开就能接着画。拖进窗口、菜单里的「打开 / 导入图片 / 导入为图层」都认这种文件；超过 1024×1024 会明确报错而不是偷偷裁掉。", "**Aseprite file compatibility**: PixelCraft now opens `.ase` / `.aseprite` directly (RGBA, grayscale and indexed sprites) and rebuilds the layers, frames, frame durations, blend modes, opacities, linked cels, palette and **animation tags** as a normal project — and it can export a canvas back to `.aseprite` (cels cropped to their content and zlib-compressed) so Aseprite can carry on from there. Dropping the file on the window, Open and both Import entries all accept it; files bigger than 1024x1024 are refused with a clear message instead of being silently cropped."),
+      it("add", "**动画标签**（Aseprite 那种命名帧区间）：多选几帧后一键加成标签，时间轴上方出现一条彩色标签条。**从标签内的任意一帧开始播放，就只循环这一段**；播放起点不在任何标签里时，播放整条时间轴。**点标签直接播这一段**（两个标签重叠时也播你点的那个，不会按帧优先挑第一个）、**播放中点别的标签的帧就切到那个动画**、**拖标签左右边缘直接改范围**、**右键（手机长按）打开编辑器**改名 / 换色 / 删除 / 选中这些帧。重叠的标签会自动分层显示，各占一行，不会互相盖住。标签随工程文件与 `.aseprite` 一起保存，所有改动都能撤销。", "**Animation tags** (Aseprite-style named frame ranges): pick a few frames and turn them into a tag with one tap; a coloured bar appears above the timeline. **Playback started on any frame inside a tag loops only that range**, while a start outside every tag plays the whole timeline. **Tap a tag to play it** (with overlapping tags the one you tapped wins — never \"whichever tag holds this frame first\"), **tap another tag's frame while playing to switch to that animation**, **drag either end of the bar to change the range**, and **right-click (long-press on touch) for the editor** to rename, recolour, delete or pick its frames. Overlapping tags get a row of their own instead of being painted on top of each other. Tags travel with the project file and with `.aseprite` exports, and every edit is undoable."),
+      it("imp", "时间轴上方的循环按钮**按模式换图标**了：单次／循环／乒乓／倒流各有各的图形，不用再看文字提示猜现在是哪种模式；导出对话框的帧范围多了一个「标签: 名字」快捷键，一键把导出限定到当前标签；新手引导新增一步演示动画标签。", "The loop button above the timeline now **changes its glyph with the mode** — once, loop, ping-pong and reverse each have their own icon, so you can see the current mode at a glance; the export dialog's frame range gained a \"Tag: name\" shortcut that limits the export to the tag you are on, and the tour has a new step that demonstrates animation tags."),
+      it("fix", "修掉一个会让网页版白屏的构建问题（打包时用错 JSX 变换，控制台报 `React is not defined`）：现在构建脚本自带**产物自检**，打好的包会先在一个最小的页面环境里真跑一遍，跑不起来就直接判定构建失败。顺带修好浏览器一直报的 `Manifest: Resource size is not correct`——PWA 图标实际是 96/192，现在按声明的 192/512 重新生成。", "Fixed a packaging bug that made the web build a blank page (`React is not defined` in the console, caused by the bundler picking up the wrong JSX transform): the build script now **smoke-tests its own output** — the bundle is really executed in a minimal page environment and the build fails if it cannot boot. Also fixed the long-standing `Manifest: Resource size is not correct` warning: the PWA icons were 96/192 while the manifest promised 192/512, so they have been regenerated at the declared sizes."),
+    ],
+  },
   {
     v: "1.0.9.9",
     date: "2026-09-10",

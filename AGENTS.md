@@ -15,7 +15,7 @@
 | 源码 | `src/`（入口 `src/main.tsx`），测试 `tests/` |
 | Web 产物 | `app2/www/js/app.js` + `app2/www/css/style.css`（esbuild IIFE） |
 | APK 产物 | `/sdcard/Download/PixelCraft-<版本号>.apk` 与 `build/PixelCraft.apk` |
-| 当前版本 | `1.0.8.7`（以 `src/ui/changelog.tsx` 的 `APP_VERSION` 为准） |
+| 当前版本 | `1.1.0.0`（以 `src/ui/changelog.tsx` 的 `APP_VERSION` 为准） |
 | 仓库根 | `/sdcard/Download/ds文件夹/pixelcraft`（= `/storage/emulated/0/Download/ds文件夹/pixelcraft`） |
 
 目录：
