@@ -279,6 +279,35 @@ export function testTags(): void {
     eq("session.tagplay.other", [d.curFrame(), d.playingTag()?.id], [1, a.id]);
     d.stopPlayback();
   }
+
+  // overlapping tags: the CLICKED tag plays, never "the first tag holding that frame"
+  {
+    const d = new Session();
+    for (let i = 0; i < 6; i++) d.frameAdd();        // 7 frames
+    const outer = d.tagAdd("walk", 0, 5)!;
+    const inner = d.tagAdd("run", 2, 4)!;            // nested inside "walk"
+    d.tagPlay(inner.id);
+    eq("session.overlap.inner-wins", d.playingTag()?.id, inner.id);
+    eq("session.overlap.inner-window", windowOf(d.playingTag(), d.doc.frames.length), { from: 2, to: 4 });
+    eq("session.overlap.jump", d.curFrame(), 2);
+    eq("session.overlap.active-tag", d.activeTag()?.id, inner.id);   // chip follows what plays
+    d.tagPlay(outer.id);
+    eq("session.overlap.outer-wins", [d.playingTag()?.id, d.curFrame()], [outer.id, 0]);
+    // clicking a frame that both tags cover keeps the animation being played
+    d.setFrame(3);
+    eq("session.overlap.stays", d.playingTag()?.id, outer.id);
+    d.setFrame(6);                                    // …but a frame outside switches to none
+    eq("session.overlap.outside", [d.playing, d.playingTag()], [true, null]);
+    d.setFrame(1);
+    eq("session.overlap.back-inside", d.playingTag()?.id, outer.id);
+    d.stopPlayback();
+
+    // the play button still derives the range from the playhead (first match)
+    d.setFrame(3);
+    d.startPlayback();
+    eq("session.overlap.play-button", d.playingTag()?.id, outer.id);
+    d.stopPlayback();
+  }
   // "once" inside a tag rewinds to the tag's FIRST frame, not frame 1
   loose.stopPlayback();
   loose.tagSetRange(far!.id, 2, 3);

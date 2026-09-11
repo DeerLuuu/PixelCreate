@@ -997,11 +997,14 @@ nextPlayFrameIn(mode, fi, dir, w): PlayStep                    // 循环/乒乓�
 // 旧签名 startPlayFrame / nextPlayFrame 保留，等价于传入整条时间轴
 ```
 
-`Session.startPlayback()` 用**当前帧所在的标签**当窗口（没有就整条），存进 `playTag`；
+`Session.startPlayback(tag?)` 的取范围规则：**显式传入的标签永远优先**（点标签条＝播它，
+即使别的标签覆盖同样的帧）；**不传**时（播放按钮）才按当前帧推：帧在某个标签里就循环那个标签，
+不在任何标签里就播整条时间轴（重叠时的「第一个匹配」只在这个推导路径上出现）。
 `tickPlay()` 每帧按该窗口推进，所以「从标签内的帧起播＝只循环这一段」。播放窗口只影响播放，
 手动切帧/时间轴浏览不受限制。**播放中点到别的标签的帧**（`setFrame` 在 `playing` 时会调
-`retargetPlay`）会把窗口换成那个标签并重新计时，也就是「切动画」；点到没有标签的帧则回到整条时间轴。
-`Snapshot` 暴露 `tags`、`activeTag`（当前帧所在标签）、`playTag`（正在播放的窗口）。
+`retargetPlay`）会把窗口换成那个标签并重新计时，也就是「切动画」；**点到当前正在播的标签内的帧则保持不动**
+（重叠时不会因为「按帧优先」被悄悄换成另一个标签）；点到所有标签之外的帧回到整条时间轴。
+`Snapshot` 暴露 `tags`、`activeTag`（正在播的标签优先，否则当前帧所在标签）、`playTag`（正在播放的窗口）。
 
 时间轴上的循环按钮按模式换图标：`once` → `i-loop-once`、`loop` → `i-loop`、
 `pingpong` → `i-loop-pingpong`、`reverse` → `i-loop-reverse`（都在 `app2/www/index.html` 的 symbol 里）。

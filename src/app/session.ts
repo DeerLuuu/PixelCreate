@@ -2121,7 +2121,12 @@ export class Session {
    * outside every tag), and restart the dwell so the new frame is visible.
    */
   private retargetPlay(fi: number): void {
-    this.playTag = this.tagAt(fi);
+    // staying inside the animation that is already playing keeps it: the user
+    // picked that tag explicitly, so a frame that several tags cover must not
+    // silently switch to whichever tag happens to come first
+    const cur = this.playTag;
+    const inside = !!cur && fi >= cur.from && fi <= cur.to;
+    this.playTag = inside ? cur : this.tagAt(fi);
     this.playDir = startPlayDir(this.loopMode);
     if (this.playTimer !== null) {
       window.clearTimeout(this.playTimer);
@@ -3274,17 +3279,27 @@ export class Session {
     this.frameAnchor = tag.to;
     this.changed();
   }
-  /** jump to a tag's first frame and play just that tag */
+  /**
+   * Jump to a tag's first frame and play exactly THAT tag. The clicked tag is
+   * passed straight into startPlayback, so overlapping ranges are not resolved
+   * by "which tag holds this frame" (that would play the first match instead).
+   */
   tagPlay(id: string): void {
     const tag = this.tagById(id);
     if (!tag) return;
     this.stopPlayback();
     this.applyFrame(tag.from);
-    this.startPlayback();
+    this.startPlayback(tag);
   }
-  /** frame the timeline should highlight: the tag under the playhead */
+  /**
+   * The tag the UI should highlight: while playing it is the tag playback is
+   * scoped to (the one the user picked), otherwise the tag under the playhead.
+   */
   activeTag(): FrameTag | null {
-    return this.tagAt(this.curFrame());
+    const fi = this.curFrame();
+    const playing = this.playing ? this.playTag : null;
+    if (playing && fi >= playing.from && fi <= playing.to) return playing;
+    return this.tagAt(fi);
   }
   setRailSwap(v: boolean): void { this.setSetting("general.swapRails", v); }
   /** live timeline height (drag handle): clamped, debounced to disk */
@@ -3566,12 +3581,18 @@ export class Session {
     if (this.playing) this.stopPlayback();
     else this.startPlayback();
   }
-  startPlayback(): void {
+  /**
+   * Start playback.
+   *
+   * `tag` decides the range: **passing a tag (a tag-bar click) always plays
+   * that tag**, even when other tags cover the same frames. Omit it — the play
+   * button — and the range comes from the current frame: inside a tag it loops
+   * that tag, outside every tag it plays the whole timeline.
+   */
+  startPlayback(tag?: FrameTag | null): void {
     if (this.playing) return;
     const n = this.doc.frames.length;
-    // playback started inside a tag stays inside that tag; started outside
-    // every tag it plays the whole timeline
-    this.playTag = this.tagAt(this.curFrame());
+    this.playTag = tag === undefined ? this.tagAt(this.curFrame()) : (tag ? { ...tag } : null);
     const w = windowOf(this.playTag, n);
     this.playDir = startPlayDir(this.loopMode);
     const start = startPlayFrameIn(this.loopMode, this.curFrame(), w);
