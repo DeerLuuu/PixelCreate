@@ -30,6 +30,7 @@ import { testExpr } from "./expr.test";
 import { testEffects } from "./effects.test";
 import { testView } from "./view.test";
 import { testSnap } from "./snap.test";
+import { testAse } from "./ase.test";
 
 async function main(): Promise<void> {
   console.log("--- history ---");
@@ -94,6 +95,8 @@ async function main(): Promise<void> {
   testKeymap();
   console.log("--- uibar ---");
   testUibar();
+  console.log("--- aseprite ---");
+  await testAse();
   finish();
 }
 

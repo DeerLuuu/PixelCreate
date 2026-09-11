@@ -1,7 +1,8 @@
-// Export helpers: PNG bytes, GIF animation, spritesheet (+JSON meta)
+// Export helpers: PNG bytes, GIF animation, spritesheet (+JSON meta), Aseprite
 import type { Doc } from "../engine/doc";
 import type { RGBA } from "../engine/types";
 import * as comp from "../render/compositor";
+import { writeAse } from "./asewrite";
 
 declare global {
   interface Window {
@@ -304,4 +305,14 @@ export async function exportSheet(doc: Doc, o: ExportOpts & { cols?: number } = 
     name: base + suffix + "_sheet.png",
     jsonName: base + suffix + "_sheet.json",
   };
+}
+
+/** Export the document as an Aseprite file (.aseprite): layers, frames,
+ *  durations, blend modes and the palette all survive, so the sprite can be
+ *  opened in Aseprite and edited further (see src/io/asewrite.ts).
+ *  Scale / background / frame range do not apply: an Aseprite file is a
+ *  document, not a rendering. */
+export async function exportASE(doc: Doc): Promise<{ bytes: Uint8Array; name: string }> {
+  const bytes = await writeAse(doc);
+  return { bytes, name: sanitizeName(doc.name || "sprite") + ".aseprite" };
 }

@@ -10,6 +10,7 @@ import { HsvWheel } from "./HsvWheel";
 import { HoldAdjust } from "./hold";
 import { PALETTE_PACKS } from "../data/palettes";
 import { tryReadGif } from "../io/gifread";
+import * as ase from "../io/aseread";
 import * as compose from "../render/compositor";
 import * as exporters from "../io/exporters";
 import * as bridge from "../io/bridge";
@@ -254,6 +255,23 @@ export async function openFileBytes(name: string, bytes: Uint8Array, mode: "new"
     bridge.toast(ok ? t("docLoaded") : t("importFail"));
     return ok;
   }
+  // Aseprite (.ase / .aseprite): detected by magic, so a wrong extension still works
+  if (ext === "ase" || ext === "aseprite" || ase.isAseBytes(f.bytes)) {
+    const r = ase.readAseDoc(f.bytes, f.name || "sprite");
+    if (!r.ok || !r.doc) { bridge.toast(t(r.reason || "importFail")); return false; }
+    if (mode === "layer") {
+      // flatten the first frame and drop it in as one layer
+      const flat = compose.composeFrame(r.doc, 0);
+      const px = flat.getContext("2d")!.getImageData(0, 0, flat.width, flat.height).data;
+      const okLayer = addAsLayer(flat.width, flat.height, px, f.name);
+      bridge.toast(okLayer ? t("importOk") : t("importFail") + " (size)");
+      return okLayer;
+    }
+    if (!r.doc.palette.length) r.doc.palette = SESSION.doc.palette.map((c) => [c[0], c[1], c[2], c[3]]);
+    const ok = await SESSION.replaceDoc(r.doc);
+    bridge.toast(ok ? t("docLoaded") + (r.doc.layers.length > 1 || r.doc.frames.length > 1 ? " · " + r.doc.layers.length + "L/" + r.doc.frames.length + "F" : "") : t("importFail"));
+    return ok;
+  }
   if (isGif) {
     const gif = tryReadGif(f.bytes);
     if (gif) {
@@ -463,7 +481,7 @@ export function NewDocModal({ t, onClose, mode = "canvas" }: { t: ReturnType<typ
 }
 export function ExportModal({ t, snap, onClose }: { t: ReturnType<typeof makeT>; snap: Snapshot; onClose: () => void }) {
   const guideTab = (window as unknown as { __pcGuideExportTab?: string }).__pcGuideExportTab;
-  const [tab, setTab] = useState<"png" | "gif" | "sheet" | "layers">(guideTab === "gif" ? "gif" : "png");
+  const [tab, setTab] = useState<"png" | "gif" | "sheet" | "layers" | "ase">(guideTab === "gif" ? "gif" : "png");
   const [scope, setScope] = useState<"frame" | "layer" | "sel">("frame");
   const [scale, setScale] = useState(1);
   const [bgMode, setBgMode] = useState<"transparent" | "white">("transparent");
@@ -547,10 +565,32 @@ export function ExportModal({ t, snap, onClose }: { t: ReturnType<typeof makeT>;
           else bridge.toast(t("saveCancel"));
         });
       });
+    } else if (tab === "ase") {
+      void run(async () => {
+        const r = await exporters.exportASE(doc);
+        bridge.saveBytes(r.name, "application/octet-stream", r.bytes, (ok) => bridge.toast(ok ? t("exported") : t("saveCancel")));
+      });
     } else {
       void run(exportLayersFlow);
     }
   };
+  // 输出尺寸 + 预算检查：超大导出在点之前就拦住（以前会把标签页/手机拖死）。
+  // Aseprite 导出输出的是一份文档而不是一张图，所以没有缩放/尺寸这一行。
+  const size = (() => {
+    if (tab === "ase") return null;
+    const doc = SESSION.doc;
+    const bounds = scope === "sel" && doc.sel ? doc.sel.bounds() : null;
+    const fw = (bounds && bounds.w > 0 ? bounds.w : doc.w) * scale;
+    const fh = (bounds && bounds.h > 0 ? bounds.h : doc.h) * scale;
+    const n = tab === "png" ? 1 : rTo - rFrom + 1;
+    const colsN = tab === "sheet" ? Math.max(1, Math.min(n, cols)) : 1;
+    const rowsN = tab === "sheet" ? Math.ceil(n / colsN) : 1;
+    const outW = fw * colsN;
+    const outH = fh * rowsN;
+    const err = exporters.exportBudgetError(outW, outH, 1, 1, "image") ||
+      (tab === "png" ? null : exporters.exportBudgetError(fw, fh, 1, n, "anim"));
+    return { outW, outH, n, err };
+  })();
   return (
     <>
       <Dialog title={t("export")} onClose={onClose} guide="dlg-export" footer={<><Btn label={t("cancel")} onClick={onClose} /><Btn label={busy ? t("exporting") : t("export")} onClick={doExport} className="primary" /></>}>
@@ -559,8 +599,9 @@ export function ExportModal({ t, snap, onClose }: { t: ReturnType<typeof makeT>;
           { id: "gif", label: "GIF" },
           { id: "sheet", label: t("exportSheet") },
           { id: "layers", label: t("exportLayers") },
+          { id: "ase", label: t("exportAseprite") },
         ]} />
-        {tab === "layers" ? <div className="row-note">{t("layersNote")}</div> : (<>
+        {tab === "layers" ? <div className="row-note">{t("layersNote")}</div> : tab === "ase" ? <div className="row-note" data-guide="exp-ase">{t("aseNote")}</div> : (<>
         <Row label={t("srcScope")}>
           <ChipGroup value={scope} onChange={setScope} options={[
             { id: "frame", label: t("srcFrame") },
@@ -575,11 +616,13 @@ export function ExportModal({ t, snap, onClose }: { t: ReturnType<typeof makeT>;
           ]} />
         </Row>
         </>)}
+        {tab !== "ase" && (
         <Row label={t("scale")}>
           <ChipGroup value={String(scale)} onChange={(id) => setScale(Number(id))}
             options={[1, 2, 4, 8].map((n) => ({ id: String(n), label: n + "x" }))} />
         </Row>
-        {tab !== "png" && (<>
+        )}
+        {tab !== "png" && tab !== "ase" && (<>
           <label className="rowlabel">{t("frameRange")}</label>
           <div className="chips fsel-range" data-guide="exp-range">
             <ScrubNum min={1} max={snap.frameCount} value={rFrom} onChange={(v) => {
@@ -606,25 +649,13 @@ export function ExportModal({ t, snap, onClose }: { t: ReturnType<typeof makeT>;
         {tab === "sheet" && <NumberField label={t("columns")} min={1} max={rTo - rFrom + 1} value={cols}
           onChange={(v) => setCols(Math.max(1, Math.min(rTo - rFrom + 1, Number(v) || 1)))} />}
         {/* 输出尺寸 + 预算检查：超大导出在点之前就拦住（以前会把标签页/手机拖死） */}
-        {(() => {
-          const doc = SESSION.doc;
-          const bounds = scope === "sel" && doc.sel ? doc.sel.bounds() : null;
-          const fw = (bounds && bounds.w > 0 ? bounds.w : doc.w) * scale;
-          const fh = (bounds && bounds.h > 0 ? bounds.h : doc.h) * scale;
-          const n = tab === "png" ? 1 : rTo - rFrom + 1;
-          const colsN = tab === "sheet" ? Math.max(1, Math.min(n, cols)) : 1;
-          const rowsN = tab === "sheet" ? Math.ceil(n / colsN) : 1;
-          const outW = fw * colsN, outH = fh * rowsN;
-          const err = exporters.exportBudgetError(outW, outH, 1, 1, "image") ||
-            (tab === "png" ? null : exporters.exportBudgetError(fw, fh, 1, n, "anim"));
-          return (
-            <div className={"row-note" + (err ? " warn" : "")} data-guide="exp-size">
-              {t("exportSize")}: <b>{outW}×{outH}</b>
-              {tab === "png" ? "" : " · " + n + " " + t("frames")}
-              {err ? " · " + t(err === "tooBigAnim" ? "exportTooBigAnim" : "exportTooBig") : ""}
-            </div>
-          );
-        })()}
+        {size && (
+          <div className={"row-note" + (size.err ? " warn" : "")} data-guide="exp-size">
+            {t("exportSize")}: <b>{size.outW}×{size.outH}</b>
+            {tab === "png" ? "" : " · " + size.n + " " + t("frames")}
+            {size.err ? " · " + t(size.err === "tooBigAnim" ? "exportTooBigAnim" : "exportTooBig") : ""}
+          </div>
+        )}
       </Dialog>
     </>
   );

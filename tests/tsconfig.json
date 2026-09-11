@@ -42,6 +42,7 @@
     "../tests/effects.test.ts",
     "../tests/view.test.ts",
     "../tests/snap.test.ts",
+    "../tests/ase.test.ts",
     "../tests/i18n.test.ts"
   ]
 }

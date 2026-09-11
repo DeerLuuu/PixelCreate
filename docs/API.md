@@ -2,7 +2,7 @@
 
 > 版本：随源码更新 · 覆盖 `src/` 下全部对外导出
 > 约定：坐标为文档像素（整数，左上为原点）；`RGBA = [r, g, b, a]`（0–255）；`Rect = { x, y, w, h }`（文档像素，含左上、宽高）
-> 引擎层（`engine/` `app/` `tools/`）**不依赖 DOM**，可在 Node 中直接测试；`render/` `io/` `ui/` 需要浏览器环境
+> 引擎层（`engine/` `app/` `tools/`）**不依赖 DOM**，可在 Node 中直接测试；`io/` 里的 `.pxc` / `.aseprite` / zlib 同样是纯逻辑，`render/` `ui/` 与 `io/` 的其余部分需要浏览器环境
 
 ---
 
@@ -914,6 +914,46 @@ tryReadGif(bytes): GifData | null
 writeClipboardPng(canvas): Promise<boolean>
 ```
 
+### 16.6 Aseprite 文件 `src/io/aseread.ts` + `src/io/asewrite.ts` + `src/io/zlib.ts`
+
+按官方规范实现（<https://github.com/aseprite/aseprite/blob/main/docs/ase-file-specs.md>，对照
+Aseprite 自身 `src/dio/aseprite_decoder.cpp` / `aseprite_encoder.cpp` 校对）：
+
+```ts
+// ---- 读取：纯逻辑、无 DOM、同步（cel 由自写 inflate 解压，不依赖 DecompressionStream）
+const ASE_MAGIC = 0xa5e0, ASE_FRAME_MAGIC = 0xf1fa, ASE_MAX_SIZE = 1024;
+isAseBytes(b: Uint8Array): boolean          // 看 header 里的魔数（扩展名不对也能认出来）
+
+parseAse(bytes): AseFile | null             // 头部 / 帧头 / 分块；不认识的块按 size 跳过
+aseToDoc(file: AseFile): Doc | null         // 转成 PixelCraft 文档（>1024² 返回 null）
+readAseDoc(bytes, name = "sprite"): AseImport  // 上面两步 + 文件名；失败给 i18n key
+                                               // { ok, doc?, reason?: "aseBad" | "aseTooBig",
+                                               //   layers?, frames?, cels?, tags? }
+
+interface AseFile { w; h; bpp /* 32 RGBA / 16 灰度 / 8 索引 */; transparentIndex; speed;
+  layers: AseLayer[]; frames: { durationMs }[]; cels: AseCel[]; palette: RGBA[] | null; tags: AseTag[] }
+interface AseLayer { name; visible; editable; background; opacity /* 0-255 */; blend; group; tilemap; reference; childLevel }
+interface AseCel { li; fi; x; y; w; h; opacity; rgba: Uint8ClampedArray }  // 已按索引色/灰度转成 RGBA
+
+aseBlendName(code: number): BlendMode       // ASE 0-18 → PixelCraft 混合模式（不支持的落回 normal）
+
+// ---- 写入：可被 Aseprite 直接打开（third-party 解析器交叉验证过）
+celBounds(cel): Rect | null                 // 非透明像素包围盒（空 cel 返回 null）
+writeAse(doc, { compress = true } = {}): Promise<Uint8Array>
+// 图层顺序/名称/可见性/不透明度/锁定/混合模式、逐帧时长、调色板都会写出；
+// cel 按内容裁剪，默认 zlib 压缩（cel type 2），平台没有 CompressionStream 时自动退回未压缩（type 0）；
+// 文档底色 doc.bg 会写成一个真正的 "Background" 图层（Aseprite 没有“文档底色”这个概念），保证外观一致。
+
+// ---- zlib（io/zlib.ts）
+inflateZlib(src, outSize): Uint8Array | null  // RFC1950/1951，自写 inflate（存储块/固定/动态霍夫曼）
+deflateZlib(src): Promise<Uint8Array | null>  // CompressionStream("deflate")，不支持时返回 null
+canDeflate(): boolean
+```
+
+打开流程（`ui/modals.tsx` 的 `openFileBytes`）先按魔数判断 Aseprite，再走 `.pxc` / GIF / 静态图；
+`mode: "layer"` 时把第一帧拍平成一张图层加入当前画布（尺寸不符则提示失败）。导出侧在
+`ui/modals.tsx` 的导出弹窗里是第 5 个页签（`exporters.exportASE`），缩放 / 背景 / 帧范围对它不适用。
+
 ---
 
 ## 17. UI 层与事件契约
@@ -1236,10 +1276,17 @@ PC 专属的 Blender 式饼菜单：浮动球存储区边的**装备槽**里装�
 2. `ui/modals.tsx` 的 `ExportModal` 加页签与选项。
 3. `io/bridge.ts` 的 `saveBytes` 落盘。
 
+### 新增一个导入格式
+
+1. `io/` 下加一个纯逻辑解析器（**不要依赖 DOM**，这样 `tests/` 里能直接跑）。
+2. `ui/modals.tsx` 的 `openFileBytes` 加一条按魔数判断的分支（扩展名不可靠），返回 `Doc`；
+   `mode === "layer"` 时用 `compose.composeFrame` 拍平后调 `addAsLayer`。
+3. 失败分支要给 i18n key，别静默 return（`.aseprite` 见 16.6 的 `aseBad` / `aseTooBig`）。
+
 ### 测试
 
 ```bash
-npm test        # 1108 项：引擎 / 选区 / 历史 / 播放 / 设置 / 引导 / 渲染 / 导出 / 返回手势 / UI 控件与令牌
+npm test        # 1949 项：引擎 / 选区 / 历史 / 播放 / 设置 / 引导 / 渲染 / 导出 / Aseprite 读写 / 返回手势 / UI 控件与令牌
 ```
 
 新增纯逻辑（算法、布局、解析、决策）时，优先抽成无 DOM 依赖的函数再补一条 `tests/*.test.ts` 断言——这是本项目保持可回归的主要手段。
