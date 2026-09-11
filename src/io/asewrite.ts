@@ -18,7 +18,16 @@ export const ASE_FRAME_MAGIC = 0xf1fa;
 
 const CHUNK_LAYER = 0x2004;
 const CHUNK_CEL = 0x2005;
+const CHUNK_TAGS = 0x2018;
 const CHUNK_PALETTE = 0x2019;
+
+/** "#rrggbb" → [r, g, b] (black when unset/unparsable) */
+function hexToRgb(hex: string | undefined): [number, number, number] {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex ?? "");
+  if (!m) return [0, 0, 0];
+  const v = parseInt(m[1], 16);
+  return [(v >> 16) & 255, (v >> 8) & 255, v & 255];
+}
 
 const CEL_RAW = 0;
 const CEL_COMPRESSED = 2;
@@ -253,7 +262,7 @@ export async function writeAse(doc: Doc, opts: { compress?: boolean } = {}): Pro
     const list = cels[fi];
     // frame 0 carries the palette + layer chunks (Aseprite writes the layer
     // layout once, in the first frame)
-    const chunks = list.length + (fi === 0 ? layers.length + (doc.palette.length ? 1 : 0) : 0);
+    const chunks = list.length + (fi === 0 ? layers.length + (doc.palette.length ? 1 : 0) + (doc.tags.length ? 1 : 0) : 0);
     w.u32(0); // frame size, patched below
     w.u16(ASE_FRAME_MAGIC);
     w.u16(chunks < 0xffff ? chunks : 0xffff);
@@ -276,6 +285,29 @@ export async function writeAse(doc: Doc, opts: { compress?: boolean } = {}): Pro
           w.u8(c[1]);
           w.u8(c[2]);
           w.u8(c[3] ?? 255);
+        }
+        w.patchU32(at, w.size - at);
+      }
+      if (doc.tags.length) {
+        // animation tags (0x2018): Aseprite writes them before the layer
+        // chunks of the first frame, and republishes our ranges as real tags
+        const at = w.size;
+        w.u32(0);
+        w.u16(CHUNK_TAGS);
+        w.u16(Math.min(65535, doc.tags.length));
+        w.pad(8);
+        for (const tag of doc.tags) {
+          const rgb = hexToRgb(tag.color);
+          w.u16(Math.max(0, Math.min(frameCount - 1, tag.from)));
+          w.u16(Math.max(0, Math.min(frameCount - 1, tag.to)));
+          w.u8(Math.max(0, Math.min(3, tag.dir ?? 0))); // loop direction
+          w.u16(Math.max(0, Math.min(65535, tag.repeat ?? 0)));
+          w.pad(6);
+          w.u8(rgb[0]); // deprecated colour bytes (v1.2.x)
+          w.u8(rgb[1]);
+          w.u8(rgb[2]);
+          w.u8(0); // extra byte
+          w.str(tag.name);
         }
         w.patchU32(at, w.size - at);
       }

@@ -1,6 +1,7 @@
 // Raw structural operations on a Doc. The caller wraps these in history.
 import { Cel } from "./cel";
 import { Doc, Sel, type LayerMeta, type FrameMeta } from "./doc";
+import { normalizeTags, tagsAfterInsert, tagsAfterRemove } from "./tags";
 import { uid } from "./types";
 import type { BlendMode } from "./types";
 
@@ -97,6 +98,9 @@ export function addFrame(doc: Doc, index: number): void {
   // frames originally at >= at shifted up by one: reindex their cels, or every
   // following frame would read the wrong cel (and the last one would go blank)
   shiftCelsByFrame(doc, at, +1);
+  // tags after the insertion point shift with their frames; a tag spanning the
+  // insertion point grows so the new frame belongs to that animation
+  tagsAfterInsert(doc.tags, at);
 }
 export function duplicateFrame(doc: Doc, fi: number): void {
   const src = doc.frames[fi];
@@ -107,6 +111,7 @@ export function duplicateFrame(doc: Doc, fi: number): void {
     const cel = doc.celAt(li, fi);
     if (cel) doc.cels.set(doc.key(li, fi + 1), cel.clone());
   }
+  tagsAfterInsert(doc.tags, fi + 1);
 }
 export function removeFrame(doc: Doc, fi: number): void {
   if (doc.frames.length <= 1) return;
@@ -115,6 +120,8 @@ export function removeFrame(doc: Doc, fi: number): void {
     if (Number(k.slice(k.indexOf(":") + 1)) === fi) doc.cels.delete(k);
   }
   shiftCelsByFrame(doc, fi + 1, -1);
+  // tags shrink with the frame; a tag left with no frame disappears
+  doc.tags = tagsAfterRemove(doc.tags, fi, doc.frames.length);
 }
 export function moveFrame(doc: Doc, from: number, to: number): void {
   const n = doc.frames.length;
@@ -140,6 +147,9 @@ export function moveFrame(doc: Doc, from: number, to: number): void {
   }
   for (const r of rekeys) doc.cels.delete(doc.key(r.li, r.of));
   for (const r of rekeys) doc.cels.set(doc.key(r.li, r.nf), r.cel);
+  // a tag is a RANGE over the timeline, so reordering frames keeps the ranges
+  // as they are (only clamp them into the new frame count)
+  doc.tags = normalizeTags(doc.tags, doc.frames.length);
 }
 
 /**

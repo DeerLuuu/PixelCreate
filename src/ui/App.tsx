@@ -26,7 +26,7 @@ import { TimelineBar } from "./timeline";
 import { PreviewBox } from "./preview";
 import { RefImageBox } from "./refimg";
 import type { RefImg } from "./refimg";
-import { PalettePanel, openFlow, MenuModal, SizeModal, SheetModal, NewDocModal, ExportModal, AdjustModal, SettingsModal, FrameModal, FramePreviewModal, CanvasRefModal, HistoryModal, ShortcutHelpModal, CustomiseModal, histName, importFlow, saveProject, openFileBytes } from "./modals";
+import { PalettePanel, openFlow, MenuModal, SizeModal, SheetModal, NewDocModal, ExportModal, AdjustModal, SettingsModal, FrameModal, TagModal, FramePreviewModal, CanvasRefModal, HistoryModal, ShortcutHelpModal, CustomiseModal, histName, importFlow, saveProject, openFileBytes } from "./modals";
 import { FxParamDialog, fxDefaults, type FxRun, type FxVals } from "./fxparam";
 import { CanvasTitles } from "./canvas";
 import { ChangelogModal, changelogNeedsShow } from "./changelog";
@@ -82,6 +82,8 @@ export function App() {
   const pcMode = useKitPcMode();
   // frame duration dialog: a frame index, or "batch" for the picked frames
   const [frameDlgIdx, setFrameDlgIdx] = useState<number | "batch" | null>(null);
+  // animation tag editor: the id of the tag being edited
+  const [tagDlgId, setTagDlgId] = useState<string | null>(null);
   const [tlOn, setTlOn] = useState(false); // timeline starts hidden
   const [tlClosing, setTlClosing] = useState(false);
   const [sizeMode, setSizeMode] = useState<SizeMode>("canvas");
@@ -410,6 +412,22 @@ export function App() {
       pick(0);
       pick(Math.min(2, n - 1));
     },
+    // animation tags: pick two frames, really create a tag (removed by
+    // cleanupTagDemo so the tour leaves no trace), keep the picker open
+    demoTagPick: () => {
+      SESSION.setFrameSelMode(true);
+      const n = SESSION.doc.frames.length;
+      SESSION.frameSel.clear();
+      for (let i = 0; i < Math.min(2, n); i++) SESSION.frameSel.add(i);
+      SESSION.frameAnchor = Math.min(1, n - 1);
+      SESSION.changed();
+      window.setTimeout(() => simulateTap('[data-guide="btn-framesel-tag"]'), 420);
+      window.setTimeout(() => setTagDlgId(null), 900);      // the demo only shows the button
+    },
+    cleanupTagDemo: () => {
+      const demo = SESSION.doc.tags.find((x) => x.name.indexOf("Demo") === 0 || x.name.indexOf("演示") === 0);
+      if (demo) SESSION.tagRemove(demo.id);
+    },
 
     // ---------------------------------------------------------------- demos
     // Every demo below performs the REAL action and then puts the app back the
@@ -648,7 +666,7 @@ export function App() {
         <div className="tl-grip" data-guide="tl-grip" title={t("tlGripHint")}
           onPointerDown={gripDown} onPointerMove={gripMove} onPointerUp={gripUp} onPointerCancel={gripUp}
           onDoubleClick={() => SESSION.setTlHeight(200)} />
-        <TimelineBar t={t} snap={snap} onFrameDlg={setFrameDlgIdx} />
+        <TimelineBar t={t} snap={snap} onFrameDlg={setFrameDlgIdx} onTagDlg={setTagDlgId} />
       </div>
       )}
       {tlDrag && <div className="tl-pill" style={{ top: Math.max(4, tlDrag.top - 30) }}>{tlDrag.h}px</div>}
@@ -674,6 +692,7 @@ export function App() {
       <Keep on={modal === "settings"} el={modal === "settings" ? <SettingsModal t={t} onClose={() => setModal(null)} /> : null} />
       <Keep on={modal === "adjust"} el={modal === "adjust" ? <AdjustModal t={t} onClose={() => setModal(null)} /> : null} />
       <Keep on={frameDlgIdx !== null} el={frameDlgIdx !== null ? <FrameModal t={t} snap={snap} fi={typeof frameDlgIdx === "number" ? frameDlgIdx : snap.frameIdx} batch={frameDlgIdx === "batch"} onClose={() => setFrameDlgIdx(null)} /> : null} />
+      <Keep on={tagDlgId !== null} el={tagDlgId !== null ? <TagModal t={t} snap={snap} id={tagDlgId} onClose={() => setTagDlgId(null)} /> : null} />
       <Keep on={modal === "history"} el={modal === "history" ? <HistoryModal t={t} snap={snap} onClose={() => setModal(null)} onReplay={() => { setModal(null); setReplayOn(true); }} /> : null} />
       <Keep on={modal === "framePrev"} el={modal === "framePrev" ? <FramePreviewModal t={t} onClose={() => setModal(null)} /> : null} />
       <Keep on={modal === "canvasRef"} el={modal === "canvasRef" ? <CanvasRefModal t={t} onClose={() => setModal(null)} /> : null} />

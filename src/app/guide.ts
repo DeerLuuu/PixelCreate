@@ -27,7 +27,7 @@ export type GuideAction =
   | "closeOrbs"
   | "openPalettePanel" | "closePalettePanel"
   | "demoExportRange" | "closeExport" | "demoBucketGrad"
-  | "demoFramePick";
+  | "demoFramePick" | "demoTagPick" | "cleanupTagDemo";
 
 /** a step may request several actions; they run in order */
 export type GuideActionList = GuideAction | GuideAction[];
@@ -209,6 +209,12 @@ export const GUIDE: GuideStep[] = [
     id: "timeline.onion", module: "timeline", since: "1.0.6.0", target: '[data-guide="btn-onion"]', place: "top", optional: true, peek: true,
     before: ["openTimeline", "demoOnionFrame"], after: "closeTimeline",
     title: "guide.onion.title", body: "guide.onion.body",
+  },
+  {
+    // the tour really tags two frames (and removes the demo tag afterwards)
+    id: "timeline.tag", module: "timeline", since: "1.0.9.10", target: '[data-guide="btn-framesel-tag"]', place: "top", optional: true, peek: true,
+    before: ["openTimeline", "demoTagPick"], after: "cleanupTagDemo",
+    title: "guide.tag.title", body: "guide.tag.body",
   },
 
   // -------------------------------------------------------------- files

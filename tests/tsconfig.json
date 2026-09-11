@@ -43,6 +43,7 @@
     "../tests/view.test.ts",
     "../tests/snap.test.ts",
     "../tests/ase.test.ts",
+    "../tests/tags.test.ts",
     "../tests/i18n.test.ts"
   ]
 }

@@ -447,7 +447,6 @@ wandAt(x, y) / setSelectionTolerance(n) / deleteSelection()
 ```
 
 ### 11.7 图层 / 帧
-
 ```ts
 layerAdd / layerDuplicate / layerDelete / layerUp / layerDown / layerMoveTo(from, to)
 layerMergeDown / toggleLayerVisible(li) / toggleLayerLock(li) / renameLayer(li, name)
@@ -461,12 +460,21 @@ setFrame(fi, record = true) / curFrame() / setFrameDuration(fi, ms)
 setFrameSelMode(on) / toggleFrameSel(fi) / clearFrameSel() / frameSelList(): number[]
 framesSelectAll() / framesDeleteSelected(): number / framesDuplicateSelected(): number
 framesSetDuration(ms): number
+
+// 动画标签（每个改动都是一条可撤销的结构历史）
+tagAt(fi): FrameTag | null / tagById(id) / activeTag(): FrameTag | null / playingTag(): FrameTag | null
+tagAdd(name?, from?, to?): FrameTag | null   // 默认用选中的帧（没选就用当前帧）；名字不给就自动编号
+tagRename(id, name) / tagSetRange(id, from, to) / tagSetColor(id, color) / tagRemove(id): boolean
+tagSelectFrames(id)                          // 进入帧多选并选中这段
+tagPlay(id)                                  // 跳到首帧并只播放这一段
 ```
 
 ### 11.8 播放 / 洋葱皮 / 画布
 
 ```ts
 togglePlay() / startPlayback() / stopPlayback() / cycleLoopMode(): LoopMode
+// startPlayback 会把「当前帧所在的标签」当作播放窗口（没有则整条时间轴），存进 playTag；
+// stopPlayback 清空它。播放范围不影响手动切帧。
 toggleOnion() / setOnionOn(on) / setOnionBefore(n) / setOnionAfter(n)
 setOnionAlpha(n) / setOnionTint(on) / setOnionWrap(on)
 setGridMode("off"|"pixel"|"iso") / setGridSize(n)
@@ -934,15 +942,17 @@ interface AseFile { w; h; bpp /* 32 RGBA / 16 灰度 / 8 索引 */; transparentI
   layers: AseLayer[]; frames: { durationMs }[]; cels: AseCel[]; palette: RGBA[] | null; tags: AseTag[] }
 interface AseLayer { name; visible; editable; background; opacity /* 0-255 */; blend; group; tilemap; reference; childLevel }
 interface AseCel { li; fi; x; y; w; h; opacity; rgba: Uint8ClampedArray }  // 已按索引色/灰度转成 RGBA
+interface AseTag { name; from; to; direction /* 0 正向 1 反向 2 乒乓 3 反向乒乓 */; repeat; color? }
 
 aseBlendName(code: number): BlendMode       // ASE 0-18 → PixelCraft 混合模式（不支持的落回 normal）
 
 // ---- 写入：可被 Aseprite 直接打开（third-party 解析器交叉验证过）
 celBounds(cel): Rect | null                 // 非透明像素包围盒（空 cel 返回 null）
 writeAse(doc, { compress = true } = {}): Promise<Uint8Array>
-// 图层顺序/名称/可见性/不透明度/锁定/混合模式、逐帧时长、调色板都会写出；
+// 图层顺序/名称/可见性/不透明度/锁定/混合模式、逐帧时长、调色板、动画标签都会写出；
 // cel 按内容裁剪，默认 zlib 压缩（cel type 2），平台没有 CompressionStream 时自动退回未压缩（type 0）；
-// 文档底色 doc.bg 会写成一个真正的 "Background" 图层（Aseprite 没有“文档底色”这个概念），保证外观一致。
+// 文档底色 doc.bg 会写成一个真正的 "Background" 图层（Aseprite 没有“文档底色”这个概念），保证外观一致；
+// doc.tags 写成 0x2018 标签块（Aseprite 的顺序：调色板 → 标签 → 图层），方向/重复次数/颜色一起写。
 
 // ---- zlib（io/zlib.ts）
 inflateZlib(src, outSize): Uint8Array | null  // RFC1950/1951，自写 inflate（存储块/固定/动态霍夫曼）
@@ -953,6 +963,42 @@ canDeflate(): boolean
 打开流程（`ui/modals.tsx` 的 `openFileBytes`）先按魔数判断 Aseprite，再走 `.pxc` / GIF / 静态图；
 `mode: "layer"` 时把第一帧拍平成一张图层加入当前画布（尺寸不符则提示失败）。导出侧在
 `ui/modals.tsx` 的导出弹窗里是第 5 个页签（`exporters.exportASE`），缩放 / 背景 / 帧范围对它不适用。
+
+### 16.7 动画标签 `src/engine/tags.ts`
+
+标签 = 一段**有名字的帧范围**（0 基、含首含尾），和 `.aseprite` 的 tag 块一一对应。纯函数，无依赖：
+
+```ts
+const TAG_COLORS: string[];                       // 编辑器的 6 个标签色
+tagAt(tags, fi): FrameTag | null                  // 帧落在哪个标签里
+tagById(tags, id): FrameTag | null
+nextTagName(tags, base): string                   // "动画 1" / "Tag 1"…取第一个没被占用的编号
+clampRange(from, to, count): { from, to } | null   // 自动交换倒序、夹到帧数内；空返回 null
+normalizeTags(tags, count): FrameTag[]            // 丢掉空标签、夹范围、按帧序排序
+tagsAfterInsert(tags, at): void                   // 插入帧：后面的标签整体后移，跨过的标签变长
+tagsAfterRemove(tags, fi, count): FrameTag[]      // 删除帧：标签缩短，只剩一帧的标签消失
+tagRangeLabel({from,to}): string                  // "3–7"（1 基，跟时间轴一致）
+```
+
+`Doc.tags` 参与 `capture()` / `restore()`（结构历史可撤销）、`.pxc` 的 `tags` 字段、
+以及 Aseprite 的 0x2018 块。**帧的结构操作统一在 `engine/ops.ts` 里维护标签范围**
+（`addFrame` / `duplicateFrame` / `removeFrame` / `moveFrame`），所以时间轴拖拽、批量删除、
+历史回放都不会把标签留在一个非法范围上。
+
+### 16.8 播放范围 `src/app/playback.ts`
+
+```ts
+interface PlayWindow { from; to }                              // 闭区间
+fullWindow(count): PlayWindow                                  // 整条时间轴
+windowOf(tag | null, count): PlayWindow                        // 标签 → 它的范围；null/非法 → 整条
+startPlayFrameIn(mode, fi, w): number                          // once 停在窗口末帧时回到窗口首帧
+nextPlayFrameIn(mode, fi, dir, w): PlayStep                    // 循环/乒乓都在窗口内绕回
+// 旧签名 startPlayFrame / nextPlayFrame 保留，等价于传入整条时间轴
+```
+
+`Session.startPlayback()` 用**当前帧所在的标签**当窗口（没有就整条），存进 `playTag`；
+`tickPlay()` 每帧按该窗口推进，所以「从标签内的帧起播＝只循环这一段」。播放窗口只影响播放，
+手动切帧/时间轴浏览不受限制。`Snapshot` 暴露 `tags`、`activeTag`（当前帧所在标签）、`playTag`（正在播放的窗口）。
 
 ---
 

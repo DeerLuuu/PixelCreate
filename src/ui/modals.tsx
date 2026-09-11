@@ -11,6 +11,7 @@ import { HoldAdjust } from "./hold";
 import { PALETTE_PACKS } from "../data/palettes";
 import { tryReadGif } from "../io/gifread";
 import * as ase from "../io/aseread";
+import { TAG_COLORS, tagRangeLabel } from "../engine/tags";
 import * as compose from "../render/compositor";
 import * as exporters from "../io/exporters";
 import * as bridge from "../io/bridge";
@@ -644,6 +645,12 @@ export function ExportModal({ t, snap, onClose }: { t: ReturnType<typeof makeT>;
                 setRTo(list[list.length - 1] + 1);
               }}>{t("frameRangePicked")}</button>
             )}
+            {snap.activeTag && (
+              <button className="chip" data-guide="exp-range-tag" onClick={() => {
+                setRFrom(snap.activeTag!.from + 1);
+                setRTo(snap.activeTag!.to + 1);
+              }}>{t("frameRangeTag")}: {snap.activeTag.name}</button>
+            )}
           </div>
         </>)}
         {tab === "sheet" && <NumberField label={t("columns")} min={1} max={rTo - rFrom + 1} value={cols}
@@ -895,8 +902,75 @@ export function FrameModal({ t, snap, fi, onClose, batch = false }: { t: ReturnT
     </>
   );
 }
-const H_ZH: Record<string, string> = { "canvas-close": "关闭画布", "canvas-size": "修改画布尺寸", "sprite-size": "整体缩放精灵", "layer-add": "新建图层", "layer-del": "删除图层", "layer-up": "上移图层", "layer-down": "下移图层", "layer-move": "拖拽重排图层", "layer-dupe": "复制图层", "layer-merge": "向下合并图层", "layer-visible": "图层可见性", "layer-solo": "只显示该图层", "layer-ref-edit": "引用图层改动(同步到源画布)", "layer-lock": "锁定图层", "layer-rename": "重命名图层", "layer-opacity": "图层不透明度", "layer-blend": "图层混合模式", "frame-add": "新建帧", "frame-del": "删除帧", "frame-move": "移动帧", "frame-switch": "切换帧", "frame-dupe": "复制帧", "frame-duration": "帧时长", "palette-set": "替换色板", "palette-add": "添加颜色", "palette-remove": "删除颜色", "import-layer": "导入为图层", "wand": "魔棒选区", "sel.grow": "扩展选区", "sel.shrink": "收缩选区", "sel.invert": "反选", "sel.lasso": "套索选区", "sel.move": "移动选区", "sel.rotate": "旋转选区", "sel.scale": "缩放选区", "adjust-color": "颜色调整", "palette-recolor": "色卡换色(整幅同步)", "outline-fill": "轮廓填充", "fx-outline": "描边", "fx-outline1": "描边 1px", "fx-blur": "模糊", "fx-shadow": "投影", "fx-glow": "外发光", "fx-invert": "反色", "fx-gray": "灰度", "fx-center": "居中" };
-const H_EN: Record<string, string> = { "canvas-close": "Close canvas", "canvas-size": "Resize canvas", "sprite-size": "Scale sprite", "layer-add": "New layer", "layer-del": "Delete layer", "layer-up": "Move layer up", "layer-down": "Move layer down", "layer-move": "Reorder layer (drag)", "layer-dupe": "Duplicate layer", "layer-merge": "Merge layer down", "layer-visible": "Layer visibility", "layer-solo": "Solo layer", "layer-ref-edit": "Reference layer edit (synced to source)", "layer-lock": "Lock layer", "layer-rename": "Rename layer", "layer-opacity": "Layer opacity", "layer-blend": "Layer blend mode", "frame-add": "New frame", "frame-del": "Delete frame", "frame-move": "Move frame", "frame-switch": "Switch frame", "frame-dupe": "Duplicate frame", "frame-duration": "Frame duration", "palette-set": "Replace palette", "palette-add": "Add color", "palette-remove": "Remove color", "import-layer": "Import as layer", "wand": "Magic wand select", "sel.grow": "Grow selection", "sel.shrink": "Shrink selection", "sel.invert": "Invert selection", "sel.lasso": "Lasso select", "sel.move": "Move selection", "sel.rotate": "Rotate selection", "sel.scale": "Scale selection", "adjust-color": "Adjust color", "palette-recolor": "Recolor palette (sprite)", "outline-fill": "Outline fill", "fx-outline": "Outline", "fx-outline1": "Outline 1px", "fx-blur": "Blur", "fx-shadow": "Drop shadow", "fx-glow": "Outer glow", "fx-invert": "Invert", "fx-gray": "Grayscale", "fx-center": "Center" };
+/**
+ * Animation tag editor. A tag is a named frame range: playback started on a
+ * frame inside it stays inside that range. Everything applies live through
+ * Session, so every edit is a single undo step and the timeline bar follows.
+ */
+export function TagModal({ t, snap, id, onClose }: { t: ReturnType<typeof makeT>; snap: Snapshot; id: string; onClose: () => void }) {
+  const tag = SESSION.tagById(id);
+  const [name, setName] = useState(tag?.name ?? "");
+  const [from, setFrom] = useState(String((tag?.from ?? 0) + 1));
+  const [to, setTo] = useState(String((tag?.to ?? 0) + 1));
+  const [color, setColor] = useState(tag?.color ?? TAG_COLORS[0]);
+  const n = snap.frameCount;
+  if (!tag) return null;
+  const commit = () => {
+    SESSION.tagRename(id, name);
+    const a = Math.max(1, Math.min(n, parseInt(from, 10) || 1));
+    const b = Math.max(1, Math.min(n, parseInt(to, 10) || 1));
+    SESSION.tagSetRange(id, a - 1, b - 1);
+    SESSION.tagSetColor(id, color);
+    onClose();
+  };
+  const remove = () => { SESSION.tagRemove(id); onClose(); };
+  return (
+    <>
+      <Dialog title={t("tagEdit")} onClose={onClose} footer={<>
+        <Btn label={t("tagDelete")} danger onClick={remove} />
+        <div className="grow" />
+        <Btn label={t("cancel")} onClick={onClose} />
+        <Btn label={t("ok")} className="primary" onClick={commit} />
+      </>}>
+        <div className="row-note">{t("tagNote")}</div>
+        <Row label={t("name")}>
+          <input autoFocus value={name} onChange={(e) => setName(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") commit(); else if (e.key === "Escape") onClose(); }} />
+        </Row>
+        <Row label={t("tagFrames")}>
+          <div className="chips fsel-range">
+            <ScrubNum min={1} max={n} value={parseInt(from, 10) || 1} onChange={(v) => {
+              const k = Math.max(1, Math.min(n, Number(v) || 1));
+              setFrom(String(k));
+              if (k > (parseInt(to, 10) || 1)) setTo(String(k));
+            }} />
+            <span className="fsel-dash">–</span>
+            <ScrubNum min={1} max={n} value={parseInt(to, 10) || 1} onChange={(v) => {
+              const k = Math.max(1, Math.min(n, Number(v) || 1));
+              setTo(String(k));
+              if (k < (parseInt(from, 10) || 1)) setFrom(String(k));
+            }} />
+            <span className="fsel-count">{tagRangeLabel({ from: (parseInt(from, 10) || 1) - 1, to: (parseInt(to, 10) || 1) - 1 })}</span>
+          </div>
+        </Row>
+        <Row label={t("tagColor")}>
+          <div className="tag-colors">
+            {TAG_COLORS.map((c) => (
+              <button key={c} type="button" className={"tag-dot" + (c === color ? " on" : "")}
+                style={{ background: c }} title={c} onClick={() => setColor(c)} />
+            ))}
+          </div>
+        </Row>
+        <RowActions>
+          <Btn icon="i-play" label={t("tagPlayThis")} onClick={() => { SESSION.tagPlay(id); onClose(); }} />
+          <Btn icon="i-framesel" label={t("tagPickFrames")} onClick={() => { SESSION.tagSelectFrames(id); onClose(); }} />
+        </RowActions>
+      </Dialog>
+    </>
+  );
+}
+const H_ZH: Record<string, string> = { "canvas-close": "关闭画布", "canvas-size": "修改画布尺寸", "sprite-size": "整体缩放精灵", "layer-add": "新建图层", "layer-del": "删除图层", "layer-up": "上移图层", "layer-down": "下移图层", "layer-move": "拖拽重排图层", "layer-dupe": "复制图层", "layer-merge": "向下合并图层", "layer-visible": "图层可见性", "layer-solo": "只显示该图层", "layer-ref-edit": "引用图层改动(同步到源画布)", "layer-lock": "锁定图层", "layer-rename": "重命名图层", "layer-opacity": "图层不透明度", "layer-blend": "图层混合模式", "frame-add": "新建帧", "frame-del": "删除帧", "frame-move": "移动帧", "frame-switch": "切换帧", "frame-dupe": "复制帧", "frame-duration": "帧时长", "tag-add": "新建动画标签", "tag-rename": "重命名动画标签", "tag-range": "调整标签范围", "tag-color": "标签颜色", "tag-del": "删除动画标签", "palette-set": "替换色板", "palette-add": "添加颜色", "palette-remove": "删除颜色", "import-layer": "导入为图层", "wand": "魔棒选区", "sel.grow": "扩展选区", "sel.shrink": "收缩选区", "sel.invert": "反选", "sel.lasso": "套索选区", "sel.move": "移动选区", "sel.rotate": "旋转选区", "sel.scale": "缩放选区", "adjust-color": "颜色调整", "palette-recolor": "色卡换色(整幅同步)", "outline-fill": "轮廓填充", "fx-outline": "描边", "fx-outline1": "描边 1px", "fx-blur": "模糊", "fx-shadow": "投影", "fx-glow": "外发光", "fx-invert": "反色", "fx-gray": "灰度", "fx-center": "居中" };
+const H_EN: Record<string, string> = { "canvas-close": "Close canvas", "canvas-size": "Resize canvas", "sprite-size": "Scale sprite", "layer-add": "New layer", "layer-del": "Delete layer", "layer-up": "Move layer up", "layer-down": "Move layer down", "layer-move": "Reorder layer (drag)", "layer-dupe": "Duplicate layer", "layer-merge": "Merge layer down", "layer-visible": "Layer visibility", "layer-solo": "Solo layer", "layer-ref-edit": "Reference layer edit (synced to source)", "layer-lock": "Lock layer", "layer-rename": "Rename layer", "layer-opacity": "Layer opacity", "layer-blend": "Layer blend mode", "frame-add": "New frame", "frame-del": "Delete frame", "frame-move": "Move frame", "frame-switch": "Switch frame", "frame-dupe": "Duplicate frame", "frame-duration": "Frame duration", "tag-add": "New animation tag", "tag-rename": "Rename animation tag", "tag-range": "Change tag range", "tag-color": "Tag colour", "tag-del": "Delete animation tag", "palette-set": "Replace palette", "palette-add": "Add color", "palette-remove": "Remove color", "import-layer": "Import as layer", "wand": "Magic wand select", "sel.grow": "Grow selection", "sel.shrink": "Shrink selection", "sel.invert": "Invert selection", "sel.lasso": "Lasso select", "sel.move": "Move selection", "sel.rotate": "Rotate selection", "sel.scale": "Scale selection", "adjust-color": "Adjust color", "palette-recolor": "Recolor palette (sprite)", "outline-fill": "Outline fill", "fx-outline": "Outline", "fx-outline1": "Outline 1px", "fx-blur": "Blur", "fx-shadow": "Drop shadow", "fx-glow": "Outer glow", "fx-invert": "Invert", "fx-gray": "Grayscale", "fx-center": "Center" };
 export function histName(label: string, t: ReturnType<typeof makeT>, lang: string): string {
   const m = lang === "zh" ? H_ZH : H_EN;
   if (m[label]) return m[label];

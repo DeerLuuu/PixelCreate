@@ -1,4 +1,4 @@
-import { Doc } from "../engine/doc";
+import { Doc, type FrameTag } from "../engine/doc";
 import { Cel } from "../engine/cel";
 import { History, type HistoryDump, type HistoryDumpEntry } from "../engine/history";
 import { uid } from "../engine/types";
@@ -28,9 +28,10 @@ import {
 } from "./uibar";
 import { mirrorMaskInPlace } from "../engine/symmetry";
 import { adjustPixel, type HslAdj } from "../engine/adjust";
-import { type LoopMode, nextLoopMode, nextPlayFrame, startPlayDir, startPlayFrame } from "./playback";
+import { type LoopMode, nextLoopMode, nextPlayFrameIn, startPlayDir, startPlayFrameIn, windowOf } from "./playback";
 import { SETTINGS_BY_PATH, normalizeSetting, type SettingValue } from "./settings";
 import { snapToTargets, snapCandidates, snapGapRect, stackGap, tightenLegacyStack, type GapRect, type SnapTarget } from "./canvas-snap";
+import { TAG_COLORS, clampRange, nextTagName, normalizeTags, tagAt as findTag } from "../engine/tags";
 
 export interface Prefs {
   lang: "zh" | "en";
@@ -223,6 +224,12 @@ export interface Snapshot {
   h: number;
   playing: boolean;
   loopMode: LoopMode;
+  /** animation tags of the focused document (copies; safe to render) */
+  tags: FrameTag[];
+  /** tag holding the current frame, or null when it is outside every tag */
+  activeTag: FrameTag | null;
+  /** tag the running playback is scoped to (null = the whole timeline) */
+  playTag: FrameTag | null;
   /** frames picked in the timeline for a batch operation */
   frameSel: number[];
   /** true while the timeline is in "pick frames" mode */
@@ -487,6 +494,8 @@ export class Session {
   private lastColorAt = 0;
   playing = false;
   loopMode: LoopMode = "loop";
+  /** animation tag the running playback is scoped to (null = whole timeline) */
+  playTag: FrameTag | null = null;
   private playDir: 1 | -1 = 1;
   // ---------- reference image (persisted in IndexedDB) ----------
   /** the floating reference picture, restored on launch */
@@ -806,6 +815,9 @@ export class Session {
       h: this.doc.h,
       playing: this.playing,
       loopMode: this.loopMode,
+      tags: this.doc.tags.map((t) => ({ ...t })),
+      activeTag: this.tagAt(this.curFrame()),
+      playTag: this.playTag ? { ...this.playTag } : null,
       frameSel: this.frameSelList(),
       frameSelOn: this.frameSelOn,
       canvasCount: this.docs.length,
@@ -3172,6 +3184,90 @@ export class Session {
     this.changed();
   }
   setNewFrameCopy(v: boolean): void { this.setSetting("general.newFrameCopy", v); }
+
+  // ---------- animation tags ----------
+  /** tag holding frame `fi` (null = untagged, playback uses every frame) */
+  tagAt(fi: number): FrameTag | null {
+    return findTag(this.doc.tags, fi);
+  }
+  tagById(id: string): FrameTag | null {
+    return this.doc.tags.find((t) => t.id === id) ?? null;
+  }
+  /** the tag the running playback is scoped to (for the timeline badge) */
+  playingTag(): FrameTag | null {
+    return this.playing ? this.playTag : null;
+  }
+  /**
+   * Create a tag for the picked frames (or for the current frame when nothing
+   * is picked) and return it. Names are auto-numbered; the editor renames it.
+   */
+  tagAdd(name?: string, from?: number, to?: number): FrameTag | null {
+    const n = this.doc.frames.length;
+    const sel = this.frameSelList();
+    const a = from ?? (sel.length ? sel[0] : this.curFrame());
+    const b = to ?? (sel.length ? sel[sel.length - 1] : this.curFrame());
+    const r = clampRange(a, b, n);
+    if (!r) return null;
+    // an explicit name is used verbatim; otherwise auto-number a localised one
+    const explicit = (name ?? "").trim();
+    const tag: FrameTag = {
+      id: uid(),
+      name: explicit || nextTagName(this.doc.tags, this.prefs.lang === "en" ? "Tag" : "动画"),
+      from: r.from,
+      to: r.to,
+      color: TAG_COLORS[this.doc.tags.length % TAG_COLORS.length],
+    };
+    this.struct("tag-add", () => {
+      this.doc.tags = normalizeTags([...this.doc.tags, tag], n);
+    });
+    return tag;
+  }
+  tagRename(id: string, name: string): void {
+    const tag = this.tagById(id);
+    const v = name.trim();
+    if (!tag || !v || v === tag.name) return;
+    this.struct("tag-rename", () => { tag.name = v; });
+  }
+  tagSetRange(id: string, from: number, to: number): void {
+    const tag = this.tagById(id);
+    const r = clampRange(from, to, this.doc.frames.length);
+    if (!tag || !r || (tag.from === r.from && tag.to === r.to)) return;
+    this.struct("tag-range", () => { tag.from = r.from; tag.to = r.to; });
+  }
+  tagSetColor(id: string, color: string): void {
+    const tag = this.tagById(id);
+    if (!tag || !color || tag.color === color) return;
+    this.struct("tag-color", () => { tag.color = color; });
+  }
+  tagRemove(id: string): boolean {
+    if (!this.tagById(id)) return false;
+    this.struct("tag-del", () => {
+      this.doc.tags = this.doc.tags.filter((t) => t.id !== id);
+    });
+    return true;
+  }
+  /** pick every frame of a tag in the timeline (batch edits right after) */
+  tagSelectFrames(id: string): void {
+    const tag = this.tagById(id);
+    if (!tag) return;
+    this.frameSelOn = true;
+    this.frameSel.clear();
+    for (let fi = tag.from; fi <= tag.to; fi++) this.frameSel.add(fi);
+    this.frameAnchor = tag.to;
+    this.changed();
+  }
+  /** jump to a tag's first frame and play just that tag */
+  tagPlay(id: string): void {
+    const tag = this.tagById(id);
+    if (!tag) return;
+    this.stopPlayback();
+    this.applyFrame(tag.from);
+    this.startPlayback();
+  }
+  /** frame the timeline should highlight: the tag under the playhead */
+  activeTag(): FrameTag | null {
+    return this.tagAt(this.curFrame());
+  }
   setRailSwap(v: boolean): void { this.setSetting("general.swapRails", v); }
   /** live timeline height (drag handle): clamped, debounced to disk */
   setTlHeight(v: number): void {
@@ -3455,8 +3551,12 @@ export class Session {
   startPlayback(): void {
     if (this.playing) return;
     const n = this.doc.frames.length;
+    // playback started inside a tag stays inside that tag; started outside
+    // every tag it plays the whole timeline
+    this.playTag = this.tagAt(this.curFrame());
+    const w = windowOf(this.playTag, n);
     this.playDir = startPlayDir(this.loopMode);
-    const start = startPlayFrame(this.loopMode, this.curFrame(), n);
+    const start = startPlayFrameIn(this.loopMode, this.curFrame(), w);
     if (start !== this.curFrame()) this.applyFrame(start); // rewind: no history step
     this.playing = true;
     this.changed();
@@ -3464,6 +3564,7 @@ export class Session {
   }
   stopPlayback(): void {
     this.playing = false;
+    this.playTag = null;
     if (this.playTimer !== null) {
       window.clearTimeout(this.playTimer);
       this.playTimer = null;
@@ -3473,7 +3574,8 @@ export class Session {
   private tickPlay(): void {
     if (!this.playing) return;
     const n = this.doc.frames.length;
-    if (n <= 1) {
+    const w = windowOf(this.playTag, n);
+    if (w.to - w.from + 1 <= 1) {
       this.stopPlayback();
       return;
     }
@@ -3481,7 +3583,7 @@ export class Session {
     const dur = Math.max(16, this.doc.frames[fi].durationMs);
     this.playTimer = window.setTimeout(() => {
       if (!this.playing) return;
-      const step = nextPlayFrame(this.loopMode, this.curFrame(), n, this.playDir);
+      const step = nextPlayFrameIn(this.loopMode, this.curFrame(), this.playDir, w);
       if (step.stop) {
         this.stopPlayback();
         return;

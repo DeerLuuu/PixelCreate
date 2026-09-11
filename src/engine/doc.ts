@@ -23,6 +23,25 @@ export interface FrameMeta {
   durationMs: number;
 }
 
+/** An animation tag: a named frame range (Aseprite's "tag"). Playback started
+ *  inside a tag loops over that range only; a frame outside every tag plays the
+ *  whole timeline. `dir`/`repeat` mirror the .aseprite tag chunk so tags survive
+ *  a round trip through that format. */
+export interface FrameTag {
+  id: string;
+  name: string;
+  /** first frame, 0-based inclusive */
+  from: number;
+  /** last frame, 0-based inclusive */
+  to: number;
+  /** 0 forward, 1 reverse, 2 ping-pong, 3 ping-pong reverse (file metadata) */
+  dir?: number;
+  /** repeats (0 = forever; file metadata) */
+  repeat?: number;
+  /** colour of the timeline bar */
+  color?: string;
+}
+
 export class Sel {
   readonly w: number;
   readonly h: number;
@@ -88,6 +107,7 @@ export interface DocSnapshot {
   name: string;
   layers: LayerMeta[];
   frames: FrameMeta[];
+  tags: FrameTag[];
   cels: Map<string, Cel>;
   bg: RGBA | null;
   palette: RGBA[];
@@ -100,6 +120,8 @@ export class Doc {
   name: string;
   layers: LayerMeta[];
   frames: FrameMeta[];
+  /** animation tags (named frame ranges); empty = the whole timeline plays */
+  tags: FrameTag[] = [];
   cels: Map<string, Cel> = new Map();
   bg: RGBA | null = null; // null = transparent
   palette: RGBA[] = [];
@@ -147,6 +169,7 @@ export class Doc {
       w: this.w, h: this.h, name: this.name,
       layers: this.layers.map((l) => ({ ...l })),
       frames: this.frames.map((f) => ({ ...f })),
+      tags: this.tags.map((t) => ({ ...t })),
       cels,
       bg: this.bg ? ([...this.bg] as RGBA) : null,
       palette: this.palette.map((c) => [...c] as RGBA),
@@ -159,6 +182,7 @@ export class Doc {
     this.w = s.w; this.h = s.h; this.name = s.name;
     this.layers = s.layers.map((l) => ({ ...l }));
     this.frames = s.frames.map((f) => ({ ...f }));
+    this.tags = (s.tags ?? []).map((t) => ({ ...t }));
     this.cels = new Map();
     for (const [k, cel] of s.cels) this.cels.set(k, cel.clone());
     this.bg = s.bg ? ([...s.bg] as RGBA) : null;

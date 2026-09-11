@@ -7,10 +7,13 @@ import type { Snapshot } from "../app/session";
 import { Btn, Icon, useLandscape } from "./base";
 import { HoldAdjust } from "./hold";
 import { BLEND_MODES } from "../engine/types";
+import { tagRangeLabel } from "../engine/tags";
 import * as bridge from "../io/bridge";
 import { Dialog, Row } from "./kit";
-export function TimelineBar({ t, snap, onFrameDlg }: { t: ReturnType<typeof makeT>; snap: Snapshot; onFrameDlg: (fi: number | "batch") => void }) {
+export function TimelineBar({ t, snap, onFrameDlg, onTagDlg }: { t: ReturnType<typeof makeT>; snap: Snapshot; onFrameDlg: (fi: number | "batch") => void; onTagDlg: (id: string) => void }) {
   const HEAD = 20, ROW = 24, CELL = 30, LEFT = 96;
+  /** animation tags add one thin row between the frame numbers and the layers */
+  const TAGH = 15;
   const land = useLandscape();
   // landscape: measure matrix height so rows can grow to fill the footer
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -27,6 +30,11 @@ export function TimelineBar({ t, snap, onFrameDlg }: { t: ReturnType<typeof make
   const frames = SESSION.doc.frames;
   const layers = SESSION.doc.layers;
   const doc = SESSION.doc;
+  // tag bar: drawn only when the document has tags, so the usual layout keeps
+  // its old height; rows below it shift by one track
+  const tags = snap.tags;
+  const tagRow = tags.length > 0;
+  const rowOff = tagRow ? 3 : 2;
 
   // drag a frame NUMBER cell to reorder frames (long-press then drag)
   const [dl, setDl] = useState<{ from: number; to: number; dx: number } | null>(null);
@@ -289,13 +297,14 @@ export function TimelineBar({ t, snap, onFrameDlg }: { t: ReturnType<typeof make
   // landscape: enlarge every layer row so the matrix fills the footer height
   let rowPx = ROW;
   if (land && availH > 0 && layers.length > 0) {
-    const required = HEAD + layers.length * (ROW + 1); // +1px gaps between row tracks
+    const required = HEAD + (tagRow ? TAGH + 1 : 0) + layers.length * (ROW + 1); // +1px gaps between row tracks
     const grow = availH > required ? Math.floor((availH - required) / layers.length) : 0;
     rowPx = ROW + Math.min(64, Math.max(0, grow));
   }
   // trailing 1fr track + a full-width filler cell: when the panel is taller than
   // the layer rows, the empty area below them is painted like the cells
-  const gtr = HEAD + "px" + Array.from({ length: layers.length }, () => " " + rowPx + "px").join("") + " 1fr";
+  const gtr = (tagRow ? HEAD + "px " + TAGH + "px" : HEAD + "px")
+    + Array.from({ length: layers.length }, () => " " + rowPx + "px").join("") + " 1fr";
 
   return (
     // prefs.tlH is the WHOLE panel height (drag handle), so the matrix below
@@ -313,9 +322,24 @@ export function TimelineBar({ t, snap, onFrameDlg }: { t: ReturnType<typeof make
         <Btn icon="i-trash" onClick={() => SESSION.frameDelete()} title={t("frameDel")} />
         <Btn icon="i-onion" onClick={() => SESSION.toggleOnion()} active={snap.onionOn} title={t("onion")} guide="btn-onion" />
         <Btn icon="i-framesel" onClick={() => SESSION.setFrameSelMode(!snap.frameSelOn)} active={snap.frameSelOn} title={t("frameSelMode")} guide="btn-framesel" />
+        {/* which animation playback will stay inside (no tag = the whole timeline) */}
+        {snap.activeTag && (
+          <button type="button" className={"tag-chip" + (snap.playTag && snap.playing ? " playing" : "")}
+            style={{ borderColor: snap.activeTag.color || undefined }}
+            title={t("tagPlayHint").replace("{name}", snap.activeTag.name).replace("{range}", tagRangeLabel(snap.activeTag))}
+            onClick={() => onTagDlg(snap.activeTag!.id)} data-guide="btn-tag-chip">
+            <Icon id="i-tag" size={12} />{snap.activeTag.name}
+          </button>
+        )}
         {snap.frameSelOn && (<>
           <span className="fsel-count" title={t("frameSelHint")}>{t("frameSelTitle")} · {snap.frameSel.length}</span>
           <Btn icon="i-sel-all" onClick={() => SESSION.framesSelectAll()} title={t("frameSelAll")} active={snap.frameSel.length >= snap.frameCount} />
+          <Btn icon="i-tag" onClick={() => {
+            const tag = SESSION.tagAdd();
+            if (!tag) { bridge.toast(t("tagNone")); return; }
+            bridge.toast(t("tagAdded") + tag.name);
+            onTagDlg(tag.id);          // straight into the editor to name it
+          }} title={t("tagAdd")} guide="btn-framesel-tag" />
           <Btn icon="i-dupe" onClick={() => {
             const n = SESSION.framesDuplicateSelected();
             bridge.toast(n ? t("frameSelDuped") + n : t("frameSelNone"));
@@ -347,6 +371,24 @@ export function TimelineBar({ t, snap, onFrameDlg }: { t: ReturnType<typeof make
             </div>
           );
         })}
+        {/* animation tags: one bar per tag, spanning its frames */}
+        {tagRow && tags.map((tg) => {
+          const active = !!snap.activeTag && snap.activeTag.id === tg.id;
+          const playing = !!snap.playTag && snap.playTag.id === tg.id && snap.playing;
+          return (
+            <button key={"t" + tg.id}
+              className={"ase-cell ase-tagcell" + (active ? " on" : "") + (playing ? " playing" : "")}
+              style={{
+                gridColumn: (tg.from + 2) + " / " + (tg.to + 3),
+                gridRow: 2,
+                background: tg.color || "#3ad6e8",
+              }}
+              title={t("tagTip").replace("{name}", tg.name).replace("{range}", tagRangeLabel(tg))}
+              onClick={() => onTagDlg(tg.id)}>
+              <span>{tg.name}</span>
+            </button>
+          );
+        })}
         {/* layer rows (long-press + drag vertically to reorder) */}
         {layers.map((L, li) => {
           const isDrag = ldl !== null && ldl.from === li;
@@ -361,7 +403,7 @@ export function TimelineBar({ t, snap, onFrameDlg }: { t: ReturnType<typeof make
           return (
             <div key={"lh" + L.id}
               className={"ase-cell ase-lcell" + (li === snap.layerIdx ? " on" : "") + (isDrag ? " dragging" : "") + (isDrop ? " drop" : "")}
-              style={{ gridColumn: 1, gridRow: li + 2, transform: isDrag && ldl ? "translateY(" + ldl.dy + "px)" : undefined }}
+              style={{ gridColumn: 1, gridRow: li + rowOff, transform: isDrag && ldl ? "translateY(" + ldl.dy + "px)" : undefined }}
               onPointerDown={layDown(li)} onPointerMove={layMove(li)} onPointerUp={layUp(li)} onPointerCancel={resetL}>
               <button className="mini" data-guide="layer-eye"
                 title={(L.visible ? t("layerHide") : t("layerShow")) + " · " + t("layerSoloHint")}
@@ -379,7 +421,7 @@ export function TimelineBar({ t, snap, onFrameDlg }: { t: ReturnType<typeof make
             </div>
           );
         })}
-        <div className="ase-cell ase-fill" style={{ gridColumn: "1 / -1", gridRow: layers.length + 2 }} />
+        <div className="ase-cell ase-fill" style={{ gridColumn: "1 / -1", gridRow: layers.length + rowOff }} />
         {/* cel cells */}
         {layers.map((L, li) =>
           frames.map((f, fi) => {
@@ -388,7 +430,7 @@ export function TimelineBar({ t, snap, onFrameDlg }: { t: ReturnType<typeof make
             return (
               <button key={"c" + L.id + ":" + f.id}
                 className={"ase-cell ase-cel" + (active ? " on" : "") + (snap.frameSel.includes(fi) ? " picked" : "")}
-                style={{ gridColumn: fi + 2, gridRow: li + 2, gridTemplateColumns: "none" }}
+                style={{ gridColumn: fi + 2, gridRow: li + rowOff, gridTemplateColumns: "none" }}
                 onClick={() => {
                   if (Date.now() - panT.current < 260) return;
                   // in pick-frames mode the whole frame column (every layer cell)

@@ -260,6 +260,7 @@ java -jar /root/pk/apksigner.jar verify --print-certs /sdcard/Download/PixelCraf
 PC 桌面化第 2 批（1.0.8.7）：粘贴流程重做（`ui/paste.ts` + `Session.pasteAsNewLayer/pasteAsNewCanvas/pasteIntoFrames`，修复 Ctrl+V 静默失效）、`engine/scrub.ts` 修滚轮/拖动调值跳变、空格按住＝背景色绘制 + `X` 换色、平移改画布外拖动/方向键、Alt 吸管光标、`Ctrl+F1` 快捷键一览、多球同开不拦截、画布球 PC 全展开、色球与子球同尺寸、PC 隐藏球里的复制剪切粘贴、帧图层直接拖动/双击重命名/右键帧设置/Shift 区间选帧/`Del` 全局删除/单画布标题、跨画布拖选区实时预览、浏览器手势拦截、`Ctrl+O/N/E`。
 PC 桌面化（1.0.8.5 / 1.0.8.6 批）：UI 规范与 `src/ui/kit` 控件库（Dialog/Form/primitives/scrub/HoverTip）+ 设计令牌与浅色主题、18 个弹窗与全部表单行迁移；PC 模式识别（`io/pcmode.ts`）与全套桌面输入（滚轮缩放/平移、中键＝聚焦适配、右键＝背景色、Alt+单击取色、窗口拖放导入、剪贴板、快捷键、Tab 专注）；浮动球桌面几何与全展开+锁定；设置/更新日志左右分栏；帧预览面板加宽；**选区跨画布移动**（`selOps.floatDropInto`）。
 Aseprite 兼容：`io/aseread.ts` / `io/asewrite.ts` / `io/zlib.ts`（自写同步 inflate；读 RGBA/灰度/索引色 + 图层/帧/链接 cel/调色板/标签，写 .aseprite 供 Aseprite 打开），打开流程按魔数识别、导出弹窗加 Aseprite 页签。
+动画标签：`engine/tags.ts`（命名帧区间的纯函数，帧结构操作在 `engine/ops.ts` 里统一维护范围）+ `app/playback.ts` 的 `PlayWindow`（从标签内的帧起播＝只循环这一段，起点不在标签里＝整条时间轴）+ 时间轴标签条（`ui/timeline.tsx`，点开 `TagModal` 改名/改范围/换色/删除/播放这一段）+ `.pxc` / `.aseprite` 双向存取。
 
 ---
 

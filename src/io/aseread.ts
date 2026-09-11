@@ -12,6 +12,7 @@
 // instead of DecompressionStream so it also runs in the plain-node test suite.
 import { Cel } from "../engine/cel";
 import { Doc, type LayerMeta } from "../engine/doc";
+import { normalizeTags } from "../engine/tags";
 import type { BlendMode, RGBA } from "../engine/types";
 import { uid } from "../engine/types";
 import { inflateZlib } from "./zlib";
@@ -81,6 +82,8 @@ export interface AseTag {
   /** 0 forward, 1 reverse, 2 ping-pong, 3 ping-pong reverse */
   direction: number;
   repeat: number;
+  /** #rrggbb from the (deprecated) tag colour bytes, when they are not black */
+  color?: string;
 }
 
 export interface AseFile {
@@ -346,9 +349,17 @@ export function parseAse(bytes: Uint8Array): AseFile | null {
           const to = r.u16();
           const direction = r.u8();
           const repeat = r.u16();
-          r.skip(6 + 3 + 1);
+          r.skip(6);
+          // deprecated RGB bytes: Aseprite v1.2.x stored the tag colour here,
+          // v1.3 moved it to a user-data chunk we do not parse — keep them so
+          // our own round trip through the tag bar colour survives
+          const cr = r.u8();
+          const cg = r.u8();
+          const cb = r.u8();
+          r.skip(1); // extra byte
           const name = r.str();
-          tags.push({ name, from, to, direction, repeat });
+          const color = cr || cg || cb ? "#" + [cr, cg, cb].map((v) => v.toString(16).padStart(2, "0")).join("") : undefined;
+          tags.push({ name, from, to, direction, repeat, color });
         }
       }
       // any other chunk (slices, tilesets, user data, color profile…) is
@@ -459,6 +470,21 @@ export function aseToDoc(file: AseFile): Doc | null {
 
   const dur = (d: number): number => Math.max(1, Math.min(60000, d || file.speed || 100));
   doc.frames = (file.frames.length ? file.frames : [{ durationMs: 100 }]).map((f) => ({ id: uid(), durationMs: dur(f.durationMs) }));
+
+  // animation tags become real tags here, so playback inside Aseprite's
+  // "walk" / "idle" ranges works the same way it does over there
+  doc.tags = normalizeTags(
+    file.tags.map((tg, i) => ({
+      id: uid(),
+      name: tg.name || "Tag " + (i + 1),
+      from: tg.from,
+      to: tg.to,
+      dir: tg.direction,
+      repeat: tg.repeat,
+      color: tg.color,
+    })),
+    doc.frames.length,
+  );
 
   doc.cels = new Map();
   for (const c of file.cels) {

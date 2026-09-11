@@ -5,6 +5,7 @@
 // (a single document) are still readable: they load as a one-canvas project.
 import { Doc } from "../engine/doc";
 import { Cel } from "../engine/cel";
+import { normalizeTags } from "../engine/tags";
 import { b64ToBytes, bytesToB64 } from "../engine/b64";
 import type { RGBA } from "../engine/types";
 
@@ -59,6 +60,8 @@ interface DocPayload {
   bg: number[] | null;
   layers: Array<{ id?: string; name: string; visible: boolean; opacity: number; blend: string; locked: boolean; ref?: string | null; refLayer?: string | null }>;
   frames: Array<{ durationMs: number }>;
+  /** animation tags (named frame ranges), e.g. "walk" = frames 3–7 */
+  tags?: Array<{ name: string; from: number; to: number; dir?: number; repeat?: number; color?: string }>;
   palette: number[][];
   /** cel payload as PNG data URLs (the .pxc file format) */
   cels?: [string, string][];
@@ -138,6 +141,9 @@ async function docPayloadHead(doc: Doc): Promise<Omit<DocPayload, "cels" | "cels
       ref: l.ref ?? null, refLayer: l.refLayer ?? null,
     })),
     frames: doc.frames.map((f) => ({ durationMs: f.durationMs })),
+    tags: doc.tags.length
+      ? doc.tags.map((t) => ({ name: t.name, from: t.from, to: t.to, dir: t.dir, repeat: t.repeat, color: t.color }))
+      : undefined,
     palette: doc.palette.map((c) => [...c]),
   };
 }
@@ -146,6 +152,7 @@ async function docPayloadHead(doc: Doc): Promise<Omit<DocPayload, "cels" | "cels
 async function docFromPayload(obj: {
   w?: number; h?: number; name?: string;
   bg?: number[] | null; layers?: Record<string, unknown>[]; frames?: { durationMs?: number }[];
+  tags?: { name?: string; from?: number; to?: number; dir?: number; repeat?: number; color?: string }[];
   palette?: number[][]; cels?: [string, string][]; celsRle?: [string, string][];
 }): Promise<Doc | null> {
   if (!obj || !obj.w || !obj.h) return null;
@@ -166,6 +173,18 @@ async function docFromPayload(obj: {
     durationMs: Math.max(1, Math.min(60000, Number(f?.durationMs ?? 100))),
   }));
   if (!doc.layers.length) doc.layers = [{ id: "x1", name: "Layer 1", visible: true, opacity: 100, blend: "normal", locked: false }];
+  doc.tags = normalizeTags(
+    (obj.tags || []).map((t, i) => ({
+      id: Math.random().toString(36).slice(2),
+      name: String(t?.name ?? "Tag " + (i + 1)).slice(0, 64) || "Tag " + (i + 1),
+      from: Math.round(Number(t?.from ?? 0)),
+      to: Math.round(Number(t?.to ?? 0)),
+      dir: typeof t?.dir === "number" ? t.dir : undefined,
+      repeat: typeof t?.repeat === "number" ? t.repeat : undefined,
+      color: typeof t?.color === "string" ? t.color : undefined,
+    })),
+    doc.frames.length,
+  );
   doc.bg = obj.bg && obj.bg.length === 4 ? (obj.bg as RGBA) : null;
   doc.palette = (obj.palette || []).map((c) => [c[0], c[1], c[2], c[3]] as RGBA);
   doc.cels = new Map();
