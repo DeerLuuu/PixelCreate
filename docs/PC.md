@@ -44,6 +44,7 @@
 | ✅ 跨画布拖选区**实时预览**落点幽灵 + 目标画布虚线框 | `View.dropTargetOf` + `drawOverlay` |
 | ✅ 色板小球与环形子球**同尺寸**；PC 球里隐藏复制/剪切/粘贴（有快捷键） | `orb-layout.ts`、`App.tsx` 的 `selItems` |
 | ✅ PC 模式**多个浮动球同时展开**且不拦截画布操作（Esc 收球） | `App.tsx`（`!pcMode` 才渲染 `.radial-back`） |
+| ✅ **选区自由变换用「双层同心圈」**：内圈 22px＝缩放、角外圈 34px＝旋转、边中点外圈 34px＝斜切；未按住时悬停会把可抓的那圈点亮（`xfHint`），抓手与枢轴都用鼠标友好的窄命中；拖动中 Shift＝等比、Alt＝网格吸附取反、Ctrl＝复制（chip 同名同义） | `src/tools/xform.ts`（`PC_HIT` / `ringHitAt` / `outerKindOf`）、`View.xfHitAt` / `xfMove`、`View.beginXfMoveAt` |
 | ✅ **快捷圆盘 + 装备槽**（Blender 式，按住 `F`）：装备槽、圆盘、圆盘尺寸/半径设置**全部只在电脑模式存在**——移动端没有键盘发动不了它，渲染它只是白占画面 | `App.tsx`（装备槽的 `pcMode &&` 门槛、`hiddenById` 里的 `pcMode && pieEquip === id`）、`src/app/settings.ts`（`display.pieItem/pieRadius` 的 `visible`）、`src/ui/pie-layout.ts` |
 
 ## 二、还没做的（按优先级）
@@ -65,9 +66,12 @@
 
 ### P1 —— 效率与一致性
 
-7. ⬜ **选区变换手柄命中半径固定 20px**（旋转点 26px，`View.handleAt`），而旋转点在 `selFramePts` 里被
-   `Math.max(14, y0 - 30)` 拉回顶部，小选区时会与上边中点手柄抢同一个点。建议半径随 zoom 调整，
-   并给旋转点留屏幕固定的垂直偏移。
+7. ✅ ~~选区变换手柄命中半径固定 20px~~（已随 1.1.0.0 后的自由变换重做解决）：旧的
+   `View.handleAt` / `selFramePts` 已删除，改成 `src/tools/xform.ts` 的
+   **两层同心圈**（`PC_HIT = { inner: 22, outer: 34 }`）+ `ringHitAt()`：
+   角锚点的缩放圈在 22px 内、旋转圈在 34px 内，边中点只有缩放圈 + 斜切圈，
+   两圈**同心不同半径**所以不会互抢；触屏则换成带自动收窄半径的独立抓手（`touchHitRadius()`）。
+   仍可调的是「半径是否该随 zoom 缩放」——现在是屏幕固定像素，缩放很大时手感偏小，留给下一批。
 8. ⬜ **环形菜单展开时输入仍然打到画布**：滚轮会缩放、右键会画到下面的画布。建议弹出层置顶时吞掉画布输入。
 9. ⬜ **悬停读数每跨一个像素就 `changedUI()`**（`Session.setHover`）：PC 上鼠标移动密集，整屏 React 重渲染
    会成为负担。建议节流到 1 帧，或直接用 ref 写 DOM。

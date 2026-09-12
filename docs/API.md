@@ -380,6 +380,121 @@ const selOps = {
 
 > 任何改写 `mask` 的操作都要调用 `doc.sel.bump()`（或走 `set/clear/fillAll`），否则选区染色图不会刷新。
 
+
+---
+
+## 10b. 选区自由变换的几何 `src/tools/xform.ts`
+
+Aseprite 那套「移动 + 缩放 + 旋转 + 斜切」的**纯函数层**（无 DOM、无 Session，`tests/xform.test.ts` 直接跑）。
+视图层的状态机在 `src/render/view.ts`（见 §15.4），这里只放几何与解算。
+
+**坐标口径（唯一约定）**：内容占下标 `0..w-1` / `0..h-1`（`indexBox(w, h)`），
+「下标 `i` 的像素」在屏幕上占 `[i·zoom + ox, (i+1)·zoom + ox)`（**左上角口径**）。
+`screenFrameOf()` / `View.xfScreenFrame()` / `View.xfPivotScreen()` / `screenAnchors()` / 抓手绘制
+全部走这一条，所以「枢轴预设的左上角」＝「框的左上角」＝「角抓手的位置」，不会有半格偏差。
+
+### 10b.1 锚点与命中
+
+```ts
+type AnchorId = "tl" | "tr" | "br" | "bl" | "t" | "b" | "l" | "r";
+const ANCHORS: AnchorId[];                  // 上面这个顺序（角在前，边中点在后）
+isCorner(id): boolean; axisOf(id): "x" | "y" | "xy";   // 边中点只改一个轴
+anchorPoint(box, id): Pt;                  // 锚点在**框上**的位置
+scaleAnchor(box, id): Pt;                  // 缩放的**不动点**＝对角那个锚点（tl↔br、tr↔bl、t↔b、l↔r）
+screenAnchors(frame): Pt[];                // 8 个锚点的屏幕坐标
+
+interface ScreenFrame { corners: [Pt, Pt, Pt, Pt]; angle: number; spanX: number; spanY: number }
+screenFrameOf(m: Mat3, w, h, zoom, ox, oy): ScreenFrame;   // 变换后的框 → 屏幕四角
+
+const PC_HIT = { inner: 22, outer: 34 };   // PC：两层同心圈的命中半径（px）
+const TOUCH_HIT = { inner: 38, outer: 38 }; // 触屏基础半径（还会被 touchHitRadius 自动收窄）
+const TOUCH_OFF_CORNER = 46;                // 触屏角上的缩放抓手离角 46px
+const TOUCH_OFF_EDGE = 46;                  // 触屏边中点的缩放抓手离边 46px
+const TOUCH_OFF_OUTER = 144;                // 触屏旋转 / 斜切抓手的基准偏移
+touchOuterOffset(span) = 144 + 0.6 * max(0, span - 160);
+touchHitRadius(grabs) = clamp(min(38, 相邻抓手最小距离 / 2), 28, 38);
+touchLayout(spanX, spanY): "full" | "mid" | "corner";   // ≥160 全 16 个 / ≥80 八个 / 否则只四个角
+touchGrabs(frame): Array<{ kind, anchor?, x, y }>;      // 触屏独立抓手（PC 返回空）
+
+ringHitAt(frame, pt, radii): { kind: XfKind; anchor?: AnchorId; ring } | null;  // PC 两层圈
+grabAt(grabs, pt, radius): Grab | null;                                        // 触屏抓手
+```
+
+**触屏为什么这么摆**：16 个抓手在屏幕上最坏情况下相邻中心距约 98px，而两个 38px 半径的圆要求 ≥76px，
+所以不会出现「两个抓手抢同一下按」。选区小到一定程度就自动降档（8 个 / 4 个），半径也会跟着收窄
+（下限 28px），保证小选区上也点得中。
+
+### 10b.2 解算
+
+```ts
+type XfKind = "move" | "scale" | "rotate" | "skew" | "pivot";
+const XF_LABEL: Record<XfKind, string>;    // 「移动 / 缩放 / 旋转 / 斜切 / 枢轴」（历史 label 用）
+
+interface XfParams {  // 一次变换的全部参数（内容局部下标空间）
+  pivot: Pt; angle: number; sx: number; sy: number;
+  skewX?: number; skewY?: number; shift?: Pt;
+  pivot0?: Pt; pivot0Shift?: Pt; skewPivot?: Pt; skewAnchor?: AnchorId;
+}
+affineFrom(p: XfParams): Mat3;             // S（绕枢轴缩放）→ K（斜切）→ R（旋转），再叠加 shift
+linearOf(p): [number, number, number, number];
+pivotComp(p): Pt;                          // 枢轴挪动时的平移补偿（画面逐字节不动）
+
+solveScale(from, to, anchor, axis, keepAspect?, gridSnap?): { sx, sy };
+solveRotate(from, to, snapClean?): { angle };
+solveSkew(id, from, to, fixed): { tan };   // 返回的 tan 直接写进 skewX / skewY
+skewBaseline(id, box, pivot): number;      // 斜切的基准线（枢轴那条线）
+skewPivotOf(id, box, pivot): Pt;
+
+const SCALE_MIN = 0.02, SCALE_MAX = 40;    // 极限缩放（按绝对值钳，符号保留＝允许翻转）
+const TAN_SKEW_LIMIT = Math.tan((85 * Math.PI) / 180);
+```
+
+`affineFrom()` 的线性部分 `L = R · K · S`，平移 `t = c - L·c + shift + pivot0Shift`（枢轴不动）。
+斜切的 `dx += dy * tan(skew)` 按 Aseprite：**枢轴所在那条线是不动的基准线**，所以拖边中点时
+被拖的边与对面那条边各反着走一半。
+
+### 10b.3 枢轴、干净角、像素精确通道
+
+```ts
+type PivotPreset = "cc" | "tl" | "tc" | "tr" | "cl" | "cr" | "bl" | "bc" | "br";
+const PIVOT_PRESETS: PivotPreset[];
+pivotPresetPoint(box, k): Pt;  pivotPresetAt(i): PivotPreset;  pivotPresetOf(box, pt): PivotPreset;
+adjustPivot(oldBox, newBox, pivot): Pt;    // 缩放后按归一化比例跟位（旋转不调用）
+pivotInBox(box, p): boolean;
+
+const CLEAN_ANGLES_DEG: number[];          // 0 / 26.565 / 45 / 63.435 / 90 / 116.565 / 135 / 161.565 / 180 + 负半轴
+snapCleanAngle(rad): number;               // 吸附到上表（旋转吸附用；不是 15° 的倍数）
+normAngle(rad): number;                    // 归一到 (-π, π]
+isRightAngle(rad): boolean; rightAngleSteps(rad): number;   // 90° 的倍数 → 可走精确通道
+
+isIntegerShift(dx, dy): boolean;
+isExactTransform(p: XfParams): boolean;    // 整数平移 / 90° 倍数 / ±1 翻转 → 可以逐像素搬运
+exactMove(content: { w; h; data: Uint8ClampedArray }, steps, flipX?, flipY?): ExactMove;
+rotatedSize(w, h, steps): { w, h };
+transformedBox(m, w, h): XfBox;            // 变换后的包围盒（**目标空间**，与画布下标差一个 st.ox/oy）
+outerKindOf(id): XfKind;                   // 锚点在外圈上的语义：角＝rotate、边中点＝skew（内圈恒为 scale）
+distToSegment(p, a, b): number;
+distToFrame(frame: ScreenFrame, pt): number;   // 点到框边的最短距离（±2px 环带用来判「只移动选区边框」）
+insideFrame(frame: ScreenFrame, pt): boolean;
+```
+
+**为什么角度吸附不用 15°**：像素画只有「直角」和「2:1 / 1:2 斜率」这些角度转完还在格点上
+（`atan(1/2) = 26.565°`、`atan(2) = 63.435°`），15° 的倍数转完必然要重采样、像素就糊了。
+
+### 10b.4 列驱动状态机（view 侧的实现形状）
+
+`View` 里的变换会话**不是**一堆并列的 `if`，而是一张「抓手 → 解算」的表：`xfStart()` 记下
+`{ kind, anchor?, start }`，`xfMove()` 按 `kind` 分派（`pivot` / `move` / `scale` / `rotate` / `skew`），
+`xfEndDrag()` 收尾（松手只结束**这一次拖拽**，会话继续开着）。这样做的原因：
+
+- **一次会话一条 undo**：`endXf()` 只在「完成 / 还原 / 切工具 / 切帧 / 换文档」时落历史；
+- **换抓手不重开会话**：`xfStart()` 遇到活着的会话只换 `xfDrag`，枢轴 / 缩放 / 角度都保留；
+- **解算每次从会话起点重算**（不做增量累加），所以来回拖不会漂。
+
+缩放分支的口径值得单独记一笔：`from` / `to` 都用「指针在**内容局部下标**里的位置」，且
+`to` 是**指针当前位置**而不是「抓手起点 + 位移」——否则斜着拖时某一轴会一直差半格
+（被解成 0 再钳到 `0.02`，表现就是「缩放没反应」）。
+
 ---
 
 ## 11. 应用层 Session
@@ -713,10 +828,26 @@ class View {
   toLogical(x, y) / toSurface(x, y)             // 真实画布坐标 ↔ 逻辑坐标（DOM 覆盖层用）
   surfaceDelta(dx, dy): { x; y }                // 屏幕位移 → 空间位移（旋转后拖拽方向仍正确）
 
+  // —— 选区自由变换（会话＝一次事务，见 §10b；下面这些都是给 UI / 测试用的公开面）——
+  transforming: boolean;                        // 会话是否开着（UI 据此显示「完成 / 还原 / 枢轴」）
+  xfScreenFrame(): ScreenFrame | null;          // 当前变换框在屏幕上的四角（无选区 / 无会话 = null）
+  xfGrabs(): Grab[];                            // 触屏独立抓手（PC 返回空）
+  xfPivotScreen(): PxPoint | null;              // 枢轴的屏幕位置
+  xfHitAt(pt): { kind: XfKind; anchor?: AnchorId } | null;   // 命中什么（PC 两层圈 / 触屏抓手 / 枢轴）
+  beginXfMoveAt(sx, sy): boolean;               // 显式以「移动内容」开会话（小选区上没有空白点）
+  setXfPivotAt(lx, ly): boolean;                // 把枢轴钉到内容下标（顺手补平移补偿，画面不动）
+  setPivotPreset(k: PivotPreset): boolean;      // 9 档预设（拖拽枢轴后会被判成最近的一档）
+  pivotPreset(): PivotPreset | null;            // 当前枢轴落在哪一档
+  cyclePivot(step = 1): void;                   // 9 档循环（选区球的「枢轴」chip）
+  commitXf(): void;                             // 「完成」：落下一条历史并结束会话
+  revertXf(): void;                             // 「还原」：会话整个丢掉，像素逐字节回滚（不进历史）
+  xfHint: string | null;                        // PC 悬停提示（"scale:br" 这类）
+  hitRadii(): HitRadii;                         // 当前该用哪套命中半径（PC / 触屏 + 自动收窄）
+
   markDirty(rect?: Rect | null): void;   // 标记脏区（无参 = 全帧 + 全量重绘）
   invalidate(rect?: Rect | null): void;  // 标记 + rAF 合并重绘（Session.repaint 用）
   refresh(force: boolean): void;         // 立即绘制（force = 重建合成）
-  flushStroke(): boolean;                // 手势未正常结束时的兜底提交
+  flushStroke(): boolean;                // 手势未正常结束时的兜底提交（**变换会话也会在这里收尾**）
 }
 ```
 
@@ -1441,7 +1572,7 @@ Stroke 侧：`BrushState.pattern` 一填，落笔统一走 `paintOne()`——图
 ### 测试
 
 ```bash
-npm test        # 2060 条断言：引擎 / 选区 / 历史 / 播放 / 设置 / 引导 / 渲染 / 导出 / Aseprite 读写 / 返回手势 / UI 控件与令牌（末尾打印 assertions: N）
+npm test        # 2924 条断言：引擎 / 选区 / 历史 / 播放 / 设置 / 引导 / 渲染 / 导出 / Aseprite 读写 / 返回手势 / UI 控件与令牌（末尾打印 assertions: N）
 ```
 
 新增纯逻辑（算法、布局、解析、决策）时，优先抽成无 DOM 依赖的函数再补一条 `tests/*.test.ts` 断言——这是本项目保持可回归的主要手段。
