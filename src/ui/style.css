@@ -203,6 +203,16 @@ input[type=range]{width:64px;height:22px;accent-color:var(--accent)}
 .panel-body.col{display:flex;flex-direction:column;gap:6px}
 .lock{font-size:12px}
 .row-actions{display:flex;gap:6px;margin:8px 0;flex-wrap:wrap}
+.rgb-row{gap:6px}
+.rgb-cell{display:flex;align-items:center;gap:4px;flex:1 1 0;min-width:0}
+.rgb-tag{font-size:10px;font-weight:800;width:11px;text-align:center;color:var(--dim-2)}
+.rgb-r{color:var(--danger)}
+.rgb-g{color:var(--ok, var(--accent))}
+.rgb-b{color:var(--link)}
+.rgbinput{flex:1 1 auto;min-width:0;width:100%;background:var(--bg3);border:1px solid var(--line);border-radius:8px;
+  color:var(--fg);font-family:inherit;font-size:12px;padding:5px 6px;text-align:center;-moz-appearance:textfield}
+.rgbinput:focus{outline:none;border-color:var(--accent)}
+.rgbinput::-webkit-outer-spin-button,.rgbinput::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
 .dlg-body input[type=number],.dlg-body input[type=text],.hexinput{
   background:var(--bg3);border:1px solid var(--line);border-radius:8px;padding:7px 9px;color:var(--text);
   width:100%;outline:none;min-height:34px}
