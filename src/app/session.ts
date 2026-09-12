@@ -1644,6 +1644,34 @@ export class Session {
     this.docColorCache = { rev: this.rev, colors: out };
     return out;
   }
+  /** 一键从画布生成调色板：统计当前画布实际用到的颜色，按**使用次数**取前 `max` 个
+      写进调色板（一条可撤销的历史步）。返回写进去的颜色数（0 = 画布上没有任何颜色）。 */
+  paletteFromCanvas(max = 256): number {
+    const cap = Math.max(2, Math.min(256, Math.round(max)));
+    const counts = new Map<number, { c: RGBA; n: number }>();
+    for (const cel of this.doc.cels.values()) {
+      const d = cel.data;
+      for (let i = 0; i < d.length; i += 4) {
+        if (d[i + 3] === 0) continue;
+        const key = (d[i] << 24) | (d[i + 1] << 16) | (d[i + 2] << 8) | d[i + 3];
+        const hit = counts.get(key);
+        if (hit) hit.n++;
+        else counts.set(key, { c: [d[i], d[i + 1], d[i + 2], d[i + 3]], n: 1 });
+      }
+    }
+    const all = Array.from(counts.values()).sort((a, b) => b.n - a.n);
+    if (!all.length) {
+      toastFn(this.prefs.lang === "en" ? "This canvas has no colours yet" : "这张画布上还没有颜色");
+      return 0;
+    }
+    const picked = all.slice(0, cap).map((v) => v.c);
+    this.setPalette(picked);
+    const extra = all.length > picked.length ? all.length : 0;
+    toastFn(this.prefs.lang === "en"
+      ? "Palette built from the canvas: " + picked.length + " colours" + (extra ? " (of " + extra + ", most used first)" : "")
+      : "已从画布生成 " + picked.length + " 色调色板" + (extra ? "（共 " + extra + " 色，按使用次数取前 " + picked.length + " 个）" : ""));
+    return picked.length;
+  }
   setRecentColorsMax(n: number): void { this.setSetting("display.recentColors", n); }
   /** keep the recent-colour list within the configured limit */
   trimRecentColors(): void {

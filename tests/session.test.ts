@@ -1818,4 +1818,31 @@ export async function testSession(): Promise<void> {
     const one = new Session();
     eq("tool.prev.none", one.switchToPreviousTool(), null);
   }
+
+  // --- 一键从画布生成调色板：按使用次数排序，可限色数 ---
+  {
+    const s = new Session();
+    const cel = s.doc.ensureCel(0, 0);
+    const put = (i: number, r: number, g: number, b: number): void => {
+      const p = cel.idx(i % 8, Math.floor(i / 8));
+      cel.data[p] = r; cel.data[p + 1] = g; cel.data[p + 2] = b; cel.data[p + 3] = 255;
+    };
+    let k = 0;
+    for (let n = 0; n < 5; n++) put(k++, 255, 0, 0);      // 红 x5
+    for (let n = 0; n < 3; n++) put(k++, 0, 255, 0);      // 绿 x3
+    put(k++, 0, 0, 255);                                  // 蓝 x1
+    s.doc.palette = [];
+    eq("pal.from-canvas.count", s.paletteFromCanvas(), 3);
+    eq("pal.from-canvas.order", s.doc.palette.map((c) => c[0] + "," + c[1] + "," + c[2]),
+      ["255,0,0", "0,255,0", "0,0,255"]);
+    // 限 2 色：只留用得最多的两个
+    s.doc.palette = [];
+    eq("pal.from-canvas.cap-count", s.paletteFromCanvas(2), 2);
+    eq("pal.from-canvas.cap-colours", s.doc.palette.map((c) => c[0] + "," + c[1]), ["255,0", "0,255"]);
+    // 全透明画布：不动调色板、返回 0
+    const empty = new Session();
+    empty.doc.palette = [[9, 9, 9, 255]];
+    eq("pal.from-canvas.empty", empty.paletteFromCanvas(), 0);
+    eq("pal.from-canvas.empty-keeps", empty.doc.palette.length, 1);
+  }
 }

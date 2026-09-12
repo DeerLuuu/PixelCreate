@@ -116,6 +116,8 @@ export function PalettePanel({ t, onClose }: { t: ReturnType<typeof makeT>; onCl
             <Btn icon="i-dedupe" label={t("indexedRemap")} title={t("indexedRemapHint")}
               onClick={() => SESSION.remapToPalette("canvas")} guide="pal-remap" />
           )}
+          <Btn icon="i-pal-from-canvas" label={t("palFromCanvas")} title={t("palFromCanvasHint")}
+            onClick={() => SESSION.paletteFromCanvas()} guide="pal-from-canvas" />
         </RowActions>
         <div data-guide="pal-ops">
           <TabBar<"palette" | "doc" | "recent">
