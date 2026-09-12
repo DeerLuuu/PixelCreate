@@ -9,7 +9,7 @@ import { useKitPcMode } from "./kit";
 import { Dialog } from "./kit";
 
 /** keep in sync with android/AndroidManifest.xml versionName on every release */
-export const APP_VERSION = "1.1.1.2";
+export const APP_VERSION = "1.1.1.3";
 /** build stamp shown next to the version (support/debug: identifies the exact
  *  package a user is running when the version number itself does not change) */
 export const BUILD_TAG = "7bb01ab";
@@ -21,6 +21,15 @@ export interface ClgVersion { v: string; date: string; items: ClgItem[] }
 const it = (kind: ClgKind, zh: string, en: string): ClgItem => ({ kind, zh, en });
 
 export const CHANGELOG: ClgVersion[] = [
+  {
+    v: "1.1.1.3",
+    date: "2026-09-12",
+    items: [
+      it("fix", "**变形现在覆盖整个选区**（上一版控制点比选区小一圈、结果会漏掉最右/最下一列）：统一成「像素角」口径，四个控制点正好落在选区框的四角，采样按像素区间取整；顺手修掉两处会让恒等变换丢像素的浮点边界问题（重心权重在整数边界上会算成 3.9999999996、网格三角形共用对角线时压线的像素被两边都判成外面）。现在恒等变换逐字节无损，整条边一起拖时那一整边都会跟着走。", "**Warps now cover the whole selection** (last build's control points sat one pixel inside, so the right/bottom row of the artwork was dropped): everything uses pixel-corner coordinates now, the four handles land exactly on the selection frame, and sampling rounds per pixel interval. Two floating-point edge cases that also dropped pixels on an identity warp are fixed too (a barycentric weight landing on an integer boundary as 3.9999999996, and mesh pixels sitting on the shared triangle diagonal being rejected by both sides). Identity is byte-for-byte lossless and dragging a whole edge moves the whole edge."),
+      it("imp", "**手机上的选区球补齐了全部功能**：以前「更多」那一页塞了 10 个按钮，排布为了不重叠会把半径撑到屏幕外，所以自由变换、裁切、删除、翻转、扩展收缩、描边这些**根本点不到**。现在触屏分三页（常用 → 变形 → 工具），每页最多 7 项，收起球会回到第一页；电脑端照旧一页铺开。另外调色板的 **R/G/B 数值改成长按拖动**（和底栏的不透明度、笔刷大小同一种操作：按住左右拖，点按按位置设值），仍然和色轮、HEX、前景色三边同步。", "**The selection ball is complete on a phone now**: the old More page packed 10 buttons and, to avoid overlap, the ring grew past the screen edge — so free transform, crop, delete, flip, grow/shrink and outline were simply unreachable. Touch now has three pages (Common → Transform → Tools) with at most 7 items each, and closing the ball returns to the first page; desktop still spreads everything out. The palette's **R/G/B values are now hold-and-drag buttons** like the opacity and brush-size controls in the bottom bar (hold and slide to change, tap to set by position), still in sync with the colour wheel, the HEX field and the foreground colour."),
+    ],
+  },
+
   {
     v: "1.1.1.2",
     date: "2026-09-12",
