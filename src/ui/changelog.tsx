@@ -9,7 +9,7 @@ import { useKitPcMode } from "./kit";
 import { Dialog } from "./kit";
 
 /** keep in sync with android/AndroidManifest.xml versionName on every release */
-export const APP_VERSION = "1.1.1.3";
+export const APP_VERSION = "1.1.1.4";
 /** build stamp shown next to the version (support/debug: identifies the exact
  *  package a user is running when the version number itself does not change) */
 export const BUILD_TAG = "7bb01ab";
@@ -21,6 +21,15 @@ export interface ClgVersion { v: string; date: string; items: ClgItem[] }
 const it = (kind: ClgKind, zh: string, en: string): ClgItem => ({ kind, zh, en });
 
 export const CHANGELOG: ClgVersion[] = [
+  {
+    v: "1.1.1.4",
+    date: "2026-09-12",
+    items: [
+      it("fix", "**变形的控制点现在正好画在像素上**（之前是画在像素之间的边界线上，看着像「卡在半个像素处」）：口径统一成像素下标，四个角点落在选区四角的那个像素上；顺带把拖动里的取整换成连续反解，半格相位不再被吃掉。恒等变换依旧逐字节无损、整块选区一个像素都不丢。", "**Warp handles now sit exactly on the pixels** (they used to be drawn on the boundaries between pixels, which looked like snapping to half pixels): coordinates are pixel indices now, so the four handles land on the pixels at the selection's corners, and dragging uses a continuous inverse mapping so half-pixel phases are no longer swallowed. Identity warps stay byte-for-byte lossless and never drop a column or row."),
+      it("add", "**变形控制点支持半像素吸附**：控制点可以落在整数像素上，也可以落在两个像素之间的半格（`12.5` 这种），拖动时会显示一位小数的坐标。选区球「变形」页多了一个开关（默认**开半像素**，点一下切回整像素），设置里也有对应一项；半像素位移不会丢列、不留洞、像素数守恒（最近邻采样的必然取舍：位移正好半格时只能归到其中一侧，所以此时结果与「整格」一致，真正生效的是单点/非整块形变的跟手程度与落点精度）。", "**Warp handles can snap to half pixels**: a control point can land on a whole pixel or halfway between two pixels (like 12.5), with a one-decimal coordinate shown while dragging. The selection ball's Transform page gained a switch (half-pixel is **on** by default, tap to go back to whole pixels) and there is a matching setting. Half-pixel moves never drop a column, leave holes, or change the pixel count (an unavoidable consequence of nearest-neighbour sampling: an exact half-pixel shift has to fall to one side, so that case matches the whole-pixel result — what really gains is single-point/non-block warps and the feel of dragging)."),
+    ],
+  },
+
   {
     v: "1.1.1.3",
     date: "2026-09-12",
