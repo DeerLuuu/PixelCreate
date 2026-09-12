@@ -9,7 +9,7 @@ import { useKitPcMode } from "./kit";
 import { Dialog } from "./kit";
 
 /** keep in sync with android/AndroidManifest.xml versionName on every release */
-export const APP_VERSION = "1.1.1.4";
+export const APP_VERSION = "1.1.1.5";
 /** build stamp shown next to the version (support/debug: identifies the exact
  *  package a user is running when the version number itself does not change) */
 export const BUILD_TAG = "7bb01ab";
@@ -21,6 +21,15 @@ export interface ClgVersion { v: string; date: string; items: ClgItem[] }
 const it = (kind: ClgKind, zh: string, en: string): ClgItem => ({ kind, zh, en });
 
 export const CHANGELOG: ClgVersion[] = [
+  {
+    v: "1.1.1.5",
+    date: "2026-09-12",
+    items: [
+      it("add", "**选区的自由变换按 Aseprite 那套重做了**：八个锚点（四个角 + 四条边的中点）＋一个枢轴点。电脑上是**双层同心命中圈**——贴着锚点拖＝缩放，角上再往外一点＝**旋转**，边中点再往外一点＝**斜切**（整条边沿边方向平移，±85° 钳制）；手机上没有 hover 也不能按修饰键，所以换成**看得见的独立抓手**（方块＝缩放、圆形箭头＝旋转、双向斜线＝斜切，命中半径 38px 并按间距自动收窄，任意尺寸下互不重叠），另有四个可点的开关代替 Shift/Alt/Ctrl：**等比 / 角度吸附 / 网格吸附 / 复制**。枢轴可以拖、可以选 3×3 预设，**缩放后自动跟位、旋转后不动**；旋转吸附到**像素画干净角**（0 / 26.565 / 45 / 63.435 / 90…，不是 15° 的倍数）；**只挪位置和 90° 转身走像素精确通道**（完全不重采样）；一次变换会话只记**一条**可撤销历史。上一版的四角自由变形与 3×3 网格变形作为额外模式保留。", "**The selection's free transform has been rebuilt the Aseprite way**: eight anchors (four corners plus the four edge midpoints) and a pivot. On desktop it uses **two concentric hit rings** — grab an anchor to scale, go a little further out at a corner to **rotate**, a little further out at an edge midpoint to **skew** (the whole edge slides along itself, clamped to ±85°). A phone has no hover and no modifier keys, so it gets **visible separate handles** instead (square = scale, round arrow = rotate, double diagonal = skew, 38px hit radius that narrows with spacing so they never overlap), plus four tap-able switches standing in for Shift/Alt/Ctrl: **aspect, angle snap, grid snap, copy**. The pivot can be dragged and set to any of nine presets, **follows a scale** and **stays put on rotation**; rotation snaps to the **pixel-art clean angles** (0 / 26.565 / 45 / 63.435 / 90…, not multiples of 15°); **pure moves and 90° turns go through a pixel-exact path** (no resampling at all), and one transform session records exactly **one** undo step. Last build's four-corner and 3x3 mesh warps stay available as extra modes."),
+      it("fix", "这一轮还顺手修掉五处实现缺陷：同一会话里连续「缩放 → 旋转 → 斜切」会把枢轴和状态重建丢掉；切工具、换帧没有把进行中的变换落定（浮动内容不落历史）；枢轴会抢走角上的抓手导致按不动；缩放的解算把内容局部坐标和画布坐标混用（镜像永远拖不出负值、抓手跟手差一截）；框、抓手、枢轴的屏幕口径各补了半格不统一。另外补上了 `tests/tsconfig.json` 里漏掉的 11 个测试文件——这些测试此前根本没被编译执行，断言总数因此从 2612 涨到 2924。", "Five implementation defects were fixed along the way: chaining scale → rotate → skew in one session used to rebuild the session and lose the pivot; switching tools or frames did not settle an in-progress transform (the floating pixels never reached the history); the pivot stole hits from the corner handles so they could not be grabbed; the scale solver mixed content-local and canvas coordinates (mirroring could never go negative and handles lagged the finger); and the frame, handles and pivot each added their own half-pixel offset. Eleven test files missing from `tests/tsconfig.json` were restored too — they had never been compiled or run, which is why the assertion count went from 2612 to 2924."),
+    ],
+  },
+
   {
     v: "1.1.1.4",
     date: "2026-09-12",
