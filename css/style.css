@@ -203,6 +203,16 @@ input[type=range]{width:64px;height:22px;accent-color:var(--accent)}
 .panel-body.col{display:flex;flex-direction:column;gap:6px}
 .lock{font-size:12px}
 .row-actions{display:flex;gap:6px;margin:8px 0;flex-wrap:wrap}
+.rgb-row{gap:6px}
+.rgb-cell{display:flex;align-items:center;gap:4px;flex:1 1 0;min-width:0}
+.rgb-tag{font-size:10px;font-weight:800;width:11px;text-align:center;color:var(--dim-2)}
+.rgb-r{color:var(--danger)}
+.rgb-g{color:var(--ok, var(--accent))}
+.rgb-b{color:var(--link)}
+.rgbinput{flex:1 1 auto;min-width:0;width:100%;background:var(--bg3);border:1px solid var(--line);border-radius:8px;
+  color:var(--fg);font-family:inherit;font-size:12px;padding:5px 6px;text-align:center;-moz-appearance:textfield}
+.rgbinput:focus{outline:none;border-color:var(--accent)}
+.rgbinput::-webkit-outer-spin-button,.rgbinput::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
 .dlg-body input[type=number],.dlg-body input[type=text],.hexinput{
   background:var(--bg3);border:1px solid var(--line);border-radius:8px;padding:7px 9px;color:var(--text);
   width:100%;outline:none;min-height:34px}
@@ -1228,10 +1238,6 @@ html[data-pc] .cu-dlg{width:min(92vw,800px)}
 .pat-cell.on{border-color:var(--accent);color:var(--text);background:var(--accent-soft)}
 .pat-name{font-size:10px;max-width:64px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .pat-none{font-size:18px;line-height:1;color:var(--dim-2)}
-.act-search-pill{position:fixed;z-index:var(--z-pop);transform:translate(-50%,-50%);display:flex;align-items:center;
-  gap:5px;padding:5px 11px;border-radius:999px;background:var(--surface-item);border:1px solid var(--ctl-line-soft);
-  color:var(--text-3);font-size:11px;font-weight:600;white-space:nowrap;box-shadow:var(--sh-1)}
-.act-search-pill:active{background:var(--surface-item-active);border-color:var(--accent);color:var(--text)}
 .act-hit{display:flex;align-items:center;gap:8px;text-align:left;padding:8px 10px;border-radius:var(--r-3);
   background:var(--bg2);color:var(--text);border:1px solid transparent;width:100%}
 .act-hit:hover{background:var(--bg3)}
