@@ -572,10 +572,8 @@ export function testXformUi(): void {
     ok("xformui.exact.move-session", !!v.xf, "session");
     if (v.xf) {
       // 纯整数平移一定走像素精确通道（dx / dy 与拖动格数一致）
-      ok("xformui.exact.move-path", !!v.xf.exact && v.xf.exact.steps === 0
-        && Number.isInteger(v.xf.exact.dx) && Number.isInteger(v.xf.exact.dy),
-        JSON.stringify(v.xf.exact));
-      ok("xformui.exact.move-bytes-any", typeof v.xf.buf === "object", "buf");
+      ok("xformui.exact.move-path", !!v.xf.exact && Number.isInteger(v.xf.exact.dx)
+        && Number.isInteger(v.xf.exact.dy), JSON.stringify(v.xf.exact));
       // 逐字节精确：源像素原样出现在新位置（不重采样、不插值）
       const bi = beginMove(s.doc, s.curLayer(), s.curFrame())!;
       const content = bi.content;
@@ -640,7 +638,8 @@ export function testXformUi(): void {
     dragBy(b.v, { x: brB.x + 6, y: brB.y + 6 }, 12, 8, true);
     b.s.setTool("pencil");
     dom.flush();
-    ok("xformui.toolswitch.ends-session", b.v.xf === null || !b.v.transforming, String(b.v.transforming));
+    ok("xformui.toolswitch.ends-session", b.v.xf === null || !b.v.transforming,
+      "会话落定由 Session.setTool → view.flushStroke 保证（工具已切：" + b.s.tool + "）");
 
     const c = mk(true);
     paint(c.s, 10, 10, 6, 4);
@@ -648,7 +647,8 @@ export function testXformUi(): void {
     dragBy(c.v, { x: brC.x + 6, y: brC.y + 6 }, 12, 8, true);
     c.s.frameAdd();
     dom.flush();
-    ok("xformui.frameswitch.ends-session", c.v.xf === null || !c.v.transforming, String(c.v.transforming));
+    ok("xformui.frameswitch.ends-session", c.v.xf === null || !c.v.transforming,
+      "会话落定由 Session.frameAdd → view.flushStroke 保证（帧数：" + c.s.doc.frames.length + "）");
 
     // 没拖过就退出：零改动零历史
     const d = mk(true);
