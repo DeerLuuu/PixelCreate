@@ -9,7 +9,7 @@ import { useKitPcMode } from "./kit";
 import { Dialog } from "./kit";
 
 /** keep in sync with android/AndroidManifest.xml versionName on every release */
-export const APP_VERSION = "1.1.1.1";
+export const APP_VERSION = "1.1.1.2";
 /** build stamp shown next to the version (support/debug: identifies the exact
  *  package a user is running when the version number itself does not change) */
 export const BUILD_TAG = "7bb01ab";
@@ -21,6 +21,15 @@ export interface ClgVersion { v: string; date: string; items: ClgItem[] }
 const it = (kind: ClgKind, zh: string, en: string): ClgItem => ({ kind, zh, en });
 
 export const CHANGELOG: ClgVersion[] = [
+  {
+    v: "1.1.1.2",
+    date: "2026-09-12",
+    items: [
+      it("fix", "**修好上一版「自由变换」的一堆毛病**（你反馈的「能拖但结果不对」）：① 进入变形后，只要手指在画布上一动（没抓住控制点）画面就会突然放大几十倍、控制点与画面脱钩——现在变形模式下画布上的普通拖动被完全拦住；② 一松手就自动提交并退出变形模式（控制点消失、完成/还原失效、网格只能拖一个点）——现在松手只是放下这一下，可以接着拖第二个点。", "**The free transform from the last build is fixed** (the “I can drag but the result is wrong” you hit): (1) any canvas drag that did not grab a control point used to blow the preview up dozens of times and detach the handles from the artwork — plain drags are now swallowed while a warp is active; (2) releasing used to auto-commit and leave the mode (handles vanished, Done/Revert stopped working, the mesh allowed only one point per gesture) — releasing now just ends that one drag so you can grab the next point."),
+      it("fix", "同一处还修了数据安全：进入变形不再立刻把图层挖空（推迟到真正拖动），**没拖过就退出＝像素一个字节都不变、也不产生历史**；把四角拖成一条线或整体拖出画布时自动还原而不是落一条“清空内容”的历史；1 像素宽/高的选区（含斜线、1px 直线）直接拒绝进入并提示，不再把内容清掉；切工具/切图层/撤销/自动保存/保存工程前都会先把变形落定，不会存出“图层被清空”的草稿。另外拖动不再每次整帧重算（不卡）、长按取色不再抢走拖动、选区高亮跟着变形走、历史里显示为「自由变形」。", "Data safety got fixed in the same pass: entering a warp no longer cuts the layer open (that now happens on the first real drag), **leaving without dragging changes zero bytes and records no history**, flattening the quad or dragging it off-canvas restores the pixels instead of recording an “emptied” step, selections 1px wide or tall (including diagonals and 1px lines) are refused with a message instead of losing their content, and switching tools/layers, undo, autosave and saving all settle the warp first so a draft can never store a hollowed layer. Dragging no longer recomposites the whole frame each move, the long-press colour picker no longer steals the drag, the selection highlight follows the warp, and history shows “Free transform”."),
+    ],
+  },
+
   {
     v: "1.1.1.1",
     date: "2026-09-12",
