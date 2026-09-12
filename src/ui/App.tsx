@@ -4,7 +4,7 @@ import type { Snapshot } from "../app/session";
 import { makeT } from "./i18n";
 import type { Lang } from "./i18n";
 import { CORE_TOOLS, SHAPE_TOOLS, SELECT_TOOLS, isShapeTool, isSelectTool, isSymTool, type ToolId } from "../tools/registry";
-import { View } from "../render/view";
+import { View, PIVOT_ORDER } from "../render/view";
 import { rgbaToHex, hexToRgba, chipCss } from "../engine/color";
 import { paintAt } from "../engine/paint";
 import * as selOps from "../tools/select";
@@ -1484,10 +1484,18 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
   const li = snap.layerIdx, fi = snap.frameIdx;
   const d = SESSION.doc;
   const repaintChanged = () => { SESSION.repaint(); SESSION.changedUI(); };
+  /** 枢轴 9 档的中文名（与 `PIVOT_ORDER` 行主序一一对应；英文界面下用方位缩写） */
+  const pivotName = (i: number): string => {
+    const zh = ["左上", "上中", "右上", "左中", "中心", "右中", "左下", "下中", "右下"];
+    const en = ["top-left", "top", "top-right", "left", "centre", "right", "bottom-left", "bottom", "bottom-right"];
+    return (snap.lang === "zh" ? zh : en)[((i % 9) + 9) % 9];
+  };
   // ⑥⑯ 手机端：选区球分三页（常用 → 变形 → 工具），PC 模式一次全铺开。
   //     之所以分三页：环上的条目一多，ringLayout 会为「不重叠」把半径撑大，
   //     手机上会顶出屏幕；每页最多 7 项，半径始终落在屏幕内。
-  const [selSub, setSelSub] = useState<null | "more" | "tools">(null);
+  const [selSub, setSelSub] = useState<null | "xform" | "warp" | "tools">(null);
+  /** 枢轴 9 档预设（选区球「枢轴」条目：点一下换下一档，画布上也可以直接拖） */
+  const [pivotIdx, setPivotIdx] = useState(4);   // 4 = cc（中心）
   /** 进入自由变换：顺手把球收起来（否则触屏上第一次点画布只会被遮罩用来收球），
    *  失败时按原因给提示（图层锁定已经由 paintBlockedNote 说过，不再重复） */
   const startWarp = (kind: "quad" | "mesh") => {
@@ -1512,23 +1520,59 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
       { id: "pasteAsLayerBall", icon: "i-paste-layer", label: t("pasteAsLayerBall"), desc: t("pasteAsLayerBallDesc"), act: () => { void pasteClipboard("layer"); } },
       { id: "pasteAsCanvasBall", icon: "i-paste-canvas", label: t("pasteAsCanvasBall"), desc: t("pasteAsCanvasBallDesc"), act: () => { void pasteClipboard("canvas"); } },
     ]),
-    // ⑯ 手机端：「更多」是第二页（自由变换），第二页里再有一个「工具」进第三页
+    // ⑯ 手机端：「变形」是第二页（自由变换的 sticky 开关 + 枢轴 + 进自由变形页）
     ...(pcMode ? [] : [{
-      id: "sel-more", icon: "i-more", label: t("canvasMore"), desc: t("selMoreWarpDesc"),
-      act: () => setSelSub("more"), guide: "sel-more",
+      id: "sel-more", icon: "i-more", label: t("selXfTitle"), desc: t("selXfTitleDesc"),
+      act: () => setSelSub("xform"), guide: "sel-more",
     }]),
   ];
-  // 第二页：自由变换（「完成 / 还原」就在同一页，点进去就能接着点）+ 吸附粒度开关
+  /**
+   * 第二页：自由变换（Aseprite 那套）的 sticky 开关 + 枢轴。
+   * 手机上既没有 Shift / Alt / Ctrl，也没有 hover，所以那套修饰键全部变成**看得见、
+   * 点得到、状态高亮**的开关（`Item.active` → 环上那条就近高亮）；PC 上修饰键照旧可用。
+   */
+  const xfChips = (): Item[] => [
+    { id: "selXfAspect", icon: "i-resize-mode", label: t("selXfAspect"), desc: t("selXfAspectDesc"),
+      active: SESSION.prefs.selXformAspect,
+      act: () => SESSION.setSetting("tools.selXformAspect", !SESSION.prefs.selXformAspect) },
+    { id: "selXfAngleSnap", icon: "i-rotate", label: t("selXfAngleSnap"), desc: t("selXfAngleSnapDesc"),
+      active: SESSION.prefs.selXformAngleSnap,
+      act: () => SESSION.setSetting("tools.selXformAngleSnap", !SESSION.prefs.selXformAngleSnap) },
+    { id: "selXfGridSnap", icon: "i-grid", label: t("selXfGridSnap"), desc: t("selXfGridSnapDesc"),
+      active: SESSION.prefs.selXformGridSnap,
+      act: () => SESSION.setSetting("tools.selXformGridSnap", !SESSION.prefs.selXformGridSnap) },
+    { id: "selXfCopy", icon: "i-dupe", label: t("selXfCopy"), desc: t("selXfCopyDesc"),
+      active: SESSION.prefs.selXformCopy,
+      act: () => SESSION.setSetting("tools.selXformCopy", !SESSION.prefs.selXformCopy) },
+    { id: "selXfPivot", icon: "i-sym", label: t("selXfPivot"),
+      desc: t("selXfPivot") + "：" + pivotName(pivotIdx),
+      act: () => {
+        const next = (pivotIdx + 1) % 9;
+        setPivotIdx(next);
+        if (!SESSION.view?.setPivotPreset(PIVOT_ORDER[next])) bridge.toast(t("selXfNone"));
+      } },
+    { id: "selXfReset", icon: "i-undo", label: t("selXfReset"), desc: t("selXfResetDesc"),
+      act: () => SESSION.view?.revertXf(), guide: "sel-warp-revert" },
+  ];
   const selPage2: Item[] = [
     { id: "sel-back", icon: "", label: "\u2039", act: () => setSelSub(null), guide: "sel-back" },
+    ...xfChips(),
+    ...(pcMode ? [] : [{
+      id: "sel-more-tools", icon: "i-more", label: t("selMoreWarp"), desc: t("selMoreWarpDesc"),
+      act: () => setSelSub("warp"), guide: "sel-more-tools",
+    }]),
+  ];
+  /** 第三页：自由变形（斜切 / 透视、网格）+ 完成 / 还原 + 吸附粒度（额外能力，保留不动） */
+  const selPage3: Item[] = [
+    { id: "sel-back", icon: "", label: "\u2039", act: () => setSelSub("xform"), guide: "sel-back" },
     { id: "selWarpQuad", icon: "i-resize-mode", label: t("selWarpQuad"), desc: t("selWarpQuadDesc"),
       act: () => startWarp("quad"), guide: "sel-warp-quad" },
     { id: "selWarpMesh", icon: "i-grid", label: t("selWarpMesh"), desc: t("selWarpMeshDesc"),
       act: () => startWarp("mesh"), guide: "sel-warp-mesh" },
     { id: "selWarpDone", icon: "i-check", label: t("selWarpDone"), desc: t("selWarpDoneDesc"),
-      act: () => SESSION.view?.finishWarp(false), guide: "sel-warp-done" },
+      act: () => SESSION.view?.commitXf(), guide: "sel-warp-done" },
     { id: "selWarpRevert", icon: "i-undo", label: t("selWarpRevert"), desc: t("selWarpRevertDesc"),
-      act: () => SESSION.view?.finishWarp(true), guide: "sel-warp-revert" },
+      act: () => SESSION.view?.revertXf(), guide: "sel-warp-revert" },
     // 变形控制点的吸附粒度（设置项 tools.selWarpHalfSnap 的快捷开关）：
     // 选中态走 Item.active（.orb-item.on 高亮），点一下就地切换、当前状态一眼可见
     { id: "selWarpHalf", icon: "i-grid", label: t("selWarpHalfSnap"),
@@ -1538,13 +1582,13 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
       guide: "sel-warp-half" },
     { id: "selCrop", icon: "i-fx-crop", label: t("selCrop"), desc: t("selCropDesc"), act: () => { if (SESSION.cropToSelection()) repaintChanged(); } },
     ...(pcMode ? [] : [{
-      id: "sel-more-tools", icon: "i-more", label: t("selMoreTools"), desc: t("selMoreToolsDesc"),
-      act: () => setSelSub("tools"), guide: "sel-more-tools",
+      id: "sel-more-more", icon: "i-more", label: t("selMoreTools"), desc: t("selMoreToolsDesc"),
+      act: () => setSelSub("tools"), guide: "sel-more-tools2",
     }]),
   ];
-  // 第三页：翻转 / 扩展收缩 / 描边 / 删除
-  const selPage3: Item[] = [
-    { id: "sel-back", icon: "", label: "\u2039", act: () => setSelSub(null), guide: "sel-back" },
+  // 第四页：翻转 / 扩展收缩 / 描边 / 删除
+  const selPage4: Item[] = [
+    { id: "sel-back", icon: "", label: "\u2039", act: () => setSelSub("warp"), guide: "sel-back" },
     { id: "sel.fliph", icon: "i-fliph", label: t("sel.fliph"), act: () => { selOps.selOps.flip(d, SESSION.history, li, fi, true); repaintChanged(); } },
     { id: "sel.flipv", icon: "i-flipv", label: t("sel.flipv"), act: () => { selOps.selOps.flip(d, SESSION.history, li, fi, false); repaintChanged(); } },
     { id: "sel.grow", icon: "i-sel-grow", label: t("sel.grow"), act: () => SESSION.maskOp("sel.grow", () => selOps.growSelection(d, 1)) },
@@ -1556,13 +1600,15 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
     ? [
         ...selPage1.filter((it) => it.guide !== "sel-more"),
         ...selPage2.filter((it) => it.guide !== "sel-back" && it.guide !== "sel-more-tools"),
-        ...selPage3.filter((it) => it.guide !== "sel-back"),
+        ...selPage3.filter((it) => it.guide !== "sel-back" && it.guide !== "sel-more-more"),
+        ...selPage4.filter((it) => it.guide !== "sel-back"),
       ]
-    : selSub === "tools" ? selPage3 : selSub === "more" ? selPage2 : selPage1;
+    : selSub === "tools" ? selPage4 : selSub === "warp" ? selPage3 : selSub === "xform" ? selPage2 : selPage1;
   // 界面定制 / 动作搜索要能列到全部条目（含翻页后面的），但「返回 / 更多」是导航项、不是功能
   const selCatalog: Item[] = pcMode
     ? selItems
-    : [...selPage1, ...selPage2, ...selPage3].filter((it) => it.guide !== "sel-back" && it.guide !== "sel-more" && it.guide !== "sel-more-tools");
+    : [...selPage1, ...selPage2, ...selPage3, ...selPage4]
+        .filter((it) => it.guide !== "sel-back" && it.guide !== "sel-more" && it.guide !== "sel-more-tools" && it.guide !== "sel-more-more");
 
   // ---- parameterised FX: live preview on a snapshot, one history step on OK
   const [fxDlg, setFxDlg] = useState<{ run: FxRun; vals: FxVals } | null>(null);

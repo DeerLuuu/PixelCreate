@@ -5,7 +5,8 @@ import type { RGBA } from "../engine/types";
 import type { History } from "../engine/history";
 import { blendOver } from "../engine/color";
 import { polygonCells } from "../engine/paint";
-import { gridLine, meshWarp, warpQuad, type Pixmap, type Pt } from "./warp";
+import { gridLine, meshWarp, warpQuad, type Pixmap, type Pt, type Mat3 } from "./warp";
+import { applyAffine, indexBox, invertAffine, transformedBox, type XfBox } from "./xform";
 
 function record(doc: Doc, history: History, li: number, fi: number, before: Uint8ClampedArray | null, label: string): void {
   const cel = doc.celAt(li, fi);
@@ -160,6 +161,11 @@ export interface MoveState {
   oy: number;
   /** cel bytes at gesture start (drag-start picture) */
   before: Uint8ClampedArray;
+  /**
+   * 「复制」模式（选区球的 sticky chip，PC 上等价 Ctrl+拖动）：浮动内容**不从图层上挖走**，
+   * 原内容留在原地，松手时把副本贴上去。`floatCut()` / `FloatDrop` 会看这个标志。
+   */
+  copy?: boolean;
 }
 
 /** Snapshot everything needed to move a selection without corrupting old content. */
@@ -333,9 +339,104 @@ export function xformFloating(
   return cells;
 }
 
+/**
+ * 自由变换（Aseprite 那套：移动 + 缩放 + 旋转 + 斜切）的预览栅格化。
+ *
+ * 与 `warpFloating()` 的分工：那是四点 / 网格的**透视与自由变形**（口径由 `warp.ts` 定死），
+ * 这里是**纯仿射**（矩阵由 `xform.ts` 的 `affineFrom()` 组装），所以不走单应、直接求逆。
+ *
+ * 采样口径（**像素中心对齐**，与 `warp.ts` 同一套）：
+ *  - **像素下标空间**，内容占局部下标 `0..cw-1` / `0..ch-1`，`st.content` 的第 0 列就是画布下标 `st.ox`；
+ *  - 遍历范围＝输出像素**中心**反查后仍可能落在源内的那一段：`floor(min)..ceil(max)`，
+ *    所以恒等变换正好覆盖整个选区、缩放后正好覆盖放大后的每一格（不多不少）；
+ *  - 输出像素 `(px, py)` 的**中心** `(px + 0.5, py + 0.5)`（画布下标空间）经逆矩阵映回
+ *    目标局部中心坐标，再减去「局部 0 落在下标 0 中心」的 0.5，**就近取整**（`Math.round`）。
+ *    恒等变换下 `px = ox` → `0`、`px = ox + cw - 1` → `cw - 1`；2× 放大下
+ *    `px = ox .. ox + 2(cw-1)` → `0 .. cw-1`，两边都不多不少。
+ *  - 采样一律**最近邻**（像素画不能被插值糊掉）。
+ *
+ * 每次都从 `st.content`（手势起点抓下来的原图）重算，所以拖动过程中不会累积误差。
+ *
+ * @param dest 目标像素中心包围盒（**画布下标空间**，含端点）；
+ *             调用方用 `xformAffineDestBox()` 算出来（不是 `transformedBox()` —— 那个是
+ *             目标空间的包围盒，差着一个 `st.ox / st.oy` 的平移）
+ * @returns 被点亮的**画布像素下标**（overlay / 落笔用），同时把 `doc.sel` 掩码设成结果形状
+ */
+export function xformAffineFloating(
+  doc: Doc, st: MoveState, m: Mat3, out: Uint8ClampedArray, dest: XfBox,
+): number[] {
+  const w = doc.w, h = doc.h;
+  out.fill(0);
+  const cells: number[] = [];
+  if (!doc.sel) doc.sel = new Sel(w, h, false);
+  const mask = doc.sel.mask;
+  mask.fill(0);
+  doc.sel.bump();   // 掩码被就地改写：让 view 的选区着色 / 虚线框缓存失效
+  if (dest.x1 < dest.x0 || dest.y1 < dest.y0) return cells;
+  const inv = invertAffine(m);
+  if (!inv) return cells;                       // 退化矩阵（缩放被钳死在 0 附近）：不画
+  const content = st.content;
+  const cw = content.w, ch = content.h;
+  // `dest` 是**半开区间**：`[x0, x1)` / `[y0, y1)`（见 `xformAffineDestBox()`）
+  const x0 = Math.max(0, dest.x0), y0 = Math.max(0, dest.y0);
+  const x1 = Math.min(w - 1, dest.x1 - 1), y1 = Math.min(h - 1, dest.y1 - 1);
+  if (x1 < x0 || y1 < y0) return cells;
+  for (let py = y0; py <= y1; py++) {
+    for (let px = x0; px <= x1; px++) {
+      // 采样点＝「目标像素在索引空间向后错一格的 +0.5」再逆映射回内容局部下标（口径同 `xformFloating`）
+      const p = applyAffine(inv, { x: px - st.ox + 0.5, y: py - st.oy + 0.5 });
+      if (!Number.isFinite(p.x) || !Number.isFinite(p.y)) continue;
+      const lx = Math.floor(p.x), ly = Math.floor(p.y);
+      if (lx < 0 || ly < 0 || lx >= cw || ly >= ch) continue;
+      const si = content.idx(lx, ly);
+      if (content.data[si + 3] === 0) continue;
+      const di = py * w + px, o = di * 4;
+      out[o] = content.data[si];
+      out[o + 1] = content.data[si + 1];
+      out[o + 2] = content.data[si + 2];
+      out[o + 3] = content.data[si + 3];
+      cells.push(di);
+      mask[di] = 1;
+    }
+  }
+  return cells;
+}
+
+/**
+ * `xformAffineFloating()` 的遍历范围（**内容局部下标空间**，半开区间 `[x0, x1) × [y0, y1)`）。
+ *
+ * 口径与 `xformFloating()` 一致（那是旧的旋转 / 缩放实现，一直是对的）：目标像素 `(px, py)`
+ * 采样的是「索引空间里 `(px - st.ox + 1, py - st.oy + 1)` 处的 +0.5」再 `floor`，
+ * 所以恒等变换正好覆盖内容本身、缩放后正好覆盖缩放后的每一格。`x1` / `y1` 用 `ceil` 取
+ * **上界**（不是最后一个下标）：边界那一列会多取样一个像素，`floor` + 源越界判定会把它滤掉。
+ */
+export function xformAffineDestBox(m: Mat3, cw: number, ch: number, ox: number, oy: number): XfBox {
+  // 内容占局部下标 `0..cw-1`，也就是**像素范围** `-0.5 .. cw-0.5`（像素中心在下标上）
+  const cs = [
+    { x: -0.5, y: -0.5 }, { x: cw - 0.5, y: -0.5 },
+    { x: cw - 0.5, y: ch - 0.5 }, { x: -0.5, y: ch - 0.5 },
+  ].map((p) => applyAffine(m, p));
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const p of cs) {
+    if (p.x < x0) x0 = p.x; if (p.x > x1) x1 = p.x;
+    if (p.y < y0) y0 = p.y; if (p.y > y1) y1 = p.y;
+  }
+  // 画布下标 = 局部下标 + 内容原点；遍历用半开区间，所以上界取 ceil
+  return { x0: Math.floor(x0) + ox, y0: Math.floor(y0) + oy, x1: Math.ceil(x1) + ox, y1: Math.ceil(y1) + oy };
+}
+
+/** 兼容旧名（目标**局部**空间的包围盒，`floor..ceil` 含端点；视图层已改用上面的版本） */
+export function xformDestBox(m: Mat3, cw: number, ch: number): XfBox {
+  return transformedBox(m, cw, ch);
+}
+
+/** 内容框（下标空间）：`0..cw-1` / `0..ch-1`（转发 `xform.ts`，省得视图层再 import 一次） */
+export function xformContentBox(cw: number, ch: number): XfBox {
+  return indexBox(cw, ch);
+}
+
 export const selOps = {
-  setRect: setRectFn,
-  selectAll(doc: Doc): void {
+  setRect: setRectFn,  selectAll(doc: Doc): void {
     if (!doc.sel) doc.sel = new Sel(doc.w, doc.h, false);
     doc.sel.fillAll();
   },
@@ -488,8 +589,10 @@ export const selOps = {
   },
   // ---- Aseprite-style floating helpers: while a selection drags, the grabbed
   // pixels live OUTSIDE the cel; the layer only sees them when dropped. ----
-  /** cut the grabbed pixels out of the layer (called once when the drag starts) */
+  /** cut the grabbed pixels out of the layer (called once when the drag starts)。
+   *  `st.copy`（「复制」开关 / PC 的 Ctrl+拖动）＝**不挖**，原内容留在原地。 */
   floatCut(doc: Doc, li: number, fi: number, st: MoveState): void {
+    if (st.copy) return;
     const cel = doc.celAt(li, fi);
     if (!cel) return;
     const content = st.content;
@@ -505,7 +608,8 @@ export const selOps = {
       }
     }
   },
-  /** paste the floating pixels back onto the layer at (ox+dx, oy+dy) */
+  /** paste the floating pixels back onto the layer at (ox+dx, oy+dy)。
+   *  `st.copy` 时刻意**直接覆盖**（不透明混合）：复制出来的副本要与源像素逐字节一致。 */
   floatPaste(doc: Doc, li: number, fi: number, st: MoveState, dx: number, dy: number): void {
     const cel = doc.celAt(li, fi);
     if (!cel) return;

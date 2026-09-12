@@ -387,6 +387,25 @@ const defs: SettingDef[] = [
     path: "tools.selWarpHalfSnap", field: "selWarpHalfSnap", kind: "bool", group: "tools",
     label: "selWarpHalfSnap", desc: "selWarpHalfSnapDesc", default: true, refresh: "changed",
   },
+  // ---- 自由变换的 sticky 开关（选区球「变形」页的 chip 行）----
+  // 手机既没有 Shift / Alt / Ctrl，也没有 hover，所以修饰键那一套全部做成**看得见、
+  // 点得到、状态高亮**的开关；PC 上 Shift / Ctrl / Alt 依然直接可用，判断时取「或」。
+  {
+    path: "tools.selXformAspect", field: "selXformAspect", kind: "bool", group: "tools",
+    label: "selXfAspect", desc: "selXfAspectDesc", default: false, refresh: "none",
+  },
+  {
+    path: "tools.selXformAngleSnap", field: "selXformAngleSnap", kind: "bool", group: "tools",
+    label: "selXfAngleSnap", desc: "selXfAngleSnapDesc", default: false, refresh: "none",
+  },
+  {
+    path: "tools.selXformGridSnap", field: "selXformGridSnap", kind: "bool", group: "tools",
+    label: "selXfGridSnap", desc: "selXfGridSnapDesc", default: false, refresh: "none",
+  },
+  {
+    path: "tools.selXformCopy", field: "selXformCopy", kind: "bool", group: "tools",
+    label: "selXfCopy", desc: "selXfCopyDesc", default: false, refresh: "none",
+  },
 
   // ------------------------------------------------------------ gesture
   {

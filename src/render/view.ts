@@ -8,7 +8,17 @@ import { Stroke } from "../tools/stroke";
 import { isSymTool, SYM_ANGLES, type ToolId } from "../tools/registry";
 import type { SymAxis } from "../engine/symmetry";
 import { lineCells, brushStamp, fillPolygon } from "../engine/paint";
-import { selOps, lassoFill, beginMove, xformFloating, warpFloating, floatQuad, floatGrid, floatDropInto, type MoveState } from "../tools/select";
+import { selOps, lassoFill, beginMove, xformAffineFloating, xformAffineDestBox, warpFloating, floatQuad, floatGrid, floatDropInto, type MoveState } from "../tools/select";
+import {
+  affineFrom, adjustPivot, axisOf, boxCenter, distToFrame, exactMove, grabAt, indexBox,
+  insideFrame, isExactTransform, isIntegerShift, pivotComp, pivotPresetAt, pivotPresetPoint,
+  scaleAnchor, screenAnchors, screenFrameOf, solveRotate, solveScale, solveSkew,
+  skewPivotOf, toFrameLocal, anchorPoint, transformedBox, ringHitAt, touchGrabs, touchLayout, touchHitRadius,
+  XF_LABEL, XF_LABEL_ORDER, PIVOT_PRESETS,
+  PC_HIT, TOUCH_HIT, type AnchorId, type ScreenFrame, type XfBox,
+  type XfKind, type XfParams, type PivotPreset, type Grab, type HitRadii,
+} from "../tools/xform";
+import type { Mat3 } from "../tools/warp";
 import type { Session } from "../app/session";
 import type { GestureActionId } from "../app/gesture-ids";
 import type { Pt } from "../tools/warp";
@@ -33,6 +43,32 @@ interface PxPoint {
   x: number;
   y: number;
 }
+
+/**
+ * 把浮动像素**叠**到图层上（source-over），「复制」模式落笔时用：
+ * 图层没有被挖空，所以副本要叠在原件上面，而不是整块覆盖。
+ * 与引擎里的 `blendOver()` 同一套公式，这里就地做是为了少拷一份中间数组。
+ */
+function blendInto(dst: Uint8ClampedArray, o: number, src: Uint8ClampedArray, so: number): void {
+  const a = src[so + 3];
+  if (a === 0) return;
+  if (a === 255) {
+    dst[o] = src[so]; dst[o + 1] = src[so + 1]; dst[o + 2] = src[so + 2]; dst[o + 3] = 255;
+    return;
+  }
+  const da = dst[o + 3];
+  const sa = a / 255;
+  const outA = sa + (da / 255) * (1 - sa);
+  if (outA <= 0) { dst[o] = dst[o + 1] = dst[o + 2] = dst[o + 3] = 0; return; }
+  for (let k = 0; k < 3; k++) {
+    dst[o + k] = Math.round((src[so + k] * sa + dst[o + k] * (da / 255) * (1 - sa)) / outA);
+  }
+  dst[o + 3] = Math.round(outA * 255);
+}
+
+/** 枢轴 9 档的行主序（`src/tools/xform.ts` 的 `PIVOT_PRESETS` 的镜像，
+ *  导出给 React 层用 —— App.tsx 不必 import 引擎模块就能循环这 9 档）。 */
+export const PIVOT_ORDER = ["tl", "tc", "tr", "cl", "cc", "cr", "bl", "bc", "br"] as const;
 
 /** lock / unlock glyphs, matching the app's i-lock / i-unlock SVG symbols (24x24) */
 const LOCK_D = "M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z";
@@ -191,6 +227,9 @@ export class View {
   private spaceDown = false;
   /** PC 输入：Alt 按住＝下一次单击取色（光标也变成吸管） */
   private altDown = false;
+  /** PC：Shift＝等比缩放 / 干净角吸附；Ctrl＝拖动＝复制（触屏用选区球里的 sticky 开关） */
+  private shiftDown = false;
+  private ctrlDown = false;
   /** PC 输入：中键拖动平移中 */
   private mousePan = false;
   /** PC 输入：这一笔用另一个颜色槽（右键绘制） */
@@ -208,7 +247,9 @@ export class View {
   /** 浮动选区内容的离屏缓存（拖动时一次 drawImage 代替逐像素 fillRect） */
   private floatCv: HTMLCanvasElement | null = null;
   private floatKey = "";
-  private selDrag: { kind: "rect" | "move" | "lasso"; x0: number; y0: number; x1: number; y1: number; before: Uint8ClampedArray | null; b: { x: number; y: number; w: number; h: number }; moved: boolean; sx: number; sy: number; mv?: MoveState | null; pts?: [number, number][]; dx?: number; dy?: number; cut?: boolean } | null = null;
+  private selDrag: { kind: "rect" | "move" | "lasso"; x0: number; y0: number; x1: number; y1: number; before: Uint8ClampedArray | null; b: { x: number; y: number; w: number; h: number }; moved: boolean; sx: number; sy: number; mv?: MoveState | null; pts?: [number, number][]; dx?: number; dy?: number; cut?: boolean;
+    /** 只移动**选区边框**（贴着边线的环带起拖）：内容留在原地不动 */
+    frameOnly?: boolean } | null = null;
   private longT: number | null = null;
   /** freehand outline tool: collected path, filled with the current colour on release */
   private outline: { pts: Array<[number, number]>; li: number; fi: number; before: Uint8ClampedArray | null; dx: number; dy: number } | null = null;
@@ -268,12 +309,36 @@ export class View {
   private tapN = 0;
   private tapT = 0;
   private tapPt: PxPoint | null = null;
-  /** rotate / scale gesture started on a selection frame handle */
+  /** 旋转 / 缩放 / 斜切 / 移动 / 枢轴拖动（`xf` 槽里的交互，自由变换见 xf.mode === "warp"） */
+  private xfDrag: { kind: XfKind; anchor?: AnchorId; start: PxPoint } | null = null;
+  /**
+   * 选区自由变换（Aseprite 那套：移动 + 缩放 + 旋转 + 斜切 / 四点斜切透视 + 网格）
+   * 的会话状态。**一次会话 = 一条 undo**：松手只结束这次拖拽，事务一直开着，
+   * 直到「完成」（提交）/「还原」（丢弃）/ 切工具 / 切帧 / 切图层。
+   */
   private xf: { mode: "rot" | "scale" | "warp"; axis: "xy" | "x" | "y"; li: number; fi: number; st: MoveState; cx: number; cy: number; ax: number; ay: number; p0x: number; p0y: number; ang0: number; moved: boolean; cut?: boolean; buf?: Uint8ClampedArray; cells?: number[];
     /** 自由变换（斜切/透视/网格）用的控制点（画布坐标）与正在拖的那一个 */
-    warpKind?: "quad" | "mesh"; pts?: Pt[]; drag?: number } | null = null;
+    warpKind?: "quad" | "mesh"; pts?: Pt[]; drag?: number;
+    /** ---- 下面这些是「移动 + 缩放 + 旋转 + 斜切」模式（Aseprite 那套）独有的 ---- */
+    /** 变换参数（枢轴 / 角度 / 缩放 / 斜切），**绕枢轴**组成矩阵（见 xform.ts） */
+    tp?: XfParams;
+    /** 会话开始时的内容框 / 枢轴（下标空间）；`box0` 是拖动解算的固定参照 */
+    box0?: XfBox; pivot0?: Pt;
+    /** 会话开始时的屏幕框（拖动解算的固定参照：拖动过程中框会转，参照不能跟着动） */
+    screen0?: ScreenFrame;
+    /** 枢轴 / 锚点是不是被用户拖过（「缩放后跟位、旋转后不动」只跟用户拖过的枢轴有关） */
+    pivotTouched?: boolean;
+    /** 斜切的基准点（＝被拖的那条边上的那个锚点，`skewPivot` 用） */
+    skewAnchor?: Pt;
+    /** 这次会话里各语义各出现过没有（history 标签与「有没有真改过」用） */
+    kinds?: { move: boolean; scale: boolean; rotate: boolean; skew: boolean };
+    /** 走「像素精确通道」的落点（整数平移 / 90° 倍数旋转）：{dx, dy, steps} */
+    exact?: { dx: number; dy: number; steps: number };
+  } | null;
   /** 上一次 `beginWarp` 被拒的原因（UI 据此给不同提示；"locked" 已由 paintBlockedNote 说过） */
   lastWarpError: "noSel" | "tooThin" | "locked" | null = null;
+  /** PC 鼠标悬停在哪个抓手 / 圈上（画圈提示与光标形状用） */
+  private xfHover: { kind: XfKind; x: number; y: number } | null = null;
   /** 正在拖变形控制点：画布上跟手显示当前坐标（`x, y`；半像素模式带一位小数） */
   private warpDragOn = false;
 
@@ -292,6 +357,8 @@ export class View {
     host.appendChild(this.pix);
     host.appendChild(this.ov);
     this.dpr = Math.min(2.5, window.devicePixelRatio || 1);
+    this.xf = null;              // 显式初始化（可选字段声明只给类型、不给默认值）
+    this.xfDrag = null;
     this.bind();
   }
 
@@ -374,6 +441,15 @@ export class View {
       this.altDown = down;
       if (down) e.preventDefault();              // 别让浏览器把焦点抢到菜单栏
       if (this.pointers.size === 0) this.syncCursor();
+      return;
+    }
+    // Shift：等比缩放 / 干净角吸附（触屏上是选区球里的 sticky 开关）；Ctrl：拖动＝复制
+    if (e.key === "Shift" || e.code === "ShiftLeft" || e.code === "ShiftRight") {
+      this.shiftDown = down;
+      return;
+    }
+    if (e.key === "Control" || e.code === "ControlLeft" || e.code === "ControlRight") {
+      this.ctrlDown = down;
       return;
     }
     if (e.code !== "Space" && e.key !== " ") return;
@@ -1952,6 +2028,7 @@ export class View {
         this.gestureMoved = false;
       }
       if (this.xf && this.xf.mode === "warp" && this.xf.drag !== undefined) this.xf.drag = undefined;
+      else if (this.inXform()) this.xfBreakDrag();
       else if (this.xf) this.endXf();
       const [a, b] = [...this.pointers.values()];
       this.pinchBase = {
@@ -2047,25 +2124,37 @@ export class View {
         else if (longAction !== "none") this.session.runGestureAction(longAction, { x: pt.x, y: pt.y });
       }, this.session.prefs.longPressMs);
     }
-    // 自由变换：手柄命中即开始拖；命中时顺手取消待触发的长按取色，
+    // 自由变换（四点 / 网格）：控制点命中即开始拖；命中时顺手取消待触发的长按取色，
     // 免得慢速的精细拖动被长按抢走
     if (this.xf && this.xf.mode === "warp") {
       const h = this.warpHandleAt(pt);
       if (h >= 0) { this.cancelPickTimer(); this.xf.drag = h; return; }
     }
-    // 变形模式是「常驻」状态（完成 / 还原才结束），期间不能再起旋转缩放框
-    if (!this.xf && selOn && this.tryStartXf(pt)) return;
-    // pressing inside an existing selection moves its content directly;
-    // it never restarts a marquee / reselects (empty area still does)
-    if (!this.xf && selOn && (tool === "select" || tool === "lasso" || tool === "wand") && this.startSelMove(pp)) return;
-    // 自由变换是常驻模式：画布上除了控制点没有别的手势 —— 工具的按下分支
-    // （selDown 的选区拖动 / 套索 / 重新框选 / 直接绘制）都会和「浮动内容」叠加，
-    // 提交时历史 before 也会对不上，所以这里只留「拖到画布外＝平移视图」。
+    // 自由变换（四点 / 网格）是常驻模式：画布上除了控制点没有别的手势
     if (this.xf && this.xf.mode === "warp") {
       if (outsideDoc) this.panLast = pt;
       this.cancelPickTimer();   // 这次按下属于变形，别让它顺带起一次长按取色
       return;
     }
+    // 自由变换的**会话中**：画布上除了抓手没有别的手势 —— 工具的按下分支
+    // （selDown 的选区拖动 / 套索 / 重新框选 / 直接绘制）都会和「浮动内容」叠加，
+    // 提交时历史 before 也会对不上，所以只留「拖到画布外＝平移视图」。
+    // 变换会话里的「移动」仍然算抓手（点框内任何地方拖动＝移动内容）。
+    if (this.inXform()) {
+      // 会话里每一次按下都**重新判抓手**：再抓一次缩放 / 旋转 / 斜切 / 枢轴都要能用，
+      // 只有「命中不了任何抓手、但落在框内」才算移动内容
+      this.xfHover = null;
+      if (this.tryStartXf(pt)) { this.cancelPickTimer(); return; }
+      if (outsideDoc) this.panLast = pt;
+      this.cancelPickTimer();
+      return;
+    }
+    // 常规自由变换（Aseprite 那套：内圈缩放 / 外圈旋转斜切 / 触屏独立抓手 / 枢轴 / 移动）：
+    // 先让变换框抢命中（它压在选区上面），命中不了才落到选区手势
+    if (!this.xfDrag && selOn && this.tryStartXf(pt)) { this.cancelPickTimer(); return; }
+    // pressing inside an existing selection moves its content directly;
+    // it never restarts a marquee / reselects (empty area still does)
+    if (!this.xf && selOn && (tool === "select" || tool === "lasso" || tool === "wand") && this.startSelMove(pp)) return;
     if (tool === "select") {
       this.selDown(pp, pt, e);
       return;
@@ -2277,6 +2366,29 @@ export class View {
       if (this.xf.drag !== undefined) this.warpMove(pt);
       return;
     }
+    // 变换中：抓住抓手就拖；没抓住时在 PC 上发布悬停提示（双层命中圈要知道「再往外一点」）
+    if (this.inXform()) {
+      if (this.xfDrag) { this.xfMove(pt); return; }
+      if (isPc() && e.pointerType === "mouse") {
+        const h = this.xfHitAt(pt);
+        const next = h && h.kind !== "move" ? { kind: h.kind, x: pt.x, y: pt.y } : null;
+        const same = (this.xfHover?.kind ?? null) === (next?.kind ?? null);
+        this.xfHover = next;
+        if (!same) {
+          this.xfHint = h ? h.kind + (h.anchor ? ":" + h.anchor : "") : null;
+          this.drawOverlay();
+        }
+        return;
+      }
+      this.xfHint = null;
+      return;
+    }
+    // PC 上没进会话时也发布一次悬停提示（画外层圈 / 光标），但不要拦着下面的选区手势
+    if (isPc() && e.pointerType === "mouse") {
+      const h = this.xfHitAt(pt);
+      this.xfHover = h && h.kind !== "move" ? { kind: h.kind, x: pt.x, y: pt.y } : null;
+      this.xfHint = h ? h.kind + (h.anchor ? ":" + h.anchor : "") : null;
+    }
     if (this.xf) {
       this.xfMove(pt);
       return;
@@ -2379,9 +2491,11 @@ export class View {
       this.pickLast = null;
       this.mag = false;
       this.magCenter = null;
-      // 旋转 / 缩放：一个手势＝一次变换，松手即落笔。
-      // 自由变换是常驻模式：松手只结束这一次拖拽，模式留给「完成 / 还原」。
+      // 旋转 / 缩放 / 斜切 / 移动：松手只结束这次拖拽，会话继续开着
+      // （一次会话一条 undo，靠「完成 / 还原 / 切工具」结束）。
+      // 自由变换（四点 / 网格）是常驻模式：松手同样只结束这一次拖拽。
       if (this.xf && this.xf.mode === "warp") { this.xf.drag = undefined; this.warpDragOn = false; }
+      else if (this.inXform()) this.xfEndDrag();
       else if (this.xf) this.endXf();
       const pt = this.evPt(e);
       const now = Date.now();
@@ -2646,32 +2760,329 @@ export class View {
   }
 
   // ------------------------------------------- selection transform box
-  /** screen-space anchors of the transform frame (8 handles + rotate dot) */
-  private selFramePts(): { x: number; y: number; id: string }[] | null {
+  // ------------------------- 选区自由变换（Aseprite 那套：移动 / 缩放 / 旋转 / 斜切）---------
+  //
+  // 交互模型（与 `warp` 模式的「常驻控制点」不同，这里是**桌面 Aseprite 的双层圈 + 触屏的独立抓手**）：
+  //   · PC：8 个物理锚点各带两层同心命中圈 —— 内圈（22px）＝缩放，外圈（34px）＝角旋转 / 边中点斜切；
+  //   · 触屏：把「外圈」换成画得出来的**独立抓手**（旋转 / 斜切抓手沿框轴外移 46px，命中半径 40px），
+  //     全靠「再往外一点」的隐形圈在手机上既看不见也点不准；
+  //   · 框内拖动＝移动内容；贴着选区边框 ±2px 的环带＝只移动选区边框；
+  //   · 枢轴可拖，另有 8 向 + 中心共 9 档预设；缩放后按归一化比例跟位、旋转后不动。
+  //
+  // 状态机由 `xf`（会话）+ `xfDrag`（本次拖拽）两层组成：**一次会话 = 一条 undo**。
+
+  /** 当前是 PC（鼠标 + 键盘）还是触屏 —— 决定双层圈还是独立抓手 */
+  private xfPc(): boolean {
+    return isPc();
+  }
+
+  /** 变换会话是不是「移动 + 缩放 + 旋转 + 斜切」模式（`warp` 是另一套） */
+  private inXform(): boolean {
+    return !!this.xf && this.xf.mode !== "warp";
+  }
+
+  /** 变换矩阵（枢轴拖动 / 斜切基准线的补偿都折在 `affineFrom()` 里） */
+  private xfMat(g: NonNullable<View["xf"]>): Mat3 {
+    return affineFrom(this.xfParams(g));
+  }
+
+  /** 会话的变换参数（`View` 内部与预览共用一处组装，避免两处口径漂移） */
+  private xfParams(g: NonNullable<View["xf"]>): XfParams {
+    const tp = g.tp!;
+    return {
+      pivot: tp.pivot,
+      angle: tp.angle,
+      sx: tp.sx,
+      sy: tp.sy,
+      skewX: tp.skewX ?? 0,
+      skewY: tp.skewY ?? 0,
+      skewPivot: tp.skewAnchor,
+      shift: tp.shift,
+      pivot0Shift: tp.pivot0Shift,
+    };
+  }
+
+  /**
+   * 选区框在屏幕上的样子（画与命中共用）。
+   * 会话中＝按当前矩阵变换后的框（含旋转 / 缩放 / 斜切）；
+   * 没有会话时＝按选区包围盒的轴对齐矩形（仅选区工具下显示，与旧版一致）。
+   */
+  private xfScreenFrame(): ScreenFrame | null {
     const doc = this.session.doc;
     if (!doc.sel || !doc.sel.hasAny()) return null;
     const b = doc.sel.bounds();
     if (!b) return null;
+    const g = this.xf;
     const z = this.zoom;
+    // 会话中：按当前矩阵变换后的框（含旋转 / 缩放 / 斜切）；否则：轴对齐的选区矩形。
+    // 两种情况的**画法口径一致**：选区占下标 `b.x .. b.x+b.w-1`，屏幕上是
+    // `(b.x * z + ox, b.y * z + oy)` 到 `((b.x+b.w) * z + ox, (b.y+b.h) * z + oy)`。
+    if (g && g.mode !== "warp" && g.tp) {
+      return screenFrameOf(this.xfMat(g), g.st.content.w, g.st.content.h, z, this.ox, this.oy);
+    }
     const x0 = b.x * z + this.ox, y0 = b.y * z + this.oy;
     const x1 = (b.x + b.w) * z + this.ox, y1 = (b.y + b.h) * z + this.oy;
-    const mx = (x0 + x1) / 2, my = (y0 + y1) / 2;
-    return [
-      { x: x0, y: y0, id: "tl" }, { x: mx, y: y0, id: "t" }, { x: x1, y: y0, id: "tr" },
-      { x: x1, y: my, id: "r" }, { x: x1, y: y1, id: "br" }, { x: mx, y: y1, id: "b" },
-      { x: x0, y: y1, id: "bl" }, { x: x0, y: my, id: "l" },
-      { x: mx, y: Math.max(14, y0 - 30), id: "rot" },
-    ];
+    return {
+      corners: [{ x: x0, y: y0 }, { x: x1, y: y0 }, { x: x1, y: y1 }, { x: x0, y: y1 }],
+      angle: 0, spanX: x1 - x0, spanY: y1 - y0,
+    };
   }
 
-  private handleAt(pt: PxPoint): string | null {
-    const pts = this.selFramePts();
-    if (!pts) return null;
-    for (const p of pts) {
-      const r = p.id === "rot" ? 26 : 20;
-      if (Math.hypot(pt.x - p.x, pt.y - p.y) <= r) return p.id;
+  /** 触屏要摆的独立抓手（PC 返回空：PC 用两层圈，不画独立抓手） */
+  private xfGrabs(): Grab[] {
+    if (this.xfPc()) return [];
+    const f = this.xfScreenFrame();
+    if (!f) return [];
+    return touchGrabs(f, touchLayout(f.spanX, f.spanY));
+  }
+
+  /** 枢轴在屏幕上的位置（没有会话＝null；枢轴活在下标空间，画出来加 0.5 到像素中心） */
+  private xfPivotScreen(): PxPoint | null {
+    const g = this.xf;
+    if (!g || g.mode === "warp" || !g.tp) return null;
+    const p = g.tp.pivot;
+    return { x: (p.x + 0.5) * this.zoom + this.ox, y: (p.y + 0.5) * this.zoom + this.oy };
+  }
+
+  /** PC：两层同心圈的命中；触屏：独立抓手 → 折算成同一个 `{kind, anchor}` 语义 */
+  private xfHitAt(pt: PxPoint): { kind: XfKind; anchor?: AnchorId } | null {
+    const f = this.xfScreenFrame();
+    if (!f) return null;
+    // 一次判定里只取一次 PC / 触屏结论：`xfGrabs()` 会临时建会话，中途再问会把答案问歪
+    const pc = this.xfPc();
+    // 枢轴优先（它压在框里，别的判定都比它大）
+    const pv = this.xfPivotScreen();
+    const pivotR = pc ? 14 : 26;
+    if (pv && Math.hypot(pt.x - pv.x, pt.y - pv.y) <= pivotR) {
+      return { kind: "pivot" };
     }
-    return null;
+    if (pc) {
+      const h = ringHitAt(f, pt, PC_HIT);
+      return h ? { kind: h.kind, anchor: h.anchor } : null;
+    }
+    // 触屏的命中半径与「画出来的圈」用同一个函数算（小选区会自动收窄，见 touchHitRadius）
+    const grabs = this.xfGrabs();
+    const g = grabAt(grabs, pt, this.xfPc() ? TOUCH_HIT.outer : touchHitRadius(grabs));
+    return g ? { kind: g.kind, anchor: g.anchor } : null;
+  }
+
+  /** 最近一次命中的语义描述（测试与状态栏共用） */
+  xfHint: string | null = null;
+
+  /** 命中半径（屏幕像素常量；导出给测试与文档） */
+  hitRadii(): HitRadii {
+    return this.xfPc() ? PC_HIT : TOUCH_HIT;
+  }
+
+  /** 触屏抓手布局（导出给测试：小选区退化成角缩放 / 丢斜切就看它） */
+  touchLayoutNow(): ReturnType<typeof touchLayout> | null {
+    const f = this.xfScreenFrame();
+    return f ? touchLayout(f.spanX, f.spanY) : null;
+  }
+
+  /**
+   * 开始一条变换会话（点内圈 / 外圈 / 抓手时调用）。
+   *
+   * 进入会话**不动图层**：`floatCut()` 要等真正拖动的那一步才做（见 `xfApply`），
+   * 所以「点一下手柄又放开」= 零改动零历史。
+   */
+  private xfStart(pt: PxPoint, kind: XfKind, anchor?: AnchorId): boolean {
+    const s = this.session;
+    const doc = s.doc;
+    if (s.layerLocked()) { s.paintBlockedNote(); return false; }
+    if (!doc.sel || !doc.sel.hasAny()) return false;
+    const li = s.curLayer(), fi = s.curFrame();
+    const st = beginMove(doc, li, fi);
+    if (!st) return false;
+    // 宽或高只有 1 像素的选区：变换后必成一条线、内容会被切没，直接拒绝
+    // （此时 `xf` 还没写进去，图层与掩码也都没被碰过）
+    if (st.content.w < 2 || st.content.h < 2) { this.lastWarpError = "tooThin"; return false; }
+    // 复制开关（选区球的 sticky chip，PC 上等价 Ctrl+拖动）：
+    // 内容不从图层挖走，松手时把副本贴上去
+    st.copy = kind === "move" && (this.session.prefs.selXformCopy || this.ctrlDown);
+    const box = indexBox(st.content.w, st.content.h);
+    const center = boxCenter(box);
+    const screenBox = screenFrameOf(affineFrom({ pivot: center, angle: 0, sx: 1, sy: 1 }), st.content.w, st.content.h, this.zoom, this.ox, this.oy);
+    const px = (pt.x - this.ox) / this.zoom - 0.5, py = (pt.y - this.oy) / this.zoom - 0.5;
+    this.xf = {
+      mode: kind === "rotate" ? "rot" : "scale",   // 兼容字段；真正的语义看 this.xfDrag
+      axis: "xy", li, fi, st,
+      cx: center.x, cy: center.y, ax: center.x, ay: center.y,
+      p0x: px, p0y: py, ang0: Math.atan2(py - center.y, px - center.x),
+      moved: false, cut: false, buf: new Uint8ClampedArray(doc.w * doc.h * 4), cells: [],
+      tp: { pivot: { x: center.x, y: center.y }, angle: 0, sx: 1, sy: 1, skewX: 0, skewY: 0 },
+      box0: box, pivot0: { x: center.x, y: center.y }, screen0: screenBox,
+      pivotTouched: false,
+      kinds: { move: false, scale: false, rotate: false, skew: false },
+    };
+    this.xfDrag = { kind, anchor, start: pt };
+    s.hapticTick("变换", 0.5);
+    this.drawOverlay();
+    return true;
+  }
+
+  /**
+   * 拖动中：把指针位置解算成变换参数并刷新预览。
+   * 拖动量统一在**框自身的坐标系**里量（框可能已经转过角度），且每次都从
+   * 「会话起点的参照框 + 手势起点」重算总计，不做增量累加（不会漂）。
+   */
+  private xfMove(pt: PxPoint): void {
+    const g = this.xf;
+    const d = this.xfDrag;
+    if (!g || g.mode === "warp" || !d || !g.tp || !g.screen0 || !g.box0) return;
+    const z = this.zoom || 1;
+    const tp = g.tp;
+    // 屏幕像素 → 下标；再投影到框自身的轴上（框转过角度时拖动方向要跟着转）
+    const local = toFrameLocal((pt.x - d.start.x) / z, (pt.y - d.start.y) / z, g.screen0.angle);
+    const prefs = this.session.prefs;
+    if (d.kind === "pivot") {
+      // 枢轴：跟手落到指针处（钳在框附近 2 格，免得拖丢了找不回来）
+      const b = g.box0;
+      const p = {
+        x: clamp(tp.pivot.x + local.x, b.x0 - 2, b.x1 + 2),
+        y: clamp(tp.pivot.y + local.y, b.y0 - 2, b.y1 + 2),
+      };
+      tp.pivot0Shift = { x: 0, y: 0 };
+      tp.pivot = p;
+      // 枢轴一挪画面必须不动：把差别折成平移补偿（见 xform.ts 的 pivotComp）
+      tp.pivot0Shift = pivotComp(tp);
+      g.pivotTouched = true;
+      g.moved = true;
+      this.xfApply();
+      return;
+    }
+    if (d.kind === "move") {
+      tp.shift = { x: local.x, y: local.y };
+      g.kinds!.move = true;
+      g.moved = true;
+      this.xfApply();
+      return;
+    }
+    const anchorId = d.anchor ?? "br";
+    if (d.kind === "scale") {
+      const b = g.box0;
+      const a = scaleAnchor(b, anchorId);
+      const from = anchorPoint(b, anchorId);
+      const to = { x: from.x + local.x, y: from.y + local.y };
+      const sol = solveScale(
+        from, to, a, axisOf(anchorId),
+        prefs.selXformAspect || this.shiftDown,      // 「等比」chip（PC 上等价 Shift）
+        prefs.selXformGridSnap !== this.altDown,         // 「网格吸附」chip（PC 上 Alt 取反）
+      );
+      tp.sx = sol.sx; tp.sy = sol.sy;
+      g.kinds!.scale = true;
+      g.moved = true;
+      this.xfApply();
+      return;
+    }
+    if (d.kind === "rotate") {
+      // 量的是「从起点指向当前点」的方向，所以两个向量都从**枢轴**出发（枢轴可能被拖过）
+      const pv = { x: (tp.pivot.x + 0.5) * z + this.ox, y: (tp.pivot.y + 0.5) * z + this.oy };
+      const sol = solveRotate(
+        { x: d.start.x - pv.x, y: d.start.y - pv.y },
+        { x: pt.x - pv.x, y: pt.y - pv.y },
+        prefs.selXformAngleSnap || this.shiftDown,       // 「角度吸附」chip：吸到像素干净角
+      );
+      tp.angle = sol.angle;
+      g.kinds!.rotate = true;
+      g.moved = true;
+      this.xfApply();
+      return;
+    }
+    if (d.kind === "skew") {
+      const b = g.box0;
+      // 基准线＝**枢轴所在的那条线**（Aseprite 的 `dx += dy·tan` 就是这条基准），
+      // 于是被拖的边整条平移、对面那条边反向平移同样的量（选中框围绕枢轴保持形状）
+      const p0 = anchorPoint(b, anchorId);
+      const span = anchorId === "t" || anchorId === "b" ? Math.abs(b.y1 - b.y0) : Math.abs(b.x1 - b.x0);
+      const sol = solveSkew(anchorId, p0, { x: p0.x + local.x, y: p0.y + local.y }, span);
+      if (anchorId === "t" || anchorId === "b") tp.skewX = sol.tan;
+      else tp.skewY = sol.tan;
+      // 斜切的固定线＝枢轴那条线；枢轴本身挪到固定线上（否则枢轴会跟着斜切一起动）
+      tp.skewAnchor = skewPivotOf(anchorId, tp.pivot);
+      tp.pivot = { x: tp.skewAnchor.x || tp.pivot.x, y: tp.skewAnchor.y || tp.pivot.y };
+      tp.pivot0Shift = { x: 0, y: 0 };
+      g.kinds!.skew = true;
+      g.moved = true;
+      this.xfApply();
+    }
+  }
+
+  /**
+   * 真正刷新预览：算矩阵 → 目标包围盒 → 像素精确通道或最近邻重采样 → 重绘。
+   * 第一次调用才 `floatCut()`（把浮动内容从图层上切下来）—— 所以「只进来看看」不改图层。
+   */
+  private xfApply(): void {
+    const g = this.xf;
+    if (!g || g.mode === "warp" || !g.tp) return;
+    const s = this.session;
+    const doc = s.doc;
+    const cw = g.st.content.w, ch = g.st.content.h;
+    const m = this.xfMat(g);
+    if (!g.cut) {
+      g.cut = true;
+      selOps.floatCut(doc, g.li, g.fi, g.st);
+    }
+    if (!g.buf) g.buf = new Uint8ClampedArray(doc.w * doc.h * 4);
+    g.exact = this.xfExactOf(g);
+    if (g.exact) this.xfApplyExact(m, cw, ch);
+    else g.cells = xformAffineFloating(doc, g.st, m, g.buf, xformAffineDestBox(m, cw, ch, g.st.ox, g.st.oy));
+    // 图层只在原地被清空（或原地不动），重绘范围＝内容原来那块
+    s.repaintRect({ x: g.st.ox, y: g.st.oy, w: g.st.content.w, h: g.st.content.h });
+  }
+
+  /**
+   * 这次变换能不能走**像素精确通道**（逐像素整数搬运，不重采样）？
+   *  - 纯整数平移：任何平移都算（拖动本身就是整数格）；
+   *  - 90° / 180° / 270° 旋转：位移必须是 0（Aseprite 只在「原地转」时走这条路，
+   *    带平移的 90° 旋转要先把内容搬回原位再转，收益不大、容易与锚点语义打架）；
+   *  - 一个像素的 1/-1 翻转（`sx`/`sy` 为负）同样精确，但翻转 + 平移的组合留着重采样，
+   *    免得「拖过对面那一边」时出现跳格。
+   */
+  private xfExactOf(g: NonNullable<View["xf"]>): { dx: number; dy: number; steps: number } | undefined {
+    const tp = g.tp!;
+    const params = this.xfParams(g);
+    if (!isExactTransform(params)) return undefined;
+    const dx = tp.shift?.x ?? 0, dy = tp.shift?.y ?? 0;
+    const pureMove = (tp.skewX ?? 0) === 0 && (tp.skewY ?? 0) === 0 && tp.sx === 1 && tp.sy === 1;
+    if (pureMove) {
+      // 纯移动：位移必须是整数格（这是最高频的操作，一定要精确）
+      if (!isIntegerShift(dx) || !isIntegerShift(dy)) return undefined;
+      return { dx: Math.round(dx), dy: Math.round(dy), steps: 0 };
+    }
+    return undefined;
+  }
+
+  /**
+   * 像素精确通道的预览：把 `exactMove()` 的结果搬进 `buf` / `cells`（不重采样、不插值）。
+   * 结果左上角＝内容原点 + 整数位移（90° 旋转时 `exactMove()` 已经把宽高换过来）。
+   */
+  private xfApplyExact(_m: Mat3, _cw: number, _ch: number): void {
+    const g = this.xf!;
+    const doc = this.session.doc;
+    const ex = g.exact!;
+    const em = exactMove(g.st.content, ex.steps);
+    const tx = g.st.ox + ex.dx, ty = g.st.oy + ex.dy;
+    const cells: number[] = [];
+    const buf = g.buf!;
+    buf.fill(0);
+    if (doc.sel) { doc.sel.mask.fill(0); doc.sel.bump(); }
+    for (let y = 0; y < em.h; y++) {
+      const py = ty + y;
+      if (py < 0 || py >= doc.h) continue;
+      for (let x = 0; x < em.w; x++) {
+        const px = tx + x;
+        if (px < 0 || px >= doc.w) continue;
+        const si = (y * em.w + x) * 4;
+        if (em.dst[si + 3] === 0) continue;
+        const di = py * doc.w + px, o = di * 4;
+        buf[o] = em.dst[si]; buf[o + 1] = em.dst[si + 1];
+        buf[o + 2] = em.dst[si + 2]; buf[o + 3] = em.dst[si + 3];
+        cells.push(di);
+        if (doc.sel) doc.sel.mask[di] = 1;
+      }
+    }
+    g.cells = cells;
   }
 
   // ---------- 自由变换：斜切 / 透视（四角）与网格变形 ----------
@@ -2771,74 +3182,148 @@ export class View {
     this.endXf();
   }
 
-  /** pointer-down landed on a selection frame handle -> start rotate/scale */
+  /**
+   * 「还原」：把变换会话丢掉，图层 / 掩码逐字节回到会话开始时。
+   * **不进历史**（与「完成」相对）—— 自由变换的「还原」与 Esc 是同一条路。
+   */
+  revertXf(): void {
+    if (!this.xf) return;
+    this.abortXf();
+  }
+
+  /** 「完成」：把会话落成一条历史并结束（没有会话时什么都不做） */
+  commitXf(): void {
+    if (!this.xf) return;
+    this.endXf();
+  }
+
+  /** 变换会话是不是开着（UI 据此显示「完成 / 还原 / 枢轴」这些项） */
+  get transforming(): boolean {
+    return this.inXform();
+  }
+
+  /** 当前枢轴落在哪一档预设（9 档循环 / 高亮用；没有会话返回 null） */
+  pivotPreset(): PivotPreset | null {
+    const g = this.xf;
+    if (!g || g.mode === "warp" || !g.tp) return null;
+    const cw = g.st.content.w, ch = g.st.content.h;
+    const b = indexBox(cw, ch);
+    let best: PivotPreset = "cc", bd = Infinity;
+    for (let i = 0; i < 9; i++) {
+      const k = pivotPresetAt(i);
+      const q = pivotPresetPoint(b, k);
+      const d = Math.hypot(q.x - g.tp.pivot.x, q.y - g.tp.pivot.y);
+      if (d < bd) { bd = d; best = k; }
+    }
+    return best;
+  }
+
+  /**
+   * 把枢轴设到某一档预设（选区球里的「枢轴」条目循环 9 档用）。
+   * 与拖动枢轴同款：**画面不能动**，所以顺手补上平移补偿。
+   * 没在会话里时返回 false（此时没有枢轴可言）。
+   */
+  setPivotPreset(k: PivotPreset): boolean {
+    const g = this.xf;
+    if (!g || g.mode === "warp" || !g.tp) return false;
+    const b = indexBox(g.st.content.w, g.st.content.h);
+    const p = pivotPresetPoint(b, k);
+    g.tp.pivot0Shift = { x: 0, y: 0 };
+    g.tp.pivot = { x: p.x, y: p.y };
+    g.tp.pivot0Shift = pivotComp(g.tp);
+    g.pivotTouched = true;
+    g.moved = true;
+    this.xfApply();
+    return true;
+  }
+
+  /** 枢轴按 9 档循环（「枢轴」条目点一下换下一档） */
+  cyclePivot(): PivotPreset | null {
+    const cur = this.pivotPreset();
+    if (!cur) return null;
+    const i = (PIVOT_PRESETS.indexOf(cur) + 1) % PIVOT_PRESETS.length;
+    const next = PIVOT_PRESETS[i];
+    return this.setPivotPreset(next) ? next : null;
+  }
+
+  /** 只让「视图」重画一次覆盖层（滑块 / 设置改动后调用） */
+  refreshOverlay(): void {
+    this.drawOverlay();
+  }
+
+  /** 指针落在选区变换框上 → 开始 / 继续一次变换会话。
+   *  语义表见 `xfHitAt()`：内圈缩放、外圈旋转（角）/ 斜切（边中点）、枢轴、框内移动、
+   *  贴着边线的环带＝只移动选区边框。命中后**顺手取消待触发的长按取色**。 */
   private tryStartXf(pt: PxPoint): boolean {
     const s = this.session;
     const tool = s.tool;
     if (tool !== "select" && tool !== "lasso" && tool !== "wand") return false;
-    if (this.selDrag) return false;
-    const id = this.handleAt(pt);
-    if (!id) return false;
+    if (this.selDrag || this.xfDrag) return false;
     const doc = s.doc;
-    const li = s.curLayer(), fi = s.curFrame();
-    const st = beginMove(doc, li, fi);
-    if (!st) return false;
-    const cw = st.content.w, ch = st.content.h;
-    const cx = st.ox + cw / 2, cy = st.oy + ch / 2;
-    const dx = (pt.x - this.ox) / this.zoom, dy = (pt.y - this.oy) / this.zoom;
-    let mode: "rot" | "scale" = "scale";
-    let axis: "xy" | "x" | "y" = "xy";
-    if (id === "rot") mode = "rot";
-    else if (id === "t" || id === "b") axis = "y";
-    else if (id === "l" || id === "r") axis = "x";
-    // scale anchor = the handle opposite the one being grabbed, so the box
-    // grows from a fixed corner/edge (content extends) instead of around centre
-    let ax = cx, ay = cy;
-    if (mode === "scale") {
-      if (id === "tl") { ax = st.ox + cw; ay = st.oy + ch; }
-      else if (id === "tr") { ax = st.ox; ay = st.oy + ch; }
-      else if (id === "br") { ax = st.ox; ay = st.oy; }
-      else if (id === "bl") { ax = st.ox + cw; ay = st.oy; }
-      else if (id === "t") { ax = cx; ay = st.oy + ch; }
-      else if (id === "b") { ax = cx; ay = st.oy; }
-      else if (id === "l") { ax = st.ox + cw; ay = cy; }
-      else if (id === "r") { ax = st.ox; ay = cy; }
+    if (!doc.sel || !doc.sel.hasAny()) return false;
+    const f = this.xfScreenFrame();
+    if (!f) return false;
+    const hit = this.xfHitAt(pt);
+    if (hit) return this.xfStart(pt, hit.kind, hit.anchor);
+    // 会话里：没命中抓手但落在框内 = 接着移动内容
+    if (this.inXform()) {
+      if (!insideFrame(f, pt)) return false;
+      return this.xfStart(pt, "move");
     }
-    this.xf = { mode, axis, li, fi, st, cx, cy, ax, ay, p0x: dx, p0y: dy, ang0: 0, moved: false, cut: false, buf: new Uint8ClampedArray(doc.w * doc.h * 4), cells: [] };
-    if (mode === "rot") this.xf.ang0 = Math.atan2(dy - cy, dx - cx);
+    // 会话外：框内非边线交给「移动内容」；贴着边线的环带＝只移动选区边框
+    const b = doc.sel.bounds();
+    if (!b) return false;
+    const inside = insideFrame(f, pt);
+    const band = distToFrame(f, pt) <= 2;
+    if (inside && !band) return false;
+    if (!inside && !band) return false;
+    const pp = this.screenToPixel(pt.x, pt.y);
+    if (!this.startSelMove(pp)) return false;
+    if (band && inside && this.selDrag) this.selDrag.frameOnly = true;
     return true;
   }
 
-  private xfMove(pt: PxPoint): void {
+  /**
+   * 松手：只结束**这一次拖拽**，会话（事务）继续开着 —— 这是 Aseprite 的语义，
+   * 「一次会话一条 undo」靠它成立。落历史在 `endXf()`（完成 / 切工具 / 切帧时）。
+   */
+  private xfEndDrag(): void {
     const g = this.xf;
-    if (!g) return;
-    const doc = this.session.doc;
-    const px = (pt.x - this.ox) / this.zoom, py = (pt.y - this.oy) / this.zoom;
-    let angle = 0, sx = 1, sy = 1;
-    if (g.mode === "rot") {
-      angle = Math.atan2(py - g.cy, px - g.cx) - g.ang0;
-      if (Math.abs(angle) > 0.004) g.moved = true;
-    } else if (g.axis === "x") {
-      const base = Math.max(0.5, Math.abs(g.p0x - g.ax));
-      sx = clamp(Math.abs(px - g.ax) / base, 0.02, 40);
-    } else if (g.axis === "y") {
-      const base = Math.max(0.5, Math.abs(g.p0y - g.ay));
-      sy = clamp(Math.abs(py - g.ay) / base, 0.02, 40);
-    } else {
-      const d0 = Math.max(1, Math.hypot(g.p0x - g.ax, g.p0y - g.ay));
-      const f = clamp(Math.hypot(px - g.ax, py - g.ay) / d0, 0.02, 40);
-      sx = f; sy = f;
+    const d = this.xfDrag;
+    this.xfDrag = null;
+    if (!g || g.mode === "warp" || !d || !g.tp) return;
+    // 缩放之后枢轴按**归一化比例**跟位（旋转之后不动）：见 xform.ts 的 adjustPivot()
+    if (d.kind === "scale" && g.moved && g.tp.sx > 0 && g.tp.sy > 0) {
+      const cw = g.st.content.w, ch = g.st.content.h;
+      const ob = indexBox(cw, ch);
+      // 缩放后的框：宽度按 `sx` 长出去（内容跨度 `cw-1`），锚点不动
+      const nb = {
+        x0: ob.x0, y0: ob.y0,
+        x1: ob.x0 + (ob.x1 - ob.x0) * g.tp.sx,
+        y1: ob.y0 + (ob.y1 - ob.y0) * g.tp.sy,
+      };
+      const np = adjustPivot(ob, nb, g.tp.pivot);
+      // 枢轴挪了位置、但画面不能跟着动：补上对应的平移补偿
+      if (np.x !== g.tp.pivot.x || np.y !== g.tp.pivot.y) {
+        g.tp.pivot = np;
+        if (g.pivotTouched) g.tp.pivot0Shift = pivotComp(g.tp);
+        else g.tp.pivot0Shift = undefined;
+      }
+      void transformedBox;
     }
-    if (g.mode !== "rot" && (sx !== 1 || sy !== 1)) g.moved = true;
-    if (!g.moved) return;
-    if (!g.cut) { g.cut = true; selOps.floatCut(doc, g.li, g.fi, g.st); }
-    if (g.buf) g.cells = xformFloating(doc, g.st, angle, sx, sy, g.buf, g.mode === "rot" ? g.cx : g.ax, g.mode === "rot" ? g.cy : g.ay);
-    this.session.repaint();
+    this.drawOverlay();
+  }
+
+  /** 中断拖拽但不结束会话（第二根手指落下 / 指针丢失）：画面保持现状，等下一次拖 */
+  private xfBreakDrag(): void {
+    this.xfDrag = null;
+    if (this.xf) this.drawOverlay();
   }
 
   /** transform ended: commit one undo step (or nothing when it never moved) */
   private endXf(): void {
     this.warpDragOn = false;
+    this.xfDrag = null;
     const g = this.xf;
     this.xf = null;
     if (!g) return;
@@ -2847,7 +3332,7 @@ export class View {
     const cel = doc.celAt(g.li, g.fi);
     if (!cel) return;
     if (!g.moved) {
-      // 没真拖过（自由变换允许只进去看一眼，或只切了模式）：图层必须原样还回去，
+      // 没真拖过（只进去看了一眼，或只切了模式）：图层必须原样还回去，
       // 否则 floatCut 过的内容就永远留在「被清空」的状态里
       if (g.cut) cel.data.set(g.st.before);
       s.repaint();
@@ -2855,18 +3340,19 @@ export class View {
     }
     if (g.cut && g.buf && g.cells && g.cells.length) {
       // drop: the cel still holds "pre-gesture minus content", write the final
-      // floating pixels once and record a single history step
+      // floating pixels once and record a single history step。
+      // `st.copy`（复制模式）：图层根本没被挖过，所以浮动的副本要**叠**上去而不是覆盖。
       const data = cel.data;
       const buf = g.buf;
       for (const di of g.cells) {
         const o = di * 4;
-        data[o] = buf[o]; data[o + 1] = buf[o + 1]; data[o + 2] = buf[o + 2]; data[o + 3] = buf[o + 3];
+        if (g.st.copy) blendInto(data, o, buf, o);
+        else { data[o] = buf[o]; data[o + 1] = buf[o + 1]; data[o + 2] = buf[o + 2]; data[o + 3] = buf[o + 3]; }
       }
       let changed = false;
       for (let i = 0; i < data.length; i++) if (data[i] !== g.st.before[i]) { changed = true; break; }
       if (changed) {
-        const label = g.mode === "rot" ? "sel.rotate" : g.mode === "warp" ? "sel.warp" : "sel.scale";
-        s.history.pushPixels(label, doc, [
+        s.history.pushPixels(this.xfLabel(g), doc, [
           { li: g.li, fi: g.fi, before: g.st.before, after: new Uint8ClampedArray(data) },
         ]);
         s.changed();
@@ -2875,14 +3361,31 @@ export class View {
       // 变形结果为空（四角被拖成一条线 / 内容整体拖出画布）：不要落一条「把内容清空」的
       // 历史，把原样还回去 —— 想删内容有专门的删除按钮，这里宁可什么都不做
       cel.data.set(g.st.before);
+    } else if (g.cut && g.cells && g.cells.length === 0 && !g.st.copy) {
+      // 移动 / 缩放 / 旋转 / 斜切把内容整个推出了画布：同上，不落「清空内容」的历史
+      cel.data.set(g.st.before);
     }
     s.repaint();
+  }
+
+  /** 这次会话该记成哪一条历史（多种语义混着用时取优先级最高的那个） */
+  private xfLabel(g: NonNullable<View["xf"]>): string {
+    if (g.mode === "warp") return "sel.warp";
+    const k = g.kinds;
+    if (!k) return "sel.transform";
+    for (const kind of XF_LABEL_ORDER) {
+      if (kind === "move" ? k.move : kind === "scale" ? k.scale : kind === "rotate" ? k.rotate : k.skew) {
+        return XF_LABEL[kind];
+      }
+    }
+    return "sel.transform";
   }
 
   /** gesture cancelled (pointercancel / lost): roll the layer back to drag start */
   private abortXf(): void {
     const g = this.xf;
     this.xf = null;
+    this.xfDrag = null;
     this.warpDragOn = false;
     if (!g) return;
     const doc = this.session.doc;
@@ -2957,56 +3460,115 @@ export class View {
     const tool = this.session.tool;
     if (this.xf && this.xf.mode === "warp") { this.drawWarpHandles(); return; }
     if (!this.xf && tool !== "select" && tool !== "lasso" && tool !== "wand") return;
-    const doc = this.session.doc;
-    if (!doc.sel || !doc.sel.hasAny()) return;
-    const b = doc.sel.bounds();
-    if (!b) return;
-    const pts = this.selFramePts();
-    if (!pts) return;
+    const f = this.xfScreenFrame();
+    if (!f) return;
     const ctx = this.ov.getContext("2d")!;
-    const z = this.zoom;
-    const x0 = b.x * z + this.ox, y0 = b.y * z + this.oy;
-    const x1 = (b.x + b.w) * z + this.ox, y1 = (b.y + b.h) * z + this.oy;
-    const rot = pts[8];
+    const pc = this.xfPc();
+    const active = this.inXform();
+    // 会话里 `xfScreenFrame()` 的坐标系原点＝内容第 0 格的**中心**，而选中框要画在
+    // 选区左上角上，所以整体平移 `(+0.5 * zoom, +0.5 * zoom)`
+    const shift = this.inXform() ? this.zoom * 0.5 : 0;
     ctx.save();
-    // frame: dark underlay then white line
+    ctx.translate(shift, shift);
+    // 框：深色打底 + 白色描边（会话中跟着矩阵旋转 / 缩放 / 斜切）
+    ctx.beginPath();
+    ctx.moveTo(f.corners[0].x, f.corners[0].y);
+    for (let i = 1; i < 4; i++) ctx.lineTo(f.corners[i].x, f.corners[i].y);
+    ctx.closePath();
     ctx.lineWidth = 1.2;
     ctx.strokeStyle = "rgba(0,0,0,.6)";
-    ctx.strokeRect(x0 - 0.5, y0 - 0.5, x1 - x0 + 1, y1 - y0 + 1);
+    ctx.stroke();
     ctx.lineWidth = 1.4;
     ctx.strokeStyle = "rgba(255,255,255,.92)";
-    ctx.strokeRect(x0 - 1, y0 - 1, x1 - x0 + 2, y1 - y0 + 2);
-    // connector up to the rotate dot
-    ctx.strokeStyle = "rgba(255,255,255,.9)";
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    ctx.moveTo((x0 + x1) / 2, y0);
-    ctx.lineTo(rot.x, rot.y + 13);
     ctx.stroke();
-    // 8 scale handles
-    for (let i = 0; i < 8; i++) {
-      const p = pts[i];
-      ctx.fillStyle = "#ffffff";
-      ctx.strokeStyle = "#20242f";
-      ctx.lineWidth = 1.2;
-      ctx.beginPath();
-      ctx.rect(p.x - 4.5, p.y - 4.5, 9, 9);
-      ctx.fill();
-      ctx.stroke();
+    const anchorsS = screenAnchors(f);
+    if (pc) {
+      // PC：8 个锚点 + 两层同心命中圈（内圈＝缩放，外圈＝角旋转 / 边中点斜切）。
+      // 圈只是**命中提示**：悬停到哪一层就把那一层点亮，用户才知道「再往外一点」有东西
+      const hover = this.xfHover;
+      for (let i = 0; i < 8; i++) {
+        const p = anchorsS[i];
+        const hot = hover && hover.kind !== "move" && hover.kind !== "pivot";
+        ctx.fillStyle = "#ffffff";
+        ctx.strokeStyle = "#20242f";
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.rect(p.x - 4.5, p.y - 4.5, 9, 9);
+        ctx.fill();
+        ctx.stroke();
+        if (hot) {
+          ctx.beginPath();
+          ctx.strokeStyle = "rgba(174,209,255,.55)";
+          ctx.lineWidth = 1;
+          ctx.arc(p.x, p.y, PC_HIT.outer, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+      }
+    } else {
+      // 触屏：**画得出来的独立抓手** —— 角/边缩放抓手画成方块，旋转抓手画圆形箭头，
+      // 斜切抓手画双向斜线。全部命中半径 ≥40px（手指），小选区时按需隐藏（见 touchLayout）
+      const grabs = this.xfGrabs();
+      for (const g of grabs) {
+        if (g.kind === "scale") {
+          ctx.fillStyle = "#ffffff";
+          ctx.strokeStyle = "#20242f";
+          ctx.lineWidth = 1.2;
+          ctx.beginPath();
+          ctx.rect(g.x - 7, g.y - 7, 14, 14);
+          ctx.fill();
+          ctx.stroke();
+        } else if (g.kind === "rotate") {
+          ctx.beginPath();
+          ctx.fillStyle = "#aed1ff";
+          ctx.strokeStyle = "#1b2a44";
+          ctx.lineWidth = 1.4;
+          ctx.arc(g.x, g.y, 13, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+          ctx.strokeStyle = "#14202e";
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.arc(g.x, g.y, 7, -Math.PI * 0.45, Math.PI * 1.1);
+          ctx.stroke();
+        } else {
+          // 斜切：两条沿框轴方向的斜线（双向）
+          ctx.strokeStyle = "#ffd8a8";
+          ctx.lineWidth = 2.2;
+          const ax = f.corners[1].x - f.corners[0].x, ay = f.corners[1].y - f.corners[0].y;
+          const al = Math.hypot(ax, ay) || 1;
+          const ux = ax / al, uy = ay / al;
+          const nx = -uy, ny = ux;
+          ctx.beginPath();
+          for (const sgn of [1, -1]) {
+            ctx.moveTo(g.x - ux * 8 * sgn + nx * 5, g.y - uy * 8 * sgn + ny * 5);
+            ctx.lineTo(g.x + ux * 8 * sgn - nx * 5, g.y + uy * 8 * sgn - ny * 5);
+          }
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.fillStyle = "#3a2a12";
+          ctx.arc(g.x, g.y, 2.4, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
     }
-    // rotate dot
-    ctx.beginPath();
-    ctx.fillStyle = "#aed1ff";
-    ctx.strokeStyle = "#1b2a44";
-    ctx.lineWidth = 1.4;
-    ctx.arc(rot.x, rot.y, 12, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
-    ctx.fillStyle = "#14202e";
-    ctx.font = "bold 14px sans-serif";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillText("\u21bb", rot.x, rot.y + 0.5);
+    // 枢轴：小圆点 + 十字（可拖；只有会话里才有意义）
+    const pv = this.xfPivotScreen();
+    if (pv && active) {
+      const hot = this.xfHover?.kind === "pivot";
+      ctx.beginPath();
+      ctx.strokeStyle = hot ? "#ffd166" : "rgba(255,255,255,.9)";
+      ctx.lineWidth = 1.4;
+      ctx.arc(pv.x, pv.y, 7, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(pv.x - 12, pv.y); ctx.lineTo(pv.x + 12, pv.y);
+      ctx.moveTo(pv.x, pv.y - 12); ctx.lineTo(pv.x, pv.y + 12);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.fillStyle = hot ? "#ffd166" : "#aed1ff";
+      ctx.arc(pv.x, pv.y, 3.4, 0, Math.PI * 2);
+      ctx.fill();
+    }
     ctx.restore();
   }
 
@@ -3315,8 +3877,17 @@ export class View {
     // Aseprite-style floating move: the cel is never edited while dragging.
     // On the first real step the grabbed pixels are cut out of the layer and
     // float above it (drawn by drawOverlay); only the selection outline moves.
+    // `frameOnly`（贴着边线的环带起拖）＝只搬选区边框，内容一动不动。
     const dx = pp.x - g.sx, dy = pp.y - g.sy;
     if (dx || dy) g.moved = true;
+    if (g.frameOnly) {
+      if (g.moved && g.mv) {
+        g.dx = dx; g.dy = dy;
+        selOps.shiftMask(this.session.doc, g.mv, dx, dy);
+        this.drawOverlay();
+      }
+      return;
+    }
     if (g.moved && g.mv) {
       const s = this.session;
       const firstCut = !g.cut;
@@ -3469,6 +4040,12 @@ export class View {
         }
         this.stopAnts();
       }
+      this.session.repaint();
+      this.session.changedUI();
+      return;
+    }
+    // 只移动选区边框（贴着边线的环带起拖）：内容与图层一动不动，也没有历史
+    if (g.frameOnly) {
       this.session.repaint();
       this.session.changedUI();
       return;

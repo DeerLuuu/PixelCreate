@@ -205,6 +205,14 @@ export interface Prefs {
   selectionTolerance: number;
   /** 变形控制点的吸附粒度：true = 半像素（可落整数或 `x.5`，默认）/ false = 整像素 */
   selWarpHalfSnap: boolean;
+  /** 自由变换 sticky：等比缩放（PC 上等价按住 Shift） */
+  selXformAspect: boolean;
+  /** 自由变换 sticky：角度吸附到像素画的**干净角**（PC 上等价按住 Shift） */
+  selXformAngleSnap: boolean;
+  /** 自由变换 sticky：缩放吸附到整数倍（PC 上 Alt 取反，默认关） */
+  selXformGridSnap: boolean;
+  /** 自由变换 sticky：拖动＝复制，原内容不从图层挖走（PC 上等价 Ctrl+拖动） */
+  selXformCopy: boolean;
 }
 
 export interface Snapshot {
@@ -1335,6 +1343,7 @@ export class Session {
       snapOn: true, snapRange: 14, snapGap: 8, snapInColor: "#78ffb4", snapOutColor: "#ff6464",
       bucketGlobal: false, fillSimilar: false, fillTolerance: 32, fillGaps: 0, indexed: false,
       loopMode: "loop", recentColorsMax: 16, selectionTolerance: 8, selWarpHalfSnap: true,
+      selXformAspect: false, selXformAngleSnap: false, selXformGridSnap: false, selXformCopy: false,
       bucketGrad: false, bucketGradMode: "rgb",
       airbrushMin: 1, airbrushMax: 3, airbrushRate: 20,
       brushSize: 1, brushAlpha: 255, fgColor: "#141414", bgColor: "#ffffff",
@@ -1463,6 +1472,10 @@ export class Session {
       if (typeof saved.recentColorsMax === "number") p.recentColorsMax = Math.max(4, Math.min(64, Math.round(saved.recentColorsMax)));
       if (typeof saved.selectionTolerance === "number") p.selectionTolerance = Math.max(0, Math.min(64, Math.round(saved.selectionTolerance)));
       if (typeof saved.selWarpHalfSnap === "boolean") p.selWarpHalfSnap = saved.selWarpHalfSnap;
+      if (typeof saved.selXformAspect === "boolean") p.selXformAspect = saved.selXformAspect;
+      if (typeof saved.selXformAngleSnap === "boolean") p.selXformAngleSnap = saved.selXformAngleSnap;
+      if (typeof saved.selXformGridSnap === "boolean") p.selXformGridSnap = saved.selXformGridSnap;
+      if (typeof saved.selXformCopy === "boolean") p.selXformCopy = saved.selXformCopy;
       // remembered tool / colour / symmetry / document state
       const hex = (v: unknown): string | null => (typeof v === "string" && /^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$/.test(v) ? v.toLowerCase() : null);
       if (typeof saved.brushSize === "number") p.brushSize = Math.max(1, Math.min(64, Math.round(saved.brushSize)));

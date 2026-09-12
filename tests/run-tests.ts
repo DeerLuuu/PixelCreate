@@ -34,6 +34,8 @@ import { testAse } from "./ase.test";
 import { testTags, testTagsIo } from "./tags.test";
 import { testPatterns } from "./patterns.test";
 import { testWarp } from "./warp.test";
+import { testXform } from "./xform.test";
+import { testXformUi } from "./xformui.test";
 import { testWarpUi } from "./warpui.test";
 import { testSelOrb } from "./selorb.test";
 
@@ -108,6 +110,10 @@ async function main(): Promise<void> {
   testWarp();
   console.log("--- warp ui ---");
   testWarpUi();
+  console.log("--- xform (affine transform geometry) ---");
+  testXform();
+  console.log("--- xform ui ---");
+  testXformUi();
   console.log("--- select orb pages ---");
   testSelOrb();
   console.log("--- animation tags ---");

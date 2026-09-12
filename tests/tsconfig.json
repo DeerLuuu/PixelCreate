@@ -44,6 +44,17 @@
     "../tests/snap.test.ts",
     "../tests/ase.test.ts",
     "../tests/tags.test.ts",
-    "../tests/i18n.test.ts"
+    "../tests/i18n.test.ts",
+    "../tests/icons.test.ts",
+    "../tests/keymap.test.ts",
+    "../tests/patterns.test.ts",
+    "../tests/pie.test.ts",
+    "../tests/scrub.test.ts",
+    "../tests/selorb.test.ts",
+    "../tests/uibar.test.ts",
+    "../tests/warp.test.ts",
+    "../tests/warpui.test.ts",
+    "../tests/xform.test.ts",
+    "../tests/xformui.test.ts"
   ]
 }
