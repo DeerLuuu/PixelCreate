@@ -530,8 +530,9 @@ export interface ScreenFrame {
 export function screenFrameOf(m: Mat3, w: number, h: number, zoom: number, ox: number, oy: number): ScreenFrame {
   const cs = boxCorners(indexBox(w, h))
     .map((p) => applyAffine(m, p))
-    // 下标 → 屏幕：像素中心 `(i + 0.5) * zoom + o`
-    .map((p) => ({ x: (p.x + 0.5) * zoom + ox, y: (p.y + 0.5) * zoom + oy }));
+    // 下标 → 屏幕：**像素下标 `i` 占屏幕 `[i·z + o, (i+1)·z + o)`**（左上角），
+    // 于是内容框 `0..w-1` 正好落在屏幕 `[0, w·z + o]`，与选区框 / 抓手的口径完全一致
+    .map((p) => ({ x: p.x * zoom + ox, y: p.y * zoom + oy }));
   const spanX = Math.hypot(cs[1].x - cs[0].x, cs[1].y - cs[0].y);
   const spanY = Math.hypot(cs[3].x - cs[0].x, cs[3].y - cs[0].y);
   // 屏幕上的旋转角＝框方向（以「上边指向右」为 0°）

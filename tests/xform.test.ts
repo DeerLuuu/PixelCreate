@@ -318,16 +318,18 @@ export function testXform(): void {
 
   // ---------------------------------------------------------------- 屏幕框 / 命中
   {
-    // 无旋转、zoom=1、ox=oy=0：内容 6×4 → 下标 0..5 / 0..3，画在像素中心
+    // 无旋转、zoom=1、ox=oy=0：内容 8×6 → 下标 0..7 / 0..5
+    // 口径：**下标 `i` → 屏幕 `i`**（内容 8×6 占下标 `0..7 / 0..5`，两端都是下标），
+    // 与 `indexBox()` / 矩阵 / 光栅化器完全一致（见 `screenFrameOf()`）。
     const f = screenFrameOf(affineFrom({ pivot: { x: 3.5, y: 2.5 }, angle: 0, sx: 1, sy: 1 }), 8, 6, 1, 0, 0);
     eq("xform.screen.corners", f.corners.map((p) => [p.x, p.y]),
-      [[0.5, 0.5], [7.5, 0.5], [7.5, 5.5], [0.5, 5.5]]);
+      [[0, 0], [7, 0], [7, 5], [0, 5]]);
     eq("xform.screen.span", [f.spanX, f.spanY], [7, 5]);
     eq("xform.screen.anchors", screenAnchors(f).map((p) => [p.x, p.y]),
-      [[0.5, 0.5], [4, 0.5], [7.5, 0.5], [7.5, 3], [7.5, 5.5], [4, 5.5], [0.5, 5.5], [0.5, 3]]);
+      [[0, 0], [3.5, 0], [7, 0], [7, 2.5], [7, 5], [3.5, 5], [0, 5], [0, 2.5]]);
     ok("xform.screen.inside", insideFrame(f, { x: 3, y: 2 }));
     ok("xform.screen.outside", !insideFrame(f, { x: 9, y: 2 }) && !insideFrame(f, { x: 3, y: 7 }));
-    eq("xform.screen.dist-to-frame", distToFrame(f, { x: 3, y: 0.5 }), 0);
+    eq("xform.screen.dist-to-frame", distToFrame(f, { x: 3, y: 0 }), 0);
 
     // 8×6 的小框上相邻锚点只隔 3.5px，22px 内圈会互相压到 —— 命中判定按「最近的那个锚点」
     // 分层（`ringHitAt()`），所以下面用一块大框（81×81）看两层圈的语义

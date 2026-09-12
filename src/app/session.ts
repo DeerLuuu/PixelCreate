@@ -2286,6 +2286,9 @@ export class Session {
     const next = Math.max(0, Math.min(n - 1, fi));
     const prev = this.curFrame();
     if (next === prev) return;
+    // 换了帧：先把「还在手上的手势」落定（笔迹 / 浮动变形），
+    // 否则浮动内容只活在内存里、而图层已经被 floatCut 清空
+    this.view_?.flushStroke();
     if (record) {
       this.history.record("frame-switch", {
         apply: () => this.applyFrame(next),
@@ -3256,6 +3259,8 @@ export class Session {
 
   // ---------- frames ----------
   frameAdd(): void {
+    // 加帧会换帧：先把「还在手上的手势」落定（笔迹 / 浮动变形）
+    this.view_?.flushStroke();
     const src = this.curFrame();
     const copy = this.prefs.newFrameCopy;
     this.struct("frame-add", () => {
