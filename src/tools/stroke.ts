@@ -123,11 +123,10 @@ export class Stroke {
   /** 一次落笔：图案笔刷时按图案取样（透明处不落笔，tint 图案用当前画笔颜色），
    *  否则就是普通的「按颜色画 / 用 alpha=0 擦」 */
   private paintOne(tx: number, ty: number): boolean {
-    const pat = this.pattern;
+    const pat = this.kind === "eraser" ? null : this.pattern;   // 橡皮不吃图案：画什么就擦什么
     if (pat) {
       const c = patternColorAt(pat.bytes, pat.w, pat.h, tx, ty);
       if (!c) return false;                                  // 图案透明处：留白
-      if (this.color[3] === 0) return eraseAt(this.cel, tx, ty, this.mask);   // 图案橡皮：只擦图案点
       const col: RGBA = pat.tint
         ? [this.color[0], this.color[1], this.color[2], Math.round(this.color[3] * (c[3] / 255))]
         : [c[0], c[1], c[2], Math.round(c[3] * (this.color[3] / 255))];
@@ -232,7 +231,7 @@ export class Stroke {
       for (const [X, Y] of this.wrapPts(mx, my)) {
         this.markCell(X, Y);
         const [tx, ty] = this.toTarget(X, Y);
-        if (this.pattern ? this.paintOne(tx, ty) : eraseAt(this.cel, tx, ty, this.mask)) any = true;
+        if (eraseAt(this.cel, tx, ty, this.mask)) any = true;
       }
     }
     return any;
@@ -408,7 +407,7 @@ export class Stroke {
     }
     for (const [X, Y] of cells) {
       this.markCell(X + this.refDx, Y + this.refDy); // dirty rect lives here
-      if (erase && !this.pattern) { if (eraseAt(this.cel, X, Y, this.mask)) this.everPainted = true; }
+      if (erase) { if (eraseAt(this.cel, X, Y, this.mask)) this.everPainted = true; }
       else if (this.paintOne(X, Y)) this.everPainted = true;
     }
     this.ppSaved = { cells, bytes };

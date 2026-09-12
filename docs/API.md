@@ -1328,7 +1328,7 @@ Session 侧：`patternDefs()`（内置 + 用户）、`activePattern()`、`brushP
 `patternFromSelection()`（只收选区内像素，返回 `ok|empty|toolarge|nosel`）、`patternFromCanvas()`（可见图层叠加后按内容裁剪）。
 
 Stroke 侧：`BrushState.pattern` 一填，落笔统一走 `paintOne()`——图案 alpha=0 处**不落笔**（既不上色也不擦除），
-`tint` 图案用当前画笔颜色着色（画笔不透明度仍生效），画笔颜色 alpha=0（橡皮）时**只擦图案点**。
+`tint` 图案用当前画笔颜色着色（画笔不透明度仍生效）；**橡皮工具完全不吃图案**（`kind === "eraser"` 时按普通橡皮整片擦除）。
 
 ### 18.9 新增设置项
 

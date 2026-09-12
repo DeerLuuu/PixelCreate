@@ -98,7 +98,7 @@ export function testPatterns(): void {
     eq("pattern.session.removed-clears-active", s.activePattern(), null);
   }
 
-  // ---- 笔画：图案笔刷只落在图案点上，tint 用画笔色、图案橡皮只擦图案点 ----
+  // ---- 笔画：图案笔刷只落在图案点上，tint 用画笔色；橡皮不吃图案 ----
   {
     const hist = new History();
     const doc = new Doc(8, 8, "P");
@@ -120,16 +120,18 @@ export function testPatterns(): void {
     eq("pattern.stroke.off", [alphaAt(1, 0), alphaAt(0, 1)], [0, 0]);
     eq("pattern.stroke.tint-colour", [cel.data[cel.idx(0, 0)], cel.data[cel.idx(0, 0) + 1]], [255, 0]);
 
-    // 图案橡皮：只把图案点擦掉（先铺满）
+    // 橡皮配了图案也照常整片擦：图案只影响「上色」，不影响「擦除」
     const doc2 = new Doc(8, 8, "Q");
     const cel2 = doc2.ensureCel(0, 0);
     for (let i = 0; i < cel2.data.length; i += 4) { cel2.data[i + 3] = 255; }
     const er = new Stroke(doc2, 0, 0, "eraser", { ...brush, color: [0, 0, 0, 0] }, false, "off");
+    // 横着擦两格：(0,0) 是棋盘"落笔"格、(1,0) 是"留白"格——照图案只擦会漏掉后者，
+    // 现在要求两个都被擦掉
     er.startAt(0, 0);
-    er.moveTo(1, 1, 1);
+    er.moveTo(1, 0, 1);
     er.commit(new History(), "pattern-erase");
     const a2 = (x: number, y: number): number => cel2.data[cel2.idx(x, y) + 3];
-    eq("pattern.erase.on", [a2(0, 0), a2(1, 1)], [0, 0]);
-    eq("pattern.erase.off-kept", [a2(1, 0), a2(0, 1)], [255, 255]);
+    eq("pattern.erase.touched", [a2(0, 0), a2(1, 0)], [0, 0]);
+    eq("pattern.erase.untouched", [a2(0, 1), a2(2, 0)], [255, 255]);
   }
 }
