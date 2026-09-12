@@ -26,7 +26,7 @@ import { SHORTCUT_SHEET } from "../app/shortcuts";
 import { REBINDABLE, chordForAction, chordLabel, chordOf, isOverridden, overrides } from "../app/keymap";
 import { CBAR_ACTIONS, LAYOUT_KEYS, ORB_IDS, TOPBAR_ACTIONS, fullOrder } from "../app/uibar";
 
-export type ModalId = "menu" | "changelog" | "newdoc" | "newproject" | "export" | "adjust" | "settings" | "frame" | "framePrev" | "size" | "sheet" | "history" | "canvasRef" | "shortcuts" | "customise" | null;
+export type ModalId = "menu" | "changelog" | "newdoc" | "newproject" | "export" | "adjust" | "settings" | "frame" | "framePrev" | "size" | "sheet" | "history" | "canvasRef" | "shortcuts" | "customise" | "actions" | null;
 export type SizeMode = "canvas" | "sprite";
 export type SheetData = { w: number; h: number; px: Uint8ClampedArray; name: string };
 
@@ -1116,6 +1116,54 @@ function keyActionLabel(action: string, en: boolean): string {
  * 点方块＝显示/隐藏；顺序请打开「编辑界面」后直接在界面上拖动。
  * 被藏起来的一切都收在「未使用」里，点一下就能放回原位，不会丢。
  */
+/** 动作搜索：把界面上所有按钮（顶栏 / 底栏 / 五个浮动球 / 临时挂上去的）当成一张可搜索的清单。
+ *  PC 是 Ctrl+K，触摸端从主球上方的「搜索动作」浮条进；回车跑第一个匹配项。 */
+export function ActionSearchModal({ t, onClose }: { t: ReturnType<typeof makeT>; onClose: () => void }) {
+  useSession();                       // 动作闭包每次渲染都会重新注册，跟着会话刷新取最新的
+  const [q, setQ] = useState("");
+  const [pick, setPick] = useState(0);
+  const GROUP_KEY: Record<string, string> = {
+    top: "actGroupTop", bar: "actGroupBar", main: "actGroupMain",
+    sel: "actGroupSel", pal: "actGroupPal", fx: "actGroupFx", canv: "actGroupCanv", other: "actGroupOther",
+  };
+  const groupName = (g: string): string => t((GROUP_KEY[g] ?? "actGroupOther") as never);
+  const all = SESSION.allActions();
+  const needle = q.trim().toLowerCase();
+  const hits = needle ? all.filter((a) => (a.label + " " + a.id).toLowerCase().indexOf(needle) >= 0) : all;
+  const pickIdx = Math.max(0, Math.min(hits.length - 1, pick));
+  const run = (i: number): void => {
+    const a = hits[i];
+    if (!a) return;
+    onClose();
+    a.run();
+  };
+  return (
+    <Dialog title={t("actSearch")} onClose={onClose} className="act-dlg" bodyClass="act-body"
+      extra={<div className="row-note">{t("actSearchHint")}</div>}
+      footer={<><Btn label={t("close")} onClick={onClose} className="primary" /></>}>
+      <input className="textinput" autoFocus value={q} placeholder={t("actSearchPlaceholder")}
+        onChange={(e) => { setQ(e.target.value); setPick(0); }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") { e.preventDefault(); run(pickIdx); }
+          else if (e.key === "ArrowDown") { e.preventDefault(); setPick(Math.min(hits.length - 1, pickIdx + 1)); }
+          else if (e.key === "ArrowUp") { e.preventDefault(); setPick(Math.max(0, pickIdx - 1)); }
+        }} />
+      {hits.length === 0 ? <div className="row-note">{t("actSearchEmpty")}</div> : (
+        <div className="act-list">
+          {hits.map((a, i) => (
+            <button key={a.id} type="button" className={"act-hit" + (i === pickIdx ? " on" : "")}
+              onClick={() => run(i)} onPointerEnter={() => setPick(i)}>
+              <Icon id={a.icon || "i-more"} size={15} />
+              <span>{a.label}</span>
+              <span className="act-group">{groupName(a.group)}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </Dialog>
+  );
+}
+
 export function CustomiseModal({ t, onClose }: { t: ReturnType<typeof makeT>; onClose: () => void }) {
   const en = SESSION.prefs.lang === "en";
   const pc = useKitPcMode();

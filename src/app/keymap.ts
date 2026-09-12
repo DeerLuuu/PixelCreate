@@ -19,7 +19,7 @@ export const REBINDABLE: readonly string[] = [
   "undo", "redo", "save", "openFile", "newDoc", "exportFile",
   "copy", "cut", "paste", "pasteLayer", "pasteCanvas", "delete", "escape",
   "swapColors", "framePrev", "frameNext", "layerPrev", "layerNext",
-  "zoomIn", "zoomOut", "fit", "toggleUI", "resizeMode", "shortcutHelp",
+  "zoomIn", "zoomOut", "fit", "toggleUI", "resizeMode", "shortcutHelp", "actionSearch",
   "pieLaunch",
 ];
 

@@ -164,4 +164,28 @@ export function testUibar(): void {
     s.resetAllUi();
     eq("uibar.session.reset-all", [isDefaultLayout(s.prefs.layout), s.prefs.barHidden.length, Object.keys(s.prefs.orbPrefs).length], [true, 0, 0]);
   }
+
+  // 动作搜索：注册表 → 分组清单（顶栏 → 底栏 → 五个浮动球 → 其它），id 不重复
+  {
+    const s = new Session();
+    s.registerActions({
+      menu: { icon: "i-menu", label: "菜单", run: () => undefined },
+      undo: { icon: "i-undo", label: "撤销", run: () => undefined },
+      "tool.pencil": { icon: "i-pencil", label: "铅笔", run: () => undefined },
+      "tool.eraser": { icon: "i-eraser", label: "橡皮", run: () => undefined },
+      "fx.o1": { icon: "i-fx-o1", label: "描边", run: () => undefined },
+      stray: { icon: "", label: "没归类的动作", run: () => undefined },
+    });
+    s.registerOrbCatalog("main", [{ id: "tool.pencil", label: "铅笔" }, { id: "tool.eraser", label: "橡皮" }]);
+    s.registerOrbCatalog("fx", [{ id: "fx.o1", label: "描边" }]);
+    const all = s.allActions();
+    const ids = all.map((a) => a.id);
+    eq("act.list.unique", ids.length, new Set(ids).size);
+    eq("act.list.top-first", ids.slice(0, 2), ["menu", "undo"]);
+    eq("act.list.ball-group", all.find((a) => a.id === "tool.pencil")?.group, "main");
+    eq("act.list.fx-group", all.find((a) => a.id === "fx.o1")?.group, "fx");
+    eq("act.list.stray-last", all[all.length - 1].id, "stray");
+    eq("act.list.stray-group", all[all.length - 1].group, "other");
+    eq("act.list.labels-localised", all.find((a) => a.id === "tool.eraser")?.label, "橡皮");
+  }
 }

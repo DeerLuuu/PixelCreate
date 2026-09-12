@@ -3488,6 +3488,38 @@ export class Session {
   actionById(id: string): { icon: string; label: string; run: () => void } | null {
     return this.registry[id] ?? null;
   }
+  /** 全部动作（动作搜索面板用）：按「顶栏 → 底栏 → 各浮动球 → 界面上临时挂上去的」分组，
+      组内保持各自的默认顺序；label 是注册时已经本地化好的文案。 */
+  allActions(): Array<{ id: string; label: string; icon: string; group: string; run: () => void }> {
+    const out: Array<{ id: string; label: string; icon: string; group: string; run: () => void }> = [];
+    const push = (id: string, group: string, order: string[]): void => {
+      const a = this.registry[id];
+      if (!a) return;
+      order.push(id);
+      out.push({ id, label: a.label, icon: a.icon, group, run: a.run });
+    };
+    const seen = new Set<string>();
+    const take = (ids: string[], group: string): void => {
+      for (const id of ids) {
+        if (seen.has(id)) continue;
+        seen.add(id);
+        push(id, group, []);
+      }
+    };
+    take(["menu", "history", "undo", "redo", "save", "timeline", "fullscreen"], "top");
+    take(["colors", "swap", "adjust", "symmetry", "frameprev"], "bar");
+    const ballNames: Record<string, string> = { main: "main", sel: "sel", pal: "pal", fx: "fx", canv: "canv" };
+    for (const ball of ["main", "sel", "pal", "fx", "canv"]) {
+      take(this.orbCatalogOf(ball).map((it) => it.id), ballNames[ball] ?? ball);
+    }
+    // 界面上临时挂到工具栏的、以及其它任何注册过但没归类的动作
+    for (const id of Object.keys(this.registry)) {
+      if (seen.has(id)) continue;
+      seen.add(id);
+      push(id, "other", []);
+    }
+    return out;
+  }
   /** 某条栏（top/bar）额外挂上去的动作 id */
   barExtras(section: string): string[] {
     return (this.prefs.barExtra[section] ?? []).filter((id) => !!this.registry[id]);

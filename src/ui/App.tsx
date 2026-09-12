@@ -26,7 +26,7 @@ import { TimelineBar } from "./timeline";
 import { PreviewBox } from "./preview";
 import { RefImageBox } from "./refimg";
 import type { RefImg } from "./refimg";
-import { PalettePanel, openFlow, MenuModal, SizeModal, SheetModal, NewDocModal, ExportModal, AdjustModal, SettingsModal, FrameModal, TagModal, FramePreviewModal, CanvasRefModal, HistoryModal, ShortcutHelpModal, CustomiseModal, histName, importFlow, saveProject, openFileBytes } from "./modals";
+import { ActionSearchModal, PalettePanel, openFlow, MenuModal, SizeModal, SheetModal, NewDocModal, ExportModal, AdjustModal, SettingsModal, FrameModal, TagModal, FramePreviewModal, CanvasRefModal, HistoryModal, ShortcutHelpModal, CustomiseModal, histName, importFlow, saveProject, openFileBytes } from "./modals";
 import { FxParamDialog, fxDefaults, type FxRun, type FxVals } from "./fxparam";
 import { CanvasTitles } from "./canvas";
 import { ChangelogModal, changelogNeedsShow } from "./changelog";
@@ -227,6 +227,7 @@ export function App() {
         case "newDoc": e.preventDefault(); setModal("newdoc"); break;
         case "exportFile": e.preventDefault(); setModal("export"); break;
         case "shortcutHelp": e.preventDefault(); setModal("shortcuts"); break;
+        case "actionSearch": e.preventDefault(); setModal("actions"); break;
         case "nudge": {
           e.preventDefault();
           const dx = hit.dx ?? 0, dy = hit.dy ?? 0;
@@ -676,7 +677,8 @@ export function App() {
         onCanvasAdjust={() => setModal("adjust")}
         onCanvasExport={() => setModal("export")}
         onOpenPalette={() => setPanel("palette")}
-        onCanvasRef={() => setModal("canvasRef")} />}
+        onCanvasRef={() => setModal("canvasRef")}
+        onSearch={() => setModal("actions")} />}
       {replayOn && <ReplayOverlay t={t} snap={snap} nameFn={(lb) => histName(lb, t, snap.lang)} onClose={() => { setModal(null); setReplayOn(false); }} />}
       <Keep on={panel === "palette"} el={panel === "palette" ? (
         <Overlay onClose={() => setPanel(null)}>
@@ -705,6 +707,7 @@ export function App() {
       )}
       <Keep on={modal === "customise"} el={modal === "customise" ? <CustomiseModal t={t} onClose={() => setModal(null)} /> : null} />
       <Keep on={modal === "shortcuts"} el={modal === "shortcuts" ? <ShortcutHelpModal t={t} onClose={() => setModal(null)} /> : null} />
+      <Keep on={modal === "actions"} el={modal === "actions" ? <ActionSearchModal t={t} onClose={() => setModal(null)} /> : null} />
       <Keep on={modal === "changelog"} el={modal === "changelog" ? <ChangelogModal onClose={() => { setModal(null); setClgBlock(false); }} /> : null} />
       {guide && <GuideOverlay steps={guide} actions={guideActions} onDone={finishGuide} />}
       {textQ && (
@@ -1007,9 +1010,10 @@ function EmptyCanvas({ t, onNew, onOpen }: { t: ReturnType<typeof makeT>; onNew:
   );
 }
 
-function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onCanvasExport, onOpenPalette, onCanvasRef }: {
+function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onCanvasExport, onOpenPalette, onCanvasRef, onSearch }: {
   t: ReturnType<typeof makeT>; snap: Snapshot; onCanvasNew: () => void; onCanvasSize: () => void;
   onCanvasAdjust: () => void; onCanvasExport: () => void; onOpenPalette: () => void; onCanvasRef: () => void;
+  onSearch: () => void;
 }) {
   const orbKey = "pc.orb.pos";
   const loadPos = () => {
@@ -2107,6 +2111,12 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
 
   return (
     <>
+      {!hiddenById("main") && open && !pcMode && !SESSION.uiEdit && (
+        <button className="act-search-pill" style={{ left: pos.x, top: pos.y - (M.orb / 2 + 26) }}
+          onClick={() => { setOpen(false); setSub(null); onSearch(); }}>
+          <Icon id="i-search" size={12} /><span>{t("actSearch")}</span>
+        </button>
+      )}
       {!hiddenById("main") && renderBall("main", pos, baseIcon, open, t("menu"), bd(snap.lang, "orb"), () => {
         // 双击主球＝切回上一个工具（两次点击之间来回切，跟 Aseprite 一致）
         const now = Date.now();
