@@ -1,5 +1,5 @@
 import { Cel } from "../src/engine/cel";
-import { blurCel, outlineCel, inlineCel, dropShadowCel } from "../src/engine/effects";
+import { blurCel, outlineCel, inlineCel, roundCornersCel, dropShadowCel } from "../src/engine/effects";
 import { eq, ok } from "./common";
 
 const RED: [number, number, number, number] = [255, 0, 0, 255];
@@ -23,6 +23,22 @@ function alphaSum(c: Cel): number {
   return s;
 }
 function countAlpha(c: Cel): number {
+  let n = 0;
+  for (let i = 3; i < c.data.length; i += 4) if (c.data[i] > 0) n++;
+  return n;
+}
+
+/** 画一个 bxh 的实心块（含边距） */
+function block(w: number, h: number, fill: Array<[number, number]> = []): Cel {
+  const cel = new Cel(w, h);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const i = cel.idx(x, y);
+    cel.data[i] = 255; cel.data[i + 1] = 0; cel.data[i + 2] = 0; cel.data[i + 3] = 255;
+  }
+  for (const [x, y] of fill) { const i = cel.idx(x, y); cel.data[i] = 0; cel.data[i + 1] = 0; cel.data[i + 2] = 0; cel.data[i + 3] = 0; }
+  return cel;
+}
+function opaqueCount(c: Cel): number {
   let n = 0;
   for (let i = 3; i < c.data.length; i += 4) if (c.data[i] > 0) n++;
   return n;
@@ -175,5 +191,60 @@ export function testEffects(): void {
     const d2 = mk(9, 9, [[4, 4]]);
     dropShadowCel(d2.data, 9, 9, 1, 0, BLUE, false);
     eq("shadow.copy-only", [at(d2, 4, 4), at(d2, 5, 4)], [[0, 0, 0, 0], BLUE]);
+  }
+
+  // ------------------------------------------- 圆角化（硬直角 → 圆角）
+  {
+    // 9x9 实心块，削 1 层：四个直角各掉一个像素，边与中心不动
+    const one = block(9, 9);
+    roundCornersCel(one.data, 9, 9, 1);
+    eq("round.r1.corners", [at(one, 0, 0), at(one, 8, 0), at(one, 0, 8), at(one, 8, 8)].map((p) => p[3]), [0, 0, 0, 0]);
+    eq("round.r1.count", opaqueCount(one), 81 - 4);
+    eq("round.r1.edges-kept", [at(one, 4, 0)[3], at(one, 0, 4)[3], at(one, 4, 4)[3]], [255, 255, 255]);
+
+    // 削 2 层：再来一层，(1,0)/(0,1) 这种"次角"也被削掉，但 (2,0) 留着
+    const two = block(9, 9);
+    roundCornersCel(two.data, 9, 9, 2);
+    eq("round.r2.second-ring", [at(two, 1, 0)[3], at(two, 0, 1)[3]], [0, 0]);
+    eq("round.r2.third-kept", at(two, 2, 0)[3], 255);
+    ok("round.r2.fewer-than-r1", opaqueCount(two) < opaqueCount(one), opaqueCount(two) + " < " + opaqueCount(one));
+
+    // 1px 横线 / 竖线 / 斜线：一个像素都不能少
+    const hline = mk(9, 1, Array.from({ length: 9 }, (_, x) => [x, 0] as [number, number]));
+    const hs = hline.data.join();
+    roundCornersCel(hline.data, 9, 1, 3);
+    eq("round.thin-hline-safe", hline.data.join(), hs);
+    const diag = mk(9, 9, Array.from({ length: 9 }, (_, k) => [k, k] as [number, number]));
+    const ds = diag.data.join();
+    roundCornersCel(diag.data, 9, 9, 3);
+    eq("round.diagonal-safe", diag.data.join(), ds);
+    const elbow = mk(9, 9, [[0, 0], [1, 0], [2, 0], [0, 1], [0, 2]]);
+    const es = elbow.data.join();
+    roundCornersCel(elbow.data, 9, 9, 2);
+    eq("round.elbow-safe", elbow.data.join(), es);
+
+    // 3px 粗的细条：太细，整条跳过（不能被啃成 1px）
+    const bar = mk(9, 3, Array.from({ length: 27 }, (_, k) => [k % 9, Math.floor(k / 9)] as [number, number]));
+    roundCornersCel(bar.data, 9, 3, 2);
+    eq("round.thin-bar-safe", opaqueCount(bar), 27);
+
+    // mode=both：补 1px 洞（孔四周 8 个邻居全是不透明的）
+    const holed = block(5, 5, [[2, 2]]);
+    roundCornersCel(holed.data, 5, 5, 1, "both");
+    eq("round.both.fills-hole", at(holed, 2, 2)[3], 255);
+    // mode=outer（默认）：洞留着
+    const holed2 = block(5, 5, [[2, 2]]);
+    roundCornersCel(holed2.data, 5, 5, 1);
+    eq("round.outer.keeps-hole", at(holed2, 2, 2)[3], 0);
+
+    // 空画布 / 半径 0：安全
+    const empty = new Cel(4, 4);
+    const es2 = empty.data.join();
+    roundCornersCel(empty.data, 4, 4, 2);
+    eq("round.empty-noop", empty.data.join(), es2);
+    const b0 = block(9, 9);
+    const b0s = b0.data.join();
+    roundCornersCel(b0.data, 9, 9, 0);
+    eq("round.radius-0-noop", b0.data.join(), b0s);
   }
 }

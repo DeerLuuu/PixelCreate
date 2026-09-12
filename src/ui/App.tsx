@@ -1617,6 +1617,15 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
       ],
       apply: (dd, w, h, v) => fxE.inlineCel(dd, w, h, Number(v.w), hexToRgba(String(v.color)), Math.round(Number(v.alpha) * 2.55)),
     })),
+    fxI("round", "i-fx-round", "圆角化", "Round", "把硬直角削成圆角（1–8 层），可选是否同时补内凹角；细线与斜线不会被啃掉", "Knock hard right-angle corners into rounded ones (1–8 layers), optionally filling inner corners too; thin lines and diagonals survive", () => openFx({
+      label: "fx-round", title: "fxRoundTitle", desc: "fxRoundDesc",
+      params: [
+        { key: "r", kind: "int", label: "fxRoundRadius", min: 1, max: 8, unit: "", def: 2 },
+        { key: "mode", kind: "enum", label: "fxRoundMode", def: "outer", options: [
+          { value: "outer", label: "fxRoundOuter" }, { value: "both", label: "fxRoundBoth" }] },
+      ],
+      apply: (dd, w, h, v) => fxE.roundCornersCel(dd, w, h, Number(v.r), v.mode as fxE.RoundMode),
+    })),
     fxI("blur", "i-fx-blur", "模糊", "Blur", "模糊滤镜：弹窗设置半径，可实时预览", "Blur filter: set the radius in a dialog, live preview", () => openFx({
       label: "fx-blur", title: "fxBlurTitle", desc: "fxBlurDesc",
       params: [{ key: "r", kind: "int", label: "fxBlurRadius", min: 1, max: 32, unit: "px", def: 2 }],

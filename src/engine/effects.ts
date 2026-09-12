@@ -146,6 +146,152 @@ export function inlineCel(d: Uint8ClampedArray, w: number, h: number, width: num
   }
 }
 
+/** 圆角化的两种方向：只削外直角，或者连内凹角（含 1px 洞）一起补 */
+export type RoundMode = "outer" | "both";
+
+/** count of opaque 8-neighbours around `i` (out of canvas = transparent) */
+function opaqueNeighbours(opaque: Uint8Array, w: number, h: number, i: number): number {
+  const x = i % w, y = (i - x) / w;
+  let n = 0;
+  for (let dy = -1; dy <= 1; dy++) {
+    for (let dx = -1; dx <= 1; dx++) {
+      if (dx === 0 && dy === 0) continue;
+      const nx = x + dx, ny = y + dy;
+      if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+      if (opaque[ny * w + nx]) n++;
+    }
+  }
+  return n;
+}
+
+/** 3x3 里四个对角象限，各自「三格全不透明」的个数。硬直角（外凸拐角）恰好只有
+ *  1 个象限全满；直边是 2 个；1px 细线/斜线/折角是 0 个 —— 这就是「只削拐角、
+ *  不啃边、不吃细线」的判据。画布外一律算透明。 */
+function fullQuadrants(opaque: Uint8Array, w: number, h: number, i: number): number {
+  const x = i % w, y = (i - x) / w;
+  const at = (dx: number, dy: number): boolean => {
+    const nx = x + dx, ny = y + dy;
+    if (nx < 0 || ny < 0 || nx >= w || ny >= h) return false;
+    return opaque[ny * w + nx] === 1;
+  };
+  let n = 0;
+  if (at(1, 0) && at(0, -1) && at(1, -1)) n++;   // NE
+  if (at(1, 0) && at(0, 1) && at(1, 1)) n++;     // SE
+  if (at(-1, 0) && at(0, 1) && at(-1, 1)) n++;   // SW
+  if (at(-1, 0) && at(0, -1) && at(-1, -1)) n++; // NW
+  return n;
+}
+
+/** do the remaining opaque 8-neighbours of `i` stay connected without it?
+ *  (walk the 3x3 island that contains the first one) */
+function neighboursConnected(opaque: Uint8Array, w: number, h: number, i: number): boolean {
+  const x = i % w, y = (i - x) / w;
+  const list: number[] = [];
+  for (let dy = -1; dy <= 1; dy++) {
+    for (let dx = -1; dx <= 1; dx++) {
+      if (dx === 0 && dy === 0) continue;
+      const nx = x + dx, ny = y + dy;
+      if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+      if (opaque[ny * w + nx]) list.push(ny * w + nx);
+    }
+  }
+  if (list.length < 2) return true;
+  const seen = new Set<number>([list[0]]);
+  const stack = [list[0]];
+  while (stack.length) {
+    const q = stack.pop() as number;
+    for (const r of list) {
+      if (seen.has(r)) continue;
+      const qx = q % w, qy = (q - qx) / w;
+      const rx = r % w, ry = (r - rx) / w;
+      if (Math.abs(qx - rx) > 1 || Math.abs(qy - ry) > 1) continue;
+      seen.add(r); stack.push(r);
+    }
+  }
+  return seen.size === list.length;
+}
+
+/**
+ * 圆角化：把轮廓上的硬直角削成圆角（`radius` = 削几层，1..8）。
+ *
+ * 逐层进行：每一层重新算深度图（到背景的 Chebyshev 距离，见 `edgeDepth`），
+ * 只删「当前最外圈（深度 = 1）+ 至少 3 个不透明邻居 + 删掉后邻居仍连通」的像素。
+ * 这三条守卫是刻意的：1px 细线/斜线/折角的像素只有 2 个邻居，因此**永远不会被削掉**；
+ * 而「整幅最厚处还没超过 radius」时直接跳过，避免把 2~3px 粗的细条啃没。
+ * `mode = "both"` 时额外把被 ≥6 个不透明像素包住的透明像素填上（补内凹角与 1px 洞）。
+ */
+export function roundCornersCel(d: Uint8ClampedArray, w: number, h: number, radius: number, mode: RoundMode = "outer"): void {
+  const r = Math.round(radius);
+  if (w <= 0 || h <= 0 || r < 1) return;
+  const n = w * h;
+  const mask = new Uint8Array(n);
+  let any = false;
+  for (let i = 0; i < n; i++) if (d[i * 4 + 3] > 0) { mask[i] = 1; any = true; }
+  if (!any) return;
+
+  const deepest = (): number => {
+    const depth = edgeDepth(mask, w, h);
+    let mx = 0;
+    for (let i = 0; i < n; i++) if (mask[i] && depth[i] > mx && depth[i] < (1 << 20)) mx = depth[i];
+    return mx;
+  };
+  // 太细了：任何一层都会把形状啃变形，直接不动
+  if (deepest() <= r) return;
+
+  const clear = (i: number): void => {
+    const p = i * 4;
+    d[p] = 0; d[p + 1] = 0; d[p + 2] = 0; d[p + 3] = 0;
+    mask[i] = 0;
+  };
+
+  for (let pass = 0; pass < r; pass++) {
+    const depth = edgeDepth(mask, w, h);
+    const cut: number[] = [];
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const i = y * w + x;
+        if (!mask[i] || depth[i] !== 1) continue;             // 只看最外圈
+        if (fullQuadrants(mask, w, h, i) !== 1) continue;     // 只有硬直角才削（直边/细线/斜线都不动）
+        if (opaqueNeighbours(mask, w, h, i) < 3) continue;    // 双保险
+        if (!neighboursConnected(mask, w, h, i)) continue;    // 删了会断开：保住
+        cut.push(i);
+      }
+    }
+    // 一趟 = 一层：同一趟内一起删，连锁反应留到下一趟（radius 才等于层数）
+    for (const i of cut) clear(i);
+    if (!cut.length) break;
+  }
+
+  if (mode === "both") {
+    // 补内凹角 / 1px 洞：被 ≥6 个不透明像素包住的透明像素，用周围出现最多的那个颜色填上
+    const fill: number[] = [];
+    for (let i = 0; i < n; i++) if (!mask[i] && opaqueNeighbours(mask, w, h, i) >= 6) fill.push(i);
+    for (const i of fill) {
+      const x = i % w, y = (i - x) / w;
+      const tally = new Map<string, { count: number; at: number }>();
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          if (dx === 0 && dy === 0) continue;
+          const nx = x + dx, ny = y + dy;
+          if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+          const j = ny * w + nx;
+          if (!mask[j]) continue;
+          const key = d[j * 4] + "," + d[j * 4 + 1] + "," + d[j * 4 + 2] + "," + d[j * 4 + 3];
+          const cur = tally.get(key);
+          if (cur) cur.count++;
+          else tally.set(key, { count: 1, at: j });
+        }
+      }
+      let best = -1, bestCount = 0;
+      for (const v of tally.values()) if (v.count > bestCount) { bestCount = v.count; best = v.at; }
+      if (best < 0) continue;
+      const p = i * 4, q = best * 4;
+      d[p] = d[q]; d[p + 1] = d[q + 1]; d[p + 2] = d[q + 2]; d[p + 3] = d[q + 3];
+      mask[i] = 1;
+    }
+  }
+}
+
 /** Separable box blur, applied twice (a close, cheap approximation of a
  *  Gaussian). Alpha-premultiplied so transparent pixels never bleed their RGB
  *  into the result. `radius` is in pixels (1..N); 0 is a no-op. */
