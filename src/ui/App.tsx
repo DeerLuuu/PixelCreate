@@ -1484,8 +1484,10 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
   const li = snap.layerIdx, fi = snap.frameIdx;
   const d = SESSION.doc;
   const repaintChanged = () => { SESSION.repaint(); SESSION.changedUI(); };
-  // ⑥ 手机端：选区球分两页（常用在前，其余在「更多」里），PC 模式一次全铺开
-  const [selSub, setSelSub] = useState<null | "more">(null);
+  // ⑥⑯ 手机端：选区球分三页（常用 → 变形 → 工具），PC 模式一次全铺开。
+  //     之所以分三页：环上的条目一多，ringLayout 会为「不重叠」把半径撑大，
+  //     手机上会顶出屏幕；每页最多 7 项，半径始终落在屏幕内。
+  const [selSub, setSelSub] = useState<null | "more" | "tools">(null);
   /** 进入自由变换：顺手把球收起来（否则触屏上第一次点画布只会被遮罩用来收球），
    *  失败时按原因给提示（图层锁定已经由 paintBlockedNote 说过，不再重复） */
   const startWarp = (kind: "quad" | "mesh") => {
@@ -1510,7 +1512,13 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
       { id: "pasteAsLayerBall", icon: "i-paste-layer", label: t("pasteAsLayerBall"), desc: t("pasteAsLayerBallDesc"), act: () => { void pasteClipboard("layer"); } },
       { id: "pasteAsCanvasBall", icon: "i-paste-canvas", label: t("pasteAsCanvasBall"), desc: t("pasteAsCanvasBallDesc"), act: () => { void pasteClipboard("canvas"); } },
     ]),
+    // ⑯ 手机端：「更多」是第二页（自由变换），第二页里再有一个「工具」进第三页
+    ...(pcMode ? [] : [{
+      id: "sel-more", icon: "i-more", label: t("canvasMore"), desc: t("selMoreWarpDesc"),
+      act: () => setSelSub("more"), guide: "sel-more",
+    }]),
   ];
+  // 第二页：自由变换（上一版新加的四个入口在这里，手机上真的点得到）
   const selPage2: Item[] = [
     { id: "sel-back", icon: "", label: "\u2039", act: () => setSelSub(null), guide: "sel-back" },
     { id: "selWarpQuad", icon: "i-resize-mode", label: t("selWarpQuad"), desc: t("selWarpQuadDesc"),
@@ -1521,22 +1529,33 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
       act: () => SESSION.view?.finishWarp(false), guide: "sel-warp-done" },
     { id: "selWarpRevert", icon: "i-undo", label: t("selWarpRevert"), desc: t("selWarpRevertDesc"),
       act: () => SESSION.view?.finishWarp(true), guide: "sel-warp-revert" },
+    { id: "selCrop", icon: "i-fx-crop", label: t("selCrop"), desc: t("selCropDesc"), act: () => { if (SESSION.cropToSelection()) repaintChanged(); } },
+    ...(pcMode ? [] : [{
+      id: "sel-more-tools", icon: "i-more", label: t("selMoreTools"), desc: t("selMoreToolsDesc"),
+      act: () => setSelSub("tools"), guide: "sel-more-tools",
+    }]),
+  ];
+  // 第三页：翻转 / 扩展收缩 / 描边 / 删除
+  const selPage3: Item[] = [
+    { id: "sel-back", icon: "", label: "\u2039", act: () => setSelSub(null), guide: "sel-back" },
     { id: "sel.fliph", icon: "i-fliph", label: t("sel.fliph"), act: () => { selOps.selOps.flip(d, SESSION.history, li, fi, true); repaintChanged(); } },
     { id: "sel.flipv", icon: "i-flipv", label: t("sel.flipv"), act: () => { selOps.selOps.flip(d, SESSION.history, li, fi, false); repaintChanged(); } },
     { id: "sel.grow", icon: "i-sel-grow", label: t("sel.grow"), act: () => SESSION.maskOp("sel.grow", () => selOps.growSelection(d, 1)) },
     { id: "sel.shrink", icon: "i-sel-shrink", label: t("sel.shrink"), act: () => SESSION.maskOp("sel.shrink", () => selOps.shrinkSelection(d, 1)) },
     { id: "sel.outline", icon: "i-fx-o1", label: t("sel.outline"), act: () => { selOps.outlineSelected(d, SESSION.history, li, fi, SESSION.color); repaintChanged(); } },
-    { id: "selCrop", icon: "i-fx-crop", label: t("selCrop"), desc: t("selCropDesc"), act: () => { if (SESSION.cropToSelection()) repaintChanged(); } },
     { id: "sel.delete", icon: "i-sel-del", label: t("sel.delete"), act: () => { SESSION.deleteSelection(); } },
-    ...(pcMode ? [] : [{
-      id: "sel-more", icon: "i-more", label: t("canvasMore"),
-      desc: snap.lang === "zh" ? "更多：自由变换（斜切 / 透视 / 网格）/ 翻转 / 扩展 / 收缩 / 描边 / 裁切 / 删除" : "More: free transform (skew / perspective / mesh) / flip / grow / shrink / outline / crop / delete",
-      act: () => setSelSub("more"), guide: "sel-more",
-    }]),
   ];
-  const selItems: Item[] = pcMode || selSub === "more"
-    ? [...selPage1.filter((it) => it.guide !== "sel-more"), ...selPage2.filter((it) => it.guide !== "sel-back")]
-    : selPage1;
+  const selItems: Item[] = pcMode
+    ? [
+        ...selPage1.filter((it) => it.guide !== "sel-more"),
+        ...selPage2.filter((it) => it.guide !== "sel-back" && it.guide !== "sel-more-tools"),
+        ...selPage3.filter((it) => it.guide !== "sel-back"),
+      ]
+    : selSub === "tools" ? selPage3 : selSub === "more" ? selPage2 : selPage1;
+  // 界面定制 / 动作搜索要能列到全部条目（含翻页后面的），但「返回 / 更多」是导航项、不是功能
+  const selCatalog: Item[] = pcMode
+    ? selItems
+    : [...selPage1, ...selPage2, ...selPage3].filter((it) => it.guide !== "sel-back" && it.guide !== "sel-more" && it.guide !== "sel-more-tools");
 
   // ---- parameterised FX: live preview on a snapshot, one history step on OK
   const [fxDlg, setFxDlg] = useState<{ run: FxRun; vals: FxVals } | null>(null);
@@ -1802,7 +1821,7 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
     const plain = (items: Item[]): Array<{ id: string; label: string }> =>
       items.map((it) => { map[it.id] = { icon: it.icon, label: it.label, run: it.act }; return { id: it.id, label: it.label }; });
     SESSION.registerOrbCatalog("main", plain(mainItems));
-    SESSION.registerOrbCatalog("sel", plain(selItems));
+    SESSION.registerOrbCatalog("sel", plain(selCatalog));
     SESSION.registerOrbCatalog("fx", plain(fxItems));
     SESSION.registerOrbCatalog("canv", plain(canvItems));
     SESSION.registerOrbCatalog("pal", []);
@@ -1813,7 +1832,7 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
   const pieItemsFor = (ball: OrbId): Item[] => {
     const apply = (items: Item[]): Item[] => SESSION.orbItems(items, ball);
     if (ball === "main") return apply(mainItems.filter((it) => !it.guide || (it.guide !== "tool-back" && it.guide !== "tool-shape-group" && it.guide !== "tool-select-group")));
-    if (ball === "sel") return apply(selItems);
+    if (ball === "sel") return apply(selItems.filter((it) => it.guide !== "sel-back" && it.guide !== "sel-more" && it.guide !== "sel-more-tools"));
     if (ball === "fx") return apply(fxItems);
     if (ball === "canv") return apply(canvItems.filter((it) => it.guide !== "canv-back"));
     return [];
@@ -2183,7 +2202,9 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
             if (fp) setFx({ ...fp, open: pcMode ? fx.open : false });
           }
         }
-        setSel({ ...sel, open: !sel.open });
+        // ⑯ 收起球时回到第一页，否则下次打开还停在「工具」页上
+        setSel((g) => (g ? { ...g, open: !g.open } : g));
+        if (sel.open) setSelSub(null);
       }) : null} />
       {!hiddenById("pal") && renderBall("pal", { x: pal.x, y: pal.y }, "i-palette", pal.open, t("palette"), bd(snap.lang, "palette"), () => {
         if (!pcMode) { setOpen(false); setSub(null); setSel((g) => (g ? { ...g, open: false } : g)); }
