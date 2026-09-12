@@ -201,6 +201,7 @@ export function warpFloating(
   if (!doc.sel) doc.sel = new Sel(w, h, false);
   const m = doc.sel.mask;
   m.fill(0);
+  doc.sel.bump();   // 掩码被就地改写：让 view 的选区着色 / 虚线框缓存失效
   const cells: number[] = [];
   if (!pts.length) return cells;
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
@@ -287,6 +288,7 @@ export function xformFloating(
   if (!doc.sel) doc.sel = new Sel(w, h, false);
   const m = doc.sel.mask;
   m.fill(0);
+  doc.sel.bump();   // 掩码被就地改写：让 view 的选区着色 / 虚线框缓存失效
   if (x0 > x1 || y0 > y1) return cells;
   for (let py = y0; py <= y1; py++) {
     for (let px = x0; px <= x1; px++) {

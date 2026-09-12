@@ -1486,6 +1486,16 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
   const repaintChanged = () => { SESSION.repaint(); SESSION.changedUI(); };
   // ⑥ 手机端：选区球分两页（常用在前，其余在「更多」里），PC 模式一次全铺开
   const [selSub, setSelSub] = useState<null | "more">(null);
+  /** 进入自由变换：顺手把球收起来（否则触屏上第一次点画布只会被遮罩用来收球），
+   *  失败时按原因给提示（图层锁定已经由 paintBlockedNote 说过，不再重复） */
+  const startWarp = (kind: "quad" | "mesh") => {
+    const v = SESSION.view;
+    const ok = v ? v.beginWarp(kind) : false;
+    if (!ok && v?.lastWarpError !== "locked") {
+      bridge.toast(t(v?.lastWarpError === "tooThin" ? "selWarpTooThin" : "selWarpNeedSel"));
+    }
+    setSel((g) => (g ? { ...g, open: false } : g));
+  };
   const selPage1: Item[] = [
     { id: "sel.all", icon: "i-sel-all", label: t("sel.all"), act: () => { selOps.selOps.selectAll(d); SESSION.repaint(); } },
     { id: "sel.invert", icon: "i-sel-invert", label: t("sel.invert"), act: () => SESSION.maskOp("sel.invert", () => selOps.selOps.invert(d)) },
@@ -1504,9 +1514,9 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
   const selPage2: Item[] = [
     { id: "sel-back", icon: "", label: "\u2039", act: () => setSelSub(null), guide: "sel-back" },
     { id: "selWarpQuad", icon: "i-resize-mode", label: t("selWarpQuad"), desc: t("selWarpQuadDesc"),
-      act: () => { if (!SESSION.view?.beginWarp("quad")) bridge.toast(t("selWarpNeedSel")); }, guide: "sel-warp-quad" },
+      act: () => startWarp("quad"), guide: "sel-warp-quad" },
     { id: "selWarpMesh", icon: "i-grid", label: t("selWarpMesh"), desc: t("selWarpMeshDesc"),
-      act: () => { if (!SESSION.view?.beginWarp("mesh")) bridge.toast(t("selWarpNeedSel")); }, guide: "sel-warp-mesh" },
+      act: () => startWarp("mesh"), guide: "sel-warp-mesh" },
     { id: "selWarpDone", icon: "i-check", label: t("selWarpDone"), desc: t("selWarpDoneDesc"),
       act: () => SESSION.view?.finishWarp(false), guide: "sel-warp-done" },
     { id: "selWarpRevert", icon: "i-undo", label: t("selWarpRevert"), desc: t("selWarpRevertDesc"),

@@ -34,6 +34,7 @@ import { testAse } from "./ase.test";
 import { testTags, testTagsIo } from "./tags.test";
 import { testPatterns } from "./patterns.test";
 import { testWarp } from "./warp.test";
+import { testWarpUi } from "./warpui.test";
 
 async function main(): Promise<void> {
   console.log("--- history ---");
@@ -104,6 +105,8 @@ async function main(): Promise<void> {
   testPatterns();
   console.log("--- warp ---");
   testWarp();
+  console.log("--- warp ui ---");
+  testWarpUi();
   console.log("--- animation tags ---");
   testTags();
   await testTagsIo();

@@ -271,6 +271,8 @@ export class View {
   private xf: { mode: "rot" | "scale" | "warp"; axis: "xy" | "x" | "y"; li: number; fi: number; st: MoveState; cx: number; cy: number; ax: number; ay: number; p0x: number; p0y: number; ang0: number; moved: boolean; cut?: boolean; buf?: Uint8ClampedArray; cells?: number[];
     /** 自由变换（斜切/透视/网格）用的控制点（画布坐标）与正在拖的那一个 */
     warpKind?: "quad" | "mesh"; pts?: Pt[]; drag?: number } | null = null;
+  /** 上一次 `beginWarp` 被拒的原因（UI 据此给不同提示；"locked" 已由 paintBlockedNote 说过） */
+  lastWarpError: "noSel" | "tooThin" | "locked" | null = null;
 
   constructor(host: HTMLElement, session: Session) {
     this.host = host;
@@ -669,6 +671,9 @@ export class View {
 
   /** commit a still-open gesture (e.g. bucket fill whose pointerup was lost) as its own history step */
   flushStroke(): boolean {
+    // 自由变换也是「没落笔的手势」：切工具 / 切图层 / 撤销之前先把它落下来，
+    // 否则浮动内容只活在内存里，而图层已经被 floatCut 清空（自动保存会存成缺内容的样子）
+    if (this.xf && this.xf.mode === "warp") this.finishWarp(false);
     if (this.path) this.endPath(true);
     if (!this.stroke) return false;
     this.stopSpray();
@@ -2039,15 +2044,25 @@ export class View {
         else if (longAction !== "none") this.session.runGestureAction(longAction, { x: pt.x, y: pt.y });
       }, this.session.prefs.longPressMs);
     }
-    // grab a transform handle (rotate / scale) of an existing selection frame
+    // 自由变换：手柄命中即开始拖；命中时顺手取消待触发的长按取色，
+    // 免得慢速的精细拖动被长按抢走
     if (this.xf && this.xf.mode === "warp") {
       const h = this.warpHandleAt(pt);
-      if (h >= 0) { this.xf.drag = h; return; }
+      if (h >= 0) { this.cancelPickTimer(); this.xf.drag = h; return; }
     }
-    if (selOn && this.tryStartXf(pt)) return;
+    // 变形模式是「常驻」状态（完成 / 还原才结束），期间不能再起旋转缩放框
+    if (!this.xf && selOn && this.tryStartXf(pt)) return;
     // pressing inside an existing selection moves its content directly;
     // it never restarts a marquee / reselects (empty area still does)
-    if (selOn && (tool === "select" || tool === "lasso" || tool === "wand") && this.startSelMove(pp)) return;
+    if (!this.xf && selOn && (tool === "select" || tool === "lasso" || tool === "wand") && this.startSelMove(pp)) return;
+    // 自由变换是常驻模式：画布上除了控制点没有别的手势 —— 工具的按下分支
+    // （selDown 的选区拖动 / 套索 / 重新框选 / 直接绘制）都会和「浮动内容」叠加，
+    // 提交时历史 before 也会对不上，所以这里只留「拖到画布外＝平移视图」。
+    if (this.xf && this.xf.mode === "warp") {
+      if (outsideDoc) this.panLast = pt;
+      this.cancelPickTimer();   // 这次按下属于变形，别让它顺带起一次长按取色
+      return;
+    }
     if (tool === "select") {
       this.selDown(pp, pt, e);
       return;
@@ -2253,8 +2268,10 @@ export class View {
       if (this.mousePan) { this.mousePan = false; this.panLast = null; this.syncCursor(); }
       return;
     }
-    if (this.xf && this.xf.mode === "warp" && this.xf.drag !== undefined) {
-      this.warpMove(pt);
+    // 自由变换是常驻模式：没抓住控制点时指针移动什么都不做，
+    // 绝不能落到下面的 xfMove（那是旋转 / 缩放，会把变形预览顶成缩放结果）
+    if (this.xf && this.xf.mode === "warp") {
+      if (this.xf.drag !== undefined) this.warpMove(pt);
       return;
     }
     if (this.xf) {
@@ -2359,7 +2376,10 @@ export class View {
       this.pickLast = null;
       this.mag = false;
       this.magCenter = null;
-      if (this.xf) this.endXf();
+      // 旋转 / 缩放：一个手势＝一次变换，松手即落笔。
+      // 自由变换是常驻模式：松手只结束这一次拖拽，模式留给「完成 / 还原」。
+      if (this.xf && this.xf.mode === "warp") this.xf.drag = undefined;
+      else if (this.xf) this.endXf();
       const pt = this.evPt(e);
       const now = Date.now();
       // two-finger tap (no zoom): a double two-finger tap = redo
@@ -2671,7 +2691,8 @@ export class View {
     return best;
   }
 
-  /** 按当前控制点重算浮动预览（每次都从手势起点抓下来的原图重算，不累积误差） */
+  /** 按当前控制点重算浮动预览（每次都从手势起点抓下来的原图重算，不累积误差）。
+   *  第一次调用时才把浮动内容从图层上切下来（`floatCut`）——进入变形本身不改图层。 */
   private applyWarp(): void {
     const g = this.xf;
     if (!g || g.mode !== "warp" || !g.pts) return;
@@ -2680,22 +2701,26 @@ export class View {
     if (!g.cut) { g.cut = true; selOps.floatCut(doc, g.li, g.fi, g.st); }
     if (!g.buf) g.buf = new Uint8ClampedArray(doc.w * doc.h * 4);
     g.cells = warpFloating(doc, g.st, g.pts, g.buf, g.warpKind === "mesh");
-    g.moved = true;
-    s.repaintAll();
-    this.drawOverlay();
+    // 图层只在原地被清空，重绘范围＝浮动内容原来那块；overlay 由 refresh 统一画
+    s.repaintRect({ x: g.st.ox, y: g.st.oy, w: g.st.content.w, h: g.st.content.h });
   }
 
-  /** 进入自由变换：`kind = "quad"` 拖四角（斜切/透视），`kind = "mesh"` 拖 3x3 网格点 */
+  /** 进入自由变换：`kind = "quad"` 拖四角（斜切/透视），`kind = "mesh"` 拖 3x3 网格点。
+   *  进入时**不动图层**（只画控制点），失败原因见 `lastWarpError`。 */
   beginWarp(kind: "quad" | "mesh"): boolean {
     const s = this.session;
     const doc = s.doc;
-    if (!doc.sel || !doc.sel.hasAny()) return false;
-    if (s.layerLocked()) { s.paintBlockedNote(); return false; }
+    this.lastWarpError = null;
+    if (!doc.sel || !doc.sel.hasAny()) { this.lastWarpError = "noSel"; return false; }
+    if (s.layerLocked()) { this.lastWarpError = "locked"; s.paintBlockedNote(); return false; }
     let g = this.xf;
     if (!g) {
       const li = s.curLayer(), fi = s.curFrame();
       const st = beginMove(doc, li, fi);
-      if (!st) return false;
+      if (!st) { this.lastWarpError = "noSel"; return false; }
+      // 宽或高只有 1 像素的选区：四点会压成一条线，变形结果必为空 ——
+      // 进去只会把内容切没了，所以直接拒绝（此时图层与掩码都还没被碰过）
+      if (st.content.w < 2 || st.content.h < 2) { this.lastWarpError = "tooThin"; return false; }
       const b = doc.sel.bounds();
       const cx = b ? b.x + b.w / 2 : 0, cy = b ? b.y + b.h / 2 : 0;
       g = { mode: "warp", axis: "xy", li, fi, st, cx, cy, ax: cx, ay: cy, p0x: cx, p0y: cy, ang0: 0, moved: false };
@@ -2705,7 +2730,9 @@ export class View {
     g.warpKind = kind;
     g.pts = kind === "mesh" ? floatGrid(g.st, 2) : floatQuad(g.st);
     g.drag = undefined;
-    this.applyWarp();
+    // 已经在变形中（图层切过了）就重算预览；否则只把控制点画出来
+    if (g.cut) this.applyWarp();
+    else s.repaint();
     s.hapticTick("变形", 0.7);
     return true;
   }
@@ -2719,6 +2746,7 @@ export class View {
     if (q.x === p.x && q.y === p.y) return;
     q.x = Math.max(-4096, Math.min(4096, p.x));
     q.y = Math.max(-4096, Math.min(4096, p.y));
+    g.moved = true;   // 真拖过才算「改过」：只进来看手柄不落历史
     this.applyWarp();
   }
 
@@ -2804,8 +2832,14 @@ export class View {
     const doc = s.doc;
     const cel = doc.celAt(g.li, g.fi);
     if (!cel) return;
-    if (!g.moved) return;
-    if (g.cut && g.buf && g.cells) {
+    if (!g.moved) {
+      // 没真拖过（自由变换允许只进去看一眼，或只切了模式）：图层必须原样还回去，
+      // 否则 floatCut 过的内容就永远留在「被清空」的状态里
+      if (g.cut) cel.data.set(g.st.before);
+      s.repaint();
+      return;
+    }
+    if (g.cut && g.buf && g.cells && g.cells.length) {
       // drop: the cel still holds "pre-gesture minus content", write the final
       // floating pixels once and record a single history step
       const data = cel.data;
@@ -2817,11 +2851,16 @@ export class View {
       let changed = false;
       for (let i = 0; i < data.length; i++) if (data[i] !== g.st.before[i]) { changed = true; break; }
       if (changed) {
-        s.history.pushPixels(g.mode === "rot" ? "sel.rotate" : "sel.scale", doc, [
+        const label = g.mode === "rot" ? "sel.rotate" : g.mode === "warp" ? "sel.warp" : "sel.scale";
+        s.history.pushPixels(label, doc, [
           { li: g.li, fi: g.fi, before: g.st.before, after: new Uint8ClampedArray(data) },
         ]);
         s.changed();
       }
+    } else if (g.cut && g.mode === "warp") {
+      // 变形结果为空（四角被拖成一条线 / 内容整体拖出画布）：不要落一条「把内容清空」的
+      // 历史，把原样还回去 —— 想删内容有专门的删除按钮，这里宁可什么都不做
+      cel.data.set(g.st.before);
     }
     s.repaint();
   }

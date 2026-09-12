@@ -1328,8 +1328,20 @@ PC 专属的 Blender 式饼菜单：浮动球存储区边的**装备槽**里装�
 采样一律最近邻（像素画不允许被插值糊掉）；映射一律「目标 → 源」的逆向映射，所以拉伸时不会出现空洞。
 UI 侧：`View.beginWarp("quad"\|"mesh")` 进入变形（没有浮动选区时自动抓一份），画布上出现
 可拖的控制点（四角 / 3×3 网格），拖动时每帧从手势起点那份原图重算预览（不累积误差）；
-`View.finishWarp(false)` 落下（一条历史）、`finishWarp(true)` 还原。入口在**选区球 →「更多」**：
+`View.finishWarp(false)` 落下（一条历史，标签 `sel.warp`）、`finishWarp(true)` 还原。入口在**选区球 →「更多」**：
 「斜切 / 透视」「网格变形」「完成」「还原」。
+
+**状态机约定**（改这里之前先读）：
+- 变形是**常驻模式**（`xf.mode === "warp"`）：`pointerup` 只结束当前这一次拖拽（清 `xf.drag`），
+  **不落笔**；画布球里的「完成 / 还原」提交或放弃。切工具 / 切图层 / 撤销 / 重做 / 跳历史之前，
+  `View.flushStroke()` 会先 `finishWarp(false)` 把它落下来（浮动内容只活在内存里，
+  而图层已经被 `floatCut` 清空 —— 不能让它跨过这些操作）。`onMove` / `onDown` / `onUp`
+  里凡是走 `rotate/scale` 的分支都必须先排除 warp，否则指针一动就会被当成缩放。
+- **进入变形不改图层**：`floatCut` 推迟到第一次真正拖动（`warpMove` → `applyWarp`），
+  因此「进去看一眼再退出」不会留下被清空的图层，也不产生历史。
+- 移动过（`xf.moved`）但没有浮动结果（四角被拖成一条线 / 内容全拖出画布）时提交＝把原像素还回去。
+- 宽或高只有 1 像素的选区被 `beginWarp` 拒绝（`View.lastWarpError = "tooThin"`；没有选区是
+  `"noSel"`、图层锁定是 `"locked"`），UI 据此给不同提示。
 
 ### 18.10 图案笔刷（`src/data/patterns.ts`）
 
