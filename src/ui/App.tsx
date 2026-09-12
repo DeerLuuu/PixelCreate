@@ -1762,6 +1762,8 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
           ...SELECT_TOOLS.map((dd) => ({ id: "tool." + dd.id, icon: dd.icon, label: t("tools." + dd.id), desc: td(dd.id), act: () => pickTool("select", dd.id), active: snap.tool === dd.id, guide: "tool-" + dd.id })),
         ] : []),
         ...(pcMode ? [] : [
+        { id: "action-search", icon: "i-search", label: t("actSearch"), desc: t("actSearchHint"),
+          act: () => { setOpen(false); setSub(null); onSearch(); }, guide: "tool-search" },
         { id: "pattern-brush", icon: "i-pattern", label: t("patternTitle"),
           desc: SESSION.activePattern() ? t("patternTitle") + " · " + SESSION.activePattern()!.name : t("patternHint"),
           act: () => onPatterns(), active: !!SESSION.activePattern(), guide: "tool-pattern" },
@@ -2117,12 +2119,6 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
 
   return (
     <>
-      {!hiddenById("main") && open && !pcMode && !SESSION.uiEdit && (
-        <button className="act-search-pill" style={{ left: pos.x, top: pos.y - (M.orb / 2 + 26) }}
-          onClick={() => { setOpen(false); setSub(null); onSearch(); }}>
-          <Icon id="i-search" size={12} /><span>{t("actSearch")}</span>
-        </button>
-      )}
       {!hiddenById("main") && renderBall("main", pos, baseIcon, open, t("menu"), bd(snap.lang, "orb"), () => {
         // 双击主球＝切回上一个工具（两次点击之间来回切，跟 Aseprite 一致）
         const now = Date.now();

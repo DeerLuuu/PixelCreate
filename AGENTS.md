@@ -259,7 +259,7 @@ java -jar /root/pk/apksigner.jar verify --print-certs /sdcard/Download/PixelCraf
 死代码清理（2026-09-09）：`ts-prune` + 静态扫描删除未用导出（`squareCells`、`colorToHex6`）与 25 条旧布局 CSS（bottombar/zone/framebox/flyout/packrow/clg-v 等）、修好一个失衡的 `}`；删 `build.sh`/`tests/run.sh`/`toolchain/env.sh`/`toolchain/resolve.js` 与 696MB SDK 下载物；新增 `tests/i18n.test.ts` 静态校验 i18n 键（顺手修好 `t("loop.*")` 取错字典与 6 个缺失键）。
 绘制快捷与体验（1.1.0.0 之后）：双击主球＝切回上一个工具（`Session.prevToolId` / `switchToPreviousTool`）、
 把橡皮小项从工具球拖到画布＝临时橡皮（`View.beginTempStroke/moveTempStroke/endTempStroke` 转发合成指针事件，
-不改 `SESSION.tool`）、动作搜索面板（`Session.allActions()` + `ActionSearchModal`，PC `Ctrl+K` / 触摸主球上方浮条）、
+不改 `SESSION.tool`）、动作搜索面板（`Session.allActions()` + `ActionSearchModal`，PC `Ctrl+K` / 触屏＝工具球里的「搜索动作」小项）、
 一键从画布生成调色板（`Session.paletteFromCanvas`）、内描边（`effects.inlineCel`：保住最外圈原色 + 透明度混合）、
 圆角化（`effects.roundCornersCel`：只削"一个象限全满"的硬直角，细线/斜线/折角安全）、
 图案笔刷（`src/data/patterns.ts` + `Session` 图案库 + `Stroke.paintOne`，选区/画布可存为图案）。
