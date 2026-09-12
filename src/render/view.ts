@@ -2672,12 +2672,15 @@ export class View {
   }
 
   // ---------- 自由变换：斜切 / 透视（四角）与网格变形 ----------
-  /** 控制点在屏幕上的位置（命中判定与绘制共用） */
+  /** 控制点在屏幕上的位置（命中判定与绘制共用）。
+   *  `pts` 是**像素下标**（恒等时＝选区内容的像素下标），下标 `i` 的像素中心在屏幕上
+   *  是 `(i + 0.5) * zoom + ox` —— 那个 `+0.5` 只是「画在像素中心上」，不参与任何数学，
+   *  也不写回控制点，所以控制点永远落在像素上（不是像素边界、不会有半像素值）。 */
   private warpHandles(): Array<{ x: number; y: number }> {
     const g = this.xf;
     if (!g || g.mode !== "warp" || !g.pts) return [];
     const z = this.zoom;
-    return g.pts.map((p) => ({ x: p.x * z + this.ox, y: p.y * z + this.oy }));
+    return g.pts.map((p) => ({ x: (p.x + 0.5) * z + this.ox, y: (p.y + 0.5) * z + this.oy }));
   }
 
   /** 手指/鼠标落在哪个控制点上（半径 22 屏幕像素） */
@@ -2737,7 +2740,9 @@ export class View {
     return true;
   }
 
-  /** 拖控制点中：把逻辑坐标写回控制点并重算预览 */
+  /** 拖控制点中：把逻辑坐标写回控制点并重算预览。
+   *  `screenToPixel()` 用 `floor`，所以写回的控制点**永远是整数像素下标**（不会出现 `x.5`）；
+   *  手指不动时（含刚抓住控制点的那一下）反查回来正好是当前下标，恒等位置得以保持。 */
   private warpMove(pt: PxPoint): void {
     const g = this.xf;
     if (!g || g.mode !== "warp" || !g.pts || g.drag === undefined) return;

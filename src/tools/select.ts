@@ -5,7 +5,7 @@ import type { RGBA } from "../engine/types";
 import type { History } from "../engine/history";
 import { blendOver } from "../engine/color";
 import { polygonCells } from "../engine/paint";
-import { meshWarp, warpQuad, type Pixmap, type Pt } from "./warp";
+import { gridLine, meshWarp, warpQuad, type Pixmap, type Pt } from "./warp";
 
 function record(doc: Doc, history: History, li: number, fi: number, before: Uint8ClampedArray | null, label: string): void {
   const cel = doc.celAt(li, fi);
@@ -190,8 +190,10 @@ export function beginMove(doc: Doc, li: number, fi: number): MoveState | null {
  *  同时把结果写进 `doc.sel` 掩码，返回被点亮的像素下标。
  *
  *  `pts` 是**画布坐标**：四边形时是四个角（左上→右上→右下→左下，顺序固定）；
- *  网格时是 (divs+1)² 个控制点（行主序）。口径统一为**边框 / 像素角**（见 `floatQuad()`），
- *  恒等变换下 `floatQuad(st)` / `floatGrid(st)` 会把选区里每一个不透明像素都覆盖到。
+ *  网格时是 (divs+1)² 个控制点（行主序）。口径统一为**像素下标**（见 `floatQuad()`）：
+ *  控制点恒等时就是选区内容的像素下标 `ox..ox+cw-1` / `oy..oy+ch-1`，
+ *  遍历范围取这些下标的包围盒（`floor(min)..ceil(max)` 含端点），
+ *  所以恒等变换正好覆盖整个选区、不丢最右 / 最下一列。
  *  `st.content` 是手势开始时抓下来的那块像素，
  *  所以拖动过程中反复调用它都是「从原图重算」，不会累积误差。
  */
@@ -237,29 +239,31 @@ export function warpFloating(
 }
 
 /** 浮动内容在画布坐标里的四角（左上→右上→右下→左下）。
- *  **边框 / 像素角口径**：内容占 `[ox, ox+cw) × [oy, oy+ch)`，四角就是 `ox+cw`、`oy+ch`
- *  （不是 `cw-1`）—— 与 `View.selFramePts()` 画的选区框四角、`xformFloating()` 的角点口径一致。
- *  早先用「像素下标」口径（`+cw-1`）会让变形控制点比选区框内缩 1 像素，
- *  并且浮动区域的 bbox 少算一列 / 一行，最右 / 最下一列像素在变形预览里直接漏掉。 */
+ *  **像素下标口径**：内容占像素下标 `ox..ox+cw-1` / `oy..oy+ch-1`，四角就是这四个下标
+ *  （不是 `ox+cw` / `oy+ch`）—— 控制点因此落在**像素上**，而不是像素之间的边界上
+ *  （用户报的「变形点吸附半个像素」）。绘制时 `View.warpHandles()` 再把下标加上 0.5 画到像素中心。
+ *  遍历范围仍取控制点下标的包围盒，所以恒等变换正好覆盖整个选区（含最右 / 最下一列）。 */
 export function floatQuad(st: MoveState): Pt[] {
   const cw = st.content.w, ch = st.content.h;
   return [
     { x: st.ox, y: st.oy },
-    { x: st.ox + cw, y: st.oy },
-    { x: st.ox + cw, y: st.oy + ch },
-    { x: st.ox, y: st.oy + ch },
+    { x: st.ox + cw - 1, y: st.oy },
+    { x: st.ox + cw - 1, y: st.oy + ch - 1 },
+    { x: st.ox, y: st.oy + ch - 1 },
   ];
 }
 
 /** 浮动内容上的 (divs+1)² 网格控制点（画布坐标，**行主序**＝左上→右上→右下→左下，
- *  与 `meshWarp()` / `defaultGrid()` 同序；口径同为边框 / 像素角）。 */
+ *  与 `meshWarp()` / `defaultGrid()` 同序；口径同为**像素下标**，末点＝ `ox+cw-1` / `oy+ch-1`）。
+ *  中间几条线的分布由 `warp.ts` 的 `gridLine()` 给出（不整除时取最近的像素下标，
+ *  保证控制点永远落在像素上，也不会出现半像素），与 `meshWarp()` 的源格线完全一致。 */
 export function floatGrid(st: MoveState, divs = 2): Pt[] {
   const n = Math.max(1, Math.round(divs));
   const cw = st.content.w, ch = st.content.h;
   const out: Pt[] = [];
   for (let gy = 0; gy <= n; gy++) {
     for (let gx = 0; gx <= n; gx++) {
-      out.push({ x: st.ox + (cw * gx) / n, y: st.oy + (ch * gy) / n });
+      out.push({ x: st.ox + gridLine(cw, gx, n), y: st.oy + gridLine(ch, gy, n) });
     }
   }
   return out;

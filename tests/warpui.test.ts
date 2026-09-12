@@ -354,34 +354,81 @@ export function testWarpUi(): void {
     } finally { cmod.composeFrameWithOnion = orig; }
   }
 
-  // ---- 口径统一：变形的四个控制点正好落在选区框的四个角上（不再内缩 1 像素） ----
+  // ---- 口径统一：控制点＝像素下标（整数），屏幕位置＝像素中心 `(i + 0.5) * zoom + ox` ----
+  // 旧口径（边框 / 像素角）下四角是 `b.x + b.w`，控制点落在像素之间的边界上（用户报的
+  // 「变形点吸附半个像素」）；现在改成像素下标 `b.x + b.w - 1`，并把下标画在像素中心。
   {
     const { s, v } = mk();
-    paint(s, 10, 10, 6, 4);                  // 选区 = (10,10)..(16,14)（边框口径）
+    paint(s, 10, 10, 6, 4);                  // 内容像素下标 x 10..15 / y 10..13
     const sel = s.doc.sel!;
     ok("warpui.corners.enter", warp(v, "quad"));
     const b = sel.bounds()!;
+    const cornerPts = [[b.x, b.y], [b.x + b.w - 1, b.y], [b.x + b.w - 1, b.y + b.h - 1], [b.x, b.y + b.h - 1]];
     const hs = v.warpHandles();
     eq("warpui.corners.count", hs.length, 4);
-    eq("warpui.corners.x", hs.map((p) => Math.round((p.x - v.ox) / v.zoom)), [b.x, b.x + b.w, b.x + b.w, b.x]);
-    eq("warpui.corners.y", hs.map((p) => Math.round((p.y - v.oy) / v.zoom)), [b.y, b.y, b.y + b.h, b.y + b.h]);
-    // 网格模式的控制点同样铺满：四角与上面一致
+    eq("warpui.corners.pixel-index", v.xf!.pts!.map((p) => [p.x, p.y]), cornerPts);
+    // 绘制位置＝像素中心，容差 1e-6（screenToPixel 的反函数）
+    let offCentre = 0;
+    for (let i = 0; i < 4; i++) {
+      const p = v.xf!.pts![i];
+      if (Math.abs(hs[i].x - ((p.x + 0.5) * v.zoom + v.ox)) > 1e-6) offCentre++;
+      if (Math.abs(hs[i].y - ((p.y + 0.5) * v.zoom + v.oy)) > 1e-6) offCentre++;
+      // 反解回下标也必须是整数（半点偏移只活在绘制里）
+      const ix = (hs[i].x - v.ox) / v.zoom - 0.5, iy = (hs[i].y - v.oy) / v.zoom - 0.5;
+      if (Math.abs(ix - Math.round(ix)) > 1e-6 || Math.abs(iy - Math.round(iy)) > 1e-6) offCentre++;
+    }
+    eq("warpui.corners.screen-centre", offCentre, 0);
+    // 网格模式的控制点同样是像素下标（9 个点，四角与上面一致）
     ok("warpui.corners.mesh-enter", warp(v, "mesh"));
     const mh = v.warpHandles();
     eq("warpui.corners.mesh-count", mh.length, 9);
-    eq("warpui.corners.mesh-x", [mh[0].x, mh[2].x, mh[8].x].map((x) => Math.round((x - v.ox) / v.zoom)), [b.x, b.x + b.w, b.x + b.w]);
-    eq("warpui.corners.mesh-y", [mh[0].y, mh[2].y, mh[8].y].map((y) => Math.round((y - v.oy) / v.zoom)), [b.y, b.y, b.y + b.h]);
-    // 恒等（只点一下左上角、不挪位置）：预览里选区的每一个像素都还在（含最右 / 最下一列）
+    eq("warpui.corners.mesh-pixel-index", [v.xf!.pts![0], v.xf!.pts![2], v.xf!.pts![8]],
+      [{ x: b.x, y: b.y }, { x: b.x + b.w - 1, y: b.y }, { x: b.x + b.w - 1, y: b.y + b.h - 1 }]);
+    eq("warpui.corners.mesh-integers", v.xf!.pts!.filter((p) => !Number.isInteger(p.x) || !Number.isInteger(p.y)).length, 0);
+    // 恒等（把左上角拖回它自己画出来的那个屏幕点、不挪位置）：预览里选区每一个像素都还在（含最右 / 最下一列）
     const h0 = v.warpHandles()[0];
     v.onDown(ev(h0.x, h0.y));
-    const same = sc(v, b.x, b.y);
-    v.onMove(ev(same.x, same.y));
-    v.onUp(ev(same.x, same.y));
+    v.onMove(ev(h0.x, h0.y));
+    v.onUp(ev(h0.x, h0.y));
     dom.flush();
+    eq("warpui.corners.identity-point", [v.xf!.pts![0].x, v.xf!.pts![0].y], [b.x, b.y]);
     let lost = 0;
     for (let y = 10; y < 14; y++) for (let x = 10; x < 16; x++) if (alpha(s, x, y) !== 255) lost++;
     eq("warpui.corners.identity-covers-all", lost, 0);
     finish(v, true);
     eq("warpui.corners.revert-exits", v.xf, null);
+  }
+
+  // ---- 拖到任意小数屏幕坐标：写回的控制点永远是整数像素下标（不许出现 x.5） ----
+  {
+    const { s, v } = mk();
+    paint(s, 10, 10, 7, 5);
+    ok("warpui.drag-int.enter", warp(v, "quad"));
+    const fracs: number[][] = [[12.37, 9.84], [13.5, 11.5], [20.999, 16.001], [10.5, 10.5], [6.2, 7.8]];
+    let nonInteger = 0, notFloored = 0;
+    for (const [fx, fy] of fracs) {
+      const h = v.warpHandles()[1];                 // 右上角
+      const dest = sc(v, fx, fy);                   // 任意小数屏幕坐标
+      v.onDown(ev(h.x, h.y));
+      v.onMove(ev(dest.x, dest.y));
+      v.onUp(ev(dest.x, dest.y));
+      dom.flush();
+      const p = v.xf!.pts![1];
+      if (!Number.isInteger(p.x) || !Number.isInteger(p.y)) nonInteger++;
+      if (p.x !== Math.floor(fx) || p.y !== Math.floor(fy)) notFloored++;
+    }
+    eq("warpui.drag-int.integers", nonInteger, 0);
+    eq("warpui.drag-int.floor", notFloored, 0);
+    // 网格也一样：拖中心点到小数坐标后仍是整数下标
+    ok("warpui.drag-int.mesh-enter", warp(v, "mesh"));
+    const mh = v.warpHandles()[4];
+    const mdest = sc(v, 14.63, 12.21);
+    v.onDown(ev(mh.x, mh.y));
+    v.onMove(ev(mdest.x, mdest.y));
+    v.onUp(ev(mdest.x, mdest.y));
+    dom.flush();
+    eq("warpui.drag-int.mesh-point", [v.xf!.pts![4].x, v.xf!.pts![4].y], [14, 12]);
+    eq("warpui.drag-int.mesh-integers", v.xf!.pts!.filter((p) => !Number.isInteger(p.x) || !Number.isInteger(p.y)).length, 0);
+    finish(v, true);
   }
 }
