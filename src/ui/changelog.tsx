@@ -9,7 +9,7 @@ import { useKitPcMode } from "./kit";
 import { Dialog } from "./kit";
 
 /** keep in sync with android/AndroidManifest.xml versionName on every release */
-export const APP_VERSION = "1.1.0.0";
+export const APP_VERSION = "1.1.1.0";
 /** build stamp shown next to the version (support/debug: identifies the exact
  *  package a user is running when the version number itself does not change) */
 export const BUILD_TAG = "7bb01ab";
@@ -21,6 +21,16 @@ export interface ClgVersion { v: string; date: string; items: ClgItem[] }
 const it = (kind: ClgKind, zh: string, en: string): ClgItem => ({ kind, zh, en });
 
 export const CHANGELOG: ClgVersion[] = [
+  {
+    v: "1.1.1.0",
+    date: "2026-09-12",
+    items: [
+      it("add", "**图案笔刷**：工具球里多了「图案笔刷」，面板里 10 个现成图案（棋盘 50%、抖动 12/25/75%、斜线两个方向、交叉网、方格、散点、砖块）点一下就换成图案笔；**选区**或**整张画布**都能一键存成自己的图案（按内容自动裁边，最大 64×64，随设置保存）。图案按画布坐标平铺，所以每一笔接得上；图案透明的地方不着色；**橡皮配上图案就只擦图案上的点**（等于顺手多了一个抖动橡皮）。", "**Pattern brush**: the tool ball has a new Pattern brush entry with 10 ready-made patterns (checker 50%, dither 12/25/75%, both diagonals, cross-hatch, grid, dots, brick) — one tap switches the brush. The **selection** or the **whole canvas** can be saved as your own pattern (auto-trimmed to the content, up to 64x64, stored with your settings). Patterns tile in canvas coordinates so strokes line up, and transparent pattern pixels never paint; an **eraser with a pattern rubs out only the pattern dots** (a dither eraser for free)."),
+      it("add", "两个像素画整理工具进了魔法球：**内描边**——在轮廓内侧画一条线，**最外圈的颜色原样保留**，线条可以半透明（与底色混合，且不会把半透明像素变成不透明）；**圆角化**——把轮廓上的硬直角削成圆角（1–8 层，可选是否同时补内凹角），1px 细线、斜线与折角一律不会被啃掉。", "Two pixel-art clean-up tools joined the FX ball: **Inline** draws a line just inside the silhouette while **keeping the outer ring exactly as it was**, optionally see-through (blended with the pixels underneath, never forcing a semi-transparent pixel to opaque); **Round corners** knocks the hard right-angle corners into rounded ones (1-8 layers, optionally filling inner corners too) and never eats 1px lines, diagonals or elbows."),
+      it("imp", "四个画起来更顺手的快捷：**双击工具球＝切回上一个工具**（来回切）；**把橡皮小项从工具球拖到画布上＝临时橡皮**，走到哪擦到哪、松手不变当前工具、只记一条历史；**动作搜索**（电脑 `Ctrl+K`，手机上主球上方一条「搜索动作」）输入名字就能找到任何按钮；调色板面板新增**「从画布生成调色板」**，把这张画布用到的颜色按使用次数收进调色板。", "Four shortcuts that make drawing smoother: **double-tap the tool ball to switch back to the previous tool** (it swaps back and forth); **drag the eraser item out of the tool ball onto the canvas for a one-off eraser** that rubs out along the way without changing your current tool and lands as a single undo step; **action search** (`Ctrl+K` on desktop, a Search actions pill above the tool ball on a phone) finds any button by name; and the palette panel gained **Palette from canvas**, which collects the colours used on this canvas into the palette, most used first."),
+    ],
+  },
+
   {
     v: "1.1.0.0",
     date: "2026-09-12",
