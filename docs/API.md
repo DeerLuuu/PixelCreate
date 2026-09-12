@@ -1311,6 +1311,25 @@ PC 专属的 Blender 式饼菜单：浮动球存储区边的**装备槽**里装�
 多 `TITLE_EXTRA`，否则拖到邻居身边时永远够不到更大的叠放空隙。`Session.canvasesTouch` 也用
 `stackGap()` 判断，保证叠放后能正常成组。
 
+### 18.10 图案笔刷（`src/data/patterns.ts`）
+
+| 导出 | 说明 |
+|---|---|
+| `PATTERN_MAX` (64) | 图案最大边长（选区/画布抓图案超过它会被拒绝） |
+| `PatternDef` | `{ id, name, w, h, data, tint?, builtin? }`；`data` = RGBA 原始字节的 base64 |
+| `BUILTIN_PATTERNS` / `BUILTIN_PATTERN_ZH` | 10 个内置 8x8 图案（tint 遮罩）与它们的中文名 |
+| `patternBytes(def)` | 解出字节（长度/尺寸不对返回 null） |
+| `patternColorAt(bytes, w, h, x, y)` | 按画布坐标**取模平铺**取样；透明处返回 null |
+| `patternFromBytes(src, w, h, trim?)` | 从一块像素抓图案（默认裁掉四周全透明），全透明返回 null |
+| `patternPreview(bytes, w, h, size)` | 面板缩略图用的一维采样 |
+
+Session 侧：`patternDefs()`（内置 + 用户）、`activePattern()`、`brushPatternData()`（交给 Stroke 的数据）、
+`setPattern(id|null)`、`addPattern(name, bytes, w, h)`、`removePattern(id)`（内置删不掉）、`renamePattern(id, name)`、
+`patternFromSelection()`（只收选区内像素，返回 `ok|empty|toolarge|nosel`）、`patternFromCanvas()`（可见图层叠加后按内容裁剪）。
+
+Stroke 侧：`BrushState.pattern` 一填，落笔统一走 `paintOne()`——图案 alpha=0 处**不落笔**（既不上色也不擦除），
+`tint` 图案用当前画笔颜色着色（画笔不透明度仍生效），画笔颜色 alpha=0（橡皮）时**只擦图案点**。
+
 ### 18.9 新增设置项
 
 `tools.bucketGrad` / `tools.bucketGradMode`（油漆桶渐变与颗粒）、

@@ -28,7 +28,7 @@ src/tools/     工具注册表、笔迹、选区变换
 src/io/        原生桥接、工程文件（.pxc）、Aseprite 读写（aseread/asewrite/zlib）、自动保存、参考图、安全区、base64
 src/ui/        React 外壳、弹窗、时间线、浮动球、i18n、样式
 android/       MainActivity（Java 层）+ AndroidManifest
-tests/         无 DOM 的引擎/逻辑回归（**2060 条断言**，`node .ts-out/tests/run-tests.js` 末尾会打印条数）
+tests/         无 DOM 的引擎/逻辑回归（**2182 条断言**，`node .ts-out/tests/run-tests.js` 末尾会打印条数）
 docs/          API.md / COMPARISON.md
 ```
 
@@ -257,6 +257,12 @@ java -jar /root/pk/apksigner.jar verify --print-certs /sdcard/Download/PixelCraf
 撤销重做全量 Command 化、历史双模式 + 全量回放（HistoryModal / ReplayOverlay）、魔法球 FX（描边/投影/外发光/反色/灰度/居中/智能裁剪）、图形即拖即选区、网格（off/pixel/iso）、三击缩放 + loupe 取色放大镜、帧预览、dock 持久化、全局长按菜单拦截、画布钳制 + 边缘自动平移、帧多选、洋葱皮首尾着色、导出帧范围、调色板排序/合并/去重、引导同步、设置搜索/重置/导入导出、返回手势双击确认、手势可重映射、操作历史随工程保存、震动反馈修复、设置卡片化、全面屏与安全区适配、时间线可拖动分割线。
 代码整理（2026-09-08）：删除旧 vanilla 版 `app/www` 与 boot-test/eng-test 旧脚本；i18n 死键与未用导出清理；调色板数据合并到 `src/data/palettes.ts`；构建配置收进仓库；未用导入/字段清理（`tsc noUnusedLocals` 0 错误）。
 死代码清理（2026-09-09）：`ts-prune` + 静态扫描删除未用导出（`squareCells`、`colorToHex6`）与 25 条旧布局 CSS（bottombar/zone/framebox/flyout/packrow/clg-v 等）、修好一个失衡的 `}`；删 `build.sh`/`tests/run.sh`/`toolchain/env.sh`/`toolchain/resolve.js` 与 696MB SDK 下载物；新增 `tests/i18n.test.ts` 静态校验 i18n 键（顺手修好 `t("loop.*")` 取错字典与 6 个缺失键）。
+绘制快捷与体验（1.1.0.0 之后）：双击主球＝切回上一个工具（`Session.prevToolId` / `switchToPreviousTool`）、
+把橡皮小项从工具球拖到画布＝临时橡皮（`View.beginTempStroke/moveTempStroke/endTempStroke` 转发合成指针事件，
+不改 `SESSION.tool`）、动作搜索面板（`Session.allActions()` + `ActionSearchModal`，PC `Ctrl+K` / 触摸主球上方浮条）、
+一键从画布生成调色板（`Session.paletteFromCanvas`）、内描边（`effects.inlineCel`：保住最外圈原色 + 透明度混合）、
+圆角化（`effects.roundCornersCel`：只削"一个象限全满"的硬直角，细线/斜线/折角安全）、
+图案笔刷（`src/data/patterns.ts` + `Session` 图案库 + `Stroke.paintOne`，选区/画布可存为图案）。
 PC 桌面化第 2 批（1.0.8.7）：粘贴流程重做（`ui/paste.ts` + `Session.pasteAsNewLayer/pasteAsNewCanvas/pasteIntoFrames`，修复 Ctrl+V 静默失效）、`engine/scrub.ts` 修滚轮/拖动调值跳变、空格按住＝背景色绘制 + `X` 换色、平移改画布外拖动/方向键、Alt 吸管光标、`Ctrl+F1` 快捷键一览、多球同开不拦截、画布球 PC 全展开、色球与子球同尺寸、PC 隐藏球里的复制剪切粘贴、帧图层直接拖动/双击重命名/右键帧设置/Shift 区间选帧/`Del` 全局删除/单画布标题、跨画布拖选区实时预览、浏览器手势拦截、`Ctrl+O/N/E`。
 PC 桌面化（1.0.8.5 / 1.0.8.6 批）：UI 规范与 `src/ui/kit` 控件库（Dialog/Form/primitives/scrub/HoverTip）+ 设计令牌与浅色主题、18 个弹窗与全部表单行迁移；PC 模式识别（`io/pcmode.ts`）与全套桌面输入（滚轮缩放/平移、中键＝聚焦适配、右键＝背景色、Alt+单击取色、窗口拖放导入、剪贴板、快捷键、Tab 专注）；浮动球桌面几何与全展开+锁定；设置/更新日志左右分栏；帧预览面板加宽；**选区跨画布移动**（`selOps.floatDropInto`）。
 Aseprite 兼容：`io/aseread.ts` / `io/asewrite.ts` / `io/zlib.ts`（自写同步 inflate；读 RGBA/灰度/索引色 + 图层/帧/链接 cel/调色板/标签，写 .aseprite 供 Aseprite 打开），打开流程按魔数识别、导出弹窗加 Aseprite 页签。
