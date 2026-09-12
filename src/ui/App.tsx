@@ -39,7 +39,7 @@ import { GuideOverlay, simulateTap } from "./guide";
 import type { ModalId, SizeMode, SheetData } from "./modals";
 import { Dialog, useKitPcMode } from "./kit";
 
-type PanelId = "layers" | "palette" | null;
+type PanelId = "palette" | null;
 
 
 export function App() {
@@ -758,7 +758,7 @@ const B_DESC = {
   canv: { zh: "画布球：对聚焦画布操作（新建 / 重命名 / 改尺寸 / 预览 / 关闭并保存）", en: "Canvas ball: act on the focused canvas (new / rename / resize / preview / close & save)" },
   hist: { zh: "操作记录：查看可撤销/重做的步骤，点任意旧记录可回到该状态", en: "History: view undo/redo steps, tap one to jump back" },
   loop: { zh: "循环播放：播到最后一帧后回到第 1 帧继续；关闭则播到末尾停止", en: "Loop: restart from frame 1 at the end; off stops at the last frame" },
-  sides: { zh: "多边形边数：按住拖动调节（3–12 边）", en: "Polygon sides: hold & drag (3–12)" },
+  sides: { zh: "多边形边数：按住拖动调节（3–32 边）", en: "Polygon sides: hold & drag (3–32)" },
 } as const;
 function bd(lang: string, key: keyof typeof B_DESC): string {
   const e = B_DESC[key];
@@ -1467,8 +1467,8 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
     if (o && (Math.abs(e.clientX - o.x) > 10 || Math.abs(e.clientY - o.y) > 14)) stopTip();
   };
   const td = (id: string): string => {
-    const z: Record<string, string> = { pencil: "铅笔：逐像素绘制", eraser: "橡皮：清除像素", bucket: "油漆桶：向同色连通区域填充当前色；底部栏可切换渐变模式（前景色→背景色，可选 RGB/2×2/4×4/8×8 颗粒）", picker: "取色器：吸取画布上的颜色", line: "直线", rect: "矩形描边", rectfill: "实心矩形", ellipse: "椭圆描边", ellipsefill: "实心椭圆", circle: "圆形：拖动绘制正圆", polygon: "多边形：可调边数（3–12）", polyline: "折线：点一下加一个点，点最后一个点结束（点倒数第二个可撤掉最后一个点）", curve: "曲线：点一下加一个点，用平滑样条串起来，点最后一个点结束", select: "矩形选区：拖拽框选区域", wand: "魔棒：按容差选中同色连通区域", lasso: "套索：自由手绘选区", outline: "轮廓填充：手绘闭合形状，松手后自动填充内部", airbrush: "喷枪：按住持续喷出随机大小像素点（底部栏可调点大小区间与密度）" };
-    const en: Record<string, string> = { pencil: "Pencil: draw pixels", eraser: "Eraser: clear pixels", bucket: "Fill bucket: fill the same-colour region (bottom bar: gradient mode, FG->BG with RGB/2x2/4x4/8x8 steps)", picker: "Eyedropper: pick a colour", line: "Line", rect: "Rect outline", rectfill: "Filled rect", ellipse: "Ellipse outline", ellipsefill: "Filled ellipse", circle: "Circle: drag to draw a perfect circle", polygon: "Polygon: adjustable sides (3–12)", polyline: "Polyline: tap to add points, tap the last point to finish (tap the point before it to undo one)", curve: "Curve: tap to add points, a smooth spline runs through them; tap the last point to finish", select: "Rect selection: drag to select", wand: "Magic wand: select same-colour area", lasso: "Lasso: freehand selection", outline: "Outline fill: draw a closed shape, it fills itself on release", airbrush: "Airbrush: hold to spray random-size specks (dot-size range & rate in the bottom bar)" };
+    const z: Record<string, string> = { pencil: "铅笔：逐像素绘制", eraser: "橡皮：清除像素", bucket: "油漆桶：向同色连通区域填充当前色；底部栏可切换渐变模式（前景色→背景色，可选 RGB/2×2/4×4/8×8 颗粒）", picker: "取色器：吸取画布上的颜色", line: "直线", rect: "矩形描边", rectfill: "实心矩形", ellipse: "椭圆描边", ellipsefill: "实心椭圆", circle: "圆形：拖动绘制正圆", polygon: "多边形：可调边数（3–32）", polyline: "折线：点一下加一个点，点最后一个点结束（点倒数第二个可撤掉最后一个点）", curve: "曲线：点一下加一个点，用平滑样条串起来，点最后一个点结束", select: "矩形选区：拖拽框选区域", wand: "魔棒：按容差选中同色连通区域", lasso: "套索：自由手绘选区", outline: "轮廓填充：手绘闭合形状，松手后自动填充内部", airbrush: "喷枪：按住持续喷出随机大小像素点（底部栏可调点大小区间与密度）" };
+    const en: Record<string, string> = { pencil: "Pencil: draw pixels", eraser: "Eraser: clear pixels", bucket: "Fill bucket: fill the same-colour region (bottom bar: gradient mode, FG->BG with RGB/2x2/4x4/8x8 steps)", picker: "Eyedropper: pick a colour", line: "Line", rect: "Rect outline", rectfill: "Filled rect", ellipse: "Ellipse outline", ellipsefill: "Filled ellipse", circle: "Circle: drag to draw a perfect circle", polygon: "Polygon: adjustable sides (3–32)", polyline: "Polyline: tap to add points, tap the last point to finish (tap the point before it to undo one)", curve: "Curve: tap to add points, a smooth spline runs through them; tap the last point to finish", select: "Rect selection: drag to select", wand: "Magic wand: select same-colour area", lasso: "Lasso: freehand selection", outline: "Outline fill: draw a closed shape, it fills itself on release", airbrush: "Airbrush: hold to spray random-size specks (dot-size range & rate in the bottom bar)" };
     return (snap.lang === "zh" ? z : en)[id] ?? "";
   };
 

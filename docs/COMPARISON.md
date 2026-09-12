@@ -2,6 +2,7 @@
 
 > 生成时间：随项目迭代更新
 > 目的：客观对比本项目（PixelCraft）与行业标杆 Aseprite、移动端商业软件 Resprite 的差异，并给出对本项目的犀利复盘与改进优先级。
+> 与桌面像素画竞品 **PixelOver / Pixel Composer** 的三方对比（只比 2D）见 [`docs/COMPARISON-pixelover-pixelcomposer.md`](COMPARISON-pixelover-pixelcomposer.md)。
 
 ## 〇、最新进展（1.0.6.x）
 

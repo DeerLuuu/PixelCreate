@@ -7,7 +7,7 @@
 
 | 能力 | 实现位置 |
 |---|---|
-| ✅ PC 模式识别（鼠标 + 宽屏启发式，设置里可强制开关） | `src/io/pcmode.ts`、`src/app/settings.ts`（`display.pcMode`） |
+| ✅ PC 模式识别（输入证据启发式：真实鼠标事件 / 触摸否决 / `pointer:fine`+`hover` 媒体查询，不经屏幕宽度；设置里可强制开关） | `src/io/pcmode.ts`、`src/app/settings.ts`（`display.pcMode`） |
 | ✅ 滚轮缩放（以光标为中心）、`Shift` 横向 / `Alt` 纵向平移 | `src/render/wheel.ts`、`View.onWheel` |
 | ✅ 中键点画布＝聚焦并适配该画布；空格+左键拖动＝平移 | `View.onDown` / `View.onSpaceKey` |
 | ✅ 右键用另一个颜色槽（默认背景色）绘制，且拦掉浏览器右键菜单 | `View.onDown`（`altPaint`）、`App.tsx` 的 `contextmenu` 拦截 |

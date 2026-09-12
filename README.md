@@ -40,7 +40,7 @@
 npm install            # 安装开发依赖（React / TypeScript / esbuild）
 
 npm run typecheck      # tsc 严格检查
-npm test               # 引擎 / 逻辑回归测试（540+ 断言，无 DOM 依赖）
+npm test               # 引擎 / 逻辑回归测试（2060 条断言，无 DOM 依赖；跑完末尾会打印总数）
 npm run build          # 产出 app2/www/js/app.js + css/style.css
 ```
 
@@ -79,7 +79,7 @@ toolchain/       开发辅助脚本（devserver 静态服务、make-icon 图标�
 
 ### 架构要点
 
-- **引擎层零 DOM**：`engine/`、`app/`、`tools/` 全部可在 Node 下测试（1108 项测试跑在纯数据上，含 UI 控件与令牌契约）。
+- **引擎层零 DOM**：`engine/`、`app/`、`tools/` 全部可在 Node 下测试（2060 条断言跑在纯数据上，含 UI 控件与令牌契约；`npm test` 末尾会打印条数）。
 - **声明式注册表**：设置项写在 `src/app/settings.ts`，引导步骤写在 `src/app/guide.ts`；新增功能 = 一条声明 + i18n 文案，界面自动生成。
 - **增量渲染**：笔迹只重合成/重绘改动区域（`Rect` + `composeRectInto` + `celToCanvasRect`），一帧一次绘制（rAF 合并）。
 - **撤销栈**：`history.pushPixels`（像素）/ `pushStruct`（结构快照）/ `record`（标量前后值）三类，所有破坏性操作都可单步撤销。

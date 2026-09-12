@@ -28,7 +28,7 @@ src/tools/     工具注册表、笔迹、选区变换
 src/io/        原生桥接、工程文件（.pxc）、Aseprite 读写（aseread/asewrite/zlib）、自动保存、参考图、安全区、base64
 src/ui/        React 外壳、弹窗、时间线、浮动球、i18n、样式
 android/       MainActivity（Java 层）+ AndroidManifest
-tests/         无 DOM 的引擎/逻辑回归（约 1950 条断言）
+tests/         无 DOM 的引擎/逻辑回归（**2060 条断言**，`node .ts-out/tests/run-tests.js` 末尾会打印条数）
 docs/          API.md / COMPARISON.md
 ```
 
@@ -77,7 +77,7 @@ java -jar /root/pk/apksigner.jar verify --print-certs /sdcard/Download/PixelCraf
 
 **核心**
 - `Session` 单例（`src/app/session.ts`）：持有 doc / history / prefs / 工具状态，`changed()` 驱动 React（`useSyncExternalStore`）；UI 状态改动都走它。
-- `History`（`src/engine/history.ts`）：`record`（廉价逆向）/ `pushPixels`（像素差分）/ `pushStruct`（全档快照，复杂操作）；`undo/redo/jumpTo`；`histMode` = `steps`（默认 60 条）/ `full`（完整回放）。工程文件可内嵌历史（`src/io/historyfile.ts` + `src/app/history-io.ts`）。
+- `History`（`src/engine/history.ts`）：`record`（廉价逆向）/ `pushPixels`（像素差分）/ `pushStruct`（全档快照，复杂操作）；`undo/redo/jumpTo`；`histMode` = `steps`（默认 **120** 条，`prefs.histSteps`；`History.cap` 初值 60 会在 session 初始化时被 `setCap(histSteps)` 覆盖）/ `full`（完整回放）。工程文件可内嵌历史（`src/io/historyfile.ts` + `src/app/history-io.ts`）。
 - 渲染增量：`Stroke.takeDirty()` → `composeRectInto` → 视口脏矩形 blit；`Session.repaint()` 由 rAF 合并，`repaintRect(rect)` 只更新局部；洋葱皮 / 选区着色都有缓存版本号。
 
 **工具与手势**
@@ -86,7 +86,7 @@ java -jar /root/pk/apksigner.jar verify --print-certs /sdcard/Download/PixelCraf
 - 形状：统一栅格 inside+border（实心/空心），Zingl 椭圆，笔刷 `brushStamp` 镜像对称（Aseprite 移植）。
 
 **UI**
-- 浮动球 `FloatingTools`：主球 / 选区球 / 取色球（扇形）/ 魔法球，多球互斥 68px，dock 停靠持久化。
+- 浮动球 `FloatingTools`：**五个**（主球 `main` / 选区球 `sel` / 取色球 `pal` / 魔法球 `fx` / 画布球 `canv`，见 `ORB_IDS`）；触屏下多球互斥 68px、电脑模式下可同时展开，dock 停靠持久化，PC 另有装备槽 + 快捷圆盘。
 - 调色板**唯一数据源** `src/data/palettes.ts`（`PALETTE_PACKS` + `defaultPalette`），勿在别处复制色表。
 - 横屏 ≥768px 走侧栏 grid；`src/ui/style.css` 的 `--sat/--sab/--sal/--sar` 是安全区变量（由 `src/io/safearea.ts` 写入）。
 - i18n 中英同文件 `src/ui/i18n.ts`：**每个键 zh/en 各一条**；删键前先 grep。
@@ -248,7 +248,7 @@ java -jar /root/pk/apksigner.jar verify --print-certs /sdcard/Download/PixelCraf
 
 - `AndroidManifest.xml` 版本号与 changelog 的 `APP_VERSION` 需手动同步（无自动校验，容易漏）。
 - `view.ts` / `session.ts` / `App.tsx` 仍偏大：手势/渲染、会话、UI 可继续拆。
-- PC 模式仅按「鼠标 + 宽屏」启发式识别（`src/io/pcmode.ts`，可在设置里强制开关）；渲染已做脏矩形增量，仍未做 overlay 笔迹层 / Web Worker（优先级见 `docs/COMPARISON.md`）。
+- PC 模式按**输入证据**识别（`src/io/pcmode.ts` 的 `resolvePcMode`：真实鼠标事件 > 触摸事件/触摸点否决 > 媒体查询 `(pointer: fine)` + `(hover: hover)`），**不看屏幕宽度**；设置里可强制开关；渲染已做脏矩形增量，仍未做 overlay 笔迹层 / Web Worker（优先级见 `docs/COMPARISON.md`）。
 
 ---
 
@@ -274,6 +274,7 @@ Aseprite 兼容：`io/aseread.ts` / `io/asewrite.ts` / `io/zlib.ts`（自写同�
 | [`docs/UI.md`](docs/UI.md) | **UI 规范**：设计令牌（尺寸/主题色/固定色）、`src/ui/kit` 控件 API、迁移清单、组件与令牌测试约定、演示页 |
 | [`docs/PC.md`](docs/PC.md) | **电脑模式（PC）适配清单与后续建议**：已完成能力表 + 20 条待办建议（含代码位置） |
 | [`docs/COMPARISON.md`](docs/COMPARISON.md) | 与 Aseprite / Resprite 的对比、痛点复盘与优先级（含最新进展表） |
+| [`docs/COMPARISON-pixelover-pixelcomposer.md`](docs/COMPARISON-pixelover-pixelcomposer.md) | 与 PixelOver / Pixel Composer 的三方对比（只比 2D）：速览表 + 能力大对照表 + 差异化优势 + 缺口清单（含来源与待核清单） |
 | `AGENTS.md`（本文件） | AI 代理约定：环境、命令、架构、工程约定、出包 runbook、已知缺口、交互与派活规则（§10） |
 
 ---

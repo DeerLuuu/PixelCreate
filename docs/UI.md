@@ -20,7 +20,7 @@
 
 **验收口径**（每项完成都要满足）：
 1. `tsc -p tsconfig.json --noEmit` 0 错误；
-2. `tests/run-tests.ts` 全绿（含既有 1053 条断言，不得减少）；
+2. `tests/run-tests.ts` 全绿（含既有 2060 条断言，不得减少；末尾会打印 `assertions: N`）；
 3. `tests/guide-anchors.test.ts` 通过（改造不得丢 `data-guide` 锚点）；
 4. 视觉效果：默认暗色主题下与改造前**逐像素等价**（除本文 §3.6 列出的「合并色」微差）；
 5. 新增/改动样式一律使用令牌，不写裸色值。
