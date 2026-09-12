@@ -16,8 +16,11 @@ declare const __dirname: string;
 const fs = require("fs");
 const path = require("path");
 
-/** 一页放得下的条目上限（超过就必须再分一页，否则环会撑出屏幕） */
-const MAX_PER_PAGE = 7;
+/** 一页放得下的条目上限（超过就必须再分一页，否则环会撑出屏幕）。
+ *  从 7 提到 8：变形页多了一个「半像素吸附」开关（点一下就地切换、选中态高亮）。
+ *  8 项时 ringLayout 把内环半径撑到 57px（4+4 两排、张角 90°），最远的球落在
+ *  `hypot(57, 57) ≈ 81px` 上，加球半径仍远在手机短边内 —— 下面的几何断言就是钉这条。 */
+const MAX_PER_PAGE = 8;
 
 export function testSelOrb(): void {
   const appSrc = fs.readFileSync(path.resolve(__dirname, "../../../src/ui/App.tsx"), "utf8");
@@ -54,13 +57,22 @@ export function testSelOrb(): void {
   const must = [
     "sel.all", "sel.invert", "sel.clear", "sel.fill",
     "sel.copy", "sel.cut", "sel.paste", "pasteAsLayerBall", "pasteAsCanvasBall",
-    "selWarpQuad", "selWarpMesh", "selWarpDone", "selWarpRevert",
+    "selWarpQuad", "selWarpMesh", "selWarpDone", "selWarpRevert", "selWarpHalf",
     "sel.fliph", "sel.flipv", "sel.grow", "sel.shrink", "sel.outline", "selCrop", "sel.delete",
   ];
   eq("selorb.mobile-reach-all", must.filter((id) => !mobile.has(id)), []);
-  // 自由变换四个入口必须和「四角 / 网格」在同一页（点进去就能接着点「完成」）
+  // 自由变换四个入口必须和「四角 / 网格」在同一页（点进去就能接着点「完成」），
+  // 吸附粒度开关（半像素 / 整像素）也在这一页：拖之前顺手就能切
   ok("selorb.warp-one-page", p2.ids.includes("selWarpQuad") && p2.ids.includes("selWarpMesh")
     && p2.ids.includes("selWarpDone") && p2.ids.includes("selWarpRevert"), p2.ids.join(","));
+  ok("selorb.warp-half-on-warp-page", p2.ids.includes("selWarpHalf"), p2.ids.join(","));
+  // 开关项：点一下翻转设置项 tools.selWarpHalfSnap，并把当前状态显示成选中态（Item.active）
+  const halfItem = appSrc.slice(appSrc.indexOf('id: "selWarpHalf"'));
+  const halfBody = halfItem.slice(0, halfItem.indexOf("guide:") + 40);
+  ok("selorb.warp-half-toggles", halfBody.includes("setSelWarpHalfSnap(on)") && halfBody.includes("!SESSION.prefs.selWarpHalfSnap"),
+    halfBody.replace(/\s+/g, " ").slice(0, 160));
+  ok("selorb.warp-half-active", halfBody.includes("active: SESSION.prefs.selWarpHalfSnap"), "active");
+  ok("selorb.warp-half-desc", halfBody.includes("selWarpHalfOn") && halfBody.includes("selWarpHalfOff"), "desc");
 
   // 3) PC 合并视图＝三页并集，且没有重复 id（重复会让动作搜索列两次）
   const pcView = appSrc.slice(appSrc.indexOf("const selItems: Item[] = pcMode"), appSrc.indexOf("const selCatalog"));
@@ -89,7 +101,7 @@ export function testSelOrb(): void {
   }
 
   // 5) 新增的 i18n 文案中英都有，锚点也都在
-  for (const key of ["selMoreWarpDesc", "selMoreTools", "selMoreToolsDesc"]) {
+  for (const key of ["selMoreWarpDesc", "selMoreTools", "selMoreToolsDesc", "selWarpHalfSnap", "selWarpHalfSnapDesc", "selWarpHalfOn", "selWarpHalfOff"]) {
     const hits = i18nSrc.match(new RegExp("\\b" + key + ":", "g")) || [];
     eq("selorb.i18n." + key, hits.length, 2);
   }

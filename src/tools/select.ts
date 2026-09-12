@@ -196,9 +196,13 @@ export function beginMove(doc: Doc, li: number, fi: number): MoveState | null {
  *  所以恒等变换正好覆盖整个选区、不丢最右 / 最下一列。
  *  `st.content` 是手势开始时抓下来的那块像素，
  *  所以拖动过程中反复调用它都是「从原图重算」，不会累积误差。
+ *
+ *  `halfSnap`：控制点是否允许落在 `x.5`（半像素吸附，见 `warp.ts` 的 `snapWarpCoord()`）。
+ *  开着时栅格化按「目标像素格的左沿」取样（`tieDown`），于是把四角整体挪 0.5 格
+ *  正好是「整块内容连着边上那一列一起搬过去」，不会因为均分的取舍丢一列 / 一行。
  */
 export function warpFloating(
-  doc: Doc, st: MoveState, pts: Pt[], out: Uint8ClampedArray, mesh: boolean, divs = 2,
+  doc: Doc, st: MoveState, pts: Pt[], out: Uint8ClampedArray, mesh: boolean, divs = 2, halfSnap = false,
 ): number[] {
   const w = doc.w, h = doc.h;
   out.fill(0);
@@ -223,7 +227,9 @@ export function warpFloating(
   const bw = x1 - x0 + 1, bh = y1 - y0 + 1;
   const local = pts.map((p) => ({ x: p.x - x0, y: p.y - y0 }));
   const src: Pixmap = { w: st.content.w, h: st.content.h, data: st.content.data };
-  const warped = mesh ? meshWarp(src, local, bw, bh, divs) : warpQuad(src, local, bw, bh);
+  const warped = mesh
+    ? meshWarp(src, local, bw, bh, divs, halfSnap)
+    : warpQuad(src, local, bw, bh, undefined, halfSnap);
   for (let y = 0; y < bh; y++) {
     for (let x = 0; x < bw; x++) {
       const sp = (y * bw + x) * 4;
@@ -239,9 +245,11 @@ export function warpFloating(
 }
 
 /** 浮动内容在画布坐标里的四角（左上→右上→右下→左下）。
- *  **像素下标口径**：内容占像素下标 `ox..ox+cw-1` / `oy..oy+ch-1`，四角就是这四个下标
- *  （不是 `ox+cw` / `oy+ch`）—— 控制点因此落在**像素上**，而不是像素之间的边界上
- *  （用户报的「变形点吸附半个像素」）。绘制时 `View.warpHandles()` 再把下标加上 0.5 画到像素中心。
+ *  **像素下标口径**：内容占像素下标 `ox..ox+cw-1` / `oy..oy+ch-1`，初始四角就是这四个下标
+ *  （不是 `ox+cw` / `oy+ch`）—— 控制点因此落在**像素上**，而不是像素之间的边界上。
+ *  绘制时 `View.warpHandles()` 再把下标加上 0.5 画到像素中心。
+ *  拖过之后允许是 `x.5`（半像素吸附，见 `warp.ts` 的 `snapWarpCoord()`）：
+ *  整数＝压在像素中心，`x.5`＝落在相邻两个像素之间的边界线上。
  *  遍历范围仍取控制点下标的包围盒，所以恒等变换正好覆盖整个选区（含最右 / 最下一列）。 */
 export function floatQuad(st: MoveState): Pt[] {
   const cw = st.content.w, ch = st.content.h;
@@ -255,8 +263,10 @@ export function floatQuad(st: MoveState): Pt[] {
 
 /** 浮动内容上的 (divs+1)² 网格控制点（画布坐标，**行主序**＝左上→右上→右下→左下，
  *  与 `meshWarp()` / `defaultGrid()` 同序；口径同为**像素下标**，末点＝ `ox+cw-1` / `oy+ch-1`）。
- *  中间几条线的分布由 `warp.ts` 的 `gridLine()` 给出（不整除时取最近的像素下标，
- *  保证控制点永远落在像素上，也不会出现半像素），与 `meshWarp()` 的源格线完全一致。 */
+ *  中间几条线的分布由 `warp.ts` 的 `gridLine()` 给出（不整除时取最近的像素下标），
+ *  与 `meshWarp()` 的源格线完全一致。
+ *  这是**进入变形时的初始分布**（全是整数下标）；拖起来之后每个控制点各自按
+ *  `snapWarpCoord()` 落到整数或 `x.5`（半像素模式，默认开），不再走 `gridLine()` 的取整。 */
 export function floatGrid(st: MoveState, divs = 2): Pt[] {
   const n = Math.max(1, Math.round(divs));
   const cw = st.content.w, ch = st.content.h;

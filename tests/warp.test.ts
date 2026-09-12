@@ -5,7 +5,12 @@
 // `(0,0)`、`(cw-1,0)`、`(cw-1,ch-1)`、`(0,ch-1)`（不是 `cw` / `ch`）；
 // 目标像素 `(px,py)` 的质心在下标空间里就是 `(px,py)`，反查回源下标后**就近取整**（Math.round）。
 // 绘制时下标 `i` 画到屏幕 `(i + 0.5) * zoom + ox`（见 tests/warpui.test.ts）。
-import { defaultGrid, homography, applyMat, meshWarp, quadArea, skewQuad, warpQuad } from "../src/tools/warp";
+//
+// 吸附粒度：控制点可以落在**整数**（压在像素中心）或 **`x.5`**（落在两个像素之间的边界线上），
+// 由 `snapWarpCoord(v, half)` 决定（半像素模式＝默认，见 `prefs.selWarpHalfSnap`）。
+// 半像素平移会让目标像素中心正好落在两个源像素**中间**，此时采样按「正中间取左边」处理
+// （`warpFloating(..., halfSnap)` 的 `dropTie`），否则整块内容会白丢一列 / 一行。
+import { applyMat, defaultGrid, homography, meshWarp, quadArea, skewQuad, snapWarpCoord, warpCoordLabel, warpPointFromScreen, warpQuad } from "../src/tools/warp";
 import { beginMove, floatGrid, floatQuad, warpFloating } from "../src/tools/select";
 import { Doc, Sel } from "../src/engine/doc";
 import { eq, ok } from "./common";
@@ -392,5 +397,231 @@ export function testWarp(): void {
       if (out[p] === 200 && out[p + 3] === 255) far = true;
     }
     ok("warp.skew.corner-pulled-out", far);
+  }
+
+  // ---- 吸附粒度：半像素（默认）允许 `x.5`，整像素只允许整数 ----
+  {
+    // 半像素模式：任意小数都落到 0.5 的整数倍（整数＝像素中心，x.5＝像素之间的边界线）
+    const half: Array<[number, number]> = [
+      [12.2, 12], [12.3, 12.5], [12.5, 12.5], [12.7, 12.5], [12.8, 13],
+      [-0.2, 0], [-0.7, -0.5], [0, 0], [3.5, 3.5], [3.9999999996, 4], [4.0000000004, 4],
+    ];
+    for (const [v, want] of half) eq("warp.snap.half." + v, snapWarpCoord(v, true), want);
+    eq("warp.snap.half-any-fraction", half.filter(([v]) => {
+      const q = snapWarpCoord(v, true);
+      return Math.abs(q * 2 - Math.round(q * 2)) > 1e-9;
+    }).length, 0);
+    // 整像素模式：永远整数，且取的是 floor（原来的行为）
+    const whole: Array<[number, number]> = [
+      [12.2, 12], [12.5, 12], [12.99, 12], [13, 13], [-0.2, -1], [-0.7, -1], [3.9999999996, 4],
+    ];
+    for (const [v, want] of whole) eq("warp.snap.whole." + v, snapWarpCoord(v, false), want);
+    eq("warp.snap.whole-integers", whole.filter(([v]) => Number.isInteger(snapWarpCoord(v, false))).length, whole.length);
+
+    // 屏幕 → 控制点：绘制位置 `(q + 0.5) * zoom + ox` 的反解，两种模式都幂等（抓住不动不跳位）
+    const zoom = 8, ox = 100, oy = 50;
+    const draw = (q: number) => (q + 0.5) * zoom + ox;
+    for (const halfMode of [true, false]) {
+      let off = 0;
+      for (const q of [10, 11, 3, -4]) {
+        const p = warpPointFromScreen(draw(q), (q + 0.5) * zoom + oy, zoom, ox, oy, halfMode);
+        if (p.x !== q || p.y !== q) off++;
+      }
+      eq("warp.point.idempotent." + (halfMode ? "half" : "whole"), off, 0);
+    }
+    // 半像素模式：屏幕落在像素中心与下一条边界线之间 → 取最近的半点
+    const dy = (10 + 0.5) * zoom + oy;          // y 同样对准下标 10 的像素中心
+    eq("warp.point.half.cell-centre", warpPointFromScreen(draw(10), dy, zoom, ox, oy, true), { x: 10, y: 10 });
+    eq("warp.point.half.near-edge", warpPointFromScreen(draw(10) + zoom * 0.4, dy, zoom, ox, oy, true), { x: 10.5, y: 10 });
+    eq("warp.point.half.edge", warpPointFromScreen(draw(10) + zoom * 0.5, dy, zoom, ox, oy, true), { x: 10.5, y: 10 });
+    eq("warp.point.half.just-under", warpPointFromScreen(draw(10) + zoom * 0.2, dy, zoom, ox, oy, true), { x: 10, y: 10 });
+    // 整像素模式：同样的小数屏幕坐标一定落到整数（就近取整，与绘制公式严格互逆）
+    for (const [off, want] of [[0.2, 10], [0.6, 11], [0.4, 10], [0.9, 11], [0.8, 11]] as Array<[number, number]>) {
+      const p = warpPointFromScreen(draw(10) + zoom * off, dy, zoom, ox, oy, false);
+      eq("warp.point.whole." + off, p, { x: want, y: 10 });
+      ok("warp.point.whole-integer." + off, Number.isInteger(p.x), String(p.x));
+    }
+    // 半像素模式：跨过半格就落到 `x.5`（细调能落在两格中间）
+    eq("warp.point.half.over-half", warpPointFromScreen(draw(10) + zoom * 0.8, dy, zoom, ox, oy, true), { x: 11, y: 10 });
+    eq("warp.point.half.one-and-a-half", warpPointFromScreen(draw(10) + zoom * 1.5, dy, zoom, ox, oy, true), { x: 11.5, y: 10 });
+
+    // 拖动浮标的文案：半像素带一位小数，整像素是整数，-0 归一化成 0
+    eq("warp.label.half", warpCoordLabel({ x: 12.5, y: -0.0 }, true), "12.5, 0.0");  // 负零归一成 0
+    eq("warp.label.half-int", warpCoordLabel({ x: 12, y: 3 }, true), "12.0, 3.0");
+    eq("warp.label.whole", warpCoordLabel({ x: 12.5, y: -0.0 }, false), "13, 0");
+  }
+
+  // ---- 半像素拖动：四角整体 +0.5 真的参与采样（与 +0、+1 都不同），且不丢列 / 不留洞 ----
+  {
+    /** 20×10 的文档上放一块 5×3 的内容（下标 x 3..7 / y 2..4） */
+    const scene = () => {
+      const doc = new Doc(20, 10, "H");
+      const cel = doc.ensureCel(0, 0);
+      const cw = 5, ch = 3, ox = 3, oy = 2;
+      for (let y = 0; y < ch; y++) for (let x = 0; x < cw; x++) {
+        const p = cel.idx(ox + x, oy + y);
+        cel.data[p] = 30 + x * 20; cel.data[p + 1] = 60 + y * 20; cel.data[p + 2] = 9; cel.data[p + 3] = 255;
+      }
+      doc.sel = new Sel(doc.w, doc.h);
+      for (let y = 0; y < ch; y++) for (let x = 0; x < cw; x++) doc.sel.set(ox + x, oy + y, 1);
+      return { doc, cel, st: beginMove(doc, 0, 0)!, cw, ch, ox, oy };
+    };
+    /** 把四角整体挪 (dx, dy) 后跑一遍预览。
+     *  落点**先过一遍吸附**（真拖动走的是 `warpPointFromScreen()` → `snapWarpCoord()`）：
+     *  半像素模式留住 `.5`，整像素模式被吸附回整格。 */
+    const run = (dx: number, dy: number, halfSnap: boolean) => {
+      const g = scene();
+      const out = new Uint8ClampedArray(g.doc.w * g.doc.h * 4);
+      const quad = floatQuad(g.st).map((p) => ({
+        x: snapWarpCoord(p.x + dx, halfSnap), y: snapWarpCoord(p.y + dy, halfSnap),
+      }));
+      const cells = warpFloating(g.doc, g.st, quad, out, false, 2, halfSnap);
+      let count = 0;
+      for (let i = 3; i < out.length; i += 4) if (out[i] > 0) count++;
+      return { out, cells: cells.length, count, W: g.doc.w, H: g.doc.h, ox: g.ox, oy: g.oy, cw: g.cw, ch: g.ch };
+    };
+    /** 只把右上角（下标 1）往外挪 `mut` 格——带半像素位移的「拉伸」（同样先过吸附） */
+    const stretch = (mut: number, halfSnap: boolean) => {
+      const g = scene();
+      const out = new Uint8ClampedArray(g.doc.w * g.doc.h * 4);
+      const quad = floatQuad(g.st).map((p, i) => {
+        const q = i === 1 ? { x: p.x + mut, y: p.y } : { x: p.x, y: p.y };
+        return { x: snapWarpCoord(q.x, halfSnap), y: snapWarpCoord(q.y, halfSnap) };
+      });
+      const cells = warpFloating(g.doc, g.st, quad, out, false, 2, halfSnap);
+      let count = 0;
+      for (let i = 3; i < out.length; i += 4) if (out[i] > 0) count++;
+      return { out, cells: cells.length, count, W: g.doc.w, H: g.doc.h, ox: g.ox, oy: g.oy, cw: g.cw, ch: g.ch };
+    };
+    const bytes = (a: Uint8ClampedArray, b: Uint8ClampedArray): number => {
+      let n = 0;
+      for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) n++;
+      return n;
+    };
+    /** 按内容原色（红 = 30 + 列号*20，绿 = 60 + 行号*20）认一认这块内容在不在 */
+    const looksRight = (r: ReturnType<typeof run>, x0: number, y0: number): number => {
+      let bad = 0;
+      for (let y = 0; y < r.ch; y++) for (let x = 0; x < r.cw; x++) {
+        const p = ((y0 + y) * r.W + (x0 + x)) * 4;
+        if (r.out[p] !== 30 + x * 20 || r.out[p + 1] !== 60 + y * 20 || r.out[p + 3] !== 255) bad++;
+      }
+      return bad;
+    };
+    /** 输出里有多少行 / 列还有内容，内容自身的包围盒里有没有「洞」（整行 / 整列为空） */
+    const occupancy = (r: ReturnType<typeof run>) => {
+      const on = (x: number, y: number): boolean => r.out[(y * r.W + x) * 4 + 3] > 0;
+      let emptyRows = 0, emptyCols = 0;
+      let bx0 = r.W, by0 = r.H, bx1 = -1, by1 = -1;
+      for (let y = 0; y < r.H; y++) {
+        let any = false;
+        for (let x = 0; x < r.W; x++) {
+          if (!on(x, y)) continue;
+          any = true;
+          if (x < bx0) bx0 = x;
+          if (x > bx1) bx1 = x;
+          if (y < by0) by0 = y;
+          if (y > by1) by1 = y;
+        }
+        if (!any) emptyRows++;
+      }
+      for (let x = 0; x < r.W; x++) {
+        let any = false;
+        for (let y = 0; y < r.H; y++) if (on(x, y)) any = true;
+        if (!any) emptyCols++;
+      }
+      // 洞＝内容包围盒内部整行 / 整列是空的（半个像素的位移不能把内容中间挖空）
+      let holes = 0;
+      for (let y = by0; y <= by1; y++) {
+        let any = false;
+        for (let x = bx0; x <= bx1; x++) if (on(x, y)) any = true;
+        if (!any) holes++;
+      }
+      for (let x = bx0; x <= bx1; x++) {
+        let any = false;
+        for (let y = by0; y <= by1; y++) if (on(x, y)) any = true;
+        if (!any) holes++;
+      }
+      return { emptyRows, emptyCols, holes };
+    };
+
+    // 基线：不挪（半像素模式开着）
+    const b0 = run(0, 0, true);
+    // 四角整体 +0.5：控制点落到 `x.5`（两格之间的边界线）——最典型的半像素拖动
+    const bHalf = run(0.5, 0, true);
+    // 整格：+1（半像素模式）与整像素模式下的 +1
+    const h1 = run(1, 0, true);
+    const c1 = run(1, 0, false);
+
+    // 1) 0.5 确实被写进了几何：结果与不动**不同**（半个像素的位移真的参与了采样）
+    ok("warp.halfdiff.differs-0", bytes(bHalf.out, b0.out) > 0, String(bytes(bHalf.out, b0.out)));
+    ok("warp.halfdiff.int1-differs-0", bytes(h1.out, b0.out) > 0, String(bytes(h1.out, b0.out)));
+    // 2) 像素数守恒、形状原样：半个像素的位移**不丢列、不留洞**（旧行为会白丢一列）
+    eq("warp.halfdiff.count", bHalf.count, b0.count);
+    eq("warp.halfdiff.cells", bHalf.cells, b0.cells);
+    eq("warp.halfdiff.shape", looksRight(bHalf, bHalf.ox + 1, bHalf.oy), 0);
+    eq("warp.halfdiff.occupied", [occupancy(bHalf).emptyRows, occupancy(bHalf).emptyCols],
+      [bHalf.H - bHalf.ch, bHalf.W - bHalf.cw]);
+    eq("warp.halfdiff.no-hole", occupancy(bHalf).holes, 0);
+    // 3) 最近邻的必然结果：位移正好半个像素时目标像素中心压在两个源像素正中间，
+    //    统一取「左沿那一格」，于是 +0.5 与「量化到 +1」逐字节相同（内容整体搬一格）；
+    //    关键是**内容完整**（上面几条），不是凭空多出半像素的模糊。
+    eq("warp.halfdiff.half-quantises-to-one", bytes(bHalf.out, h1.out), 0);
+    // 4) 对照：整格拖动时，半像素模式与整像素模式结果**完全相同**（整格不吃半点）
+    eq("warp.halfdiff.int1-matches-whole", bytes(h1.out, c1.out), 0);
+    eq("warp.halfdiff.int1-count", h1.count, b0.count);
+    eq("warp.halfdiff.int1-old-col-empty", h1.out[(h1.oy * h1.W + h1.ox) * 4 + 3], 0);
+    eq("warp.halfdiff.int1-new-col", h1.out[(h1.oy * h1.W + h1.ox + h1.cw) * 4 + 3], 255);
+
+    // 5) 单点带半像素的「拉伸」：目标四角真的是 `x.5`（不是整数），输出跟着变、不出洞
+    const sh = stretch(0.5, true);
+    eq("warp.halfdiff.stretch-quad", [
+      snapWarpCoord(3 + 5 - 1 + 0.5, true), snapWarpCoord(2 + 0.5, true),
+    ], [7.5, 2.5]);
+    ok("warp.halfdiff.stretch-changed", bytes(sh.out, b0.out) > 0, String(bytes(sh.out, b0.out)));
+    ok("warp.halfdiff.stretch-nonempty", sh.count > 0, String(sh.count));
+    eq("warp.halfdiff.stretch-no-hole", occupancy(sh).holes, 0);
+    // 6) 两个方向都带 0.5 时同样一个像素不丢、一行不丢（浮点毛刺不能让 y 掉一行）
+    const bDiag = run(0.5, 0.5, true);
+    eq("warp.halfdiff.diag-count", bDiag.count, b0.count);
+    eq("warp.halfdiff.diag-shape", looksRight(bDiag, bDiag.ox + 1, bDiag.oy + 1), 0);
+    eq("warp.halfdiff.diag-occupied", [occupancy(bDiag).emptyRows, occupancy(bDiag).emptyCols],
+      [bDiag.H - bDiag.ch, bDiag.W - bDiag.cw]);
+    // 7) 模式切换真的换了落点粒度：整像素模式下 `+0.5` 被吸附回整格，结果＝完全不动；
+    //    同一次拖动在半像素模式下落点留在 `x.5`，结果跟着变 —— 两条路真的分开了
+    const wholeHalf = run(0.5, 0, false);
+    eq("warp.halfdiff.whole-mode-snaps-away", bytes(wholeHalf.out, b0.out), 0);
+    eq("warp.halfdiff.whole-mode-count", wholeHalf.count, b0.count);
+    ok("warp.halfdiff.half-mode-keeps", bytes(bHalf.out, wholeHalf.out) > 0, String(bytes(bHalf.out, wholeHalf.out)));
+  }
+
+  // ---- 半像素吸附：网格模式同样能落在 `x.5`，且投影/网格运算不出 NaN ----
+  {
+    const src = mk(5, 3);
+    const grid = defaultGrid(5, 3, 2);
+    // 把 9 个控制点整体往右下挪半格（下标 +0.5），不再是整数
+    const moved = grid.map((p) => ({ x: p.x + 0.5, y: p.y + 0.5 }));
+    const out = meshWarp(src, moved, 7, 5, 2, true);
+    let opaque = 0, nan = 0;
+    for (let i = 0; i < 7 * 5; i++) {
+      const p = i * 4;
+      if (out[p + 3] > 0) opaque++;
+      if (!Number.isFinite(out[p]) || !Number.isFinite(out[p + 1])) nan++;
+    }
+    eq("warp.mesh-half.nan", nan, 0);
+    ok("warp.mesh-half.nonempty", opaque > 0, String(opaque));
+    // 恒等（网格不动）仍然是逐字节无损的，结论不受半点吸附影响
+    const same = meshWarp(src, grid, 5, 3, 2, false);
+    let diff = 0;
+    for (let i = 0; i < src.data.length; i++) if (src.data[i] !== same[i]) diff++;
+    eq("warp.mesh-half.identity-still-lossless", diff, 0);
+    // 四点变换：目标四角带 .5 也不出 NaN、不把画面整片糊掉
+    const q = [
+      { x: 0.5, y: 0.5 }, { x: 4.5, y: 0.5 }, { x: 4.5, y: 2.5 }, { x: 0.5, y: 2.5 },
+    ];
+    const wq = warpQuad(src, q, 7, 4, undefined, true);
+    let wqOpaque = 0, wqNaN = 0;
+    for (let i = 0; i < 7 * 4; i++) { if (wq[i * 4 + 3] > 0) wqOpaque++; if (!Number.isFinite(wq[i * 4])) wqNaN++; }
+    eq("warp.quad-half.nan", wqNaN, 0);
+    eq("warp.quad-half.opaque", wqOpaque, src.w * src.h);   // 4 列 × 3 行：整块内容一格不少
   }
 }

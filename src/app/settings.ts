@@ -381,6 +381,12 @@ const defs: SettingDef[] = [
     path: "tools.wandTolerance", field: "selectionTolerance", kind: "int", group: "tools",
     label: "sel.wandTol", default: 8, min: 0, max: 64, unit: "T", reset: 8, refresh: "changed",
   },
+  {
+    // 变形控制点的吸附粒度：默认**半像素**（控制点可以落在两个像素之间的边界线上细调）。
+    // 选区球的「变形」页里有一个同名开关项，改的就是这一条（见 ui/App.tsx 的 selWarpHalf）。
+    path: "tools.selWarpHalfSnap", field: "selWarpHalfSnap", kind: "bool", group: "tools",
+    label: "selWarpHalfSnap", desc: "selWarpHalfSnapDesc", default: true, refresh: "changed",
+  },
 
   // ------------------------------------------------------------ gesture
   {

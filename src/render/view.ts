@@ -12,6 +12,7 @@ import { selOps, lassoFill, beginMove, xformFloating, warpFloating, floatQuad, f
 import type { Session } from "../app/session";
 import type { GestureActionId } from "../app/gesture-ids";
 import type { Pt } from "../tools/warp";
+import { warpCoordLabel, warpPointFromScreen } from "../tools/warp";
 import { clamp } from "../engine/types";
 import { LEGACY_TITLE_EXTRA, TITLE_EXTRA, snapGapRect, type GapRect } from "../app/canvas-snap";
 import { canvasAtScreen as spaceCanvasAt, screenToCanvas } from "../app/canvas-space";
@@ -273,6 +274,8 @@ export class View {
     warpKind?: "quad" | "mesh"; pts?: Pt[]; drag?: number } | null = null;
   /** 上一次 `beginWarp` 被拒的原因（UI 据此给不同提示；"locked" 已由 paintBlockedNote 说过） */
   lastWarpError: "noSel" | "tooThin" | "locked" | null = null;
+  /** 正在拖变形控制点：画布上跟手显示当前坐标（`x, y`；半像素模式带一位小数） */
+  private warpDragOn = false;
 
   constructor(host: HTMLElement, session: Session) {
     this.host = host;
@@ -2378,7 +2381,7 @@ export class View {
       this.magCenter = null;
       // 旋转 / 缩放：一个手势＝一次变换，松手即落笔。
       // 自由变换是常驻模式：松手只结束这一次拖拽，模式留给「完成 / 还原」。
-      if (this.xf && this.xf.mode === "warp") this.xf.drag = undefined;
+      if (this.xf && this.xf.mode === "warp") { this.xf.drag = undefined; this.warpDragOn = false; }
       else if (this.xf) this.endXf();
       const pt = this.evPt(e);
       const now = Date.now();
@@ -2674,8 +2677,9 @@ export class View {
   // ---------- 自由变换：斜切 / 透视（四角）与网格变形 ----------
   /** 控制点在屏幕上的位置（命中判定与绘制共用）。
    *  `pts` 是**像素下标**（恒等时＝选区内容的像素下标），下标 `i` 的像素中心在屏幕上
-   *  是 `(i + 0.5) * zoom + ox` —— 那个 `+0.5` 只是「画在像素中心上」，不参与任何数学，
-   *  也不写回控制点，所以控制点永远落在像素上（不是像素边界、不会有半像素值）。 */
+   *  是 `(i + 0.5) * zoom + ox` —— 那个 `+0.5` 只是「画在像素中心上」，不参与任何数学。
+   *  于是整数下标画在像素中心、半像素下标（`x.5`，见 `snapWarpCoord()`）正好画在
+   *  两个像素之间的**边界线**上：用户要的「点显示在像素上方」就是这个口径。 */
   private warpHandles(): Array<{ x: number; y: number }> {
     const g = this.xf;
     if (!g || g.mode !== "warp" || !g.pts) return [];
@@ -2703,7 +2707,7 @@ export class View {
     const doc = s.doc;
     if (!g.cut) { g.cut = true; selOps.floatCut(doc, g.li, g.fi, g.st); }
     if (!g.buf) g.buf = new Uint8ClampedArray(doc.w * doc.h * 4);
-    g.cells = warpFloating(doc, g.st, g.pts, g.buf, g.warpKind === "mesh");
+    g.cells = warpFloating(doc, g.st, g.pts, g.buf, g.warpKind === "mesh", 2, this.session.selWarpHalfSnap);
     // 图层只在原地被清空，重绘范围＝浮动内容原来那块；overlay 由 refresh 统一画
     s.repaintRect({ x: g.st.ox, y: g.st.oy, w: g.st.content.w, h: g.st.content.h });
   }
@@ -2741,13 +2745,17 @@ export class View {
   }
 
   /** 拖控制点中：把逻辑坐标写回控制点并重算预览。
-   *  `screenToPixel()` 用 `floor`，所以写回的控制点**永远是整数像素下标**（不会出现 `x.5`）；
-   *  手指不动时（含刚抓住控制点的那一下）反查回来正好是当前下标，恒等位置得以保持。 */
+   *  坐标取自屏幕位置的**连续**反解（`warpPointFromScreen()`，不是 `screenToPixel()` 的
+   *  `floor`——那样半个像素的位移会被吃掉），再按设置项的吸附粒度落点：
+   *  半像素模式（默认）可以落在 `x.5`，整像素模式落在整数（原来的行为）。
+   *  手指不动时（含刚抓住控制点的那一下）反解回来正好是当前下标，吸附幂等，不会跳位。 */
   private warpMove(pt: PxPoint): void {
     const g = this.xf;
     if (!g || g.mode !== "warp" || !g.pts || g.drag === undefined) return;
-    const p = this.screenToPixel(pt.x, pt.y);
+    const half = this.session.selWarpHalfSnap;
+    const p = warpPointFromScreen(pt.x, pt.y, this.zoom, this.ox, this.oy, half);
     const q = g.pts[g.drag];
+    this.warpDragOn = true;        // 拖动中：浮标显示当前坐标（见 drawWarpHandles）
     if (q.x === p.x && q.y === p.y) return;
     q.x = Math.max(-4096, Math.min(4096, p.x));
     q.y = Math.max(-4096, Math.min(4096, p.y));
@@ -2830,6 +2838,7 @@ export class View {
 
   /** transform ended: commit one undo step (or nothing when it never moved) */
   private endXf(): void {
+    this.warpDragOn = false;
     const g = this.xf;
     this.xf = null;
     if (!g) return;
@@ -2874,6 +2883,7 @@ export class View {
   private abortXf(): void {
     const g = this.xf;
     this.xf = null;
+    this.warpDragOn = false;
     if (!g) return;
     const doc = this.session.doc;
     const cel = doc.celAt(g.li, g.fi);
@@ -2908,6 +2918,35 @@ export class View {
       ctx.fillRect(h.x - 4, h.y - 4, 8, 8);
       ctx.strokeStyle = "rgba(0,0,0,0.65)";
       ctx.strokeRect(h.x - 4, h.y - 4, 8, 8);
+    }
+    // 拖动中的坐标浮标：`x, y`（半像素模式显示一位小数，如 `12.5`）。
+    // 贴着被拖的那个控制点画，松手即消失（onUp / 退出变形都会清 warpDragOn）。
+    const drag = this.xf?.drag;
+    const q = drag !== undefined ? this.xf?.pts?.[drag] : undefined;
+    const dragH = drag !== undefined ? hs[drag] : undefined;
+    if (this.warpDragOn && q && dragH) {
+      const label = warpCoordLabel(q, this.session.selWarpHalfSnap);
+      const h = dragH;
+      ctx.font = "600 13px system-ui, sans-serif";
+      ctx.textAlign = "left";
+      ctx.textBaseline = "middle";
+      const tw = ctx.measureText(label).width;
+      // 默认画在控制点右上方；顶到上边就翻到下面，顶到右边就翻到左侧
+      const w = tw + 14, hh = 22;
+      let lx = h.x + 12, ly = h.y - 14 - hh / 2;
+      if (lx + w > this.vpW() - 4) lx = h.x - 12 - w;
+      if (ly < 4) ly = h.y + 14;
+      lx = Math.max(2, Math.min(this.vpW() - w - 2, lx));
+      ly = Math.max(2, Math.min(this.vpH() - hh - 2, ly));
+      ctx.fillStyle = "rgba(20,24,32,0.86)";
+      ctx.beginPath();
+      ctx.rect(lx, ly, w, hh);
+      ctx.fill();
+      ctx.strokeStyle = "rgba(255,255,255,0.7)";
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      ctx.fillStyle = "#ffffff";
+      ctx.fillText(label, lx + 7, ly + hh / 2 + 0.5);
     }
     ctx.restore();
   }

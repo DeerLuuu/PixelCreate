@@ -1518,7 +1518,7 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
       act: () => setSelSub("more"), guide: "sel-more",
     }]),
   ];
-  // 第二页：自由变换（上一版新加的四个入口在这里，手机上真的点得到）
+  // 第二页：自由变换（「完成 / 还原」就在同一页，点进去就能接着点）+ 吸附粒度开关
   const selPage2: Item[] = [
     { id: "sel-back", icon: "", label: "\u2039", act: () => setSelSub(null), guide: "sel-back" },
     { id: "selWarpQuad", icon: "i-resize-mode", label: t("selWarpQuad"), desc: t("selWarpQuadDesc"),
@@ -1529,6 +1529,13 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
       act: () => SESSION.view?.finishWarp(false), guide: "sel-warp-done" },
     { id: "selWarpRevert", icon: "i-undo", label: t("selWarpRevert"), desc: t("selWarpRevertDesc"),
       act: () => SESSION.view?.finishWarp(true), guide: "sel-warp-revert" },
+    // 变形控制点的吸附粒度（设置项 tools.selWarpHalfSnap 的快捷开关）：
+    // 选中态走 Item.active（.orb-item.on 高亮），点一下就地切换、当前状态一眼可见
+    { id: "selWarpHalf", icon: "i-grid", label: t("selWarpHalfSnap"),
+      desc: t(SESSION.prefs.selWarpHalfSnap ? "selWarpHalfOn" : "selWarpHalfOff"),
+      active: SESSION.prefs.selWarpHalfSnap,
+      act: () => { const on = !SESSION.prefs.selWarpHalfSnap; SESSION.setSelWarpHalfSnap(on); bridge.toast(t(on ? "selWarpHalfSnap" : "selWarpHalfOff")); },
+      guide: "sel-warp-half" },
     { id: "selCrop", icon: "i-fx-crop", label: t("selCrop"), desc: t("selCropDesc"), act: () => { if (SESSION.cropToSelection()) repaintChanged(); } },
     ...(pcMode ? [] : [{
       id: "sel-more-tools", icon: "i-more", label: t("selMoreTools"), desc: t("selMoreToolsDesc"),

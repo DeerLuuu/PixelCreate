@@ -16,16 +16,24 @@
 // `warpHandles()`；+0.5 只是画法，不参与任何数学）。
 // 早先的「边框 / 像素角」口径（四角是 `w` / `h`、采样用 `floor`）会让控制点卡在
 // 半个像素处、屏幕上吸附到像素边界——用户报的就是这个。
+//
+// **吸附粒度**（用户明确要的能力，见 `snapWarpCoord()` / `warpPointFromScreen()`）：
+// 控制点可以落在**整数**（压在像素中心上）或 **`x.5`**（正好落在两个像素之间的边界线上），
+// 由设置项 `tools.selWarpHalfSnap`（`prefs.selWarpHalfSnap`，默认开）决定。
+// 0.5 只是**控制点的落点粒度**，不改变绘制口径，也不改变源格线分布。
 import type { RGBA } from "../engine/types";
 
 /**
  * 第 `i` 条网格线落在「`0..count-1` 像素下标」上的位置（`i` 从 0 到 `divs`）。
  *
  * 首尾两条线正好压在最外侧两个像素上（`0` 与 `count-1`），中间按 `i * (count-1) / divs`
- * 均分；不整除时取**最近的像素下标**（例如 `count=4, divs=2` → `0, 2, 3`），
- * 因为控制点必须永远落在像素上，不能出现半像素的网格线。
+ * 均分；不整除时取**最近的像素下标**（例如 `count=4, divs=2` → `0, 2, 3`）。
  * `meshWarp()` 的源格线、`floatGrid()`、`defaultGrid()` 全用这一个函数，
  * 三处分布完全一致，恒等变换才是逐字节无损的。
+ *
+ * 注意：**网格的「默认分布」与「拖动的吸附粒度」是两件事** —— 刚进入变形时网格线落在
+ * 整数下标上（左边那条不变），拖起来之后每个控制点各自按 `snapWarpCoord()` 落到整数或
+ * `x.5`（半像素模式），不再受这里的取整限制。
  */
 export function gridLine(count: number, i: number, divs: number): number {
   const n = Math.max(1, Math.round(divs));
@@ -34,6 +42,57 @@ export function gridLine(count: number, i: number, divs: number): number {
 }
 
 export interface Pt { x: number; y: number }
+
+/**
+ * 变形控制点的吸附：`v` 是**像素下标空间**里的落点（像素中心在整数上）。
+ *  - `half = true`（半像素模式，默认）：`Math.round(v * 2) / 2` —— 整数或 `x.5`；
+ *    整数＝压在像素中心，`x.5`＝落在相邻两个像素之间的**边界线**上（细调用）。
+ *  - `half = false`（整像素模式）：`Math.floor(v)`，即原来的行为（恒为整数）。
+ *
+ * 容差 `1e-9 × max(1,|v|)`：把「整数 / 半点 ± 浮点毛刺」显式吸到该值上（与 `snapRound()`
+ * 同量级），否则 `Math.round(3.9999999996 * 2) / 2` 会掉到 `3.5`。
+ * 直接给屏幕反解出来的连续坐标用时，整像素模式改走 `warpPointFromScreen()` 的
+ * 「就近取整」（那里的坐标是**像素中心**，`floor` 会让负向错半格）。
+ */
+export function snapWarpCoord(v: number, half: boolean): number {
+  const t = 1e-9 * Math.max(1, Math.abs(v));
+  const x = v + (v < 0 ? -t : t);
+  return half ? Math.round(x * 2) / 2 : Math.floor(x);
+}
+
+/**
+ * 屏幕坐标 → 控制点下标：`warpHandles()` 的绘制公式 `(q + 0.5) * zoom + ox` 的逆运算。
+ *
+ * 先反解出**连续**下标（不做 `floor`，否则半个像素的位移会被吃掉），再按模式吸附：
+ *  - 半像素模式：`Math.round(v * 2) / 2`（整数或 `x.5`）——`snapWarpCoord(v, true)`；
+ *  - 整像素模式：**就近取整** `Math.round(v)`，不是 `Math.floor` —— 反解出来的是「像素中心」
+ *    坐标，用 `floor` 会让负下标方向整体错半格、抓住控制点不动也会跳位；`Math.round`
+ *    既幂等（`q → q`）又与绘制公式严格互逆，代价只是吸附的判定相位平移到半格处。
+ *
+ * 抓住控制点不动时屏幕位置正好是 `(q + 0.5) * zoom + ox`，反解回来就是 `q`，
+ * 吸附是幂等的 —— 恒等拖动不会让控制点跳位（两种模式都有测试钉住）。
+ */
+export function warpPointFromScreen(
+  sx: number, sy: number, zoom: number, ox: number, oy: number, half: boolean,
+): Pt {
+  const z = zoom || 1;
+  const one = (v: number): number => (half ? snapWarpCoord(v, true) : Math.round(v));
+  return { x: one((sx - ox) / z - 0.5), y: one((sy - oy) / z - 0.5) };
+}
+
+/**
+ * 拖动时显示的坐标文案（`"x, y"`）：半像素模式显示一位小数（`12.5`），
+ * 整像素模式就是整数。整零统一成 `"0"`、半像素模式的整数统一成 `"12.0"`，
+ * 免得浮标上出现 `-0` 或两种写法混着跳。
+ */
+export function warpCoordLabel(p: Pt, half: boolean): string {
+  const one = (v: number): string => {
+    const q = half ? Math.round(v * 2) / 2 : Math.round(v);
+    if (half) return (q === 0 ? 0 : q).toFixed(1);
+    return String(q === 0 ? 0 : q);
+  };
+  return one(p.x) + ", " + one(p.y);
+}
 
 /** 3x3 矩阵，行主序（仿射 / 单应共用） */
 export type Mat3 = [number, number, number, number, number, number, number, number, number];
@@ -125,9 +184,27 @@ function snapRound(v: number): number {
 /**
  * 最近邻取样：**用 `Math.round` 不用 `Math.floor`**（见 `snapRound()`）。
  * 采样点 `(x, y)` 是「目标像素中心反查回来的源**下标**浮点值」，离哪个整数下标最近就取哪个。
+ *
+ * `tieDown`（半像素吸附，见 `snapWarpCoord()`）：控制点的位移带 `0.5` 时，反查回来的源坐标会
+ * **正好**落在两个源像素中间（`n + 0.5`）；`Math.round` 一律向上取会把最右边那一格「顶」到
+ * 源外面去，整块内容白丢一列。此时把这一格的采样点当成**目标像素格的左沿**（`v - 0.5`，
+ * 即 `n.0`）来判，于是 `0.5 → 0`、`1.5 → 1`、`4.5 → 4` …… 正好是「整块内容连边上那列一起
+ * 按控制点位移搬过去」，一个像素不多不少、也不留洞。
+ *
+ * 判据是**半点 ± 浮点毛刺**（与 `snapRound()` 同量级的 `1e-9` 相对容差）：整数位移、斜切、
+ * 透视、网格拉伸等所有非半点情况一律走 `Math.round`，与旧行为逐字节一致。
+ * x / y 各判各的，所以「只往右挪半格」不会连带在 y 上抠掉一行。
  */
-function sampleNearest(src: Pixmap, x: number, y: number, out: Uint8ClampedArray, o: number): void {
-  samplePx(src, snapRound(x), snapRound(y), out, o);
+function sampleNearest(src: Pixmap, x: number, y: number, out: Uint8ClampedArray, o: number, tieDown = false): void {
+  const edge = (v: number): number => {
+    if (!tieDown) return snapRound(v);
+    // 「正中间」的判据要留浮点毛刺的余量：`2.5 - Math.floor(2.5)` 有时是 0.4999999999999998
+    // （三点共线解出来的单应矩阵带着舍入误差），严格相等会漏判、又丢回一列。
+    const t = 1e-9 * Math.max(1, Math.abs(v));
+    const f = v - Math.floor(v);
+    return Math.abs(f - 0.5) <= t ? snapRound(v - 0.5) : snapRound(v);
+  };
+  samplePx(src, edge(x), edge(y), out, o);
 }
 
 /** 一整块 w×h 像素的默认四角（**像素下标口径**：`(0,0)`..`(w-1,h-1)`） */
@@ -143,8 +220,12 @@ function indexQuad(w: number, h: number): Pt[] {
  * （等于 `indexQuad(w, h)`），与 `quad` 用同一套坐标（见文件头）。
  * 目标像素 `(x, y)` 的质心在下标空间里就是 `(x, y)`，直接反查源下标就近取样。
  * 返回 `outW × outH` 的新像素。
+ * `tieDown`：半点位移时的「左沿判据」（见 `sampleNearest()`），仅交互预览传 true，
+ * 纯函数默认 `false` ＝ 原有行为一个字节都不变。
  */
-export function warpQuad(src: Pixmap, quad: Pt[], outW: number, outH: number, srcQuad?: Pt[]): Uint8ClampedArray {
+export function warpQuad(
+  src: Pixmap, quad: Pt[], outW: number, outH: number, srcQuad?: Pt[], tieDown = false,
+): Uint8ClampedArray {
   const out = new Uint8ClampedArray(Math.max(0, outW) * Math.max(0, outH) * 4);
   if (outW <= 0 || outH <= 0) return out;
   const s = srcQuad ?? indexQuad(src.w, src.h);
@@ -155,7 +236,7 @@ export function warpQuad(src: Pixmap, quad: Pt[], outW: number, outH: number, sr
     for (let x = 0; x < outW; x++) {
       const p = applyMat(m, { x, y });
       if (!Number.isFinite(p.x) || !Number.isFinite(p.y)) continue;
-      sampleNearest(src, p.x, p.y, out, (y * outW + x) * 4);
+      sampleNearest(src, p.x, p.y, out, (y * outW + x) * 4, tieDown);
     }
   }
   return out;
@@ -167,8 +248,9 @@ export function warpQuad(src: Pixmap, quad: Pt[], outW: number, outH: number, sr
  * `grid[0]` 是左上像素 `(0,0)`，`grid[2]` 是右上像素 `(w-1,0)`，`grid[8]` 是右下像素
  * `(w-1,h-1)`（见文件头）。每个格子的源矩形与目标四边形同分布（`gridLine()`），
  * 并拆成两个三角形做仿射逆映射，所以拉伸时不留洞、也不会漏掉最右 / 最下一列。
+ * `tieDown` 同 `warpQuad()`（半像素吸附预览用）。
  */
-export function meshWarp(src: Pixmap, grid: Pt[], outW: number, outH: number, divs = 2): Uint8ClampedArray {
+export function meshWarp(src: Pixmap, grid: Pt[], outW: number, outH: number, divs = 2, tieDown = false): Uint8ClampedArray {
   const n = Math.max(1, Math.round(divs));
   const need = (n + 1) * (n + 1);
   const out = new Uint8ClampedArray(Math.max(0, outW) * Math.max(0, outH) * 4);
@@ -198,7 +280,7 @@ export function meshWarp(src: Pixmap, grid: Pt[], outW: number, outH: number, di
         const ey = 1e-9 * Math.max(1, Math.abs(sy));
         const inRect = sx >= rMinX - ex && sx <= rMaxX + ex && sy >= rMinY - ey && sy <= rMaxY + ey;
         if (!inRect) continue;
-        sampleNearest(src, sx, sy, out, (y * outW + x) * 4);
+        sampleNearest(src, sx, sy, out, (y * outW + x) * 4, tieDown);
       }
     }
   };

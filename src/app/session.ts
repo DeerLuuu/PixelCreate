@@ -203,6 +203,8 @@ export interface Prefs {
   patterns: PatternDef[];
   /** magic-wand colour tolerance (0..64) */
   selectionTolerance: number;
+  /** 变形控制点的吸附粒度：true = 半像素（可落整数或 `x.5`，默认）/ false = 整像素 */
+  selWarpHalfSnap: boolean;
 }
 
 export interface Snapshot {
@@ -1182,6 +1184,12 @@ export class Session {
   get selectionTolerance(): number {
     return this.prefs.selectionTolerance;
   }
+  /** 变形控制点的吸附粒度（`tools.selWarpHalfSnap`）：`true` = 半像素（可落 `x.5`，
+   *  默认）/ `false` = 整像素。读的多是热路径（拖动每一帧），所以放在 getter 上而不是
+   *  走 `settingValue()` 查表。 */
+  get selWarpHalfSnap(): boolean {
+    return this.prefs.selWarpHalfSnap;
+  }
 
   // ---------- settings registry (declared in src/app/settings.ts) ----------
   /** current value of a declared setting by its dotted path */
@@ -1326,7 +1334,7 @@ export class Session {
       histMode: "steps", histSteps: 120, shadowNewLayer: false, autoPan: true,
       snapOn: true, snapRange: 14, snapGap: 8, snapInColor: "#78ffb4", snapOutColor: "#ff6464",
       bucketGlobal: false, fillSimilar: false, fillTolerance: 32, fillGaps: 0, indexed: false,
-      loopMode: "loop", recentColorsMax: 16, selectionTolerance: 8,
+      loopMode: "loop", recentColorsMax: 16, selectionTolerance: 8, selWarpHalfSnap: true,
       bucketGrad: false, bucketGradMode: "rgb",
       airbrushMin: 1, airbrushMax: 3, airbrushRate: 20,
       brushSize: 1, brushAlpha: 255, fgColor: "#141414", bgColor: "#ffffff",
@@ -1454,6 +1462,7 @@ export class Session {
       if (saved.loopMode === "once" || saved.loopMode === "loop" || saved.loopMode === "pingpong" || saved.loopMode === "reverse") p.loopMode = saved.loopMode;
       if (typeof saved.recentColorsMax === "number") p.recentColorsMax = Math.max(4, Math.min(64, Math.round(saved.recentColorsMax)));
       if (typeof saved.selectionTolerance === "number") p.selectionTolerance = Math.max(0, Math.min(64, Math.round(saved.selectionTolerance)));
+      if (typeof saved.selWarpHalfSnap === "boolean") p.selWarpHalfSnap = saved.selWarpHalfSnap;
       // remembered tool / colour / symmetry / document state
       const hex = (v: unknown): string | null => (typeof v === "string" && /^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$/.test(v) ? v.toLowerCase() : null);
       if (typeof saved.brushSize === "number") p.brushSize = Math.max(1, Math.min(64, Math.round(saved.brushSize)));
@@ -2213,6 +2222,7 @@ export class Session {
     this.changedUI();
   }
   setSelectionTolerance(n: number): void { this.setSetting("tools.wandTolerance", n); }
+  setSelWarpHalfSnap(on: boolean): void { this.setSetting("tools.selWarpHalfSnap", on); }
   maskOp(label: string, fn: () => void): void {
     this.history.pushStruct(label, this.doc, fn);
     this.repaintAll();

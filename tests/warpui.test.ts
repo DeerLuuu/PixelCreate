@@ -10,6 +10,7 @@ import { Doc, Sel } from "../src/engine/doc";
 import { Session } from "../src/app/session";
 import { View } from "../src/render/view";
 import { beginMove, warpFloating, type MoveState } from "../src/tools/select";
+import { snapWarpCoord, warpCoordLabel } from "../src/tools/warp";
 import * as compMod from "../src/render/compositor";
 import { stubEnv } from "./session.test";
 import { stubViewDom } from "./view.test";
@@ -134,7 +135,19 @@ export function testWarpUi(): void {
     const d1 = sc(v, 7, 7);
     v.onMove(ev(d1.x, d1.y));
     dom.flush();
-    ok("warpui.hold.drag1-applied", v.xf!.pts![0].x === 7 && v.xf!.pts![0].y === 7);
+    // 半像素吸附（默认开）：`(7,7)` 的像素中心反解回连续下标是 6.5 → 落点 6.5
+    // （半点吸附是幂等的：抓住控制点不动不会跳位）
+    eq("warpui.hold.drag1-applied", [v.xf!.pts![0].x, v.xf!.pts![0].y], [6.5, 6.5]);
+    // 再往外拖一格：连续下标落在 (7, 7) 与 (8, 8) 之间 → 半像素模式停在 `x.5`
+    {
+      const h = v.warpHandles()[0];
+      const dest = sc(v, 7.75, 7.75);
+      v.onDown(ev(h.x, h.y));
+      v.onMove(ev(dest.x, dest.y));
+      v.onUp(ev(dest.x, dest.y));
+      dom.flush();
+      eq("warpui.hold.drag1-half", [v.xf!.pts![0].x, v.xf!.pts![0].y], [7.5, 7.5]);
+    }
     v.onUp(ev(d1.x, d1.y));
     dom.flush();
     ok("warpui.hold.mode-after-up", !!v.xf && v.xf.mode === "warp");
@@ -147,8 +160,9 @@ export function testWarpUi(): void {
     const d2 = sc(v, 19, 17);
     v.onMove(ev(d2.x, d2.y));
     dom.flush();
-    ok("warpui.hold.drag2-applied", v.xf!.pts![2].x === 19 && v.xf!.pts![2].y === 17);
-    eq("warpui.hold.two-points-changed", v.xf!.pts![0].x === 7 && v.xf!.pts![2].x === 19, true);
+    eq("warpui.hold.drag2-applied", [v.xf!.pts![2].x, v.xf!.pts![2].y], [18.5, 16.5]);
+    // 两个控制点各自落在自己那一格：一个半点、一个整点（互不干扰）
+    eq("warpui.hold.two-points-changed", [v.xf!.pts![0].x, v.xf!.pts![2].x], [7.5, 18.5]);
     v.onUp(ev(d2.x, d2.y));
     dom.flush();
     ok("warpui.hold.still-warp", !!v.xf && v.xf.mode === "warp");
@@ -399,36 +413,114 @@ export function testWarpUi(): void {
     eq("warpui.corners.revert-exits", v.xf, null);
   }
 
-  // ---- 拖到任意小数屏幕坐标：写回的控制点永远是整数像素下标（不许出现 x.5） ----
+  // ---- 拖到任意小数屏幕坐标：落点粒度跟随设置（半像素＝整数或 x.5 / 整像素＝只有整数） ----
+  //
+  // 上一轮把落点写死成整数（`screenToPixel()` 的 floor），半像素位移被整个吃掉、
+  // 屏幕落点还整体错半格（反解用的是「像素中心」坐标）。现在改成：
+  //   连续坐标 = (屏幕 - ox) / zoom - 0.5   ← 绘制公式 (q + 0.5) * zoom + ox 的逆运算
+  //   半像素模式：snapWarpCoord(连续, true) = Math.round(v * 2) / 2  → 整数或 x.5
+  //   整像素模式：Math.round(连续)                                   → 只有整数
+  // 抓住控制点不动时反解回来就是它自己，两种模式都幂等（下面都钉住）。
   {
     const { s, v } = mk();
     paint(s, 10, 10, 7, 5);
     ok("warpui.drag-int.enter", warp(v, "quad"));
-    const fracs: number[][] = [[12.37, 9.84], [13.5, 11.5], [20.999, 16.001], [10.5, 10.5], [6.2, 7.8]];
-    let nonInteger = 0, notFloored = 0;
-    for (const [fx, fy] of fracs) {
-      const h = v.warpHandles()[1];                 // 右上角
-      const dest = sc(v, fx, fy);                   // 任意小数屏幕坐标
+    /** 落点：与 View.warpMove 用同一条公式（连续反解 + 吸附） */
+    const land = (fx: number, fy: number, half: boolean): { x: number; y: number } => {
+      const one = (v0: number) => (half ? snapWarpCoord(v0, true) : Math.round(v0));
+      return { x: one(fx - 0.5), y: one(fy - 0.5) };
+    };
+    /** 拖右上角到任意小数屏幕坐标（fx, fy 是在「像素中心」坐标里说的位置） */
+    const dragCorner = (fx: number, fy: number): void => {
+      const h = v.warpHandles()[1];
+      const dest = sc(v, fx, fy);
       v.onDown(ev(h.x, h.y));
       v.onMove(ev(dest.x, dest.y));
       v.onUp(ev(dest.x, dest.y));
       dom.flush();
+    };
+    const fracs: number[][] = [[12.37, 9.84], [13.5, 11.5], [20.999, 16.001], [10.5, 10.5], [6.2, 7.8]];
+
+    // 半像素模式（默认）：横竖各一轮「整数 → 非整数 → 半像素」，每次都核对落点
+    eq("warpui.drag-half.default", s.prefs.selWarpHalfSnap, true);
+    let halfWrong = 0, offGranule = 0;
+    for (const [fx, fy] of fracs) {
+      dragCorner(fx, fy);
+      const want = land(fx, fy, true);
       const p = v.xf!.pts![1];
-      if (!Number.isInteger(p.x) || !Number.isInteger(p.y)) nonInteger++;
-      if (p.x !== Math.floor(fx) || p.y !== Math.floor(fy)) notFloored++;
+      if (p.x !== want.x || p.y !== want.y) halfWrong++;
+      if (Math.abs(p.x * 2 - Math.round(p.x * 2)) > 1e-9 || Math.abs(p.y * 2 - Math.round(p.y * 2)) > 1e-9) offGranule++;
     }
-    eq("warpui.drag-int.integers", nonInteger, 0);
-    eq("warpui.drag-int.floor", notFloored, 0);
-    // 网格也一样：拖中心点到小数坐标后仍是整数下标
-    ok("warpui.drag-int.mesh-enter", warp(v, "mesh"));
+    eq("warpui.drag-half.landing", halfWrong, 0);
+    eq("warpui.drag-half.granule", offGranule, 0);
+    // 至少有一次真的落在 `x.5` 上（不然「半像素」只是个说法）——
+    // 落在「中心与下一条边界线之间」的位置，两种取整都不会把它抹成整数
+    dragCorner(13.8, 11.2);
+    eq("warpui.drag-half.has-half", [v.xf!.pts![1].x, v.xf!.pts![1].y], [13.5, 10.5]);
+
+    // 网格模式：中心点也能落在 `x.5`（9 个点同一个粒度）
+    ok("warpui.drag-half.mesh-enter", warp(v, "mesh"));
     const mh = v.warpHandles()[4];
     const mdest = sc(v, 14.63, 12.21);
     v.onDown(ev(mh.x, mh.y));
     v.onMove(ev(mdest.x, mdest.y));
     v.onUp(ev(mdest.x, mdest.y));
     dom.flush();
-    eq("warpui.drag-int.mesh-point", [v.xf!.pts![4].x, v.xf!.pts![4].y], [14, 12]);
+    eq("warpui.drag-half.mesh-point", [v.xf!.pts![4].x, v.xf!.pts![4].y], [land(14.63, 12.21, true).x, land(14.63, 12.21, true).y]);
+    eq("warpui.drag-half.mesh-granule",
+      v.xf!.pts!.filter((p) => Math.abs(p.x * 2 - Math.round(p.x * 2)) > 1e-9 || Math.abs(p.y * 2 - Math.round(p.y * 2)) > 1e-9).length, 0);
+
+    // 关掉半像素吸附（设置项 tools.selWarpHalfSnap 的 Session setter）：同一次拖动只落整数
+    s.setSelWarpHalfSnap(false);
+    eq("warpui.drag-int.prefs", s.prefs.selWarpHalfSnap, false);
+    ok("warpui.drag-int.quad-enter", warp(v, "quad"));
+    let intWrong = 0, nonInteger = 0;
+    for (const [fx, fy] of fracs) {
+      dragCorner(fx, fy);
+      const want = land(fx, fy, false);
+      const p = v.xf!.pts![1];
+      if (p.x !== want.x || p.y !== want.y) intWrong++;
+      if (!Number.isInteger(p.x) || !Number.isInteger(p.y)) nonInteger++;
+    }
+    eq("warpui.drag-int.landing", intWrong, 0);
+    eq("warpui.drag-int.integers", nonInteger, 0);
+    // 整像素模式下拖到「像素中心之间」的位置：不再出现 x.5，而是吸到最近整数
+    dragCorner(13.5, 11.5);
+    eq("warpui.drag-int.no-half", [v.xf!.pts![1].x, v.xf!.pts![1].y], [13, 11]);
+    // 网格也一样：整像素模式下落点全是整数
+    ok("warpui.drag-int.mesh-enter", warp(v, "mesh"));
+    const mh2 = v.warpHandles()[4];
+    const md2 = sc(v, 14.63, 12.21);
+    v.onDown(ev(mh2.x, mh2.y));
+    v.onMove(ev(md2.x, md2.y));
+    v.onUp(ev(md2.x, md2.y));
+    dom.flush();
+    eq("warpui.drag-int.mesh-point", [v.xf!.pts![4].x, v.xf!.pts![4].y], [land(14.63, 12.21, false).x, land(14.63, 12.21, false).y]);
     eq("warpui.drag-int.mesh-integers", v.xf!.pts!.filter((p) => !Number.isInteger(p.x) || !Number.isInteger(p.y)).length, 0);
+    // 切回半像素：粒度立刻跟着回来（同一个拖动重新落 `x.5`）
+    s.setSelWarpHalfSnap(true);
+    ok("warpui.drag-int.back-enter", warp(v, "quad"));
+    dragCorner(13.5, 11.5);
+    eq("warpui.drag-int.back-to-half", [v.xf!.pts![1].x, v.xf!.pts![1].y], [land(13.5, 11.5, true).x, land(13.5, 11.5, true).y]);
+    eq("warpui.drag-int.back-prefs", s.prefs.selWarpHalfSnap, true);
+    finish(v, true);
+  }
+
+  // ---- 拖动浮标：半像素模式显示一位小数，整像素模式显示整数 ----
+  {
+    const { s, v } = mk();
+    paint(s, 10, 10, 7, 5);
+    ok("warpui.label.enter", warp(v, "quad"));
+    const h = v.warpHandles()[1];
+    const dest = sc(v, 13.5, 11.5);
+    v.onDown(ev(h.x, h.y));
+    v.onMove(ev(dest.x, dest.y));
+    dom.flush();
+    const p = v.xf!.pts![1];
+    eq("warpui.label.half", warpCoordLabel(p, true), p.x.toFixed(1) + ", " + p.y.toFixed(1));
+    eq("warpui.label.whole", warpCoordLabel(p, false), Math.round(p.x) + ", " + Math.round(p.y));
+    v.onUp(ev(dest.x, dest.y));
+    dom.flush();
     finish(v, true);
   }
 }
