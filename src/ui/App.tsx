@@ -1503,6 +1503,14 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
   ];
   const selPage2: Item[] = [
     { id: "sel-back", icon: "", label: "\u2039", act: () => setSelSub(null), guide: "sel-back" },
+    { id: "selWarpQuad", icon: "i-resize-mode", label: t("selWarpQuad"), desc: t("selWarpQuadDesc"),
+      act: () => { if (!SESSION.view?.beginWarp("quad")) bridge.toast(t("selWarpNeedSel")); }, guide: "sel-warp-quad" },
+    { id: "selWarpMesh", icon: "i-grid", label: t("selWarpMesh"), desc: t("selWarpMeshDesc"),
+      act: () => { if (!SESSION.view?.beginWarp("mesh")) bridge.toast(t("selWarpNeedSel")); }, guide: "sel-warp-mesh" },
+    { id: "selWarpDone", icon: "i-check", label: t("selWarpDone"), desc: t("selWarpDoneDesc"),
+      act: () => SESSION.view?.finishWarp(false), guide: "sel-warp-done" },
+    { id: "selWarpRevert", icon: "i-undo", label: t("selWarpRevert"), desc: t("selWarpRevertDesc"),
+      act: () => SESSION.view?.finishWarp(true), guide: "sel-warp-revert" },
     { id: "sel.fliph", icon: "i-fliph", label: t("sel.fliph"), act: () => { selOps.selOps.flip(d, SESSION.history, li, fi, true); repaintChanged(); } },
     { id: "sel.flipv", icon: "i-flipv", label: t("sel.flipv"), act: () => { selOps.selOps.flip(d, SESSION.history, li, fi, false); repaintChanged(); } },
     { id: "sel.grow", icon: "i-sel-grow", label: t("sel.grow"), act: () => SESSION.maskOp("sel.grow", () => selOps.growSelection(d, 1)) },
@@ -1512,7 +1520,7 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
     { id: "sel.delete", icon: "i-sel-del", label: t("sel.delete"), act: () => { SESSION.deleteSelection(); } },
     ...(pcMode ? [] : [{
       id: "sel-more", icon: "i-more", label: t("canvasMore"),
-      desc: snap.lang === "zh" ? "更多：翻转 / 扩展 / 收缩 / 描边 / 裁切到选区 / 删除" : "More: flip / grow / shrink / outline / crop / delete",
+      desc: snap.lang === "zh" ? "更多：自由变换（斜切 / 透视 / 网格）/ 翻转 / 扩展 / 收缩 / 描边 / 裁切 / 删除" : "More: free transform (skew / perspective / mesh) / flip / grow / shrink / outline / crop / delete",
       act: () => setSelSub("more"), guide: "sel-more",
     }]),
   ];

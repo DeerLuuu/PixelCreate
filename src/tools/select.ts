@@ -5,6 +5,7 @@ import type { RGBA } from "../engine/types";
 import type { History } from "../engine/history";
 import { blendOver } from "../engine/color";
 import { polygonCells } from "../engine/paint";
+import { meshWarp, warpQuad, type Pixmap, type Pt } from "./warp";
 
 function record(doc: Doc, history: History, li: number, fi: number, before: Uint8ClampedArray | null, label: string): void {
   const cel = doc.celAt(li, fi);
@@ -185,6 +186,77 @@ export function beginMove(doc: Doc, li: number, fi: number): MoveState | null {
  * `out` (doc-sized RGBA) and moves the selection mask, WITHOUT touching the
  * layer cel. Returns the painted document pixel indices (for overlay drawing).
  */
+/** 自由变换（斜切 / 透视 / 网格）预览：把浮动内容按 `pts` 重排进 `out`（整幅画布像素），
+ *  同时把结果写进 `doc.sel` 掩码，返回被点亮的像素下标。
+ *
+ *  `pts` 是**画布坐标**：四边形时是四个角（左上→右上→右下→左下，顺序固定）；
+ *  网格时是 (divs+1)² 个控制点（行主序）。`st.content` 是手势开始时抓下来的那块像素，
+ *  所以拖动过程中反复调用它都是「从原图重算」，不会累积误差。
+ */
+export function warpFloating(
+  doc: Doc, st: MoveState, pts: Pt[], out: Uint8ClampedArray, mesh: boolean, divs = 2,
+): number[] {
+  const w = doc.w, h = doc.h;
+  out.fill(0);
+  if (!doc.sel) doc.sel = new Sel(w, h, false);
+  const m = doc.sel.mask;
+  m.fill(0);
+  const cells: number[] = [];
+  if (!pts.length) return cells;
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const p of pts) {
+    if (p.x < minX) minX = p.x;
+    if (p.y < minY) minY = p.y;
+    if (p.x > maxX) maxX = p.x;
+    if (p.y > maxY) maxY = p.y;
+  }
+  const x0 = Math.max(0, Math.floor(minX));
+  const y0 = Math.max(0, Math.floor(minY));
+  const x1 = Math.min(w - 1, Math.ceil(maxX));
+  const y1 = Math.min(h - 1, Math.ceil(maxY));
+  if (x1 < x0 || y1 < y0) return cells;
+  const bw = x1 - x0 + 1, bh = y1 - y0 + 1;
+  const local = pts.map((p) => ({ x: p.x - x0, y: p.y - y0 }));
+  const src: Pixmap = { w: st.content.w, h: st.content.h, data: st.content.data };
+  const warped = mesh ? meshWarp(src, local, bw, bh, divs) : warpQuad(src, local, bw, bh);
+  for (let y = 0; y < bh; y++) {
+    for (let x = 0; x < bw; x++) {
+      const sp = (y * bw + x) * 4;
+      if (warped[sp + 3] === 0) continue;
+      const di = (y0 + y) * w + (x0 + x);
+      const o = di * 4;
+      out[o] = warped[sp]; out[o + 1] = warped[sp + 1]; out[o + 2] = warped[sp + 2]; out[o + 3] = warped[sp + 3];
+      cells.push(di);
+      m[di] = 1;
+    }
+  }
+  return cells;
+}
+
+/** 浮动内容在画布坐标里的四角（左上→右上→右下→左下） */
+export function floatQuad(st: MoveState): Pt[] {
+  const cw = st.content.w, ch = st.content.h;
+  return [
+    { x: st.ox, y: st.oy },
+    { x: st.ox + cw - 1, y: st.oy },
+    { x: st.ox + cw - 1, y: st.oy + ch - 1 },
+    { x: st.ox, y: st.oy + ch - 1 },
+  ];
+}
+
+/** 浮动内容上的 (divs+1)² 网格控制点（画布坐标，行主序） */
+export function floatGrid(st: MoveState, divs = 2): Pt[] {
+  const n = Math.max(1, Math.round(divs));
+  const cw = st.content.w - 1, ch = st.content.h - 1;
+  const out: Pt[] = [];
+  for (let gy = 0; gy <= n; gy++) {
+    for (let gx = 0; gx <= n; gx++) {
+      out.push({ x: st.ox + (cw * gx) / n, y: st.oy + (ch * gy) / n });
+    }
+  }
+  return out;
+}
+
 export function xformFloating(
   doc: Doc, st: MoveState, angleRad: number, sx: number, sy: number,
   out: Uint8ClampedArray, anchorX?: number, anchorY?: number,

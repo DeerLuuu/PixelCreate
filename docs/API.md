@@ -1322,9 +1322,14 @@ PC 专属的 Blender 式饼菜单：浮动球存储区边的**装备槽**里装�
 | `warpQuad(src, quad, outW, outH, srcQuad?)` | **四点自由变换（斜切 / 透视）**：目标四边形固定顺序（左上→右上→右下→左下），逐目标像素反查源像素，最近邻采样，画面外保持透明 |
 | `meshWarp(src, grid, outW, outH, divs = 2)` | **网格变形**：`(n+1)²` 个控制点，每个格子拆两个三角形做仿射逆映射 → 拉伸不留洞 |
 | `defaultGrid(w, h, divs)` / `pixmapFromCel(data, w, h)` | 默认网格控制点与像素块构造 |
+| `selOps.warpFloating(doc, st, pts, out, mesh, divs?)`（`src/tools/select.ts`） | 把浮动内容按画布坐标控制点重排进整幅画布的 `out`，并同步 `doc.sel` 掩码，返回点亮的像素下标 |
+| `selOps.floatQuad(st)` / `floatGrid(st, divs)` | 浮动内容当前的四角 / 网格控制点（画布坐标） |
 
 采样一律最近邻（像素画不允许被插值糊掉）；映射一律「目标 → 源」的逆向映射，所以拉伸时不会出现空洞。
-UI 侧（选区变形手柄）待接：本轮先落地并测试了引擎与 `warpQuad` / `meshWarp` 的语义。
+UI 侧：`View.beginWarp("quad"\|"mesh")` 进入变形（没有浮动选区时自动抓一份），画布上出现
+可拖的控制点（四角 / 3×3 网格），拖动时每帧从手势起点那份原图重算预览（不累积误差）；
+`View.finishWarp(false)` 落下（一条历史）、`finishWarp(true)` 还原。入口在**选区球 →「更多」**：
+「斜切 / 透视」「网格变形」「完成」「还原」。
 
 ### 18.10 图案笔刷（`src/data/patterns.ts`）
 

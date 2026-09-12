@@ -1,5 +1,7 @@
 // 自由变换（斜切/透视/网格）的纯函数测试。
 import { defaultGrid, homography, applyMat, meshWarp, quadArea, skewQuad, warpQuad } from "../src/tools/warp";
+import { beginMove, floatGrid, floatQuad, warpFloating } from "../src/tools/select";
+import { Doc, Sel } from "../src/engine/doc";
 import { eq, ok } from "./common";
 
 function mk(w: number, h: number): { w: number; h: number; data: Uint8ClampedArray } {
@@ -91,5 +93,47 @@ export function testWarp(): void {
     eq("warp.skew-quad.x", q[0], { x: 2, y: 0 });
     eq("warp.skew-quad.x-bottom", q[3], { x: -2, y: 9 });
     eq("warp.skew-quad.y", skewQuad(10, 10, "y", 2)[0], { x: 0, y: 2 });
+  }
+
+  // ---- 浮动选区上的自由变换（warpFloating）：恒等不动、拖角位移、掩码跟着走 ----
+  {
+    const doc = new Doc(10, 10, "W");
+    const cel = doc.ensureCel(0, 0);
+    // 画一块 4x4 的方块（左上 2,2）
+    for (let y = 2; y < 6; y++) for (let x = 2; x < 6; x++) {
+      const p = cel.idx(x, y);
+      cel.data[p] = 200; cel.data[p + 1] = 50; cel.data[p + 2] = 25; cel.data[p + 3] = 255;
+    }
+    doc.sel = new Sel(10, 10);
+    for (let y = 2; y < 6; y++) for (let x = 2; x < 6; x++) doc.sel.set(x, y, 1);
+    const st = beginMove(doc, 0, 0);
+    ok("warp.float.ready", !!st);
+    const out = new Uint8ClampedArray(10 * 10 * 4);
+    const quad = floatQuad(st!);
+    eq("warp.float.quad", [quad[0], quad[2]], [{ x: 2, y: 2 }, { x: 5, y: 5 }]);
+    eq("warp.float.grid", floatGrid(st!, 2).length, 9);
+
+    // 恒等：内容原地不动
+    let cells = warpFloating(doc, st!, quad, out, false);
+    ok("warp.float.identity-cells", cells.length > 0, String(cells.length));
+    eq("warp.float.identity-px", [out[cel.idx(2, 2)], out[cel.idx(2, 2) + 3]], [200, 255]);
+    ok("warp.float.identity-mask", doc.sel!.get(3, 3) === 1);
+
+    // 整体右移 3 格：新位置有像素、老位置空出来
+    const moved = quad.map((p) => ({ x: p.x + 3, y: p.y }));
+    cells = warpFloating(doc, st!, moved, out, false);
+    eq("warp.float.moved-px", [out[cel.idx(5, 3) + 3], out[cel.idx(2, 3) + 3]], [255, 0]);
+    ok("warp.float.moved-mask", doc.sel!.get(5, 3) === 1 && doc.sel!.get(2, 3) === 0);
+
+    // 网格：把中心点往上拉，画面应发生变化且不留空洞
+    const grid = floatGrid(st!, 2);
+    grid[4] = { x: grid[4].x, y: grid[4].y - 3 };
+    cells = warpFloating(doc, st!, grid, out, true, 2);
+    ok("warp.float.mesh-cells", cells.length > 0, String(cells.length));
+
+    // 退化四边形：什么都不画（避免整片乱像素）
+    const line = [{ x: 0, y: 0 }, { x: 3, y: 0 }, { x: 6, y: 0 }, { x: 9, y: 0 }];
+    cells = warpFloating(doc, st!, line, out, false);
+    eq("warp.float.degenerate", cells.length, 0);
   }
 }

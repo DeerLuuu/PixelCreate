@@ -8,9 +8,10 @@ import { Stroke } from "../tools/stroke";
 import { isSymTool, SYM_ANGLES, type ToolId } from "../tools/registry";
 import type { SymAxis } from "../engine/symmetry";
 import { lineCells, brushStamp, fillPolygon } from "../engine/paint";
-import { selOps, lassoFill, beginMove, xformFloating, floatDropInto, type MoveState } from "../tools/select";
+import { selOps, lassoFill, beginMove, xformFloating, warpFloating, floatQuad, floatGrid, floatDropInto, type MoveState } from "../tools/select";
 import type { Session } from "../app/session";
 import type { GestureActionId } from "../app/gesture-ids";
+import type { Pt } from "../tools/warp";
 import { clamp } from "../engine/types";
 import { LEGACY_TITLE_EXTRA, TITLE_EXTRA, snapGapRect, type GapRect } from "../app/canvas-snap";
 import { canvasAtScreen as spaceCanvasAt, screenToCanvas } from "../app/canvas-space";
@@ -267,7 +268,9 @@ export class View {
   private tapT = 0;
   private tapPt: PxPoint | null = null;
   /** rotate / scale gesture started on a selection frame handle */
-  private xf: { mode: "rot" | "scale"; axis: "xy" | "x" | "y"; li: number; fi: number; st: MoveState; cx: number; cy: number; ax: number; ay: number; p0x: number; p0y: number; ang0: number; moved: boolean; cut?: boolean; buf?: Uint8ClampedArray; cells?: number[] } | null = null;
+  private xf: { mode: "rot" | "scale" | "warp"; axis: "xy" | "x" | "y"; li: number; fi: number; st: MoveState; cx: number; cy: number; ax: number; ay: number; p0x: number; p0y: number; ang0: number; moved: boolean; cut?: boolean; buf?: Uint8ClampedArray; cells?: number[];
+    /** 自由变换（斜切/透视/网格）用的控制点（画布坐标）与正在拖的那一个 */
+    warpKind?: "quad" | "mesh"; pts?: Pt[]; drag?: number } | null = null;
 
   constructor(host: HTMLElement, session: Session) {
     this.host = host;
@@ -1940,7 +1943,8 @@ export class View {
         this.stroke = null;
         this.gestureMoved = false;
       }
-      if (this.xf) this.endXf();
+      if (this.xf && this.xf.mode === "warp" && this.xf.drag !== undefined) this.xf.drag = undefined;
+      else if (this.xf) this.endXf();
       const [a, b] = [...this.pointers.values()];
       this.pinchBase = {
         mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2,
@@ -2036,6 +2040,10 @@ export class View {
       }, this.session.prefs.longPressMs);
     }
     // grab a transform handle (rotate / scale) of an existing selection frame
+    if (this.xf && this.xf.mode === "warp") {
+      const h = this.warpHandleAt(pt);
+      if (h >= 0) { this.xf.drag = h; return; }
+    }
     if (selOn && this.tryStartXf(pt)) return;
     // pressing inside an existing selection moves its content directly;
     // it never restarts a marquee / reselects (empty area still does)
@@ -2243,6 +2251,10 @@ export class View {
       this.panLast = pt;
       this.refresh(false);
       if (this.mousePan) { this.mousePan = false; this.panLast = null; this.syncCursor(); }
+      return;
+    }
+    if (this.xf && this.xf.mode === "warp" && this.xf.drag !== undefined) {
+      this.warpMove(pt);
       return;
     }
     if (this.xf) {
@@ -2639,6 +2651,85 @@ export class View {
     return null;
   }
 
+  // ---------- 自由变换：斜切 / 透视（四角）与网格变形 ----------
+  /** 控制点在屏幕上的位置（命中判定与绘制共用） */
+  private warpHandles(): Array<{ x: number; y: number }> {
+    const g = this.xf;
+    if (!g || g.mode !== "warp" || !g.pts) return [];
+    const z = this.zoom;
+    return g.pts.map((p) => ({ x: p.x * z + this.ox, y: p.y * z + this.oy }));
+  }
+
+  /** 手指/鼠标落在哪个控制点上（半径 22 屏幕像素） */
+  private warpHandleAt(pt: PxPoint): number {
+    const hs = this.warpHandles();
+    let best = -1, bestD = 22;
+    for (let i = 0; i < hs.length; i++) {
+      const d = Math.hypot(pt.x - hs[i].x, pt.y - hs[i].y);
+      if (d <= bestD) { bestD = d; best = i; }
+    }
+    return best;
+  }
+
+  /** 按当前控制点重算浮动预览（每次都从手势起点抓下来的原图重算，不累积误差） */
+  private applyWarp(): void {
+    const g = this.xf;
+    if (!g || g.mode !== "warp" || !g.pts) return;
+    const s = this.session;
+    const doc = s.doc;
+    if (!g.cut) { g.cut = true; selOps.floatCut(doc, g.li, g.fi, g.st); }
+    if (!g.buf) g.buf = new Uint8ClampedArray(doc.w * doc.h * 4);
+    g.cells = warpFloating(doc, g.st, g.pts, g.buf, g.warpKind === "mesh");
+    g.moved = true;
+    s.repaintAll();
+    this.drawOverlay();
+  }
+
+  /** 进入自由变换：`kind = "quad"` 拖四角（斜切/透视），`kind = "mesh"` 拖 3x3 网格点 */
+  beginWarp(kind: "quad" | "mesh"): boolean {
+    const s = this.session;
+    const doc = s.doc;
+    if (!doc.sel || !doc.sel.hasAny()) return false;
+    if (s.layerLocked()) { s.paintBlockedNote(); return false; }
+    let g = this.xf;
+    if (!g) {
+      const li = s.curLayer(), fi = s.curFrame();
+      const st = beginMove(doc, li, fi);
+      if (!st) return false;
+      const b = doc.sel.bounds();
+      const cx = b ? b.x + b.w / 2 : 0, cy = b ? b.y + b.h / 2 : 0;
+      g = { mode: "warp", axis: "xy", li, fi, st, cx, cy, ax: cx, ay: cy, p0x: cx, p0y: cy, ang0: 0, moved: false };
+      this.xf = g;
+    }
+    g.mode = "warp";
+    g.warpKind = kind;
+    g.pts = kind === "mesh" ? floatGrid(g.st, 2) : floatQuad(g.st);
+    g.drag = undefined;
+    this.applyWarp();
+    s.hapticTick("变形", 0.7);
+    return true;
+  }
+
+  /** 拖控制点中：把逻辑坐标写回控制点并重算预览 */
+  private warpMove(pt: PxPoint): void {
+    const g = this.xf;
+    if (!g || g.mode !== "warp" || !g.pts || g.drag === undefined) return;
+    const p = this.screenToPixel(pt.x, pt.y);
+    const q = g.pts[g.drag];
+    if (q.x === p.x && q.y === p.y) return;
+    q.x = Math.max(-4096, Math.min(4096, p.x));
+    q.y = Math.max(-4096, Math.min(4096, p.y));
+    this.applyWarp();
+  }
+
+  /** 退出自由变换：把当前结果落下（一条历史），`revert = true` 时还原原像素 */
+  finishWarp(revert = false): void {
+    const g = this.xf;
+    if (!g || g.mode !== "warp") return;
+    if (revert) { this.abortXf(); return; }
+    this.endXf();
+  }
+
   /** pointer-down landed on a selection frame handle -> start rotate/scale */
   private tryStartXf(pt: PxPoint): boolean {
     const s = this.session;
@@ -2747,10 +2838,41 @@ export class View {
     this.session.repaint();
   }
 
+  /** 自由变换的控制点：四角（斜切/透视）或 3x3 网格，外加连成的多边形 */
+  private drawWarpHandles(): void {
+    const ctx = this.ov.getContext("2d");
+    const hs = this.warpHandles();
+    if (!ctx || !hs.length) return;
+    const mesh = this.xf?.warpKind === "mesh";
+    const n = mesh ? 3 : 2;
+    ctx.save();
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = "rgba(255,255,255,0.85)";
+    ctx.beginPath();
+    for (let r = 0; r < n; r++) {
+      for (let c = 0; c < n; c++) {
+        const a = hs[r * n + c];
+        const b = r * n + c + 1 < (r + 1) * n ? hs[r * n + c + 1] : null;
+        const d = r + 1 < n ? hs[(r + 1) * n + c] : null;
+        if (b) { ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); }
+        if (d) { ctx.moveTo(a.x, a.y); ctx.lineTo(d.x, d.y); }
+      }
+    }
+    ctx.stroke();
+    for (const h of hs) {
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(h.x - 4, h.y - 4, 8, 8);
+      ctx.strokeStyle = "rgba(0,0,0,0.65)";
+      ctx.strokeRect(h.x - 4, h.y - 4, 8, 8);
+    }
+    ctx.restore();
+  }
+
   /** dashed selection frame + white handles + rotate dot above the top edge */
   private drawSelTransform(): void {
     if (this.selDrag) return;
     const tool = this.session.tool;
+    if (this.xf && this.xf.mode === "warp") { this.drawWarpHandles(); return; }
     if (!this.xf && tool !== "select" && tool !== "lasso" && tool !== "wand") return;
     const doc = this.session.doc;
     if (!doc.sel || !doc.sel.hasAny()) return;
