@@ -464,6 +464,10 @@ export class Session {
   colorTarget: "fg" | "bg" = "fg";
   brushSize = 1;
   tool: ToolId = "pencil";
+  /** the tool that was active before the current one: setTool() records it, and
+   *  `switchToPreviousTool()` swaps the two (double-tapping the tool ball goes
+   *  back and forth between the last two tools) */
+  prevToolId: ToolId | null = null;
   currentShape: import("../tools/registry").ToolId = "line";
   currentSelect: import("../tools/registry").ToolId = "select";
   layerIdx = 0;
@@ -1825,10 +1829,20 @@ export class Session {
   }
   setTool(t: ToolId): void {
     this.view_?.flushStroke(); // finish a pending polyline / curve
+    if (t !== this.tool) this.prevToolId = this.tool;   // remember what to go back to
     this.tool = t;
     this.prefs.tool = t;
     this.savePrefs();
     this.changedUI();
+  }
+  /** swap the current and the previous tool (double-tap the tool ball). Returns
+   *  the tool now active, or null when there is nothing to go back to. The two
+   *  tools keep swapping, so double-tapping again returns where you started. */
+  switchToPreviousTool(): ToolId | null {
+    const prev = this.prevToolId;
+    if (!prev || prev === this.tool) return null;
+    this.setTool(prev);   // records the tool we are leaving as the new previous
+    return prev;
   }
   cycleSym(): SymMode {
     const prev = this.sym;

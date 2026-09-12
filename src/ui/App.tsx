@@ -1439,6 +1439,8 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
   /** 拖动中的球是否正悬在装备槽上（松手即装备） */
   const slotRef = useRef<OrbId | null>(null);
   const [slotArmed, setSlotArmed] = useState(false);
+  /** 上次点主球的时间：双击主球＝切回上一个工具 */
+  const toolTap = useRef(0);
   /** open pie: which ball's items are shown and which one the pointer focuses */
   const [pie, setPie] = useState<{ ball: OrbId; focus: number; cancelled: boolean } | null>(null);
   const pieRef = useRef<{ ball: OrbId; focus: number; cancelled: boolean } | null>(null);
@@ -2057,6 +2059,18 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
   return (
     <>
       {!hiddenById("main") && renderBall("main", pos, baseIcon, open, t("menu"), bd(snap.lang, "orb"), () => {
+        // 双击主球＝切回上一个工具（两次点击之间来回切，跟 Aseprite 一致）
+        const now = Date.now();
+        const prevTap = toolTap.current;
+        toolTap.current = now;
+        if (prevTap && now - prevTap < 340) {
+          toolTap.current = 0;
+          setOpen(false); setSub(null); setRingLock((m) => ({ ...m, main: false }));
+          const back = SESSION.switchToPreviousTool();
+          SESSION.hapticTick("工具栏", 0.8);
+          bridge.toast(back ? t("toolBack") + t("tools." + back) : t("toolBackNone"));
+          return;
+        }
         if (open) { setOpen(false); setSub(null); setRingLock((m) => ({ ...m, main: false })); return; }
         if (sel) {
           const pushed = clearRingOf(pos, { x: sel.x, y: sel.y });

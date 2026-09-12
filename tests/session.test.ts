@@ -1800,4 +1800,22 @@ export async function testSession(): Promise<void> {
     eq("proj.ref-layer-id", holder.layers[1].refLayer, src.layers[0].id);
     eq("proj.ref-layer-name", holder.layers[1].name, "\u5f71\u5b50");
   }
+
+  // --- 上一个工具：setTool 记录来处，双击工具球在两个工具之间来回切 ---
+  {
+    const s = new Session();
+    s.setTool("pencil");
+    eq("tool.prev.initial", s.prevToolId, null);
+    eq("tool.prev.same-tool-keeps", (s.setTool("pencil"), s.prevToolId), null);
+    s.setTool("eraser");
+    eq("tool.prev.recorded", s.prevToolId, "pencil");
+    eq("tool.prev.swap", s.switchToPreviousTool(), "pencil");
+    eq("tool.prev.now", s.tool, "pencil");
+    // 再切一次回到橡皮（来回切换，不会卡在同一个工具上）
+    eq("tool.prev.swap-back", s.switchToPreviousTool(), "eraser");
+    eq("tool.prev.round-trip", s.tool, "eraser");
+    // 只有当前工具时没有可回退的目标
+    const one = new Session();
+    eq("tool.prev.none", one.switchToPreviousTool(), null);
+  }
 }
