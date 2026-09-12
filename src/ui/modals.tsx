@@ -73,21 +73,20 @@ export function PalettePanel({ t, onClose }: { t: ReturnType<typeof makeT>; onCl
             if (v.length >= 6) { const c = hrgb(v); if (v.length === 8) SESSION.setColor([c[0], c[1], c[2], c[3]]); else { const o: [number, number, number, number] = [c[0], c[1], c[2], 255]; SESSION.setColor(o); setHex(rgbaToHex(o)); } }
           }} />
         </div>
-        {/* RGB 数值输入：和 HSV 色轮、HEX 并存，改哪个都行 */}
-        <div className="ce-row rgb-row">
+        {/* RGB 数值：长按拖动调值（与底部栏的「不透明度 / 笔刷大小」同一控件），
+            和 HSV 色轮、HEX 并存，改哪个都行 */}
+        <div className="rgb-row">
           {(["r", "g", "b"] as const).map((ch, i) => (
-            <label key={ch} className="rgb-cell" title={t("rgbMode")}>
+            <span key={ch} className="rgb-cell" title={t("rgbMode")}>
               <span className={"rgb-tag rgb-" + ch}>{ch.toUpperCase()}</span>
-              <input className="rgbinput" type="number" inputMode="numeric" min={0} max={255}
-                value={active[i]}
-                onChange={(e) => {
-                  const v = Math.max(0, Math.min(255, Math.round(Number(e.target.value) || 0)));
+              <HoldAdjust dir="h" fixedBottom value={active[i]} min={0} max={255} title={t("rgbMode")}
+                format={(v) => String(v)}
+                onChange={(v) => {
                   const o: [number, number, number, number] = [active[0], active[1], active[2], active[3]];
                   o[i] = v;
                   apply(o);
-                  setHex(rgbaToHex(o));
                 }} />
-            </label>
+            </span>
           ))}
         </div>
         <Row label={t("presets")}>
