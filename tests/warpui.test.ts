@@ -353,4 +353,35 @@ export function testWarpUi(): void {
       finish(v, true);
     } finally { cmod.composeFrameWithOnion = orig; }
   }
+
+  // ---- 口径统一：变形的四个控制点正好落在选区框的四个角上（不再内缩 1 像素） ----
+  {
+    const { s, v } = mk();
+    paint(s, 10, 10, 6, 4);                  // 选区 = (10,10)..(16,14)（边框口径）
+    const sel = s.doc.sel!;
+    ok("warpui.corners.enter", warp(v, "quad"));
+    const b = sel.bounds()!;
+    const hs = v.warpHandles();
+    eq("warpui.corners.count", hs.length, 4);
+    eq("warpui.corners.x", hs.map((p) => Math.round((p.x - v.ox) / v.zoom)), [b.x, b.x + b.w, b.x + b.w, b.x]);
+    eq("warpui.corners.y", hs.map((p) => Math.round((p.y - v.oy) / v.zoom)), [b.y, b.y, b.y + b.h, b.y + b.h]);
+    // 网格模式的控制点同样铺满：四角与上面一致
+    ok("warpui.corners.mesh-enter", warp(v, "mesh"));
+    const mh = v.warpHandles();
+    eq("warpui.corners.mesh-count", mh.length, 9);
+    eq("warpui.corners.mesh-x", [mh[0].x, mh[2].x, mh[8].x].map((x) => Math.round((x - v.ox) / v.zoom)), [b.x, b.x + b.w, b.x + b.w]);
+    eq("warpui.corners.mesh-y", [mh[0].y, mh[2].y, mh[8].y].map((y) => Math.round((y - v.oy) / v.zoom)), [b.y, b.y, b.y + b.h]);
+    // 恒等（只点一下左上角、不挪位置）：预览里选区的每一个像素都还在（含最右 / 最下一列）
+    const h0 = v.warpHandles()[0];
+    v.onDown(ev(h0.x, h0.y));
+    const same = sc(v, b.x, b.y);
+    v.onMove(ev(same.x, same.y));
+    v.onUp(ev(same.x, same.y));
+    dom.flush();
+    let lost = 0;
+    for (let y = 10; y < 14; y++) for (let x = 10; x < 16; x++) if (alpha(s, x, y) !== 255) lost++;
+    eq("warpui.corners.identity-covers-all", lost, 0);
+    finish(v, true);
+    eq("warpui.corners.revert-exits", v.xf, null);
+  }
 }

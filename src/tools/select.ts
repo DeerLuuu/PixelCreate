@@ -190,7 +190,9 @@ export function beginMove(doc: Doc, li: number, fi: number): MoveState | null {
  *  同时把结果写进 `doc.sel` 掩码，返回被点亮的像素下标。
  *
  *  `pts` 是**画布坐标**：四边形时是四个角（左上→右上→右下→左下，顺序固定）；
- *  网格时是 (divs+1)² 个控制点（行主序）。`st.content` 是手势开始时抓下来的那块像素，
+ *  网格时是 (divs+1)² 个控制点（行主序）。口径统一为**边框 / 像素角**（见 `floatQuad()`），
+ *  恒等变换下 `floatQuad(st)` / `floatGrid(st)` 会把选区里每一个不透明像素都覆盖到。
+ *  `st.content` 是手势开始时抓下来的那块像素，
  *  所以拖动过程中反复调用它都是「从原图重算」，不会累积误差。
  */
 export function warpFloating(
@@ -234,21 +236,26 @@ export function warpFloating(
   return cells;
 }
 
-/** 浮动内容在画布坐标里的四角（左上→右上→右下→左下） */
+/** 浮动内容在画布坐标里的四角（左上→右上→右下→左下）。
+ *  **边框 / 像素角口径**：内容占 `[ox, ox+cw) × [oy, oy+ch)`，四角就是 `ox+cw`、`oy+ch`
+ *  （不是 `cw-1`）—— 与 `View.selFramePts()` 画的选区框四角、`xformFloating()` 的角点口径一致。
+ *  早先用「像素下标」口径（`+cw-1`）会让变形控制点比选区框内缩 1 像素，
+ *  并且浮动区域的 bbox 少算一列 / 一行，最右 / 最下一列像素在变形预览里直接漏掉。 */
 export function floatQuad(st: MoveState): Pt[] {
   const cw = st.content.w, ch = st.content.h;
   return [
     { x: st.ox, y: st.oy },
-    { x: st.ox + cw - 1, y: st.oy },
-    { x: st.ox + cw - 1, y: st.oy + ch - 1 },
-    { x: st.ox, y: st.oy + ch - 1 },
+    { x: st.ox + cw, y: st.oy },
+    { x: st.ox + cw, y: st.oy + ch },
+    { x: st.ox, y: st.oy + ch },
   ];
 }
 
-/** 浮动内容上的 (divs+1)² 网格控制点（画布坐标，行主序） */
+/** 浮动内容上的 (divs+1)² 网格控制点（画布坐标，**行主序**＝左上→右上→右下→左下，
+ *  与 `meshWarp()` / `defaultGrid()` 同序；口径同为边框 / 像素角）。 */
 export function floatGrid(st: MoveState, divs = 2): Pt[] {
   const n = Math.max(1, Math.round(divs));
-  const cw = st.content.w - 1, ch = st.content.h - 1;
+  const cw = st.content.w, ch = st.content.h;
   const out: Pt[] = [];
   for (let gy = 0; gy <= n; gy++) {
     for (let gx = 0; gx <= n; gx++) {
