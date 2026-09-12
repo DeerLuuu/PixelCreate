@@ -1469,8 +1469,8 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
     if (o && (Math.abs(e.clientX - o.x) > 10 || Math.abs(e.clientY - o.y) > 14)) stopTip();
   };
   const td = (id: string): string => {
-    const z: Record<string, string> = { pencil: "铅笔：逐像素绘制", eraser: "橡皮：清除像素", bucket: "油漆桶：向同色连通区域填充当前色；底部栏可切换渐变模式（前景色→背景色，可选 RGB/2×2/4×4/8×8 颗粒）", picker: "取色器：吸取画布上的颜色", line: "直线", rect: "矩形描边", rectfill: "实心矩形", ellipse: "椭圆描边", ellipsefill: "实心椭圆", circle: "圆形：拖动绘制正圆", polygon: "多边形：可调边数（3–32）", polyline: "折线：点一下加一个点，点最后一个点结束（点倒数第二个可撤掉最后一个点）", curve: "曲线：点一下加一个点，用平滑样条串起来，点最后一个点结束", select: "矩形选区：拖拽框选区域", wand: "魔棒：按容差选中同色连通区域", lasso: "套索：自由手绘选区", outline: "轮廓填充：手绘闭合形状，松手后自动填充内部", airbrush: "喷枪：按住持续喷出随机大小像素点（底部栏可调点大小区间与密度）" };
-    const en: Record<string, string> = { pencil: "Pencil: draw pixels", eraser: "Eraser: clear pixels", bucket: "Fill bucket: fill the same-colour region (bottom bar: gradient mode, FG->BG with RGB/2x2/4x4/8x8 steps)", picker: "Eyedropper: pick a colour", line: "Line", rect: "Rect outline", rectfill: "Filled rect", ellipse: "Ellipse outline", ellipsefill: "Filled ellipse", circle: "Circle: drag to draw a perfect circle", polygon: "Polygon: adjustable sides (3–32)", polyline: "Polyline: tap to add points, tap the last point to finish (tap the point before it to undo one)", curve: "Curve: tap to add points, a smooth spline runs through them; tap the last point to finish", select: "Rect selection: drag to select", wand: "Magic wand: select same-colour area", lasso: "Lasso: freehand selection", outline: "Outline fill: draw a closed shape, it fills itself on release", airbrush: "Airbrush: hold to spray random-size specks (dot-size range & rate in the bottom bar)" };
+    const z: Record<string, string> = { pencil: "铅笔：逐像素绘制", eraser: "橡皮：清除像素；按住它从工具球里拖到画布上＝临时橡皮（不切换当前工具）", bucket: "油漆桶：向同色连通区域填充当前色；底部栏可切换渐变模式（前景色→背景色，可选 RGB/2×2/4×4/8×8 颗粒）", picker: "取色器：吸取画布上的颜色", line: "直线", rect: "矩形描边", rectfill: "实心矩形", ellipse: "椭圆描边", ellipsefill: "实心椭圆", circle: "圆形：拖动绘制正圆", polygon: "多边形：可调边数（3–32）", polyline: "折线：点一下加一个点，点最后一个点结束（点倒数第二个可撤掉最后一个点）", curve: "曲线：点一下加一个点，用平滑样条串起来，点最后一个点结束", select: "矩形选区：拖拽框选区域", wand: "魔棒：按容差选中同色连通区域", lasso: "套索：自由手绘选区", outline: "轮廓填充：手绘闭合形状，松手后自动填充内部", airbrush: "喷枪：按住持续喷出随机大小像素点（底部栏可调点大小区间与密度）" };
+    const en: Record<string, string> = { pencil: "Pencil: draw pixels", eraser: "Eraser: clear pixels; drag it out of the tool ball onto the canvas for a one-off eraser (your current tool stays)", bucket: "Fill bucket: fill the same-colour region (bottom bar: gradient mode, FG->BG with RGB/2x2/4x4/8x8 steps)", picker: "Eyedropper: pick a colour", line: "Line", rect: "Rect outline", rectfill: "Filled rect", ellipse: "Ellipse outline", ellipsefill: "Filled ellipse", circle: "Circle: drag to draw a perfect circle", polygon: "Polygon: adjustable sides (3–32)", polyline: "Polyline: tap to add points, tap the last point to finish (tap the point before it to undo one)", curve: "Curve: tap to add points, a smooth spline runs through them; tap the last point to finish", select: "Rect selection: drag to select", wand: "Magic wand: select same-colour area", lasso: "Lasso: freehand selection", outline: "Outline fill: draw a closed shape, it fills itself on release", airbrush: "Airbrush: hold to spray random-size specks (dot-size range & rate in the bottom bar)" };
     return (snap.lang === "zh" ? z : en)[id] ?? "";
   };
 
@@ -1898,6 +1898,36 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pcMode, pieEquip, pieItemsFor]);
 
+  /** 把工具球里的工具小项**拖到画布上**＝临时用这个工具（不切换当前工具）。
+      目前接的是橡皮：按住橡皮小项拖出去就擦，走到哪擦到哪，松手后当前工具不变、
+      也不会多出一条「切换工具」。PC 上已有右键/Alt 等顺手手法，故只在触屏接管。 */
+  const tempToolDrag = (toolId: ToolId, tip: (e: React.PointerEvent) => void) => (e: React.PointerEvent) => {
+    tip(e);                                  // 长按提示照旧（拖出 10px 后 guardTip 会把它收掉）
+    if (pcMode) return;
+    const v = SESSION.view;
+    if (!v) return;
+    const x0 = e.clientX, y0 = e.clientY;
+    let started = false;
+    const move = (ev: PointerEvent) => {
+      if (!started) {
+        if (Math.hypot(ev.clientX - x0, ev.clientY - y0) < 8) return;
+        started = v.beginTempStroke(toolId, ev.clientX, ev.clientY);
+        if (started) { stopTip(); SESSION.hapticTick("橡皮", 0.7); }
+        return;
+      }
+      v.moveTempStroke(ev.clientX, ev.clientY);
+    };
+    const up = () => {
+      if (started) v.endTempStroke();
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", up);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", up);
+  };
+
   const renderBall = (
     which: OrbId,
     p: { x: number; y: number },
@@ -2050,7 +2080,8 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
             } as unknown as React.CSSProperties}
             title={edit ? t("uiEditHint") : (it.desc || it.label)}
             onClick={() => { if (!edit) it.act(); }}
-            onPointerDown={edit ? dragRing(it.id, i, items.length) : startTip(it.label, it.desc)}
+            onPointerDown={edit ? dragRing(it.id, i, items.length)
+              : (it.id === "tool.eraser" ? tempToolDrag("eraser", startTip(it.label, it.desc)) : startTip(it.label, it.desc))}
             onPointerMove={edit ? undefined : guardTip}
             onPointerUp={edit ? undefined : stopTip}
             onPointerCancel={edit ? undefined : stopTip}

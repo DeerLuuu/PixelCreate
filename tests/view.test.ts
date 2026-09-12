@@ -726,4 +726,71 @@ export function testView(): void {
     cmod.composeFrameWithOnion = origOnion;
     delete (g as Record<string, unknown>).document;
   }
+
+    // ---- 临时工具笔画：拖动工具球里的「橡皮」小项直接擦，且不切换当前工具 ----
+    {
+      stubEnv();          // 前面的用例可能把 DOM 桩拆了（无 document 场景），这里补回来
+      const s4 = new Session();
+      const handlers4: Record<string, Array<(e: unknown) => void>> = {};
+      const st4 = {
+        clientWidth: 320, clientHeight: 240, style: {} as Record<string, string>, dataset: {} as Record<string, string>,
+        appendChild: () => undefined, replaceChildren: () => undefined,
+        getBoundingClientRect: () => ({ left: 0, top: 0, width: 320, height: 240 }),
+        setPointerCapture: () => undefined, releasePointerCapture: () => undefined,
+        addEventListener: (t: string, cb: (e: unknown) => void) => { (handlers4[t] ||= []).push(cb); },
+        dispatchEvent: (e: unknown) => { const t = (e as { type: string }).type; for (const cb of handlers4[t] || []) cb(e); return true; },
+      } as unknown as HTMLElement;
+      const v4 = new View(st4, s4);
+      s4.attachView(v4);
+      s4.doc.name = "TEMP";
+      v4.fit();
+      dom.flush();
+
+      // 画布上先铺满不透明像素，方便验证"擦掉"这件事
+      const cel = s4.doc.ensureCel(0, 0);
+      for (let i = 0; i < cel.data.length; i += 4) { cel.data[i] = 200; cel.data[i + 3] = 255; }
+      const opaque = (): number => { let n = 0; for (let i = 3; i < cel.data.length; i += 4) if (cel.data[i] > 0) n++; return n; };
+      const before = opaque();
+
+      // node 里既没有 PointerEvent 也没有 MouseEvent -> 安全失败，不留临时工具
+      s4.setTool("pencil");
+      eq("view.temp-tool.no-dom-env", v4.beginTempStroke("eraser", 60, 60), false);
+      eq("view.temp-tool.tool-kept", s4.tool, "pencil");
+
+      // 给测试装一个最小 PointerEvent，再走一遍：应当真的擦出一块
+      const g4 = globalThis as unknown as Record<string, unknown>;
+      const savedPE = g4.PointerEvent;
+      class FakePE {
+        type: string;
+        clientX: number; clientY: number; pointerId: number; pointerType: string;
+        isPrimary: boolean; button: number; buttons: number;
+        constructor(type: string, init: Record<string, unknown>) {
+          this.type = type;
+          this.clientX = Number(init.clientX ?? 0); this.clientY = Number(init.clientY ?? 0);
+          this.pointerId = Number(init.pointerId ?? 1); this.pointerType = String(init.pointerType ?? "touch");
+          this.isPrimary = true; this.button = Number(init.button ?? 0); this.buttons = Number(init.buttons ?? 1);
+        }
+        preventDefault(): void { /* stub */ }
+        stopPropagation(): void { /* stub */ }
+      }
+      g4.PointerEvent = FakePE;
+      try {
+        const started = v4.beginTempStroke("eraser", 60, 60);
+        ok("view.temp-tool.starts", started);
+        eq("view.temp-tool.does-not-switch", s4.tool, "pencil");
+        v4.moveTempStroke(70, 70);
+        v4.moveTempStroke(80, 80);
+        v4.endTempStroke();
+        dom.flush();
+        ok("view.temp-tool.erased-something", opaque() < before, before + " -> " + opaque());
+        eq("view.temp-tool.tool-still-kept", s4.tool, "pencil");
+        // 落成一条可撤销的历史步
+        s4.undo();
+        dom.flush();
+        eq("view.temp-tool.one-history-step", opaque(), before);
+      } finally {
+        if (savedPE === undefined) delete g4.PointerEvent; else g4.PointerEvent = savedPE;
+      }
+      v4.destroy();
+    }
 }

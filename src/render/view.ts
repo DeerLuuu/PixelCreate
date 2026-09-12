@@ -5,7 +5,7 @@ import { clampRect, screenRectOf, unionRect, tileOffsets, tileRect, type TileMod
 import { Sel } from "../engine/doc";
 import * as comp from "./compositor";
 import { Stroke } from "../tools/stroke";
-import { isSymTool, SYM_ANGLES } from "../tools/registry";
+import { isSymTool, SYM_ANGLES, type ToolId } from "../tools/registry";
 import type { SymAxis } from "../engine/symmetry";
 import { lineCells, brushStamp, fillPolygon } from "../engine/paint";
 import { selOps, lassoFill, beginMove, xformFloating, floatDropInto, type MoveState } from "../tools/select";
@@ -44,6 +44,8 @@ const UNLOCK_D = "M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6h2c0-1.66 1.34-3 3-3s3 
 const FOUR_MOVE_PX_DEFAULT = 15;
 /** layer-switch flash duration in ms */
 const FLASH_MS = 420;
+/** 临时工具笔画用的合成 pointerId（与真实手指的 id 区分开） */
+const TEMP_POINTER_ID = 9001;
 /** how far the gap tint tolerates an off-canonical gap: pairs snapped by an
  *  older build keep the wider stacked gap (LEGACY_TITLE_EXTRA 20 vs 10) and
  *  must still light up as snapped */
@@ -567,6 +569,55 @@ export class View {
     s.repaint();
     if (rec) s.changedUI();
     return hit.index;
+  }
+
+  // ---------- 临时工具笔画（把工具球里的子项拖到画布上直接用） ----------
+  /** 拖「橡皮小项」出去时临时顶替当前工具：只影响这一次笔画，不改 SESSION.tool，
+   *  因此工具球上的高亮与之后画的东西都不变。 */
+  private tempTool: ToolId | null = null;
+  /** 当前这次笔画应该用哪个工具（临时工具优先） */
+  private toolNow(): ToolId {
+    return this.tempTool ?? this.session.tool;
+  }
+  /** 把合成的指针事件交给画布自己的处理链：笔画/脏矩形/历史/震动全部复用 */
+  private dispatchPointer(type: string, clientX: number, clientY: number): void {
+    const host = this.host as unknown as { dispatchEvent?: (e: Event) => boolean };
+    if (!host || typeof host.dispatchEvent !== "function") return;
+    const Ctor = (globalThis as { PointerEvent?: typeof PointerEvent }).PointerEvent
+      ?? (globalThis as { MouseEvent?: typeof MouseEvent }).MouseEvent;
+    if (!Ctor) return;                 // 无 DOM 事件构造器（node 测试）：安全跳过
+    const init: PointerEventInit = {
+      pointerId: TEMP_POINTER_ID,
+      pointerType: "touch",
+      isPrimary: true,
+      clientX, clientY,
+      bubbles: true, cancelable: true,
+      button: 0,
+      buttons: type === "pointerup" ? 0 : 1,
+    };
+    host.dispatchEvent(new Ctor(type, init as MouseEventInit));
+  }
+  /** 开始一次临时工具笔画（如拖动橡皮小项） */
+  beginTempStroke(tool: ToolId, clientX: number, clientY: number): boolean {
+    if (!this.host || this.tempTool) return false;
+    this.tempTool = tool;
+    this.dispatchPointer("pointerdown", clientX, clientY);
+    if (!this.stroke) {         // 没画出笔画（画布外 / 图层锁定）：干脆别接管
+      this.tempTool = null;
+      return false;
+    }
+    return true;
+  }
+  /** 临时笔画的移动（跟手擦除/绘制） */
+  moveTempStroke(clientX: number, clientY: number): void {
+    if (!this.tempTool) return;
+    this.dispatchPointer("pointermove", clientX, clientY);
+  }
+  /** 结束临时笔画：落下一条历史步，并**不改**当前工具 */
+  endTempStroke(): void {
+    if (!this.tempTool) return;
+    this.dispatchPointer("pointerup", this.lastPt.x, this.lastPt.y);
+    this.tempTool = null;
   }
 
   // ---------------------------------------------------------------- render
@@ -1931,7 +1982,7 @@ export class View {
       // unlocked but off the line, or locked: painting / panning proceed normally
     }
     const s = this.session;
-    const tool = s.tool;
+    const tool = this.toolNow();   // 临时工具（拖动橡皮小项）优先
     const pp = this.screenToPixel(pt.x, pt.y);
     const doc = s.doc;
     // 点画布＝Delete 键重新作用于选区内容（而不是上次点的标题 / 图层 / 帧）
