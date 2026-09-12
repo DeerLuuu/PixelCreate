@@ -9,7 +9,7 @@ import { useKitPcMode } from "./kit";
 import { Dialog } from "./kit";
 
 /** keep in sync with android/AndroidManifest.xml versionName on every release */
-export const APP_VERSION = "1.1.1.0";
+export const APP_VERSION = "1.1.1.1";
 /** build stamp shown next to the version (support/debug: identifies the exact
  *  package a user is running when the version number itself does not change) */
 export const BUILD_TAG = "7bb01ab";
@@ -21,6 +21,15 @@ export interface ClgVersion { v: string; date: string; items: ClgItem[] }
 const it = (kind: ClgKind, zh: string, en: string): ClgItem => ({ kind, zh, en });
 
 export const CHANGELOG: ClgVersion[] = [
+  {
+    v: "1.1.1.1",
+    date: "2026-09-12",
+    items: [
+      it("add", "**自由变换**来了：选区球 →「更多」里有「斜切 / 透视」和「网格变形」。斜切/透视＝直接拖选区的四个角（拖一条边就是斜切，把角往里收就是透视）；网格变形＝拖 3×3 的九个网格点，画面跟着扭。拖动时实时预览（每次都从开始那一刻的原图重算，不会越拖越糊），效果满意点「完成」落成**一条可撤销的历史**，不想要点「还原」原样退回。采样始终是最近邻，拉伸**不会留下空洞**。", "**Free transform** is here: the selection ball's More page now has Skew / perspective and Mesh warp. Skew/perspective: drag the selection's four corners (slide an edge to skew, pull a corner in for perspective); mesh warp: drag the nine points of a 3x3 mesh and the artwork bends with them. The preview is live and always recomputed from the artwork as it was when you started, so repeated dragging never degrades it; Done applies it as **one undoable step**, Revert throws it away. Sampling stays nearest-neighbour and stretching **never leaves holes**."),
+      it("imp", "跟着上一版的反馈修/加了三处：**图案笔刷下橡皮不再受图案影响**（照常整片擦除，图案只决定上色落在哪些点）；**动作搜索改成工具球里的一个「搜索动作」小项**（原来浮在主球上方那条去掉了，电脑的 `Ctrl+K` 不变）；**调色板的选色区多了 R/G/B 数值输入**，和 HSV 色轮、HEX 三边同步，改哪个都行。", "Three fixes and additions from your feedback on the last build: **the eraser now ignores the pattern brush** (it clears as usual; a pattern only decides which dots get painted); **action search is a Search actions entry inside the tool ball** (the floating pill above the ball is gone, desktop Ctrl+K unchanged); and **the palette's colour area gained R/G/B number inputs**, kept in sync with the HSV wheel and the HEX field."),
+    ],
+  },
+
   {
     v: "1.1.1.0",
     date: "2026-09-12",
