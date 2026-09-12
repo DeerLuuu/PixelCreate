@@ -31,6 +31,8 @@ import { adjustPixel, type HslAdj } from "../engine/adjust";
 import { type LoopMode, nextLoopMode, nextPlayFrameIn, startPlayDir, startPlayFrameIn, windowOf } from "./playback";
 import { SETTINGS_BY_PATH, normalizeSetting, type SettingValue } from "./settings";
 import { snapToTargets, snapCandidates, snapGapRect, stackGap, tightenLegacyStack, type GapRect, type SnapTarget } from "./canvas-snap";
+import { BUILTIN_PATTERNS, PATTERN_MAX, patternBytes, patternFromBytes, type PatternDef } from "../data/patterns";
+import { bytesToB64 } from "../engine/b64";
 import { TAG_COLORS, clampRange, nextTagName, normalizeTags, tagAt as findTag } from "../engine/tags";
 
 export interface Prefs {
@@ -195,6 +197,10 @@ export interface Prefs {
   loopMode: LoopMode;
   /** how many recently used colours the palette panel remembers (4..64) */
   recentColorsMax: number;
+  /** 图案笔刷：当前选中的图案 id（null = 普通纯色笔刷） */
+  patternId: string | null;
+  /** 用户图案（从选区 / 画布抓下来的），内置图案见 src/data/patterns.ts */
+  patterns: PatternDef[];
   /** magic-wand colour tolerance (0..64) */
   selectionTolerance: number;
 }
@@ -885,7 +891,7 @@ export class Session {
   }
 
   brush(): BrushState {
-    return { color: this.color, size: this.brushSize, alpha: this.color[3], pressure: 1 };
+    return { color: this.color, size: this.brushSize, alpha: this.color[3], pressure: 1, pattern: this.brushPatternData() };
   }
   layerLocked(): boolean {
     const L = this.doc.layers[this.curLayer()];
@@ -1323,6 +1329,7 @@ export class Session {
       brushSize: 1, brushAlpha: 255, fgColor: "#141414", bgColor: "#ffffff",
       tool: "pencil", currentShape: "line", currentSelect: "select",
       brushShape: "circle", pixelPerfect: true, shapeSides: 6, shapeFill: true, shapeFromCenter: false,
+      patternId: null, patterns: [],
       sym: "off", symFour: false, symLocked: false, symAng: 90, symOx: 0, symOy: 0,
       palette: [], newDocW: 64, newDocH: 64, newDocBg: "transparent",
       longPressMs: 300, doubleTapMs: 420, tripleTapZoom: 2, fourFingerPx: 15,
@@ -1425,6 +1432,13 @@ export class Session {
       if (typeof saved.fillGaps === "number") p.fillGaps = Math.max(0, Math.min(16, Math.round(saved.fillGaps)));
       if (typeof saved.indexed === "boolean") p.indexed = saved.indexed;
       if (typeof saved.snapRange === "number") p.snapRange = Math.max(4, Math.min(48, Math.round(saved.snapRange)));
+      if (saved.patternId === null || typeof saved.patternId === "string") p.patternId = saved.patternId;
+      if (Array.isArray(saved.patterns)) {
+        p.patterns = (saved.patterns as PatternDef[]).filter((x) => !!x && typeof x.id === "string" && typeof x.name === "string"
+          && typeof x.data === "string" && Number.isFinite(x.w) && Number.isFinite(x.h)
+          && x.w > 0 && x.h > 0 && x.w <= PATTERN_MAX && x.h <= PATTERN_MAX).slice(0, 64);
+        if (p.patterns.length !== (saved.patterns as unknown[]).length) p.patternId = p.patterns.some((x) => x.id === p.patternId) ? p.patternId : null;
+      }
       if (typeof saved.snapGap === "number") p.snapGap = Math.max(0, Math.min(48, Math.round(saved.snapGap)));
       if (typeof saved.snapInColor === "string" && /^#[0-9a-fA-F]{6}$/.test(saved.snapInColor)) p.snapInColor = saved.snapInColor.toLowerCase();
       if (typeof saved.snapOutColor === "string" && /^#[0-9a-fA-F]{6}$/.test(saved.snapOutColor)) p.snapOutColor = saved.snapOutColor.toLowerCase();
@@ -1671,6 +1685,106 @@ export class Session {
       ? "Palette built from the canvas: " + picked.length + " colours" + (extra ? " (of " + extra + ", most used first)" : "")
       : "已从画布生成 " + picked.length + " 色调色板" + (extra ? "（共 " + extra + " 色，按使用次数取前 " + picked.length + " 个）" : ""));
     return picked.length;
+  }
+  // ---------- 图案笔刷（图案库） ----------
+  /** 图案库：内置在前、用户图案在后 */
+  patternDefs(): PatternDef[] { return [...BUILTIN_PATTERNS, ...this.prefs.patterns]; }
+  patternById(id: string | null): PatternDef | null {
+    if (!id) return null;
+    return this.patternDefs().find((p) => p.id === id) ?? null;
+  }
+  /** 当前选中的图案（没选或数据坏了都是 null） */
+  activePattern(): PatternDef | null {
+    const p = this.patternById(this.prefs.patternId);
+    return p && patternBytes(p) ? p : null;
+  }
+  /** 交给 Stroke 的图案数据（解不出字节就当没开图案） */
+  brushPatternData(): { w: number; h: number; bytes: Uint8ClampedArray; tint: boolean } | null {
+    const p = this.activePattern();
+    if (!p) return null;
+    const bytes = patternBytes(p);
+    if (!bytes) return null;
+    return { w: p.w, h: p.h, bytes, tint: p.tint === true };
+  }
+  /** 选图案（null = 关掉图案笔刷，回到纯色） */
+  setPattern(id: string | null): void {
+    this.prefs.patternId = id && this.patternById(id) ? id : null;
+    this.savePrefs();
+    this.changedUI();
+  }
+  /** 把一块像素加成用户图案并选中；返回新图案 id（失败 = null，例如超过 64x64） */
+  addPattern(name: string, bytes: Uint8ClampedArray, w: number, h: number): string | null {
+    if (w <= 0 || h <= 0 || w > PATTERN_MAX || h > PATTERN_MAX) return null;
+    const id = "p" + Date.now().toString(36) + Math.floor(Math.random() * 1e4).toString(36);
+    const def: PatternDef = { id, name: name || ("Pattern " + (this.prefs.patterns.length + 1)), w, h, data: bytesToB64(bytes) };
+    this.prefs.patterns = [...this.prefs.patterns, def];
+    this.prefs.patternId = id;
+    this.savePrefs();
+    this.changedUI();
+    return id;
+  }
+  removePattern(id: string): boolean {
+    const i = this.prefs.patterns.findIndex((p) => p.id === id);
+    if (i < 0) return false;                     // 内置图案不给删
+    this.prefs.patterns = this.prefs.patterns.filter((p) => p.id !== id);
+    if (this.prefs.patternId === id) this.prefs.patternId = null;
+    this.savePrefs();
+    this.changedUI();
+    return true;
+  }
+  renamePattern(id: string, name: string): void {
+    const p = this.prefs.patterns.find((x) => x.id === id);
+    if (!p) return;
+    p.name = name.trim() || p.name;
+    this.prefs.patterns = [...this.prefs.patterns];
+    this.savePrefs();
+    this.changedUI();
+  }
+  /** 把当前选区里的像素抓成图案（一条可撤销的历史都不用记：只是取数据） */
+  patternFromSelection(): "ok" | "empty" | "toolarge" | "nosel" {
+    const doc = this.doc;
+    if (!doc.sel || !doc.sel.hasAny()) return "nosel";
+    const cel = doc.celAt(this.curLayer(), this.curFrame());
+    if (!cel) return "empty";
+    const b = doc.sel.bounds();
+    if (!b) return "nosel";
+    const w = b.w, h = b.h;
+    const cut = new Uint8ClampedArray(w * h * 4);
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const sx = b.x + x, sy = b.y + y;
+        if (sx < 0 || sy < 0 || sx >= doc.w || sy >= doc.h) continue;
+        if (doc.selAt(sx, sy) !== 1) continue;                  // 只收选区内的像素
+        const s = cel.idx(sx, sy), d = (y * w + x) * 4;
+        cut[d] = cel.data[s]; cut[d + 1] = cel.data[s + 1]; cut[d + 2] = cel.data[s + 2]; cut[d + 3] = cel.data[s + 3];
+      }
+    }
+    const trimmed = patternFromBytes(cut, w, h);
+    if (!trimmed) return "empty";
+    if (trimmed.w > PATTERN_MAX || trimmed.h > PATTERN_MAX) return "toolarge";
+    this.addPattern(this.prefs.lang === "en" ? "From selection" : "来自选区", trimmed.bytes, trimmed.w, trimmed.h);
+    return "ok";
+  }
+  /** 把整张画布的内容（按内容裁剪）抓成图案 */
+  patternFromCanvas(): "ok" | "empty" | "toolarge" {
+    const doc = this.doc;
+    const all = new Uint8ClampedArray(doc.w * doc.h * 4);
+    // 所有图层按顺序叠一遍（后画的盖在上面），只为了"看起来像画布上的样子"
+    for (let li = 0; li < doc.layers.length; li++) {
+      const cel = doc.celAt(li, this.curFrame());
+      if (!cel) continue;
+      const L = doc.layers[li];
+      if (L && L.visible === false) continue;
+      for (let i = 0; i < all.length; i += 4) {
+        if (cel.data[i + 3] === 0) continue;
+        all[i] = cel.data[i]; all[i + 1] = cel.data[i + 1]; all[i + 2] = cel.data[i + 2]; all[i + 3] = cel.data[i + 3];
+      }
+    }
+    const trimmed = patternFromBytes(all, doc.w, doc.h);
+    if (!trimmed) return "empty";
+    if (trimmed.w > PATTERN_MAX || trimmed.h > PATTERN_MAX) return "toolarge";
+    this.addPattern(this.prefs.lang === "en" ? "From canvas" : "来自画布", trimmed.bytes, trimmed.w, trimmed.h);
+    return "ok";
   }
   setRecentColorsMax(n: number): void { this.setSetting("display.recentColors", n); }
   /** keep the recent-colour list within the configured limit */

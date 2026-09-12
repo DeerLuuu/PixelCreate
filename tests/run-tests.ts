@@ -32,6 +32,7 @@ import { testView } from "./view.test";
 import { testSnap } from "./snap.test";
 import { testAse } from "./ase.test";
 import { testTags, testTagsIo } from "./tags.test";
+import { testPatterns } from "./patterns.test";
 
 async function main(): Promise<void> {
   console.log("--- history ---");
@@ -98,6 +99,8 @@ async function main(): Promise<void> {
   testUibar();
   console.log("--- aseprite ---");
   await testAse();
+  console.log("--- patterns ---");
+  testPatterns();
   console.log("--- animation tags ---");
   testTags();
   await testTagsIo();

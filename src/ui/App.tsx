@@ -26,7 +26,7 @@ import { TimelineBar } from "./timeline";
 import { PreviewBox } from "./preview";
 import { RefImageBox } from "./refimg";
 import type { RefImg } from "./refimg";
-import { ActionSearchModal, PalettePanel, openFlow, MenuModal, SizeModal, SheetModal, NewDocModal, ExportModal, AdjustModal, SettingsModal, FrameModal, TagModal, FramePreviewModal, CanvasRefModal, HistoryModal, ShortcutHelpModal, CustomiseModal, histName, importFlow, saveProject, openFileBytes } from "./modals";
+import { ActionSearchModal, PatternPanel, PalettePanel, openFlow, MenuModal, SizeModal, SheetModal, NewDocModal, ExportModal, AdjustModal, SettingsModal, FrameModal, TagModal, FramePreviewModal, CanvasRefModal, HistoryModal, ShortcutHelpModal, CustomiseModal, histName, importFlow, saveProject, openFileBytes } from "./modals";
 import { FxParamDialog, fxDefaults, type FxRun, type FxVals } from "./fxparam";
 import { CanvasTitles } from "./canvas";
 import { ChangelogModal, changelogNeedsShow } from "./changelog";
@@ -678,7 +678,8 @@ export function App() {
         onCanvasExport={() => setModal("export")}
         onOpenPalette={() => setPanel("palette")}
         onCanvasRef={() => setModal("canvasRef")}
-        onSearch={() => setModal("actions")} />}
+        onSearch={() => setModal("actions")}
+        onPatterns={() => setModal("patterns")} />}
       {replayOn && <ReplayOverlay t={t} snap={snap} nameFn={(lb) => histName(lb, t, snap.lang)} onClose={() => { setModal(null); setReplayOn(false); }} />}
       <Keep on={panel === "palette"} el={panel === "palette" ? (
         <Overlay onClose={() => setPanel(null)}>
@@ -708,6 +709,7 @@ export function App() {
       <Keep on={modal === "customise"} el={modal === "customise" ? <CustomiseModal t={t} onClose={() => setModal(null)} /> : null} />
       <Keep on={modal === "shortcuts"} el={modal === "shortcuts" ? <ShortcutHelpModal t={t} onClose={() => setModal(null)} /> : null} />
       <Keep on={modal === "actions"} el={modal === "actions" ? <ActionSearchModal t={t} onClose={() => setModal(null)} /> : null} />
+      <Keep on={modal === "patterns"} el={modal === "patterns" ? <PatternPanel t={t} onClose={() => setModal(null)} /> : null} />
       <Keep on={modal === "changelog"} el={modal === "changelog" ? <ChangelogModal onClose={() => { setModal(null); setClgBlock(false); }} /> : null} />
       {guide && <GuideOverlay steps={guide} actions={guideActions} onDone={finishGuide} />}
       {textQ && (
@@ -1010,10 +1012,11 @@ function EmptyCanvas({ t, onNew, onOpen }: { t: ReturnType<typeof makeT>; onNew:
   );
 }
 
-function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onCanvasExport, onOpenPalette, onCanvasRef, onSearch }: {
+function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onCanvasExport, onOpenPalette, onCanvasRef, onSearch, onPatterns }: {
   t: ReturnType<typeof makeT>; snap: Snapshot; onCanvasNew: () => void; onCanvasSize: () => void;
   onCanvasAdjust: () => void; onCanvasExport: () => void; onOpenPalette: () => void; onCanvasRef: () => void;
   onSearch: () => void;
+  onPatterns: () => void;
 }) {
   const orbKey = "pc.orb.pos";
   const loadPos = () => {
@@ -1759,6 +1762,9 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
           ...SELECT_TOOLS.map((dd) => ({ id: "tool." + dd.id, icon: dd.icon, label: t("tools." + dd.id), desc: td(dd.id), act: () => pickTool("select", dd.id), active: snap.tool === dd.id, guide: "tool-" + dd.id })),
         ] : []),
         ...(pcMode ? [] : [
+        { id: "pattern-brush", icon: "i-pattern", label: t("patternTitle"),
+          desc: SESSION.activePattern() ? t("patternTitle") + " · " + SESSION.activePattern()!.name : t("patternHint"),
+          act: () => onPatterns(), active: !!SESSION.activePattern(), guide: "tool-pattern" },
         { id: "tool-group-shape", icon: defOf(snap.shape)?.icon || "i-rect", label: t("shapeGroup"), desc: snap.lang === "zh" ? "图形工具：直线 / 矩形 / 椭圆" : "Shape tools: line / rect / ellipse", act: () => { setSub("shape"); if (sel && !pcMode) setSel({ ...sel, open: false }); }, active: isShapeTool(snap.tool), guide: "tool-shape-group" },
         { id: "tool-group-select", icon: (snap.tool !== "line" && isSelectTool(snap.tool) ? defOf(snap.tool)?.icon : defOf(SESSION.currentSelect)?.icon) || "i-select", label: t("sel.active"), desc: snap.lang === "zh" ? "选区工具：框选 / 魔棒 / 套索" : "Select tools: rect / wand / lasso", act: () => { setSub("select"); if (sel && !pcMode) setSel({ ...sel, open: false }); }, active: isSelectTool(snap.tool), guide: "tool-select-group" },
         ]),

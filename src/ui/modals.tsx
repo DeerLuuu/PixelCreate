@@ -9,6 +9,7 @@ import { hexToRgba, rgbaToHex, hexToRgba as hrgb, chipCss } from "../engine/colo
 import { HsvWheel } from "./HsvWheel";
 import { HoldAdjust } from "./hold";
 import { PALETTE_PACKS } from "../data/palettes";
+import { BUILTIN_PATTERN_ZH, patternBytes, patternColorAt, type PatternDef } from "../data/patterns";
 import { tryReadGif } from "../io/gifread";
 import * as ase from "../io/aseread";
 import { TAG_COLORS, tagRangeLabel } from "../engine/tags";
@@ -26,7 +27,7 @@ import { SHORTCUT_SHEET } from "../app/shortcuts";
 import { REBINDABLE, chordForAction, chordLabel, chordOf, isOverridden, overrides } from "../app/keymap";
 import { CBAR_ACTIONS, LAYOUT_KEYS, ORB_IDS, TOPBAR_ACTIONS, fullOrder } from "../app/uibar";
 
-export type ModalId = "menu" | "changelog" | "newdoc" | "newproject" | "export" | "adjust" | "settings" | "frame" | "framePrev" | "size" | "sheet" | "history" | "canvasRef" | "shortcuts" | "customise" | "actions" | null;
+export type ModalId = "menu" | "changelog" | "newdoc" | "newproject" | "export" | "adjust" | "settings" | "frame" | "framePrev" | "size" | "sheet" | "history" | "canvasRef" | "shortcuts" | "customise" | "actions" | "patterns" | null;
 export type SizeMode = "canvas" | "sprite";
 export type SheetData = { w: number; h: number; px: Uint8ClampedArray; name: string };
 
@@ -1118,6 +1119,79 @@ function keyActionLabel(action: string, en: boolean): string {
  */
 /** 动作搜索：把界面上所有按钮（顶栏 / 底栏 / 五个浮动球 / 临时挂上去的）当成一张可搜索的清单。
  *  PC 是 Ctrl+K，触摸端从主球上方的「搜索动作」浮条进；回车跑第一个匹配项。 */
+/** 图案笔刷的图案库：内置 8x8 图案 + 从选区/画布抓下来的用户图案 */
+export function PatternPanel({ t, onClose }: { t: ReturnType<typeof makeT>; onClose: () => void }) {
+  const snap = useSession();
+  const [, bump] = useState(0);
+  const redraw = (): void => bump((n) => n + 1);
+  const defs = SESSION.patternDefs();
+  const active = SESSION.prefs.patternId;
+  const report = (r: "ok" | "empty" | "toolarge" | "nosel"): void => {
+    bridge.toast(r === "ok" ? t("patternAdded") : r === "nosel" ? t("patternNeedSel") : r === "toolarge" ? t("patternTooLarge") : t("patternEmpty"));
+    if (r === "ok") redraw();
+  };
+  return (
+    <Dialog title={t("patternTitle")} onClose={onClose} className="pat-dlg" bodyClass="cu-body"
+      extra={<div className="row-note">{t("patternHint")}</div>}
+      footer={<>
+        <Btn icon="i-select" label={t("patternFromSel")} onClick={() => report(SESSION.patternFromSelection())} />
+        <Btn icon="i-canvas" label={t("patternFromCanvas")} onClick={() => report(SESSION.patternFromCanvas())} />
+        <Btn label={t("close")} onClick={onClose} className="primary" />
+      </>}>
+      <div className="pat-grid">
+        <button type="button" className={"pat-cell" + (active === null ? " on" : "")} onClick={() => { SESSION.setPattern(null); redraw(); }}>
+          <span className="pat-none">∅</span>
+          <span className="pat-name">{t("patternOff")}</span>
+        </button>
+        {defs.map((p) => (
+          <button key={p.id} type="button" className={"pat-cell" + (active === p.id ? " on" : "")}
+            title={p.builtin ? t("patternBuiltin") : t("patternDelete")}
+            onClick={() => { SESSION.setPattern(p.id); redraw(); }}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              if (p.builtin) return;
+              SESSION.removePattern(p.id);
+              bridge.toast(t("patternDeleted"));
+              redraw();
+            }}>
+            <PatternThumb def={p} size={34} />
+            <span className="pat-name">{p.builtin && snap.lang === "zh" ? (BUILTIN_PATTERN_ZH[p.id] ?? p.name) : p.name}</span>
+          </button>
+        ))}
+      </div>
+    </Dialog>
+  );
+}
+
+/** 图案缩略图：按图案自己的颜色画（tint 图案用前景色示意） */
+function PatternThumb({ def, size }: { def: PatternDef; size: number }) {
+  const ref = useRef<HTMLCanvasElement | null>(null);
+  const fg = SESSION.color;
+  useEffect(() => {
+    const cv = ref.current;
+    if (!cv) return;
+    cv.width = size; cv.height = size;
+    const c = cv.getContext("2d");
+    if (!c) return;
+    c.clearRect(0, 0, size, size);
+    const bytes = patternBytes(def);
+    if (!bytes) return;
+    const cell = Math.max(1, Math.floor(size / Math.max(def.w, def.h)));
+    const ox = Math.floor((size - cell * def.w) / 2);
+    const oy = Math.floor((size - cell * def.h) / 2);
+    for (let y = 0; y < def.h; y++) {
+      for (let x = 0; x < def.w; x++) {
+        const col = patternColorAt(bytes, def.w, def.h, x, y);
+        if (!col) continue;
+        const rgb = def.tint ? fg : col;
+        c.fillStyle = "rgba(" + rgb[0] + "," + rgb[1] + "," + rgb[2] + "," + (col[3] / 255).toFixed(2) + ")";
+        c.fillRect(ox + x * cell, oy + y * cell, cell, cell);
+      }
+    }
+  }, [def, size, fg[0], fg[1], fg[2]]);
+  return <canvas ref={ref} width={size} height={size} style={{ width: size, height: size, imageRendering: "pixelated" }} />;
+}
+
 export function ActionSearchModal({ t, onClose }: { t: ReturnType<typeof makeT>; onClose: () => void }) {
   useSession();                       // 动作闭包每次渲染都会重新注册，跟着会话刷新取最新的
   const [q, setQ] = useState("");

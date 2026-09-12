@@ -7,6 +7,7 @@ import { mirrorCells, type SymAxis } from "../engine/symmetry";
 import { ellipseFill, ellipseOutline, splinePoints } from "../engine/shape";
 import type { History } from "../engine/history";
 import type { BrushState, SymMode } from "./registry";
+import { patternColorAt } from "../data/patterns";
 import { rgba } from "../engine/color";
 
 export type ToolKind = "pencil" | "eraser" | "bucket" | "airbrush" | "line" | "rect" | "ellipse" | "circle" | "polygon" | "polyline" | "curve";
@@ -115,6 +116,24 @@ export class Stroke {
     this.mask = doc.selectionActive() ? (x: number, y: number) => doc.selAt(x, y) === 1 : null;
     this.gw = doc.w;
     this.gh = doc.h;
+    this.pattern = brush.pattern ?? null;
+  }
+  /** 图案笔刷（null = 普通纯色笔刷） */
+  private pattern: { w: number; h: number; bytes: Uint8ClampedArray; tint: boolean } | null = null;
+  /** 一次落笔：图案笔刷时按图案取样（透明处不落笔，tint 图案用当前画笔颜色），
+   *  否则就是普通的「按颜色画 / 用 alpha=0 擦」 */
+  private paintOne(tx: number, ty: number): boolean {
+    const pat = this.pattern;
+    if (pat) {
+      const c = patternColorAt(pat.bytes, pat.w, pat.h, tx, ty);
+      if (!c) return false;                                  // 图案透明处：留白
+      if (this.color[3] === 0) return eraseAt(this.cel, tx, ty, this.mask);   // 图案橡皮：只擦图案点
+      const col: RGBA = pat.tint
+        ? [this.color[0], this.color[1], this.color[2], Math.round(this.color[3] * (c[3] / 255))]
+        : [c[0], c[1], c[2], Math.round(c[3] * (this.color[3] / 255))];
+      return paintAt(this.cel, tx, ty, col, this.mask);
+    }
+    return this.color[3] === 0 ? eraseAt(this.cel, tx, ty, this.mask) : paintAt(this.cel, tx, ty, this.color, this.mask);
   }
   /** the canvas the user is looking at (see gw/gh) */
   setGeometry(w: number, h: number): void {
@@ -201,7 +220,7 @@ export class Stroke {
       for (const [X, Y] of this.wrapPts(mx, my)) {
         this.markCell(X, Y);
         const [tx, ty] = this.toTarget(X, Y);
-        if (this.color[3] === 0 ? eraseAt(this.cel, tx, ty, this.mask) : paintAt(this.cel, tx, ty, this.color, this.mask)) any = true;
+        if (this.paintOne(tx, ty)) any = true;
       }
     }
     return any;
@@ -213,7 +232,7 @@ export class Stroke {
       for (const [X, Y] of this.wrapPts(mx, my)) {
         this.markCell(X, Y);
         const [tx, ty] = this.toTarget(X, Y);
-        if (eraseAt(this.cel, tx, ty, this.mask)) any = true;
+        if (this.pattern ? this.paintOne(tx, ty) : eraseAt(this.cel, tx, ty, this.mask)) any = true;
       }
     }
     return any;
@@ -389,8 +408,8 @@ export class Stroke {
     }
     for (const [X, Y] of cells) {
       this.markCell(X + this.refDx, Y + this.refDy); // dirty rect lives here
-      if (erase) { if (eraseAt(this.cel, X, Y, this.mask)) this.everPainted = true; }
-      else if (paintAt(this.cel, X, Y, this.color, this.mask)) this.everPainted = true;
+      if (erase && !this.pattern) { if (eraseAt(this.cel, X, Y, this.mask)) this.everPainted = true; }
+      else if (this.paintOne(X, Y)) this.everPainted = true;
     }
     this.ppSaved = { cells, bytes };
   }

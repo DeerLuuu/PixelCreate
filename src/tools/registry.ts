@@ -65,4 +65,6 @@ export interface BrushState {
   size: number;   // pixel diameter (>=1)
   alpha: number;  // 0..100
   pressure: number; // 0..1, 1 for touch/mouse
+  /** 图案笔刷：按画布坐标取模平铺，图案透明处不落笔（见 src/data/patterns.ts） */
+  pattern?: { w: number; h: number; bytes: Uint8ClampedArray; tint: boolean } | null;
 }
