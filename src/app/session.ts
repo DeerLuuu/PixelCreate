@@ -1259,6 +1259,9 @@ export class Session {
   }
   async writeAutosave(force = false): Promise<void> {
     if (!force && !this.autosaveDirty) return;
+    // 落盘前先把「还在手上的东西」落定：未结束的笔迹与浮动变形（含自由变换）
+    // 只存在于内存里，图层甚至已经被 floatCut 清空——带着它们存会存出「图层被清空」的草稿
+    this.view_?.flushStroke();
     this.autosaveDirty = false;
     try {
       // the autosave stores pure JSON (RLE cel data), not PNG images
@@ -2636,6 +2639,7 @@ export class Session {
   }
   /** serialize every open canvas plus the ONE shared history as .pxc */
   async serializeProject(opts?: { cels?: project.CelFormat }): Promise<string> {
+    this.view_?.flushStroke();   // 同上：保存工程前先落定未结束的笔迹 / 浮动变形
     this.syncEntry();
     let hist: unknown = null;
     if (this.prefs.recordHistory && this.history.list().labels.length) {
