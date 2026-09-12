@@ -2818,7 +2818,16 @@ export class View {
     // 两种情况的**画法口径一致**：选区占下标 `b.x .. b.x+b.w-1`，屏幕上是
     // `(b.x * z + ox, b.y * z + oy)` 到 `((b.x+b.w) * z + ox, (b.y+b.h) * z + oy)`。
     if (g && g.mode !== "warp" && g.tp) {
-      return screenFrameOf(this.xfMat(g), g.st.content.w, g.st.content.h, z, this.ox, this.oy);
+      // `screenFrameOf()` 把内容的**第 0 格中心**放在 `(0.5·z + ox, …)`，而选区框要盖在
+      // 选区左上角（画布下标 `st.ox` 的左上角）上：整体平移两者之差。
+      // 这样恒等变换下会话框与「选中框」逐像素重合（同一块内容的框不会跳）。
+      const f = screenFrameOf(this.xfMat(g), g.st.content.w, g.st.content.h, z, this.ox, this.oy);
+      const dx = (g.st.ox - 0.5) * z + this.ox - f.corners[0].x;
+      const dy = (g.st.oy - 0.5) * z + this.oy - f.corners[0].y;
+      return {
+        corners: f.corners.map((p) => ({ x: p.x + dx, y: p.y + dy })),
+        angle: f.angle, spanX: f.spanX, spanY: f.spanY,
+      };
     }
     const x0 = b.x * z + this.ox, y0 = b.y * z + this.oy;
     const x1 = (b.x + b.w) * z + this.ox, y1 = (b.y + b.h) * z + this.oy;
@@ -3263,6 +3272,14 @@ export class View {
     if (!doc.sel || !doc.sel.hasAny()) return false;
     const f = this.xfScreenFrame();
     if (!f) return false;
+    // 贴着选区边线的**环带**（±2px）优先：那一下是「只移动选区边框」，不是抓手
+    const band = distToFrame(f, pt) <= 2;
+    const inside = insideFrame(f, pt);
+    if (band && inside && !this.inXform()) {
+      const pp = this.screenToPixel(pt.x, pt.y);
+      this.startSelMove(pp);
+      if (this.selDrag) { this.selDrag.frameOnly = true; return true; }
+    }
     const hit = this.xfHitAt(pt);
     if (hit) return this.xfStart(pt, hit.kind, hit.anchor);
     // 会话里：没命中抓手但落在框内 = 接着移动内容
@@ -3273,8 +3290,6 @@ export class View {
     // 会话外：框内非边线交给「移动内容」；贴着边线的环带＝只移动选区边框
     const b = doc.sel.bounds();
     if (!b) return false;
-    const inside = insideFrame(f, pt);
-    const band = distToFrame(f, pt) <= 2;
     if (inside && !band) return false;
     if (!inside && !band) return false;
     const pp = this.screenToPixel(pt.x, pt.y);
@@ -3467,9 +3482,7 @@ export class View {
     const active = this.inXform();
     // 会话里 `xfScreenFrame()` 的坐标系原点＝内容第 0 格的**中心**，而选中框要画在
     // 选区左上角上，所以整体平移 `(+0.5 * zoom, +0.5 * zoom)`
-    const shift = this.inXform() ? this.zoom * 0.5 : 0;
     ctx.save();
-    ctx.translate(shift, shift);
     // 框：深色打底 + 白色描边（会话中跟着矩阵旋转 / 缩放 / 斜切）
     ctx.beginPath();
     ctx.moveTo(f.corners[0].x, f.corners[0].y);

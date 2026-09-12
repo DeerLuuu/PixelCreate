@@ -1531,7 +1531,8 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
    * 手机上既没有 Shift / Alt / Ctrl，也没有 hover，所以那套修饰键全部变成**看得见、
    * 点得到、状态高亮**的开关（`Item.active` → 环上那条就近高亮）；PC 上修饰键照旧可用。
    */
-  const xfChips = (): Item[] => [
+  const selPage2: Item[] = [
+    { id: "sel-back", icon: "", label: "\u2039", act: () => setSelSub(null), guide: "sel-back" },
     { id: "selXfAspect", icon: "i-resize-mode", label: t("selXfAspect"), desc: t("selXfAspectDesc"),
       active: SESSION.prefs.selXformAspect,
       act: () => SESSION.setSetting("tools.selXformAspect", !SESSION.prefs.selXformAspect) },
@@ -1553,10 +1554,6 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
       } },
     { id: "selXfReset", icon: "i-undo", label: t("selXfReset"), desc: t("selXfResetDesc"),
       act: () => SESSION.view?.revertXf(), guide: "sel-warp-revert" },
-  ];
-  const selPage2: Item[] = [
-    { id: "sel-back", icon: "", label: "\u2039", act: () => setSelSub(null), guide: "sel-back" },
-    ...xfChips(),
     ...(pcMode ? [] : [{
       id: "sel-more-tools", icon: "i-more", label: t("selMoreWarp"), desc: t("selMoreWarpDesc"),
       act: () => setSelSub("warp"), guide: "sel-more-tools",
@@ -1583,7 +1580,7 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
     { id: "selCrop", icon: "i-fx-crop", label: t("selCrop"), desc: t("selCropDesc"), act: () => { if (SESSION.cropToSelection()) repaintChanged(); } },
     ...(pcMode ? [] : [{
       id: "sel-more-more", icon: "i-more", label: t("selMoreTools"), desc: t("selMoreToolsDesc"),
-      act: () => setSelSub("tools"), guide: "sel-more-tools2",
+      act: () => setSelSub("tools"), guide: "sel-more-more",
     }]),
   ];
   // 第四页：翻转 / 扩展收缩 / 描边 / 删除
