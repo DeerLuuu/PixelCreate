@@ -1608,6 +1608,15 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
       ],
       apply: (dd, w, h, v) => fxE.outlineCel(dd, w, h, Number(v.w), hexToRgba(String(v.color)), v.pos as fxE.OutlinePos),
     })),
+    fxI("inline", "i-fx-inline", "内描边", "Inline", "在轮廓内侧画一条线，保留最外圈原色（可带透明度混合），弹窗实时预览", "Draw a line just inside the silhouette, keeping the outer ring as it is (optionally blended), live preview", () => openFx({
+      label: "fx-inline", title: "fxInlineTitle", desc: "fxInlineDesc",
+      params: [
+        { key: "w", kind: "int", label: "fxInlineWidth", min: 1, max: 8, unit: "px", def: 1 },
+        { key: "alpha", kind: "int", label: "fxInlineAlpha", min: 0, max: 100, unit: "%", def: 100 },
+        { key: "color", kind: "color", label: "fxOutlineColor", def: hexOf(SESSION.color) },
+      ],
+      apply: (dd, w, h, v) => fxE.inlineCel(dd, w, h, Number(v.w), hexToRgba(String(v.color)), Math.round(Number(v.alpha) * 2.55)),
+    })),
     fxI("blur", "i-fx-blur", "模糊", "Blur", "模糊滤镜：弹窗设置半径，可实时预览", "Blur filter: set the radius in a dialog, live preview", () => openFx({
       label: "fx-blur", title: "fxBlurTitle", desc: "fxBlurDesc",
       params: [{ key: "r", kind: "int", label: "fxBlurRadius", min: 1, max: 32, unit: "px", def: 2 }],

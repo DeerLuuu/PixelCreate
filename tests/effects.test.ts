@@ -1,5 +1,5 @@
 import { Cel } from "../src/engine/cel";
-import { blurCel, outlineCel, dropShadowCel } from "../src/engine/effects";
+import { blurCel, outlineCel, inlineCel, dropShadowCel } from "../src/engine/effects";
 import { eq, ok } from "./common";
 
 const RED: [number, number, number, number] = [255, 0, 0, 255];
@@ -107,6 +107,60 @@ export function testEffects(): void {
     const zs = z.data.join();
     outlineCel(z.data, 3, 3, 0, BLUE, "outside");
     eq("outline.width-0-noop", z.data.join(), zs);
+  }
+
+  // ------------------------------------------- 内描边（inline：保住最外圈）
+  {
+    // 5x5 实心块：最外圈保留原色，往里一圈上色，中心不动
+    const block = (sz = 5) => {
+      const pts: Array<[number, number]> = [];
+      for (let y = 0; y < sz; y++) for (let x = 0; x < sz; x++) pts.push([x, y]);
+      return mk(sz, sz, pts);
+    };
+    const b = block();
+    inlineCel(b.data, 5, 5, 1, BLUE);
+    eq("inline.outer-ring-kept", [at(b, 0, 0), at(b, 0, 2), at(b, 4, 4)], [RED, RED, RED]);
+    eq("inline.inner-ring-painted", [at(b, 1, 1), at(b, 1, 2), at(b, 3, 3)], [BLUE, BLUE, BLUE]);
+    eq("inline.centre-kept", at(b, 2, 2), RED);
+
+    // 宽度 2：往里两圈都上色（5x5 里第 3 圈就是正中心），最外圈仍是原色
+    const b2 = block();
+    inlineCel(b2.data, 5, 5, 2, BLUE);
+    eq("inline.width2", [at(b2, 1, 1), at(b2, 2, 2), at(b2, 0, 0)], [BLUE, BLUE, RED]);
+
+    // 只有 1px 粗的线：里面没有位置，什么都不该改
+    const line = mk(5, 1, [[0, 0], [1, 0], [2, 0], [3, 0], [4, 0]]);
+    const before = line.data.join();
+    inlineCel(line.data, 5, 1, 1, BLUE);
+    eq("inline.thin-line-untouched", line.data.join(), before);
+
+    // 半透明：与底色混合，且**不动像素自身的 alpha**
+    const semi = block();
+    inlineCel(semi.data, 5, 5, 1, BLUE, 128);
+    const px = at(semi, 1, 1);
+    ok("inline.blend-rgb", px[0] > 0 && px[0] < 255 && px[2] > 0 && px[2] < 255, px.join());
+    eq("inline.blend-keeps-alpha", px[3], 255);
+    const alpha0 = block();
+    inlineCel(alpha0.data, 5, 5, 1, BLUE, 0);
+    eq("inline.alpha-0-noop", at(alpha0, 1, 1), RED);
+
+    // 半透明的原像素：alpha 不被改成不透明
+    // 索引是**字节**偏移（idx(x,y) 已含 ×4），别自己再乘
+    const ghost = mk(5, 5, [[2, 2]], [255, 0, 0, 128]);
+    const gp = ghost.idx(1, 2);
+    ghost.data[gp] = 255; ghost.data[gp + 1] = 0; ghost.data[gp + 2] = 0; ghost.data[gp + 3] = 128;
+    inlineCel(ghost.data, 5, 5, 1, BLUE);
+    eq("inline.keeps-semi-alpha", at(ghost, 1, 2)[3], 128);
+
+    // 空画布 / 非法宽度：安全
+    const empty = new Cel(4, 4);
+    const es = empty.data.join();
+    inlineCel(empty.data, 4, 4, 1, BLUE);
+    eq("inline.empty-noop", empty.data.join(), es);
+    const w0 = block();
+    const w0s = w0.data.join();
+    inlineCel(w0.data, 5, 5, 0, BLUE);
+    eq("inline.width-0-noop", w0.data.join(), w0s);
   }
 
   // ------------------------------------------- parameterised drop shadow

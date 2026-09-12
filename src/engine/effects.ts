@@ -72,6 +72,80 @@ export function outlineCel(d: Uint8ClampedArray, w: number, h: number, width: nu
   }
 }
 
+/** Chebyshev depth of every opaque pixel: distance to the nearest transparent
+ *  pixel, with everything outside the canvas counting as transparent (so a
+ *  sprite that fills the whole cel still has an outer ring, exactly like
+ *  `outlineCel` treats it). 0 = the pixel itself is transparent, 1 = the
+ *  silhouette's outer ring. 8-neighbour BFS. */
+function edgeDepth(opaque: Uint8Array, w: number, h: number): Int32Array {
+  const n = w * h;
+  const dist = new Int32Array(n).fill(-1);
+  const queue = new Int32Array(n);
+  let head = 0, tail = 0;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x;
+      if (!opaque[i]) {
+        dist[i] = 0;                     // transparent pixels seed the wave
+        queue[tail++] = i;
+      } else if (x === 0 || y === 0 || x === w - 1 || y === h - 1) {
+        dist[i] = 1;                     // the cel border is a silhouette edge
+        queue[tail++] = i;
+      }
+    }
+  }
+  while (head < tail) {
+    const i = queue[head++];
+    const x = i % w, y = (i - x) / w;
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        if (dx === 0 && dy === 0) continue;
+        const nx = x + dx, ny = y + dy;
+        if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+        const j = ny * w + nx;
+        if (dist[j] !== -1) continue;
+        dist[j] = dist[i] + 1;
+        queue[tail++] = j;
+      }
+    }
+  }
+  // pixels the wave never reached are opaque but walled in by opaque pixels;
+  // they sit deeper than any painted band, so a large value is correct
+  for (let i = 0; i < n; i++) if (dist[i] === -1) dist[i] = 1 << 20;
+  return dist;
+}
+
+/** Inner line (Aseprite/PixelOver "inline"): keeps the silhouette's OUTER ring
+ *  untouched and paints the next `width` rings inside it with `color`.
+ *  `alpha` (0..255) blends the line with the pixel underneath, so a 50% line
+ *  tints the artwork instead of replacing it; the pixel's own alpha is kept, so
+ *  semi-transparent sprites stay semi-transparent. Needs a transparent
+ *  background — a fully opaque canvas has no silhouette to trace. */
+export function inlineCel(d: Uint8ClampedArray, w: number, h: number, width: number, color: RGBA, alpha = 255): void {
+  const band = Math.round(width);
+  if (w <= 0 || h <= 0 || band < 1) return;
+  const n = w * h;
+  const opaque = new Uint8Array(n);
+  let any = false;
+  for (let i = 0; i < n; i++) {
+    if (d[i * 4 + 3] > 0) { opaque[i] = 1; any = true; }
+  }
+  if (!any) return;
+  const a = Math.max(0, Math.min(255, Math.round(alpha))) / 255;
+  if (a <= 0) return;
+  const depth = edgeDepth(opaque, w, h);
+  const keep = 1 - a;
+  for (let i = 0; i < n; i++) {
+    if (!opaque[i]) continue;
+    if (depth[i] < 2 || depth[i] > band + 1) continue;   // outer ring stays as it is
+    const p = i * 4;
+    d[p] = Math.round(d[p] * keep + color[0] * a);
+    d[p + 1] = Math.round(d[p + 1] * keep + color[1] * a);
+    d[p + 2] = Math.round(d[p + 2] * keep + color[2] * a);
+    // the destination alpha is deliberately untouched
+  }
+}
+
 /** Separable box blur, applied twice (a close, cheap approximation of a
  *  Gaussian). Alpha-premultiplied so transparent pixels never bleed their RGB
  *  into the result. `radius` is in pixels (1..N); 0 is a no-op. */
