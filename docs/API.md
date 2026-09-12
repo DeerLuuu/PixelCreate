@@ -1311,6 +1311,21 @@ PC 专属的 Blender 式饼菜单：浮动球存储区边的**装备槽**里装�
 多 `TITLE_EXTRA`，否则拖到邻居身边时永远够不到更大的叠放空隙。`Session.canvasesTouch` 也用
 `stackGap()` 判断，保证叠放后能正常成组。
 
+### 18.11 自由变换 / 网格变形（`src/tools/warp.ts`）
+
+| 导出 | 说明 |
+|---|---|
+| `Pt` / `Mat3` | 点与 3x3 矩阵（行主序，仿射与单应共用） |
+| `homography(from, to)` | 四点对应解出单应矩阵（解 8x8 方程组）；退化返回 null。语义：矩阵把 `from` 空间的点映到 `to` 空间 |
+| `applyMat(m, p)` | 用矩阵映一个点（含透视除法） |
+| `quadArea(q)` / `skewQuad(w, h, "x"\|"y", amount)` | 四边形面积（判退化）与斜切预设 |
+| `warpQuad(src, quad, outW, outH, srcQuad?)` | **四点自由变换（斜切 / 透视）**：目标四边形固定顺序（左上→右上→右下→左下），逐目标像素反查源像素，最近邻采样，画面外保持透明 |
+| `meshWarp(src, grid, outW, outH, divs = 2)` | **网格变形**：`(n+1)²` 个控制点，每个格子拆两个三角形做仿射逆映射 → 拉伸不留洞 |
+| `defaultGrid(w, h, divs)` / `pixmapFromCel(data, w, h)` | 默认网格控制点与像素块构造 |
+
+采样一律最近邻（像素画不允许被插值糊掉）；映射一律「目标 → 源」的逆向映射，所以拉伸时不会出现空洞。
+UI 侧（选区变形手柄）待接：本轮先落地并测试了引擎与 `warpQuad` / `meshWarp` 的语义。
+
 ### 18.10 图案笔刷（`src/data/patterns.ts`）
 
 | 导出 | 说明 |
