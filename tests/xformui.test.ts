@@ -672,35 +672,101 @@ export function testXformUi(): void {
     dom.flush();
     eq("xformui.pivot.preset-tl", v.pivotPreset(), "tl");
 
-    // 缩放之后按归一化比例跟位（**实时**：枢轴跟着内容长，画面不动，见 `pivotKeepPicture()`）
+    // 缩放时枢轴**跟着内容走**（枢轴是内容上的一个点：屏幕位＝过一遍当前矩阵）
     {
-      // 左上角枢轴：缩放后仍然压在左上角（归一化比例不变）
+      /** 关掉三个吸附开关（设置是跨 Session 持久化的，前面的用例可能开过） */
+      const s0 = (sess: Session): void => {
+        sess.setSetting("tools.selXformGridSnap", false);
+        sess.setSetting("tools.selXformAngleSnap", false);
+        sess.setSetting("tools.selXformAspect", false);
+      };
+      /** 枢轴标记在框内的归一化位置（0..1）——缩放前后必须不变 */
+      const relOf = (v2: VX): { x: number; y: number } | null => {
+        const f = v2.xfScreenFrame();
+        const p = v2.xfPivotScreen();
+        if (!f || !p) return null;
+        const x0 = Math.min(f.corners[0].x, f.corners[2].x), x1 = Math.max(f.corners[0].x, f.corners[2].x);
+        const y0 = Math.min(f.corners[0].y, f.corners[2].y), y1 = Math.max(f.corners[0].y, f.corners[2].y);
+        return { x: (p.x - x0) / (x1 - x0), y: (p.y - y0) / (y1 - y0) };
+      };
+      // 左上角枢轴：缩放后仍然压在左上角
       const a = mk(true);
+      s0(a.s);
       paint(a.s, 10, 10, 9, 9);
       const brA = anchorScreen(a.v, "br");
       a.v.onDown(ev(brA.x, brA.y, "mouse"));
       a.v.onUp(ev(brA.x, brA.y, "mouse"));          // 先起会话（真机上就是「点一下进变换」）
       a.v.setPivotPreset("tl");
+      const relA = relOf(a.v)!;
       dragBy(a.v, { x: brA.x, y: brA.y }, 32, 32, true);            // 2×
-      eq("xformui.pivot.scale-follow-tl", [a.v.xf!.tp!.pivot.x, a.v.xf!.tp!.pivot.y], [0, 0]);
-      // 中心枢轴：缩放后仍然在中心（外框 0..9 → 0..18，中心 4.5 → 9）
+      const relA2 = relOf(a.v)!;
+      ok("xformui.pivot.scale-follow-tl", near(relA2.x, 0) && near(relA2.y, 0), JSON.stringify(relA2));
+      ok("xformui.pivot.scale-keeps-rel-tl", near(relA2.x, relA.x) && near(relA2.y, relA.y),
+        JSON.stringify([relA, relA2]));
+      // 中心枢轴：缩放后仍然在框中心
       const b = mk(true);
+      s0(b.s);
       paint(b.s, 10, 10, 9, 9);
       const brB = anchorScreen(b.v, "br");
       b.v.onDown(ev(brB.x, brB.y, "mouse"));
       b.v.onUp(ev(brB.x, brB.y, "mouse"));
       dragBy(b.v, { x: brB.x, y: brB.y }, 32, 32, true);
-      eq("xformui.pivot.scale-follow-centre", [b.v.xf!.tp!.pivot.x, b.v.xf!.tp!.pivot.y], [9, 9]);
+      const relB = relOf(b.v)!;
+      ok("xformui.pivot.scale-follow-centre", near(relB.x, 0.5) && near(relB.y, 0.5), JSON.stringify(relB));
       // 上中枢轴：缩放后仍然在上边中点
       const c = mk(true);
+      s0(c.s);
       paint(c.s, 10, 10, 9, 9);
       const brC = anchorScreen(c.v, "br");
       c.v.onDown(ev(brC.x, brC.y, "mouse"));
       c.v.onUp(ev(brC.x, brC.y, "mouse"));
       c.v.setPivotPreset("tc");
       dragBy(c.v, { x: brC.x, y: brC.y }, 32, 32, true);
-      // 上中枢轴：缩放后仍然在上边中点（外框 0..9 → 0..18，上边中点由 (4.5,0) 跟到 (9,0)）
-      eq("xformui.pivot.scale-follow-tc", [c.v.xf!.tp!.pivot.x, c.v.xf!.tp!.pivot.y], [9, 0]);
+      const relC = relOf(c.v)!;
+      ok("xformui.pivot.scale-follow-tc", near(relC.x, 0.5) && near(relC.y, 0), JSON.stringify(relC));
+
+      // **拖动内容**：枢轴标记必须跟着内容一起走（而不是呆在原地）
+      const d = mk(true);
+      paint(d.s, 10, 10, 9, 9);
+      const f0 = d.v.xfScreenFrame()!;
+      const c0 = { x: (f0.corners[0].x + f0.corners[2].x) / 2, y: (f0.corners[0].y + f0.corners[2].y) / 2 };
+      ok("xformui.pivot.move-session", d.v.beginXfMoveAt(c0.x, c0.y), "会话");
+      const pv0 = d.v.xfPivotScreen()!;
+      const step = 4 * d.v.zoom;
+      d.v.onMove(ev(c0.x + step, c0.y, "mouse"));
+      d.v.onUp(ev(c0.x + step, c0.y, "mouse"));
+      dom.flush();
+      const pv1 = d.v.xfPivotScreen()!;
+      ok("xformui.pivot.follows-move",
+        near(Math.round(pv1.x - pv0.x), Math.round(step)) && near(Math.round(pv1.y - pv0.y), 0),
+        JSON.stringify([pv0, pv1, step]));
+      eq("xformui.pivot.move-shift", [d.v.xf!.tp!.shift?.x, d.v.xf!.tp!.shift?.y], [4, 0]);
+      // 框也要一起走（锚点跟着内容）
+      const f1 = d.v.xfScreenFrame()!;
+      ok("xformui.frame.follows-move",
+        near(Math.round(f1.corners[0].x - f0.corners[0].x), Math.round(step))
+        && near(Math.round(f1.corners[0].y - f0.corners[0].y), 0),
+        JSON.stringify([f0.corners[0], f1.corners[0], step]));
+      d.v.revertXf();
+
+      // **拖动枢轴**：标记必须跟着指针 1:1（缩放过的框上也要跟手 —— 参数空间要过线性部分的逆）
+      const e = mk(true);
+      paint(e.s, 10, 10, 8, 6);
+      const brE = anchorScreen(e.v, "br");
+      dragBy(e.v, { x: brE.x, y: brE.y }, 32, 16, true);      // 先放大：sx/sy > 1
+      ok("xformui.pivot.drag-needs-scale", e.v.xf!.tp!.sx > 1.2, String(e.v.xf!.tp!.sx));
+      const pv2 = e.v.xfPivotScreen()!;
+      const ddx = 20, ddy = -12;
+      e.v.onDown(ev(pv2.x, pv2.y, "mouse"));
+      dom.flush();
+      eq("xformui.pivot.drag-kind", e.v.xfDrag?.kind, "pivot");
+      e.v.onMove(ev(pv2.x + ddx, pv2.y + ddy, "mouse"));
+      e.v.onUp(ev(pv2.x + ddx, pv2.y + ddy, "mouse"));
+      dom.flush();
+      const pv3 = e.v.xfPivotScreen()!;
+      ok("xformui.pivot.drag-follows-pointer",
+        near(Math.round(pv3.x - pv2.x), ddx) && near(Math.round(pv3.y - pv2.y), ddy),
+        JSON.stringify([pv2, pv3, ddx, ddy]));
     }
     // 旋转之后枢轴**不动**：先把枢轴拖到框中心偏一点，再旋转，枢轴坐标必须一模一样
     {

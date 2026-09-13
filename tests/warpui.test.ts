@@ -20,7 +20,7 @@ interface VX {
   ox: number; oy: number; zoom: number;
   xf: null | {
     mode: string; moved: boolean; cut?: boolean; cells?: number[]; buf?: Uint8ClampedArray; pts?: Pt[];
-    warpKind?: string; drag?: number; grab?: Pt; st: MoveState; li: number; fi: number;
+    warpKind?: string; drag?: number; grab?: Pt; move?: { x0: number; y0: number; pts: Pt[] }; st: MoveState; li: number; fi: number;
   };
   lastWarpError: "noSel" | "tooThin" | "locked" | null;
   onDown(e: PointerEvent): void; onMove(e: PointerEvent): void; onUp(e: PointerEvent): void;
@@ -531,33 +531,69 @@ export function testWarpUi(): void {
     finish(v, true);
   }
 
-  // ---- 抓取不跳位：按在命中半径内任何一处，控制点都只跟着手指**平移** ----
+  // ---- 抓取跟手：控制点直接落在指针那一点上（拖到哪就是哪），别的点一动不动 ----
   {
     const { s, v } = mk();
     paint(s, 10, 10, 8, 6);
+    /** 与 `View.warpMove()` 同一条落点公式：屏幕 → 连续下标 → 按设置吸附 */
+    const landTo = (sx: number, sy: number): { x: number; y: number } => {
+      const half = (v as unknown as { session: { prefs: { selWarpHalfSnap: boolean } } }).session.prefs.selWarpHalfSnap;
+      const one = (n: number): number => (half ? snapWarpCoord(n, true) : Math.round(n));
+      return { x: one((sx - v.ox) / v.zoom - 0.5), y: one((sy - v.oy) / v.zoom - 0.5) };
+    };
     ok("warpui.grab.mesh-enter", warp(v, "mesh"));
     const h = v.warpHandles()[4];
     const p0 = { x: v.xf!.pts![4].x, y: v.xf!.pts![4].y };
     const others = JSON.stringify(v.xf!.pts!.filter((_, i) => i !== 4).map((p) => [p.x, p.y]));
-    // 按在离手柄中心 (3, -2)px 处（命中半径 22px 内）：**不许跳到手指下**
+    // 按在离手柄中心 (3, -2)px 处（命中半径内）：还没移动，控制点不许动
     const off = { x: 3, y: -2 };
     v.onDown(ev(h.x + off.x, h.y + off.y));
     dom.flush();
     eq("warpui.grab.point-still", [v.xf!.pts![4].x, v.xf!.pts![4].y], [p0.x, p0.y]);
-    ok("warpui.grab.offset-recorded", !!v.xf!.grab && Math.abs(v.xf!.grab.x) > 1e-9, JSON.stringify(v.xf!.grab));
-    // 拖 2 格（＝2·zoom 屏幕像素）：落点＝原坐标 + 2，且别的点一动不动
+    eq("warpui.grab.held", v.xf!.drag, 4);
+    // 拖 2 格（＝2·zoom 屏幕像素）：控制点**跟着指针**落在指针那一点上（不是平行偏移）
     const step = 2 * v.zoom;
-    const from = { x: h.x + off.x, y: h.y + off.y };
-    v.onMove(ev(from.x + step, from.y));
-    v.onUp(ev(from.x + step, from.y));
+    const to = { x: h.x + off.x + step, y: h.y + off.y };
+    v.onMove(ev(to.x, to.y));
     dom.flush();
-    eq("warpui.grab.drag-lands", [v.xf!.pts![4].x, v.xf!.pts![4].y], [p0.x + 2, p0.y]);
+    const want = landTo(to.x, to.y);
+    eq("warpui.grab.follows-pointer", [v.xf!.pts![4].x, v.xf!.pts![4].y], [want.x, want.y]);
+    v.onUp(ev(to.x, to.y));
+    dom.flush();
     eq("warpui.grab.others-untouched",
       JSON.stringify(v.xf!.pts!.filter((_, i) => i !== 4).map((p) => [p.x, p.y])), others);
-    // 手柄跟着手指平移（相对偏移不变），不是「滑走」
-    const h2 = v.warpHandles()[4];
-    eq("warpui.grab.follows", [h2.x - (from.x + step), h2.y - from.y], [h.x - from.x, h.y - from.y]);
     finish(v, true);
+  }
+
+  // ---- 拖动内容：所有控制点跟着一起走（锚点跟着内容，而不是呆在原地） ----
+  {
+    const { s, v } = mk();
+    paint(s, 10, 10, 8, 6);
+    ok("warpui.move.enter", warp(v, "mesh"));
+    const before = v.xf!.pts!.map((p) => [p.x, p.y]);
+    const hs = v.warpHandles();
+    // 按在一个**网格格子的中心**（离四个角都最远，不会命中任何控制点）
+    const cell = {
+      x: (hs[0].x + hs[1].x + hs[3].x + hs[4].x) / 4,
+      y: (hs[0].y + hs[1].y + hs[3].y + hs[4].y) / 4,
+    };
+    v.onDown(ev(cell.x, cell.y));
+    dom.flush();
+    ok("warpui.move.started", !!v.xf!.move, JSON.stringify(v.xf!.move));
+    eq("warpui.move.no-handle", v.xf!.drag === undefined, true);
+    const step = 2 * v.zoom;                       // 2 格
+    v.onMove(ev(cell.x + step, cell.y + step * 0));
+    v.onUp(ev(cell.x + step, cell.y));
+    dom.flush();
+    eq("warpui.move.all-shifted",
+      v.xf!.pts!.map((p) => [p.x, p.y]),
+      before.map(([x, y]) => [x + 2, y]));
+    eq("warpui.move.layer-cut", alpha(s, 12, 12), 0);   // 已经切成浮动内容
+    // 完成 → 一条历史；撤销回原样
+    finish(v, false);
+    eq("warpui.move.history", s.history.list().labels, ["sel.warp"]);
+    s.undo();
+    eq("warpui.move.undo", alpha(s, 10, 10), 255);
   }
 
   // ---- 变换会话中途切网格变形：先把当前预览烘焙进浮动内容，控制点落在**现在**这块上 ----

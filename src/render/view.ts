@@ -11,8 +11,8 @@ import type { SymAxis } from "../engine/symmetry";
 import { lineCells, brushStamp, fillPolygon } from "../engine/paint";
 import { selOps, lassoFill, beginMove, xformAffineFloating, xformAffineDestBox, warpFloating, floatQuad, floatGrid, floatDropInto, type MoveState } from "../tools/select";
 import {
-  affineFrom, adjustPivot, axisOf, boxCenter, clampScale, clampTan, contentBox, distToFrame, exactMove, grabAt,
-  insideFrame, isExactTransform, isIntegerShift, normAngle, pivotPresetAt, pivotPresetPoint,
+  affineFrom, applyAffine, axisOf, boxCenter, clampScale, clampTan, contentBox, distToFrame, exactMove, grabAt,
+  insideFrame, isExactTransform, isIntegerShift, linearOf, normAngle, pivotPresetAt, pivotPresetPoint,
   scaleAnchor, screenAnchors, screenFrameOf, snapCleanAngle, solveRotate, solveScale, solveSkew,
   skewBaseline, skewPivotOf, toFrameLocal, anchorPoint, rightAngleSteps, ringHitAt, transformGrabs, grabOffsets, touchHitRadius,
   edgeNormalOf, XF_LABEL, XF_LABEL_ORDER, PIVOT_PRESETS, ANCHORS,
@@ -23,7 +23,7 @@ import type { Mat3 } from "../tools/warp";
 import type { Session } from "../app/session";
 import type { GestureActionId } from "../app/gesture-ids";
 import type { Pt } from "../tools/warp";
-import { warpCoordLabel, warpPointRaw, snapWarpIndex } from "../tools/warp";
+import { warpCoordLabel, warpPointFromScreen, warpPointRaw } from "../tools/warp";
 import { clamp } from "../engine/types";
 import { LEGACY_TITLE_EXTRA, TITLE_EXTRA, snapGapRect, type GapRect } from "../app/canvas-snap";
 import { canvasAtScreen as spaceCanvasAt, screenToCanvas } from "../app/canvas-space";
@@ -82,14 +82,17 @@ function pivotBoxOf(g: NonNullable<View["xf"]>): XfBox {
   return contentBox(g.st.content.w, g.st.content.h);
 }
 
-/**
- * 把框 `b` 绕 `a` 缩放 `sx` / `sy` 之后的框（负倍率＝翻转，两端重新排序）。
- * 与 `scaleAnchor()` 用的是同一套**外框**算法，视图侧「缩放后枢轴跟位」靠它。
- */
-function scaledBox(b: XfBox, a: Pt, sx: number, sy: number): XfBox {
-  const x0 = a.x + (b.x0 - a.x) * sx, x1 = a.x + (b.x1 - a.x) * sx;
-  const y0 = a.y + (b.y0 - a.y) * sy, y1 = a.y + (b.y1 - a.y) * sy;
-  return { x0: Math.min(x0, x1), y0: Math.min(y0, y1), x1: Math.max(x0, x1), y1: Math.max(y0, y1) };
+/** 一组控制点的下标包围盒（`warpStartMove()` 判「按在内容上」用） */
+function warpBounds(pts: Pt[]): { x0: number; y0: number; x1: number; y1: number } | null {
+  if (!pts.length) return null;
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const p of pts) {
+    if (p.x < x0) x0 = p.x;
+    if (p.x > x1) x1 = p.x;
+    if (p.y < y0) y0 = p.y;
+    if (p.y > y1) y1 = p.y;
+  }
+  return { x0, y0, x1, y1 };
 }
 
 /** 按下那一刻的变换参数快照（拖动解算的**累加基准**，见 `View.xfDrag.tp0`） */
@@ -460,10 +463,15 @@ export class View {
     warpKind?: "quad" | "mesh"; pts?: Pt[]; drag?: number;
     /**
      * 抓住控制点那一刻「手指 ↔ 控制点」的偏移（**下标空间**）。
-     * 有它，按在命中半径内任何一处都不会让控制点**跳到手指下**（小选区上 9 个点只隔十几像素，
-     * 跳位看起来就是「点乱飞、抓错点」）；吸附在落点那一步做，见 `warpMove()`。
+     * 只在旧实现里用过（现在控制点直接落在指针上，见 `warpMove()`），保留字段避免
+     * 旧状态读到 undefined。
      */
     grab?: Pt;
+    /**
+     * 「拖动整块内容」的起点：记下按下时指针的**连续**下标与该时刻的全部控制点，
+     * 每次移动都从它重算位移（不累加、不漂），所有控制点一起走 —— 锚点因此跟着内容走。
+     */
+    move?: { x0: number; y0: number; pts: Pt[] };
     /** ---- 下面这些是「移动 + 缩放 + 旋转 + 斜切」模式（Aseprite 那套）独有的 ---- */
     /** 变换参数（枢轴 / 角度 / 缩放 / 斜切），**绕枢轴**组成矩阵（见 xform.ts） */
     tp?: XfParams;
@@ -2276,22 +2284,22 @@ export class View {
     }
     // 自由变换（四点 / 网格）：控制点命中即开始拖；命中时顺手取消待触发的长按取色，
     // 免得慢速的精细拖动被长按抢走。
-    // **记下「手指 ↔ 控制点」的偏移**（下标空间）：按在 22px 命中半径内任何一处都算抓住，
-    // 但如果直接把控制点设成手指位置，它就会瞬间跳到手指下（小选区上 9 个网格点只隔
-    // 十几像素，看起来就是「点乱飞、抓错点」）。有了偏移，控制点只会跟着手指**平移**。
+    // 抓住之后控制点**跟着指针走**（每次 `pointermove` 直接落在指针那一点上，不记偏移）——
+    // 像素画里要的是「点被我拖到哪就是哪」，记偏移会让它只是平行跟着手指、落点算不准。
     if (this.xf && this.xf.mode === "warp") {
       const h = this.warpHandleAt(pt);
       if (h >= 0) {
-        const q = this.xf.pts?.[h];
-        const raw = warpPointRaw(pt.x, pt.y, this.zoom, this.ox, this.oy);
         this.cancelPickTimer();
         this.xf.drag = h;
-        this.xf.grab = q ? { x: q.x - raw.x, y: q.y - raw.y } : { x: 0, y: 0 };
+        this.xf.move = undefined;
         return;
       }
     }
     // 自由变换（四点 / 网格）是常驻模式：画布上除了控制点没有别的手势
     if (this.xf && this.xf.mode === "warp") {
+      // 没抓到控制点、但按在内容上＝**拖动整块内容**：所有控制点一起平移，
+      // 于是锚点跟着内容走；按在内容之外才是平移视图。
+      if (this.warpStartMove(pt)) { this.cancelPickTimer(); return; }
       if (outsideDoc) this.panLast = pt;
       this.cancelPickTimer();   // 这次按下属于变形，别让它顺带起一次长按取色
       return;
@@ -2528,7 +2536,8 @@ export class View {
     // 自由变换是常驻模式：没抓住控制点时指针移动什么都不做，
     // 绝不能落到下面的 xfMove（那是旋转 / 缩放，会把变形预览顶成缩放结果）
     if (this.xf && this.xf.mode === "warp") {
-      if (this.xf.drag !== undefined) this.warpMove(pt);
+      if (this.xf.move) this.warpMoveContent(pt);
+      else if (this.xf.drag !== undefined) this.warpMove(pt);
       return;
     }
     // 变换中：抓住抓手就拖；没抓住时在 PC 上发布悬停提示（点亮那个固定图标 + 外圈提示）
@@ -3039,13 +3048,18 @@ export class View {
     return transformGrabs(f);
   }
 
-  /** 枢轴在屏幕上的位置（没有会话＝null；枢轴活在下标空间，画出来加 0.5 到像素中心） */
+  /**
+   * 枢轴标记在屏幕上的位置（没有会话＝null）。
+   *
+   * 枢轴是**内容上的一个点**（参数坐标在会话起点那块内容上），所以屏幕位＝把它的参数坐标
+   * 过一遍当前矩阵，再加画布原点与视口偏移。于是拖动内容 / 缩放 / 旋转 / 斜切时，
+   * 枢轴标记**跟着内容一起走** —— 早先这里只算 `(p + st.ox)·z + ox`（等价于恒等变换），
+   * 枢轴会呆在原地不动（用户报的「拖动选取内容时锚点应该跟随」）。
+   */
   private xfPivotScreen(): PxPoint | null {
     const g = this.xf;
     if (!g || g.mode === "warp" || !g.tp) return null;
-    const p = g.tp.pivot;
-    // 内容局部下标 → 屏幕，与 `xfScreenFrame()` 同一条口径：`下标 · zoom + 视口偏移`
-    // （枢轴画在「那一格的左上角」上，于是枢轴预设的左上＝选区框的左上＝角抓手位置）
+    const p = applyAffine(this.xfMat(g), g.tp.pivot);
     return {
       x: (p.x + g.st.ox) * this.zoom + this.ox,
       y: (p.y + g.st.oy) * this.zoom + this.oy,
@@ -3175,11 +3189,18 @@ export class View {
     const frameAng = this.xfScreenFrame()?.angle ?? g.screen0.angle;
     const prefs = this.session.prefs;
     if (d.kind === "pivot") {
-      // 枢轴：跟手落到指针处（钳在框附近 2 格，免得拖丢了找不回来）
+      // 枢轴：跟手落到指针处（钳在框附近 2 格，免得拖丢了找不回来）。
+      // 指针位移要换算回**枢轴自己的参数空间**：标记画在 `M(pivot)` 上，所以屏幕位移
+      // 得先过一次矩阵线性部分的逆 —— 否则框缩放 / 旋转过之后，枢轴会走得比手指快（或偏方向），
+      // 表现就是「拖不动它 / 移不准」。
       const b = g.box0;
+      const lin = linearOf(tp);
+      const det = lin[0] * lin[3] - lin[1] * lin[2];
+      const bx = Math.abs(det) > 1e-12 ? (lin[3] * local.x - lin[1] * local.y) / det : local.x;
+      const by = Math.abs(det) > 1e-12 ? (lin[0] * local.y - lin[2] * local.x) / det : local.y;
       const p = {
-        x: clamp(tp.pivot.x + local.x, b.x0 - 2, b.x1 + 2),
-        y: clamp(tp.pivot.y + local.y, b.y0 - 2, b.y1 + 2),
+        x: clamp(tp.pivot.x + bx, b.x0 - 2, b.x1 + 2),
+        y: clamp(tp.pivot.y + by, b.y0 - 2, b.y1 + 2),
       };
       // 枢轴一挪画面必须**逐像素不动**：把矩阵平移分量的差补回去（见 `pivotKeepPicture()`）。
       // 用增量式补偿而不是「按会话起点重算」：缩放跟随枢轴时也写过同一份补偿，两者要能叠加。
@@ -3242,9 +3263,8 @@ export class View {
       }
       tp.sx = clampScale(nx); tp.sy = clampScale(ny);
       tp.scalePivot = a;
-      // 枢轴跟着**内容**走（Aseprite 的 adjustPivot）：每次都从本次拖拽起点的枢轴算，
-      // 幂等；改完用平移补偿保持画面逐像素不动（所以枢轴只是标记在动，图不动）。
-      if (d.pivot0) this.pivotKeepPicture(g, adjustPivot(b, scaledBox(b, a, tp.sx, tp.sy), d.pivot0));
+      // 枢轴**不需要**手动跟位：它是内容上的一个点（参数坐标），画的时候过一次矩阵
+      // （见 `xfPivotScreen()`），所以缩放时标记自然跟着内容走到新位置。
       g.kinds!.scale = true;
       g.moved = true;
       this.xfApply();
@@ -3399,10 +3419,23 @@ export class View {
     return g.pts.map((p) => ({ x: (p.x + 0.5) * z + this.ox, y: (p.y + 0.5) * z + this.oy }));
   }
 
-  /** 手指/鼠标落在哪个控制点上（半径 22 屏幕像素） */
+  /** 手指/鼠标落在哪个控制点上。
+   *
+   *  命中半径默认 22 屏幕像素，但**不超过相邻控制点间距的一半**：小选区上 3×3 网格点很密
+   *  （可能只隔十几像素），半径盖满的话「按在内容上＝拖动整块内容」就没有立足之地了，
+   *  也没法保证抓住的确实是最近那个点。半径下限 8px，保证点本身仍然好按。 */
   private warpHandleAt(pt: PxPoint): number {
     const hs = this.warpHandles();
-    let best = -1, bestD = 22;
+    if (!hs.length) return -1;
+    let pitch = Infinity;
+    for (let i = 0; i < hs.length; i++) {
+      for (let j = i + 1; j < hs.length; j++) {
+        const d = Math.hypot(hs[i].x - hs[j].x, hs[i].y - hs[j].y);
+        if (d < pitch) pitch = d;
+      }
+    }
+    const r = Number.isFinite(pitch) ? Math.max(8, Math.min(22, pitch / 2)) : 22;
+    let best = -1, bestD = r;
     for (let i = 0; i < hs.length; i++) {
       const d = Math.hypot(pt.x - hs[i].x, pt.y - hs[i].y);
       if (d <= bestD) { bestD = d; best = i; }
@@ -3510,23 +3543,64 @@ export class View {
   /** 拖控制点中：把逻辑坐标写回控制点并重算预览。
    *
    *  坐标取自屏幕位置的**连续**反解（`warpPointRaw()`，不是 `screenToPixel()` 的 `floor`
-   *  —— 那样半个像素的位移会被吃掉），**先加上按下时记下的手指↔控制点偏移**，最后才按设置项的
-   *  吸附粒度落点：半像素模式（默认）可以落在 `x.5`，整像素模式落在整数。
-   *  偏移是连续量、吸附在最后一步做，所以「按在旁边抓起来」不会让控制点跳到手指下
-   *  （用户报的「锚点乱飞」），而落点依然精确；手指不动时反解回来正好是当前位置，不会漂。 */
+   *  —— 那样半个像素的位移会被吃掉），再按设置项的吸附粒度落点：半像素模式（默认）可以落在
+   *  `x.5`，整像素模式落在整数。落点**就是指针所在的那一点**（不记偏移），所以「拖到哪就是哪」，
+   *  想精确移动控制点时手感与指针完全一致。 */
   private warpMove(pt: PxPoint): void {
     const g = this.xf;
     if (!g || g.mode !== "warp" || !g.pts || g.drag === undefined) return;
     const half = this.session.selWarpHalfSnap;
-    const raw = warpPointRaw(pt.x, pt.y, this.zoom, this.ox, this.oy);
-    const off = g.grab ?? { x: 0, y: 0 };
-    const p = { x: snapWarpIndex(raw.x + off.x, half), y: snapWarpIndex(raw.y + off.y, half) };
+    const p = warpPointFromScreen(pt.x, pt.y, this.zoom, this.ox, this.oy, half);
     const q = g.pts[g.drag];
     this.warpDragOn = true;        // 拖动中：浮标显示当前坐标（见 drawWarpHandles）
     if (q.x === p.x && q.y === p.y) return;
     q.x = Math.max(-4096, Math.min(4096, p.x));
     q.y = Math.max(-4096, Math.min(4096, p.y));
     g.moved = true;   // 真拖过才算「改过」：只进来看手柄不落历史
+    this.applyWarp();
+  }
+
+  /**
+   * 变形模式里「拖动内容」：按在内容上（不在任何控制点上）时，**所有控制点一起平移** ——
+   * 锚点因此跟着内容走，而不是呆在原地。返回 false 表示这一下不落在内容上（交给平移视图）。
+   *
+   * 起点记在 `xf.move` 里，每次移动都从起点重算（不累加、不漂）；位移按吸附粒度取整，
+   * 于是整像素 / 半像素两种粒度下拖出来的位移都是干净的。
+   */
+  private warpStartMove(pt: PxPoint): boolean {
+    const g = this.xf;
+    if (!g || g.mode !== "warp" || !g.pts) return false;
+    const bb = warpBounds(g.pts);
+    if (!bb) return false;
+    const raw = warpPointRaw(pt.x, pt.y, this.zoom, this.ox, this.oy);
+    if (raw.x < bb.x0 - 1 || raw.x > bb.x1 + 1 || raw.y < bb.y0 - 1 || raw.y > bb.y1 + 1) return false;
+    g.move = { x0: raw.x, y0: raw.y, pts: g.pts.map((p) => ({ x: p.x, y: p.y })) };
+    g.drag = undefined;
+    g.grab = undefined;
+    return true;
+  }
+
+  /** 拖动内容中：把所有控制点按（吸附后的）位移整体搬走 */
+  private warpMoveContent(pt: PxPoint): void {
+    const g = this.xf;
+    if (!g || g.mode !== "warp" || !g.pts || !g.move) return;
+    const step = this.session.selWarpHalfSnap ? 0.5 : 1;
+    const raw = warpPointRaw(pt.x, pt.y, this.zoom, this.ox, this.oy);
+    const dx = Math.round((raw.x - g.move.x0) / step) * step;
+    const dy = Math.round((raw.y - g.move.y0) / step) * step;
+    let changed = false;
+    for (let i = 0; i < g.pts.length; i++) {
+      const p0 = g.move.pts[i];
+      if (!p0) continue;
+      const nx = Math.max(-4096, Math.min(4096, p0.x + dx));
+      const ny = Math.max(-4096, Math.min(4096, p0.y + dy));
+      if (g.pts[i].x !== nx || g.pts[i].y !== ny) changed = true;
+      g.pts[i].x = nx;
+      g.pts[i].y = ny;
+    }
+    if (!changed) return;
+    this.warpDragOn = false;      // 拖内容不显示坐标浮标
+    g.moved = true;
     this.applyWarp();
   }
 
