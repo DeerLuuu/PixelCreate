@@ -532,14 +532,23 @@ html[data-pc] .orb-item{width:48px;height:48px}
 .scale-warn { color: var(--danger-1); }
 .scale-frames { display: flex; align-items: center; gap: var(--sp-5); margin: var(--sp-2) 0 var(--sp-4); }
 .scale-frame { display: flex; flex-direction: column; align-items: center; gap: var(--sp-2); }
-.scale-cv { display: block; border: 1px solid var(--line); border-radius: var(--r-1); background: var(--hud-deep);
-  image-rendering: pixelated; }
+/* 预览画布：深色底 + **透明棋盘格**（`--hud-deep` 与 `--line` 两色交替）——
+   取到的那块如果是空的，用户看到的是棋盘格而不是「一片黑，以为坏了」 */
+.scale-cv { display: block; border: 1px solid var(--line); border-radius: var(--r-1);
+  image-rendering: pixelated;
+  background-color: var(--hud-deep);
+  background-image:
+    linear-gradient(45deg, var(--line) 25%, transparent 25%, transparent 75%, var(--line) 75%),
+    linear-gradient(45deg, var(--line) 25%, transparent 25%, transparent 75%, var(--line) 75%);
+  background-size: 12px 12px;
+  background-position: 0 0, 6px 6px;
+}
 .scale-cap { font-size: var(--fs-1); color: var(--dim); }
 .scale-arrow { font-size: var(--fs-2); color: var(--dim-2); font-weight: 700; white-space: nowrap; }
 /* 对比预览单独一屏：图更大、按屏幕宽度自适应 */
 .dlg-scale-compare { width: min(94vw, 560px); }
-.dlg-scale-compare .scale-frames { justify-content: center; gap: var(--sp-4); margin: var(--sp-4) 0; }
-.dlg-scale-compare .scale-cv { max-width: 100%; height: auto; }
+.dlg-scale-compare .scale-frames { justify-content: center; align-items: flex-start; gap: var(--sp-4); margin: var(--sp-4) 0; }
+.dlg-scale-compare .scale-cv { max-width: 100%; }
 
 /* second-level floating ball + radial layers */
 .orb.sub { border-color: var(--accent-2); box-shadow: 0 0 0 2px var(--accent-2-glow); }
