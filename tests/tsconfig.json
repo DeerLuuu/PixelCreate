@@ -52,6 +52,7 @@
     "../tests/scrub.test.ts",
     "../tests/selorb.test.ts",
     "../tests/color-analysis.test.ts",
+    "../tests/scale.test.ts",
     "../tests/uibar.test.ts",
     "../tests/warp.test.ts",
     "../tests/warpui.test.ts",

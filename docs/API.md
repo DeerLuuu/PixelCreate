@@ -14,6 +14,7 @@
 4. [绘制算法 `engine/paint.ts`](#4-绘制算法)
 5. [形状与特效](#5-形状与特效)
 6. [结构操作 `engine/ops.ts`](#6-结构操作)
+6a. [重采样 `engine/resample.ts`](#6a-重采样-engineresamplets高级缩放的引擎)
 7. [撤销栈 `engine/history.ts`](#7-撤销栈)
 8. [颜色与调整](#8-颜色与调整)
 8b. [颜色分析 `engine/color-analysis.ts`](#8b-颜色分析)
@@ -196,9 +197,51 @@ removeFrame(doc, fi): void          // 至少保留 1 帧
 moveFrame(doc, from, to): void      // 按帧对象身份重映射所有 cel 键
 
 resizeDocCanvas(doc, w2, h2, ox, oy): void   // 改画布尺寸，内容按偏移保留
-scaleDocSprite(doc, w2, h2): void            // 整体缩放（最近邻）
+scaleDocSprite(doc, w2, h2, algo?, cleanTransparent?): void
+                                             // 整体缩放；默认 nearest（行为与老版逐像素一致），
+                                             // 采样实现已搬到 engine/resample.ts
 contentBounds(doc): Rect | null              // 所有内容的包围盒（智能裁剪用）
 ```
+
+### 6a. 重采样 `engine/resample.ts`（高级缩放的引擎）
+
+纯函数、无 DOM，可在 node 里直接测。统一入口返回**新分配**的 RGBA 缓冲区（长度 `dw*dh*4`），
+输入永不被修改：
+
+```ts
+type ResampleAlgo = "nearest" | "bilinear" | "bicubic" | "area" | "scale2x" | "scale3x";
+
+interface AlgoMeta {
+  id: ResampleAlgo;
+  pixelArt: boolean;             // 像素画专用（scale2x / scale3x）
+  onlyExactFactor: number | null; // 2 / 3；null = 任意比例都行
+  nameKey: string;               // i18n 键（UI 直接 t(meta.nameKey)，不硬编码分支）
+  descKey: string;
+}
+SCALE_ALGOS: readonly AlgoMeta[]              // 6 条元数据，供 UI 生成选项
+
+interface ResampleOpts { cleanTransparent?: boolean }   // alpha===0 时把 RGB 清零
+MAX_SIZE: 1024                                // 与全项目尺寸上限一致
+
+resamplePixels(src, sw, sh, dw, dh, algo?: ResampleAlgo, opts?): Uint8ClampedArray
+resampleRegion(src, sw, sh, sx, sy, rw, rh, dw, dh, algo?, opts?): Uint8ClampedArray
+                                             // 只重采样一块矩形（选区缩放用）
+
+algoSupported(algo, sw, sh, dw, dh): boolean // scale2x/scale3x 只接受整数 2×/3×
+effectiveAlgo(algo, sw, sh, dw, dh): ResampleAlgo   // 不支持时给出真正会用的算法（nearest）
+scaleFactor(sw, sh, dw, dh): { fx: number; fy: number }
+```
+
+要点：
+
+- **颜色一律在预乘 alpha 空间插值**（`bilinear` / `bicubic` / `area`）。直接平均 RGB 会把
+  透明像素的残色也算进去，透明边缘发黑/发彩；`cleanTransparent` 是额外的兜底。
+- `nearest` 用 `floor(i*sn/dn)` 映射，与老版 `scaleDocSprite` 逐像素一致；
+- `bicubic` 是 Catmull-Rom 样条，权重按轴归一化（纯色下逐字节恒等），越界坐标**钳到边缘**而不是补零；
+- `area` 按源/目标像素的重叠长度加权（缩小＝真正的面积平均），权重放在连续区间表里，
+  缩小 1024 倍也不会溢出、每像素零分配；
+- `scale2x` / `scale3x` 是 EPX 系列：整数比较 3×3 邻域、不做任何颜色混合，硬边原样保留；
+  比例不匹配时 `resamplePixels` **安全降级到 nearest**，UI 用 `algoSupported` / `effectiveAlgo` 提前提示。
 
 ---
 
@@ -720,6 +763,13 @@ toggleOnion() / setOnionOn(on) / setOnionBefore(n) / setOnionAfter(n)
 setOnionAlpha(n) / setOnionTint(on) / setOnionWrap(on)
 setGridMode("off"|"pixel"|"iso") / setGridSize(n)
 canvasSize(w, h, ax, ay) / spriteSize(w, h) / cropSmart()
+scaleAdvanced(o: { w, h, algo?, scope?, cleanTransparent? }): boolean
+  // 高级缩放（画布球 →「高级缩放」）。scope：
+  //   "sprite"    整张画布（所有图层 × 所有帧），画布尺寸随之改变
+  //   "layer"     只缩放当前图层（该层所有帧），画布尺寸随之改变
+  //   "selection" 只缩放选区外接矩形再贴回原位置，画布尺寸不变（没有选区时提示并返回 false）
+  // 一次操作只落一条历史：结构快照（尺寸变了）/ 选区缩放则执行即落一条；
+  // 返回 true 表示「这次缩放执行了」，不是「像素一定变了」。
 cropToSelection(): boolean              // 画布裁切到选区外接矩形（一条结构历史）
 resizeModeOn / setResizeMode(on) / toggleResizeMode()   // 拖画布四边改尺寸的模式
 sampleComposite(x, y): RGBA | null        // 取合成后的颜色

@@ -1,6 +1,7 @@
 // Raw structural operations on a Doc. The caller wraps these in history.
 import { Cel } from "./cel";
 import { Doc, Sel, type LayerMeta, type FrameMeta } from "./doc";
+import { resamplePixels, type ResampleAlgo } from "./resample";
 import { normalizeTags, tagsAfterInsert, tagsAfterRemove } from "./tags";
 import { uid } from "./types";
 import type { BlendMode } from "./types";
@@ -211,8 +212,11 @@ export function resizeDocCanvas(doc: Doc, w2: number, h2: number, ox: number, oy
 /**
  * Sprite Size (Aseprite-like): scale the whole sprite (all layers x frames)
  * to the new dimensions using nearest-neighbour sampling.
+ *
+ * 采样实现搬到 `engine/resample.ts`（高级缩放对话框共用同一套引擎），
+ * 这里固定用 `nearest`，所以老的「精灵尺寸」逐像素行为完全不变。
  */
-export function scaleDocSprite(doc: Doc, w2: number, h2: number): void {
+export function scaleDocSprite(doc: Doc, w2: number, h2: number, algo: ResampleAlgo = "nearest", cleanTransparent = false): void {
   const W = Math.max(1, Math.min(1024, Math.round(w2)));
   const H = Math.max(1, Math.min(1024, Math.round(h2)));
   if (W === doc.w && H === doc.h) return;
@@ -221,16 +225,7 @@ export function scaleDocSprite(doc: Doc, w2: number, h2: number): void {
   doc.cels.clear();
   for (const [k, cel] of entries) {
     const next = new Cel(W, H);
-    const d = next.data, s = cel.data;
-    for (let y = 0; y < H; y++) {
-      const sy = Math.min(sh - 1, Math.floor((y * sh) / H));
-      for (let x = 0; x < W; x++) {
-        const sx = Math.min(sw - 1, Math.floor((x * sw) / W));
-        const si = (sy * sw + sx) * 4;
-        const di = (y * W + x) * 4;
-        d[di] = s[si]; d[di + 1] = s[si + 1]; d[di + 2] = s[si + 2]; d[di + 3] = s[si + 3];
-      }
-    }
+    next.data.set(resamplePixels(cel.data, sw, sh, W, H, algo, { cleanTransparent }));
     doc.cels.set(k, next);
   }
   doc.w = W;

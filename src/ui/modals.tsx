@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { SESSION } from "./singleton";
 import { makeT } from "./i18n";
 import { SETTING_GROUPS, settingsOfGroup, isDefault, resetSetting, exportSettings, importSettings, type SettingDef } from "../app/settings";
-import type { Snapshot } from "../app/session";
+import type { ScaleScope, Snapshot } from "../app/session";
 import { Doc } from "../engine/doc";
 import { Cel } from "../engine/cel";
 import { hexToRgba, rgbaToHex, hexToRgba as hrgb, chipCss } from "../engine/color";
@@ -23,6 +23,7 @@ import { canVibrate, hapticReport } from "../io/bridge";
 import { detectInsets } from "../io/safearea";
 import type { RefImg } from "./refimg";
 import { Dialog, Row, RowActions, NumberField, ColorField, ChipGroup, Segmented, Switch, useKitPcMode } from "./kit";
+import { SCALE_ALGOS, algoSupported, effectiveAlgo, resamplePixels, type ResampleAlgo } from "../engine/resample";
 import { SHORTCUT_SHEET } from "../app/shortcuts";
 import { REBINDABLE, chordForAction, chordLabel, chordOf, isOverridden, overrides } from "../app/keymap";
 import { CBAR_ACTIONS, LAYOUT_KEYS, ORB_IDS, TOPBAR_ACTIONS, fullOrder } from "../app/uibar";
@@ -33,7 +34,7 @@ import { GROUP_TOLERANCE, type ColourAnalysis, type ColourEntry, type ColourGrou
 export function openColorAnalysis(): void {
   window.dispatchEvent(new Event("pc-color-analysis"));
 }
-export type ModalId = "menu" | "changelog" | "newdoc" | "newproject" | "export" | "adjust" | "settings" | "frame" | "framePrev" | "size" | "sheet" | "history" | "canvasRef" | "shortcuts" | "customise" | "actions" | "patterns" | "coloranalysis" | null;
+export type ModalId = "menu" | "changelog" | "newdoc" | "newproject" | "export" | "adjust" | "settings" | "frame" | "framePrev" | "size" | "scaleadv" | "sheet" | "history" | "canvasRef" | "shortcuts" | "customise" | "actions" | "patterns" | "coloranalysis" | null;
 export type SizeMode = "canvas" | "sprite";
 export type SheetData = { w: number; h: number; px: Uint8ClampedArray; name: string };
 
@@ -430,7 +431,160 @@ export function MenuModal({ t, snap, onClose, onOpen, onSheet, onRef, onGuide }:
     </>
   );
 }
-export function SizeModal({ t, snap, initial, onClose }: { t: ReturnType<typeof makeT>; snap: Snapshot; initial: SizeMode; onClose: () => void }) {
+/**
+ * 高级缩放对话框（画布球 →「高级缩放」，或从「修改尺寸」里跳过来）。
+ *
+ * 六种重采样算法都来自 `engine/resample.ts`（纯函数），这里只负责：
+ *   1. 选算法（选中项下面给一句人话说明）；
+ *   2. 宽高 + 锁定比例 + 常用倍率；
+ *   3. 作用范围（整张 / 当前图层 / 选区，没有选区时禁用）；
+ *   4. 「清理透明像素 RGB」开关；
+ *   5. 预览：当前图层（或选区）中心区域在「原图」与「按当前设置缩放后」的对比。
+ *      —— 引擎不碰 DOM，预览的 canvas 绘制只能在 UI 层做。
+ * 算法在当前比例下不可用时（Scale2x 而非 2×）当场提示并说明会降级到最近邻，
+ * 不让用户点完「确定」才发现没生效。
+ */
+export function ScaleModal({ t, onClose }: { t: ReturnType<typeof makeT>; onClose: () => void }) {
+  const doc = SESSION.doc;
+  const selBox = doc.sel && doc.sel.hasAny() ? doc.sel.bounds() : null;
+  const [algo, setAlgo] = useState<ResampleAlgo>("nearest");
+  const [scope, setScope] = useState<ScaleScope>("sprite");
+  const [w, setW] = useState(String(doc.w));
+  const [h, setH] = useState(String(doc.h));
+  const [locked, setLocked] = useState(true);
+  const [clean, setClean] = useState(false);
+  const [dirty, setDirty] = useState(false);   // 用户手改过尺寸才显示「尺寸没变」提示
+  const ratio = doc.w > 0 ? doc.h / doc.w : 1;
+  const cw = Math.max(1, Math.min(1024, parseInt(w, 10) || doc.w));
+  const ch = Math.max(1, Math.min(1024, parseInt(h, 10) || doc.h));
+  const onW = (v: string) => { setW(v); setDirty(true); if (locked) { const n = parseInt(v, 10); if (n > 0) setH(String(Math.max(1, Math.min(1024, Math.round(n * ratio))))); } };
+  const onH = (v: string) => { setH(v); setDirty(true); if (locked) { const n = parseInt(v, 10); if (n > 0) setW(String(Math.max(1, Math.min(1024, Math.round(n / ratio))))); } };
+  /** 按倍率设尺寸；÷2 只在能整除时给出整数 */
+  const setFactor = (kx: number, ky: number) => {
+    setW(String(Math.max(1, Math.min(1024, Math.round(doc.w * kx)))));
+    setH(String(Math.max(1, Math.min(1024, Math.round(doc.h * ky)))));
+    setDirty(true);
+  };
+  const scaleBase = scope === "selection" && selBox ? { w: selBox.w, h: selBox.h } : { w: doc.w, h: doc.h };
+  const selSupported = algoSupported(algo, scaleBase.w, scaleBase.h, cw, ch);
+  const selFallback = effectiveAlgo(algo, scaleBase.w, scaleBase.h, cw, ch);
+  const noSel = scope === "selection" && !selBox;
+  const sameSize = scope !== "selection" && cw === doc.w && ch === doc.h;
+  const blocked = noSel || sameSize;
+  const apply = () => {
+    if (blocked) { bridge.toast(noSel ? t("scaleSelEmpty") : t("scaleSameSize")); return; }
+    SESSION.scaleAdvanced({ w: cw, h: ch, algo, scope, cleanTransparent: clean });
+    onClose();
+  };
+  return (
+    <>
+      <Dialog title={t("scaleAdv")} onClose={onClose} className="scale-dlg" guide="dlg-scale"
+        top={<div className="row-note">{t("scaleAdvDesc")}</div>}
+        footer={<><Btn label={t("cancel")} onClick={onClose} /><Btn label={t("ok")} className="primary" onClick={apply} /></>}>
+        <Row label={t("scaleOpts")}>
+          <ChipGroup value={algo} onChange={(v) => setAlgo(v)} options={SCALE_ALGOS.map((a) => ({ id: a.id, label: t(a.nameKey) }))} />
+          <div className="row-note">{t(SCALE_ALGOS.find((a) => a.id === algo)!.descKey)}</div>
+        </Row>
+        <NumberField label={t("docs.w")} min={1} max={1024} value={w} onChange={onW} />
+        <NumberField label={t("docs.h")} min={1} max={1024} value={h} onChange={onH} />
+        <Row>
+          <div className="chips">
+            <button type="button" className={"chip" + (locked ? " on" : "")} onClick={() => setLocked(!locked)}>{t("lockRatio")}</button>
+          </div>
+        </Row>
+        <Row label={t("scaleQuick")}>
+          <div className="chips scale-quick">
+            {([[2, 2, "2\u00d7"], [3, 3, "3\u00d7"], [4, 4, "4\u00d7"]] as Array<[number, number, string]>).map(([kx, ky, lab]) =>
+              <button key={lab} type="button" className="chip" onClick={() => setFactor(kx, ky)}>{lab}</button>)}
+            {doc.w % 2 === 0 && doc.h % 2 === 0
+              ? <button type="button" className="chip" onClick={() => setFactor(0.5, 0.5)}>{"\u00f72"}</button>
+              : null}
+            <button type="button" className="chip" onClick={() => { setFactor(1, 1); setDirty(false); }}>{t("resetLabel")}</button>
+          </div>
+        </Row>
+        <Row label={t("scaleScope")}>
+          <ChipGroup value={scope} onChange={(v) => setScope(v)} options={[
+            { id: "sprite", label: t("scaleScopeSprite") },
+            { id: "layer", label: t("scaleScopeLayer") },
+            { id: "selection", label: t("scaleScopeSel"), hidden: !selBox },
+          ]} />
+        </Row>
+        <Row label={t("scaleClean")} hint={t("scaleCleanDesc")}>
+          <Switch checked={clean} onChange={setClean} label={t("scaleClean")} />
+        </Row>
+        {noSel ? <div className="row-note scale-warn">{t("scaleSelEmpty")}</div>
+          : sameSize && dirty ? <div className="row-note scale-warn">{t("scaleSameSize")}</div> : null}
+        {!blocked && !selSupported
+          ? <div className="row-note scale-warn">{t("scaleUnsupported") + "\uff08" + t(SCALE_ALGOS.find((a) => a.id === selFallback)!.nameKey) + "\uff09"}</div>
+          : null}
+        <ScalePreview t={t} algo={algo} scope={scope} cw={cw} ch={ch} clean={clean} box={selBox} />
+        <div className="row-note">{t("scaleWill") + " " + cw + "\u00d7" + ch + (scope === "selection" && selBox ? "\uff08" + t("scaleScopeSel") + " " + selBox.w + "\u00d7" + selBox.h + "\uff09" : "")}</div>
+      </Dialog>
+    </>
+  );
+}
+
+/** 预览：当前图层（或选区）中心区域，「原图」与「按当前设置缩放后」并排 */
+function ScalePreview({ t, algo, scope, cw, ch, clean, box }:
+{ t: ReturnType<typeof makeT>; algo: ResampleAlgo; scope: ScaleScope; cw: number; ch: number; clean: boolean; box: { x: number; y: number; w: number; h: number } | null }) {
+  const doc = SESSION.doc;
+  const refA = useRef<HTMLCanvasElement | null>(null);
+  const refB = useRef<HTMLCanvasElement | null>(null);
+  const region = scope === "selection" && box ? box : { x: 0, y: 0, w: doc.w, h: doc.h };
+  const SW = 44;   // 预览画布边长（css px）
+  useEffect(() => {
+    const cel = doc.celAt(SESSION.curLayer(), SESSION.curFrame());
+    const cvs = [refA.current, refB.current];
+    if (!cvs[0] || !cvs[1]) return;
+    // 取区域中心的一小块：源块大小按缩放的「放大倍数」反过来定，两边看到同样多内容
+    const kx = cw / Math.max(1, region.w), ky = ch / Math.max(1, region.h);
+    const spanX = Math.max(1, Math.min(region.w, Math.round(region.w / Math.max(1, kx))));
+    const spanY = Math.max(1, Math.min(region.h, Math.round(region.h / Math.max(1, ky))));
+    const sx = region.x + Math.max(0, Math.floor((region.w - spanX) / 2));
+    const sy = region.y + Math.max(0, Math.floor((region.h - spanY) / 2));
+    const patch = new Uint8ClampedArray(spanX * spanY * 4);
+    if (cel) {
+      for (let y = 0; y < spanY; y++) {
+        for (let x = 0; x < spanX; x++) {
+          const si = cel.idx(Math.min(doc.w - 1, sx + x), Math.min(doc.h - 1, sy + y));
+          const di = (y * spanX + x) * 4;
+          patch[di] = cel.data[si]; patch[di + 1] = cel.data[si + 1];
+          patch[di + 2] = cel.data[si + 2]; patch[di + 3] = cel.data[si + 3];
+        }
+      }
+    }
+    const tw = Math.max(1, Math.round(spanX * kx)), th = Math.max(1, Math.round(spanY * ky));
+    const scaled = resamplePixels(patch, spanX, spanY, tw, th, algo, { cleanTransparent: clean });
+    const draw = (cv: HTMLCanvasElement, data: Uint8ClampedArray, dw: number, dh: number): void => {
+      cv.width = dw; cv.height = dh;
+      const ctx = cv.getContext("2d");
+      if (!ctx) return;
+      ctx.putImageData(new ImageData(new Uint8ClampedArray(data), dw, dh), 0, 0);
+    };
+    draw(cvs[0] as HTMLCanvasElement, patch, spanX, spanY);
+    draw(cvs[1] as HTMLCanvasElement, scaled, tw, th);
+  }, [doc, doc.w, doc.h, SESSION.curLayer(), SESSION.curFrame(), algo, scope, cw, ch, clean, region.x, region.y, region.w, region.h]);
+  const kx = cw / Math.max(1, region.w), ky = ch / Math.max(1, region.h);
+  const lab = (kx === Math.round(kx) && ky === Math.round(ky) ? Math.round(kx) + "\u00d7" : kx.toFixed(2) + "\u00d7")
+    + (kx === ky ? "" : " / " + (ky === Math.round(ky) ? Math.round(ky) + "\u00d7" : ky.toFixed(2) + "\u00d7"));
+  return (
+    <Row label={t("scalePreview")} hint={t("scalePreviewNote")}>
+      <div className="scale-frames">
+        <div className="scale-frame">
+          <canvas ref={refA} className="scale-cv" style={{ width: SW, height: SW }} />
+          <span className="scale-cap">{t("scalePreviewOrig")}</span>
+        </div>
+        <div className="scale-arrow">{lab}</div>
+        <div className="scale-frame">
+          <canvas ref={refB} className="scale-cv" style={{ width: SW, height: SW }} />
+          <span className="scale-cap">{t("scalePreviewNew")}</span>
+        </div>
+      </div>
+    </Row>
+  );
+}
+
+export function SizeModal({ t, snap, initial, onClose, onAdvanced }: { t: ReturnType<typeof makeT>; snap: Snapshot; initial: SizeMode; onClose: () => void; onAdvanced?: () => void }) {
   const [mode, setMode] = useState<SizeMode>(initial);
   const [w, setW] = useState(String(SESSION.doc.w));
   const [h, setH] = useState(String(SESSION.doc.h));
@@ -445,7 +599,7 @@ export function SizeModal({ t, snap, initial, onClose }: { t: ReturnType<typeof 
   const cell = (r: number, c: number) => { const on = ax === c - 1 && ay === r - 1; return <button key={r + "-" + c} className={"anchor" + (on ? " on" : "")} onClick={() => { setAx(c - 1); setAy(r - 1); }}><span className={"a-dot" + (on ? " on" : "")} /></button>; };
   return (
     <>
-      <Dialog title={t("resizeTitle")} onClose={onClose} footer={<><Btn label={t("cancel")} onClick={onClose} /><Btn label={t("ok")} onClick={apply} className="primary" /></>}>
+      <Dialog title={t("resizeTitle")} onClose={onClose} footer={<>{onAdvanced && <Btn icon="i-scale-adv" label={t("scaleAdv")} onClick={onAdvanced} />}<Btn label={t("cancel")} onClick={onClose} /><Btn label={t("ok")} onClick={apply} className="primary" /></>}>
         <ChipGroup value={mode} onChange={switchMode} options={[
           { id: "canvas", label: t("canvasSize") },
           { id: "sprite", label: t("spriteSize") },
@@ -453,7 +607,7 @@ export function SizeModal({ t, snap, initial, onClose }: { t: ReturnType<typeof 
         <NumberField label={t("docs.w")} min={1} max={1024} value={w} onChange={(v) => onW(v)} />
         <NumberField label={t("docs.h")} min={1} max={1024} value={h} onChange={(v) => onH(v)} />
         <div className="chips"><button className={"chip" + (locked ? " on" : "")} onClick={() => setLocked(!locked)}>{t("lockRatio")}</button></div>
-        {mode === "canvas" ? (<><Row label={t("anchor")}><div className="anchor-grid">{[0, 1, 2].map((r) => <div className="anchor-row" key={r}>{[0, 1, 2].map((c) => cell(r, c))}</div>)}</div></Row><p className="size-note">{t("canvasNote")}</p></>) : <p className="size-note">{t("spriteNote")}</p>}
+        {mode === "canvas" ? (<><Row label={t("anchor")}><div className="anchor-grid">{[0, 1, 2].map((r) => <div className="anchor-row" key={r}>{[0, 1, 2].map((c) => cell(r, c))}</div>)}</div></Row><p className="size-note">{t("canvasNote")}</p></>) : (<><p className="size-note">{t("spriteNote")}</p><p className="size-note size-note-adv">{t("scaleAdvOpen")}</p></>)}
       </Dialog>
     </>
   );

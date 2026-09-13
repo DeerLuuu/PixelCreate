@@ -39,6 +39,7 @@ import { testXformUi } from "./xformui.test";
 import { testWarpUi } from "./warpui.test";
 import { testSelOrb } from "./selorb.test";
 import { testColorAnalysis } from "./color-analysis.test";
+import { testScale } from "./scale.test";
 
 async function main(): Promise<void> {
   console.log("--- history ---");
@@ -119,6 +120,8 @@ async function main(): Promise<void> {
   testSelOrb();
   console.log("--- colour analysis ---");
   testColorAnalysis();
+  console.log("--- advanced scale (resample) ---");
+  testScale();
   console.log("--- animation tags ---");
   testTags();
   await testTagsIo();

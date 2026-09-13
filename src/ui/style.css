@@ -522,6 +522,17 @@ html[data-pc] .orb-item{width:48px;height:48px}
 .a-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--anchor-dot); }
 .a-dot.on { background: var(--accent-4); }
 .size-note { font-size: 11px; color: var(--dim-2); margin: 6px 0 2px; }
+.size-note-adv { color: var(--accent); }
+
+/* 高级缩放对话框：算法说明 / 倍率快捷 / 原图-缩放后对比预览 */
+.scale-dlg .scale-quick .chip { min-width: 44px; }
+.scale-warn { color: var(--danger-1); }
+.scale-frames { display: flex; align-items: center; gap: var(--sp-5); margin: var(--sp-2) 0 var(--sp-4); }
+.scale-frame { display: flex; flex-direction: column; align-items: center; gap: var(--sp-2); }
+.scale-cv { display: block; border: 1px solid var(--line); border-radius: var(--r-1); background: var(--hud-deep);
+  image-rendering: pixelated; }
+.scale-cap { font-size: var(--fs-1); color: var(--dim); }
+.scale-arrow { font-size: var(--fs-2); color: var(--dim-2); font-weight: 700; white-space: nowrap; }
 
 /* second-level floating ball + radial layers */
 .orb.sub { border-color: var(--accent-2); box-shadow: 0 0 0 2px var(--accent-2-glow); }

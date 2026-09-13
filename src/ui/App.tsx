@@ -26,7 +26,7 @@ import { TimelineBar } from "./timeline";
 import { PreviewBox } from "./preview";
 import { RefImageBox } from "./refimg";
 import type { RefImg } from "./refimg";
-import { ActionSearchModal, PatternPanel, PalettePanel, ColorAnalysisModal, openFlow, MenuModal, SizeModal, SheetModal, NewDocModal, ExportModal, AdjustModal, SettingsModal, FrameModal, TagModal, FramePreviewModal, CanvasRefModal, HistoryModal, ShortcutHelpModal, CustomiseModal, histName, importFlow, saveProject, openFileBytes } from "./modals";
+import { ActionSearchModal, PatternPanel, PalettePanel, ColorAnalysisModal, openFlow, MenuModal, SizeModal, ScaleModal, SheetModal, NewDocModal, ExportModal, AdjustModal, SettingsModal, FrameModal, TagModal, FramePreviewModal, CanvasRefModal, HistoryModal, ShortcutHelpModal, CustomiseModal, histName, importFlow, saveProject, openFileBytes } from "./modals";
 import { FxParamDialog, fxDefaults, type FxRun, type FxVals } from "./fxparam";
 import { CanvasTitles } from "./canvas";
 import { ChangelogModal, changelogNeedsShow } from "./changelog";
@@ -681,6 +681,7 @@ export function App() {
       {snap.canvasCount > 0 && <FloatingTools t={t} snap={snap}
         onCanvasNew={() => setModal("newdoc")}
         onCanvasSize={() => { setSizeMode("canvas"); setModal("size"); }}
+        onCanvasScaleAdv={() => setModal("scaleadv")}
         onCanvasAdjust={() => setModal("adjust")}
         onCanvasExport={() => setModal("export")}
         onOpenPalette={() => setPanel("palette")}
@@ -694,7 +695,8 @@ export function App() {
         </Overlay>
       ) : null} />
       <Keep on={modal === "menu"} el={modal === "menu" ? <MenuModal t={t} snap={snap} onClose={() => setModal(null)} onOpen={setModal} onSheet={(d) => { setSheet(d); setModal("sheet"); }} onRef={(d) => SESSION.setRefImage(d)} onGuide={() => { setModal(null); setGuide(GUIDE.slice()); }} /> : null} />
-      <Keep on={modal === "size"} el={modal === "size" ? <SizeModal t={t} snap={snap} initial={sizeMode} onClose={() => setModal(null)} /> : null} />
+      <Keep on={modal === "size"} el={modal === "size" ? <SizeModal t={t} snap={snap} initial={sizeMode} onClose={() => setModal(null)} onAdvanced={() => setModal("scaleadv")} /> : null} />
+      <Keep on={modal === "scaleadv"} el={modal === "scaleadv" ? <ScaleModal t={t} onClose={() => setModal(null)} /> : null} />
       <Keep on={modal === "sheet" && sheet !== null} el={modal === "sheet" && sheet ? <SheetModal t={t} img={sheet} onClose={() => { setModal(null); setSheet(null); }} /> : null} />
       <Keep on={modal === "newdoc"} el={modal === "newdoc" ? <NewDocModal t={t} onClose={() => setModal(null)} /> : null} />
       <Keep on={modal === "newproject"} el={modal === "newproject" ? <NewDocModal t={t} mode="project" onClose={() => setModal(null)} /> : null} />
@@ -1020,8 +1022,8 @@ function EmptyCanvas({ t, onNew, onOpen }: { t: ReturnType<typeof makeT>; onNew:
   );
 }
 
-function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onCanvasExport, onOpenPalette, onCanvasRef, onSearch, onPatterns }: {
-  t: ReturnType<typeof makeT>; snap: Snapshot; onCanvasNew: () => void; onCanvasSize: () => void;
+function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasScaleAdv, onCanvasAdjust, onCanvasExport, onOpenPalette, onCanvasRef, onSearch, onPatterns }: {
+  t: ReturnType<typeof makeT>; snap: Snapshot; onCanvasNew: () => void; onCanvasSize: () => void; onCanvasScaleAdv: () => void;
   onCanvasAdjust: () => void; onCanvasExport: () => void; onOpenPalette: () => void; onCanvasRef: () => void;
   onSearch: () => void;
   onPatterns: () => void;
@@ -1826,6 +1828,7 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasAdjust, onC
       })();
     } },
     { id: "resizeTitle", icon: "i-size", label: t("resizeTitle"), desc: t("canvasResizeDesc"), act: () => { closeCanv(); onCanvasSize(); } },
+    { id: "scaleAdv", icon: "i-scale-adv", label: t("scaleAdv"), desc: t("scaleAdvDesc"), act: () => { closeCanv(); onCanvasScaleAdv(); }, guide: "canv-scale-adv" },
     { id: "canvasResizeMode", icon: "i-resize-mode", label: t("canvasResizeMode"), desc: t("canvasResizeModeDesc"), active: SESSION.resizeModeOn, act: () => { closeCanv(); SESSION.toggleResizeMode(); } },
     { id: "canvasLock", icon: SESSION.isCanvasLocked() ? "i-pin" : "i-pin-off", label: t(SESSION.isCanvasLocked() ? "canvasUnlock" : "canvasLock"), desc: t("canvasLockDesc"), act: () => { closeCanv(); SESSION.toggleCanvasLock(); }, guide: "canv-lock" },
     { id: "canvasClose", icon: "i-x", label: t("canvasClose"), desc: t("canvasCloseDesc"), act: () => {
