@@ -277,6 +277,50 @@ isActionAllowed(id, action): boolean     // 校验从磁盘读回的值
 `Session.cycleLayer(±1)` 循环切换图层（优先跳过隐藏层），`Session.setLayer()` 会调用 `View.flashLayer(li)`
 让切到的图层在画布上闪一下（`drawFlash()` 画在叠加层，不重合成）。
 
+## 6c. 色彩明暗 `src/engine/shading.ts`
+
+调色板生成器，移植自 Aseprite 脚本 [Color Shading v5.0](https://github.com/GerryLCDF/Aseprite-Color-Shading-v5.0)
+（v1–2 Dominick John + David Capello、v3 yashar98、v3.1 Daeyangae、v4 Manuel Hoelzl）。纯函数，无 DOM / 无 Session。
+
+```ts
+interface ShadingParams { slots; intensity; peak; sway; lowTemp; highTemp }   // 默认 7 / 40 / 60 / 60 / 215 / 50
+const SHADING_DEFAULTS: ShadingParams;      // ＝ Lua 的 default_*（改这里要同步文档与 i18n 提示）
+const SHADING_RANGES;                       // intensity 1..200、peak 1..100、sway 0..100、temp 0..359.99
+const SHADING_SLOTS_MIN = 3; SHADING_SLOTS_MAX = 25;
+const SHADING_ROWS = ["shade","light","sat","mix","nuance","hue"] as const;   // 界面顺序，标签在 i18n 的 sh.rows.*
+normalizeSlots(n): number                   // 夹到 3..25 并**强制奇数**（Lua 在 UI 里把偶数 +1）
+normalizeParams(p): ShadingParams           // 夹范围 + 色相取模；UI 每次改动都过一遍
+shadingRamps(base, other, params): ShadingRamps        // 六条色阶，每条 slots 个 RGBA
+shadingHarmonics(base): ShadingHarmonics               // 互补 / 三角 / 四角
+flatRamps(ramps, rows?, dedupe = true): RGBA[]         // 摊平（「加入调色板」用）
+```
+
+`Ramps` 的六条行（`i` 为 1..slots，`mid = (slots+1)/2`）：
+
+| 行 | 算法 | 说明 |
+|---|---|---|
+| `shade` | `shiftShading(shiftSat(shiftLight(base, ±peak/100·f), intensity/100·f), temp, sway/100·f)` | 明度 + 饱和度 + 温度色一起上 |
+| `light` | `shiftLight(base, ±0.4·f)` | 只动明度 |
+| `sat` | `shiftSat(base, ±0.75·f)` | 只动饱和度（暗端去饱和、亮端加饱和） |
+| `mix` | `mix(base, other, i/(slots+1))` | 基色 → 另一基色的过渡（与色相无关） |
+| `nuance` | `shiftHue(base, (mid−i)/(slots+1)·2/(slots+1))` | 极小色相偏移（近似色） |
+| `hue` | `shiftHue(base, i/(slots+1))` | 色相环等距推进 |
+
+其中 `f = ((slots−1)/2 − i + 1)/((slots−1)/2)`；**暗半侧**（`i < mid`）`f` 取正、符号 `neg = −1`、温度取
+`lowTemp`；**亮半侧**（`i > mid`）`f` 取反成正、`neg = +1`、温度取 `highTemp`；正中间那格（奇数 slots）
+**逐位等于基色本身**，是整套配色的锚点。
+
+两条与 Lua 的刻意差异，都写进了实现注释，别按 Lua 改回去：
+1. **alpha 一路带着走**（Lua 的 `mixColors` 只混 RGB、alpha 被重置成 255）——PixelCraft 的颜色可以是半透明的，
+   `mix` 行按比例混 alpha，其余各行保留基色 alpha；
+2. `slots` 的「夹范围 + 强制奇数」放进纯函数，而不是只放在界面的 `onchange` 里（测试与调用方都受益）。
+
+面板 `ShadingModal`（`src/ui/modals.tsx`）：基色行（前景 / 背景 + 「取当前」）、六条色阶、可选的三条和声配色、
+高级参数（两个温度色块 + 四个数值）、三个开关（高级参数 / 和声配色 / 跟随取色）。色块交互＝**轻点设前景色、
+长按或右键设背景色**（触屏没有右键，两条路都接，长按之后那一次 click 会被吃掉）；「加入调色板」走
+`SESSION.paletteMerge(flatRamps(ramps))`（去重、一条可撤销历史）。入口：调色板面板的动作行与主菜单
+（`openShading()` 派发 `pc-shading`，App 侧收面板再开弹窗，同 `pc-color-analysis`）。
+
 ## 7. 撤销栈
 
 `src/engine/history.ts`
@@ -1463,6 +1507,7 @@ nextPlayFrameIn(mode, fi, dir, w): PlayStep                    // 循环/乒乓�
 | `HsvWheel` / `HoldAdjust` / `PreviewBox` / `RefImageBox` / `ReplayOverlay` | 各自文件 | 色轮、长按拖动数值、预览浮窗（右上角按钮 = 二级菜单：白底/黑底/格子底 + 灰度预览，灰度只作用于画面本身）、参考图、历史回放 |
 | `TabBar` / `DropMenu` | `ui/tabs.tsx` | 共用选项卡与可展开下拉（色板 / 导出 / 更新日志） |
 | `ChangelogModal` | `ui/changelog.tsx` | 更新日志：`CHANGELOG`（`ClgVersion[]`，每项 `it(kind, zh, en)`）+ `APP_VERSION` / `BUILD_TAG`；PC 竖排版本列表、触屏横向标签条，分类（add/imp/fix）可折叠。**条目文案是纯文本渲染**（`<li>{x.zh}</li>`，没有 Markdown 解析）——`**加粗**` 与反引号会原样显示，所以文案里不许出现它们，测试 `tests/changelog.test.ts` 会拦（同时校验 `APP_VERSION` 与 `AndroidManifest.xml` 的 `versionName` 一致、条目单行格式、中英一一对应） |
+| `ShadingModal` | `ui/modals.tsx` | 色彩明暗（调色板生成器）：算法在 `engine/shading.ts`，面板只摆控件与色块；色块轻点＝前景色 / 长按或右键＝背景色，「加入调色板」调 `SESSION.paletteMerge`。入口＝调色板面板 + 主菜单（`openShading()` → `pc-shading` → App 里`setModal("shading")`） |
 | `useBlankTap` | `ui/base.tsx` | 点容器空白处执行动作（调色板面板点击关闭） |
 | 时间线分割线 | `ui/App.tsx`（`.tl-grip`） | 时间线面板顶部的拖动条：上下拖动 = `setTlHeight()`（面板总高度 140–520px，默认 200），拖动时显示 px 浮标，双击复位 200；`prefs.tlH` 是整块面板高度，矩阵 `flex:1` 填充，图层行不足时用 `.ase-fill` 单元格补底 |
 | 安全区 | `io/safearea.ts` | 把原生 insets 写成 CSS 变量 `--sat/--sab/--sal/--sar`，贴边控件统一用它们留白 |

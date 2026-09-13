@@ -1582,6 +1582,14 @@ export class Session {
     this.rememberColors();
     this.changedUI();
   }
+  /** 直接写背景槽（色彩明暗面板的「设为背景色」用；不动 active 槽） */
+  setBgColor(c: RGBA): void {
+    const b = this.bg;
+    b[0] = c[0]; b[1] = c[1]; b[2] = c[2]; b[3] = c[3];
+    this.lastColorAt = Date.now();
+    this.rememberColors();
+    this.changedUI();
+  }
   setColorTarget(t: "fg" | "bg"): void {
     this.colorTarget = t;
     this.color = t === "bg" ? this.bg : this.fg;

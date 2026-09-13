@@ -26,7 +26,7 @@ import { TimelineBar } from "./timeline";
 import { PreviewBox } from "./preview";
 import { RefImageBox } from "./refimg";
 import type { RefImg } from "./refimg";
-import { ActionSearchModal, PatternPanel, PalettePanel, ColorAnalysisModal, openFlow, MenuModal, SizeModal, ScaleModal, SheetModal, NewDocModal, ExportModal, AdjustModal, SettingsModal, FrameModal, TagModal, FramePreviewModal, CanvasRefModal, HistoryModal, ShortcutHelpModal, CustomiseModal, histName, importFlow, saveProject, openFileBytes } from "./modals";
+import { ActionSearchModal, PatternPanel, PalettePanel, ColorAnalysisModal, ShadingModal, openFlow, MenuModal, SizeModal, ScaleModal, SheetModal, NewDocModal, ExportModal, AdjustModal, SettingsModal, FrameModal, TagModal, FramePreviewModal, CanvasRefModal, HistoryModal, ShortcutHelpModal, CustomiseModal, histName, importFlow, saveProject, openFileBytes } from "./modals";
 import { FxParamDialog, fxDefaults, type FxRun, type FxVals } from "./fxparam";
 import { CanvasTitles } from "./canvas";
 import { ChangelogModal, changelogNeedsShow } from "./changelog";
@@ -118,6 +118,13 @@ export function App() {
     const onOpen = () => { setPanel(null); setModal("coloranalysis"); };
     window.addEventListener("pc-color-analysis", onOpen);
     return () => window.removeEventListener("pc-color-analysis", onOpen);
+  }, []);
+
+  // 同上，「色彩明暗」按钮（见 modals.openShading）
+  useEffect(() => {
+    const onOpen = () => { setPanel(null); setModal("shading"); };
+    window.addEventListener("pc-shading", onOpen);
+    return () => window.removeEventListener("pc-shading", onOpen);
   }, []);
 
   // first launch after an update: auto-show the release notes. While they are
@@ -722,6 +729,7 @@ export function App() {
       <Keep on={modal === "actions"} el={modal === "actions" ? <ActionSearchModal t={t} onClose={() => setModal(null)} /> : null} />
       <Keep on={modal === "patterns"} el={modal === "patterns" ? <PatternPanel t={t} onClose={() => setModal(null)} /> : null} />
       <Keep on={modal === "coloranalysis"} el={modal === "coloranalysis" ? <ColorAnalysisModal t={t} onClose={() => setModal(null)} /> : null} />
+      <Keep on={modal === "shading"} el={modal === "shading" ? <ShadingModal t={t} onClose={() => setModal(null)} /> : null} />
       <Keep on={modal === "changelog"} el={modal === "changelog" ? <ChangelogModal onClose={() => { setModal(null); setClgBlock(false); }} /> : null} />
       {guide && <GuideOverlay steps={guide} actions={guideActions} onDone={finishGuide} />}
       {textQ && (

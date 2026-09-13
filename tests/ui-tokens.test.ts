@@ -56,6 +56,8 @@ const SHELL = [
   ".repl-line", ".replay-", ".rh-", "input",
   // 高级颜色分析器：统计表/直方图/近似色/替换区的每一块都不许写死颜色
   ".ca-",
+  // 色彩明暗（Color Shading）：色阶条 / 基色 / 温度色块
+  ".sh-",
 ];
 
 const BANNER = "   2/5  base";

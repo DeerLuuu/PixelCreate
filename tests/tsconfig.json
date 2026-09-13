@@ -57,6 +57,8 @@
     "../tests/warp.test.ts",
     "../tests/warpui.test.ts",
     "../tests/xform.test.ts",
-    "../tests/xformui.test.ts"
+    "../tests/xformui.test.ts",
+    "../tests/changelog.test.ts",
+    "../tests/shading.test.ts"
   ]
 }

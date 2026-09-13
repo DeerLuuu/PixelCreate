@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { SESSION } from "./singleton";
 import { makeT } from "./i18n";
@@ -9,7 +9,14 @@ import { Cel } from "../engine/cel";
 import { cropPatch, previewPatchGeometry, previewSource, scaleFactorLabel } from "./scale-preview";
 import { hexToRgba, rgbaToHex, hexToRgba as hrgb, chipCss } from "../engine/color";
 import { HsvWheel } from "./HsvWheel";
-import { HoldAdjust } from "./hold";
+import { HoldAdjust, HOLD_MS } from "./hold";
+import { hslToRgb } from "../engine/adjust";
+import {
+  SHADING_DEFAULTS, SHADING_RANGES, SHADING_ROWS, SHADING_SLOTS_MAX, SHADING_SLOTS_MIN,
+  flatRamps, normalizeParams, normalizeSlots, shadingHarmonics, shadingRamps,
+  type ShadingParams, type ShadingRow,
+} from "../engine/shading";
+import type { RGBA } from "../engine/types";
 import { PALETTE_PACKS } from "../data/palettes";
 import { BUILTIN_PATTERN_ZH, patternBytes, patternColorAt, type PatternDef } from "../data/patterns";
 import { tryReadGif } from "../io/gifread";
@@ -36,7 +43,7 @@ import { GROUP_TOLERANCE, type ColourAnalysis, type ColourEntry, type ColourGrou
 export function openColorAnalysis(): void {
   window.dispatchEvent(new Event("pc-color-analysis"));
 }
-export type ModalId = "menu" | "changelog" | "newdoc" | "newproject" | "export" | "adjust" | "settings" | "frame" | "framePrev" | "size" | "scaleadv" | "sheet" | "history" | "canvasRef" | "shortcuts" | "customise" | "actions" | "patterns" | "coloranalysis" | null;
+export type ModalId = "menu" | "changelog" | "newdoc" | "newproject" | "export" | "adjust" | "settings" | "frame" | "framePrev" | "size" | "scaleadv" | "sheet" | "history" | "canvasRef" | "shortcuts" | "customise" | "actions" | "patterns" | "coloranalysis" | "shading" | null;
 export type SizeMode = "canvas" | "sprite";
 export type SheetData = { w: number; h: number; px: Uint8ClampedArray; name: string };
 
@@ -146,6 +153,8 @@ export function PalettePanel({ t, onClose }: { t: ReturnType<typeof makeT>; onCl
             onClick={() => SESSION.paletteFromCanvas()} guide="pal-from-canvas" />
           <Btn icon="i-search" label={t("ca.open")} title={t("ca.hint")}
             onClick={openColorAnalysis} guide="pal-color-analysis" />
+          <Btn icon="i-dedupe" label={t("sh.open")} title={t("sh.hint")}
+            onClick={openShading} guide="pal-shading" />
         </RowActions>
         <div data-guide="pal-ops">
           <TabBar<"palette" | "doc" | "recent">
@@ -414,6 +423,7 @@ export function MenuModal({ t, snap, onClose, onOpen, onSheet, onRef, onGuide }:
           {act(t("open"), "i-open", () => void openFlow("new"), "menu-open")}
           <Btn label={t("import")} icon="i-import" className="menuitem" guide="menu-import" onClick={() => setSub("import")} />
           {go("coloranalysis")(t("ca.open"), "i-search", "menu-color-analysis")}
+          {go("shading")(t("sh.open"), "i-dedupe", "menu-shading")}
           {go("settings")(t("settings"), "i-gear", "menu-settings")}
           {go("shortcuts")(t("shortcutHelp"), "i-keys", "menu-shortcuts")}
           {go("customise")(t("customise"), "i-grid", "menu-customise")}
@@ -2026,6 +2036,164 @@ export function ColorAnalysisModal({ t, onClose }: { t: ReturnType<typeof makeT>
           }} />
         </RowActions>
       </div>
+    </Dialog>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// 色彩明暗（Color Shading）—— 移植自 Aseprite 脚本 "Color Shading v5.0"
+// 算法在 engine/shading.ts（纯函数），这里只负责摆放控件与色块。
+// ---------------------------------------------------------------------------
+
+/** 打开色彩明暗面板（同 openColorAnalysis：面板与弹窗两套状态，只有 App 能同时改） */
+export function openShading(): void {
+  window.dispatchEvent(new Event("pc-shading"));
+}
+
+/**
+ * 一个色块：轻点 = 前景色，长按（触屏）/ 右键（电脑）= 背景色。
+ *
+ * 长按与右键都要能设背景色：触屏没有右键，电脑长按又会先弹系统菜单，
+ * 所以两条路都接，并用 `fired` 标记吃掉长按之后那一次 click（否则会连着设成前景色）。
+ */
+function ShSwatch({ c, title, onTap, onHold, big, guide }: {
+  c: RGBA; title: string; onTap: () => void; onHold: () => void; big?: boolean; guide?: string;
+}) {
+  const fired = useRef(false);
+  const timer = useRef<number | null>(null);
+  const clear = () => { if (timer.current !== null) { window.clearTimeout(timer.current); timer.current = null; } };
+  const hold = () => {
+    if (fired.current) return;
+    fired.current = true;
+    clear();
+    onHold();
+  };
+  return (
+    <button
+      type="button"
+      className={"sh-swatch" + (big ? " big" : "")}
+      style={{ background: chipCss(c) }}
+      title={title}
+      data-guide={guide}
+      onPointerDown={() => { fired.current = false; clear(); timer.current = window.setTimeout(hold, HOLD_MS); }}
+      onPointerUp={clear}
+      onPointerLeave={clear}
+      onPointerCancel={clear}
+      onContextMenu={(e) => { e.preventDefault(); hold(); }}
+      onClick={() => { if (fired.current) { fired.current = false; return; } onTap(); }}
+    />
+  );
+}
+
+export function ShadingModal({ t, onClose }: { t: ReturnType<typeof makeT>; onClose: () => void }) {
+  const snap = useSession();
+  const [base, setBase] = useState<RGBA>(() => [SESSION.fg[0], SESSION.fg[1], SESSION.fg[2], SESSION.fg[3]]);
+  const [other, setOther] = useState<RGBA>(() => [SESSION.bg[0], SESSION.bg[1], SESSION.bg[2], SESSION.bg[3]]);
+  const [params, setParams] = useState<ShadingParams>(() => ({ ...SHADING_DEFAULTS }));
+  const [advanced, setAdvanced] = useState(true);
+  const [options, setOptions] = useState(false);
+  // Auto Pick：在别处取色（吸管 / 色轮 / 点色块）后整组重算 —— 对应 Lua 的 autoPick
+  const [autoPick, setAutoPick] = useState(true);
+  const fgSeen = useRef(rgbaToHex(SESSION.fg));
+
+  const ramps = useMemo(() => shadingRamps(base, other, params), [base, other, params]);
+  const harmonic = useMemo(() => shadingHarmonics(base), [base]);
+
+  useEffect(() => {
+    const hex = rgbaToHex(SESSION.fg);
+    if (hex === fgSeen.current) return;
+    fgSeen.current = hex;
+    if (autoPick) setBase([SESSION.fg[0], SESSION.fg[1], SESSION.fg[2], SESSION.fg[3]]);
+  }, [snap, autoPick]);
+
+  const useFg = () => { fgSeen.current = rgbaToHex(SESSION.fg); setBase([SESSION.fg[0], SESSION.fg[1], SESSION.fg[2], SESSION.fg[3]]); };
+  const useBg = () => setOther([SESSION.bg[0], SESSION.bg[1], SESSION.bg[2], SESSION.bg[3]]);
+  const pick = (c: RGBA) => { SESSION.setFgColor(c); bridge.toast(t("sh.copied") + " " + rgbaToHex(c)); };
+  const pickBg = (c: RGBA) => { SESSION.setBgColor(c); bridge.toast(t("sh.bgSet") + " " + rgbaToHex(c)); };
+  const set = (patch: Partial<ShadingParams>) => setParams((p) => normalizeParams({ ...p, ...patch }));
+  const tempCss = (deg: number): RGBA => {
+    const [r, g, b] = hslToRgb(deg, 1, 0.5);
+    return [r, g, b, 255];
+  };
+
+  const rows: Array<{ id: ShadingRow; colours: RGBA[] }> = SHADING_ROWS.map((id) => ({ id, colours: ramps[id] }));
+  const strobe = (label: string, colours: RGBA[], guide?: string) => (
+    <div className="sh-row">
+      <span className="sh-rowlabel">{label}</span>
+      <div className="sh-strip" data-guide={guide}>
+        {colours.map((c, i) => (
+          <ShSwatch key={i} c={c} title={rgbaToHex(c)} onTap={() => pick(c)} onHold={() => pickBg(c)} />
+        ))}
+      </div>
+    </div>
+  );
+
+  return (
+    <Dialog
+      title={t("sh.title")}
+      onClose={onClose}
+      className="dlg-sh"
+      bodyClass="col"
+      guide="dlg-shading"
+      top={<div className="row-note" data-guide="sh-hint">{t("sh.hint")}</div>}
+      extra={<div className="row-note sh-note">{t("sh.rowNote")}</div>}
+      footer={<>
+        <Btn icon="i-palette" label={t("sh.toPalette")} title={t("sh.toPaletteHint")} onClick={() => {
+          const n = SESSION.paletteMerge(flatRamps(ramps));
+          bridge.toast(n ? t("sh.added") + n : t("sh.addedNone"));
+        }} guide="sh-to-palette" />
+        <Btn icon="i-revert" label={t("sh.reset")} onClick={() => setParams({ ...SHADING_DEFAULTS })} guide="sh-reset" />
+        <Btn label={t("close")} className="primary" onClick={onClose} />
+      </>}
+    >
+      {/* 基色：点哪个哪个当基色；Get 重新读当前前景 / 背景色 */}
+      <div className="sh-row">
+        <span className="sh-rowlabel">{t("sh.base")}</span>
+        <div className="sh-base" data-guide="sh-base">
+          <ShSwatch big c={base} title={t("sh.baseA") + " " + rgbaToHex(base)} onTap={useFg} onHold={useBg} guide="sh-base-a" />
+          <ShSwatch big c={other} title={t("sh.baseB") + " " + rgbaToHex(other)} onTap={() => setBase([...other] as RGBA)} onHold={useBg} guide="sh-base-b" />
+          <Btn icon="i-eyedropper" label={t("sh.get")} onClick={() => { useFg(); useBg(); }} guide="sh-get" />
+        </div>
+      </div>
+      <div className="row-note sh-tiny">{t("sh.baseHint")}</div>
+
+      {rows.map((r) => strobe(t("sh.rows." + r.id), r.colours, "sh-row-" + r.id))}
+      {options && <>
+        {strobe(t("sh.rows.complementary"), harmonic.complementary)}
+        {strobe(t("sh.rows.triadic"), harmonic.triadic)}
+        {strobe(t("sh.rows.tetradic"), harmonic.tetradic)}
+      </>}
+
+      <RowActions className="sh-opts">
+        <label className="sh-opt"><Switch checked={advanced} onChange={setAdvanced} label={t("sh.advanced")} /><span>{t("sh.advanced")}</span></label>
+        <label className="sh-opt"><Switch checked={options} onChange={setOptions} label={t("sh.options")} /><span>{t("sh.options")}</span></label>
+        <label className="sh-opt"><Switch checked={autoPick} onChange={setAutoPick} label={t("sh.autoPick")} /><span>{t("sh.autoPick")}</span></label>
+      </RowActions>
+
+      {advanced && <>
+        <Row label={t("sh.tempDark")} hint={t("sh.tempHint")}>
+          <div className="sh-temps">
+            <ShSwatch c={tempCss(params.lowTemp)} title={rgbaToHex(tempCss(params.lowTemp))} onTap={() => pick(tempCss(params.lowTemp))} onHold={() => pickBg(tempCss(params.lowTemp))} guide="sh-temp-dark" />
+            <ScrubNum value={Math.round(params.lowTemp)} min={SHADING_RANGES.temp.min} max={SHADING_RANGES.temp.max}
+              onChange={(v) => set({ lowTemp: Number(v) || 0 })} />
+          </div>
+        </Row>
+        <Row label={t("sh.tempLight")}>
+          <div className="sh-temps">
+            <ShSwatch c={tempCss(params.highTemp)} title={rgbaToHex(tempCss(params.highTemp))} onTap={() => pick(tempCss(params.highTemp))} onHold={() => pickBg(tempCss(params.highTemp))} guide="sh-temp-light" />
+            <ScrubNum value={Math.round(params.highTemp)} min={SHADING_RANGES.temp.min} max={SHADING_RANGES.temp.max}
+              onChange={(v) => set({ highTemp: Number(v) || 0 })} />
+          </div>
+        </Row>
+        <NumberField label={t("sh.intensity")} hint={t("sh.intensityHint")} min={SHADING_RANGES.intensity.min} max={SHADING_RANGES.intensity.max}
+          value={params.intensity} onChange={(v) => set({ intensity: Number(v) || SHADING_DEFAULTS.intensity })} />
+        <NumberField label={t("sh.peak")} hint={t("sh.peakHint")} min={SHADING_RANGES.peak.min} max={SHADING_RANGES.peak.max}
+          value={params.peak} onChange={(v) => set({ peak: Number(v) || SHADING_DEFAULTS.peak })} />
+        <NumberField label={t("sh.sway")} hint={t("sh.swayHint")} min={SHADING_RANGES.sway.min} max={SHADING_RANGES.sway.max}
+          value={params.sway} onChange={(v) => set({ sway: Number(v) || 0 })} />
+        <NumberField label={t("sh.slots")} hint={t("sh.slotsHint")} min={SHADING_SLOTS_MIN} max={SHADING_SLOTS_MAX}
+          value={params.slots} onChange={(v) => set({ slots: normalizeSlots(Number(v)) })} />
+      </>}
     </Dialog>
   );
 }
