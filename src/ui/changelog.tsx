@@ -9,10 +9,10 @@ import { useKitPcMode } from "./kit";
 import { Dialog } from "./kit";
 
 /** keep in sync with android/AndroidManifest.xml versionName on every release */
-export const APP_VERSION = "1.1.1.5";
+export const APP_VERSION = "1.1.1.6";
 /** build stamp shown next to the version (support/debug: identifies the exact
  *  package a user is running when the version number itself does not change) */
-export const BUILD_TAG = "7bb01ab";
+export const BUILD_TAG = "c1109ab";
 
 export type ClgKind = "add" | "imp" | "fix";
 export interface ClgItem { kind: ClgKind; zh: string; en: string }
@@ -21,6 +21,17 @@ export interface ClgVersion { v: string; date: string; items: ClgItem[] }
 const it = (kind: ClgKind, zh: string, en: string): ClgItem => ({ kind, zh, en });
 
 export const CHANGELOG: ClgVersion[] = [
+  {
+    v: "1.1.1.6",
+    date: "2026-09-13",
+    items: [
+      it("add", "**高级缩放**（画布球 →「高级缩放」，也能从「修改尺寸」跳进去）：六种重采样算法 —— **最近邻**（默认，保持硬边）、**双线性**、**双三次**（Catmull-Rom）、**区域平均**（缩小最好，不会像最近邻那样丢细节）、**Scale2x** / **Scale3x**（像素画专用整数倍放大：只把邻居按规则搬过来，不混色，所以硬边不糊）；作用范围 **整个图像 / 当前图层 / 选区** 三者口径一致（都是「把这块内容重采样成你填的宽高」），**只有「整个图像」会改画布尺寸**，图层和选区都在画布内按左上角贴回（选区缩放后选区跟着变成新的大小）；**宽高 + 锁定比例 + 2× / 3× / 4× / ÷2 快捷倍率**（按当前范围的尺寸算）、**清理透明像素 RGB** 开关（透明边缘不会发黑发彩）、**原图 / 缩放后并排预览**（真的按当前设置跑一遍算法再画出来）；颜色插值一律在预乘 alpha 空间做，所以透明边缘干净；算法在当前比例下用不了（比如选了 2× 但填的不是两倍）会当场提示并说明降级到最近邻；一次缩放只占**一条**撤销。", "**Advanced scaling** (canvas ball → Advanced Scale, also reachable from Resize): six resampling algorithms — **nearest** (default, keeps hard edges), **bilinear**, **bicubic** (Catmull-Rom), **area average** (best for shrinking, never drops detail the way nearest does), and **Scale2x** / **Scale3x** (pixel-art integer upscalers that only move neighbour colours by rule and never blend, so hard edges stay crisp). Scope can be **whole image / current layer / selection**, all with the same meaning (resample that piece to the width and height you type); **only Whole Image changes the canvas size** — layer and selection are anchored at the top-left inside the canvas, and a selection grows with its content. There are **width/height fields, lock ratio and 2× / 3× / 4× / ÷2 shortcuts** (based on the current scope's size), a **clean transparent RGB** switch (no dark or coloured fringe around transparent edges), and a **side-by-side before/after preview** that actually runs the algorithm with your settings. Colour interpolation always happens in premultiplied alpha space, and an algorithm that cannot work at the current ratio (say Scale2x at a non-2× size) says so and explains the fallback to nearest. One scale is exactly **one** undo step."),
+      it("add", "**高级颜色分析器**（调色板面板的「颜色分析」或主菜单进入）：按范围（**画布**＝当前帧可见图层 / **当前图层** / **选区** / **所有帧**）统计每种颜色的**像素数与占比**、不透明 / 半透明 / 全透明分类和**用到的颜色数**；每个颜色标注它在调色板里的状态（**在板内 / 近似板色 / 板外**），还能列出**调色板里根本没用到的颜色**；**色相 / 饱和度 / 明度三条直方图**；**近似色分组**把「肉眼难分的重复色」分成一组（默认阈值 12，可调），一键**合并成代表色**（代表色＝组内像素最多的那个颜色，一条撤销）；**颜色替换**支持源色 / 目标色 / 容差（0–255）/ 范围 / 只替换不透明像素 / 保留半透明像素的 alpha / 目标色吸附到最近板色，改完提示动了多少像素且可撤销；每一行还能「设为前景色」或「选中这些像素」（按颜色直接建选区）；统计结果可**导出 CSV**。", "**Advanced colour analyser** (from the palette panel's Colour Analysis or the main menu): for a scope of **canvas** (visible layers of the current frame) / **current layer** / **selection** / **all frames**, it counts every colour's **pixels and share**, splits opaque / semi-transparent / fully transparent, and reports **how many colours are in use**. Each colour is tagged by its palette status (**in palette / close to a palette entry / outside the palette**) and the palette entries that are **never used** are listed too. There are **hue, saturation and lightness histograms**, plus **near-colour groups** that bundle colours the eye cannot tell apart (threshold 12 by default, adjustable) with a one-tap **merge to the representative colour** (the group's most frequent colour, one undo step). **Colour replace** takes a source colour, a target colour, a tolerance (0–255), a scope, an opaque-only option, an option to keep semi-transparent alpha and an option to snap the target to the nearest palette entry — it reports how many pixels changed and is undoable. Every row can also **set the foreground colour** or **select those pixels** (build a selection straight from a colour), and the statistics can be **exported as CSV**."),
+      it("imp", "**变形抓手的手感修好了**：上一版抓手离选区框太远、又都是同一种图标，既不好瞄准也看不出哪个是缩放哪个是旋转哪个是斜切。现在抓手**贴着选区框**（缩放 6px、旋转 30px、斜切 30px，小选区自动收窄到 20px），并且换成**固定语义图标**——方块＝缩放、圆形箭头＝旋转、双向斜线＝斜切，和电脑端的双层命中圈是同一套语义。", "**The transform handles feel right now**: last build they sat too far from the selection frame and all shared one icon, so they were hard to aim at and impossible to tell apart. They now **hug the selection frame** (scale 6px, rotate and skew 30px, narrowing to 20px on small selections) and use **fixed semantic icons** — square = scale, round arrow = rotate, double diagonal = skew — matching the desktop's two-ring scheme."),
+      it("fix", "顺手修掉 Scale2x / Scale3x 的规则实现错误：旧写法「上下邻居不同且左右邻居不同就把四格全换成邻居」会让**孤立像素整格消失**（放大后中心一个像素都不剩），现在按公开规则先判「两个邻居是否相等」再决定，孤立像素原样长成 2×2（3× 则是 3×3）实心块；1 像素宽的线也不会长毛刺。另外「图层 / 选区」缩放不再改动画布尺寸（之前会把别的图层挤错位），选区缩放也不再出现「放大后又缩回原大小」的空转。", "The Scale2x / Scale3x rules were wrong and are fixed: the old form (\"if the up and down neighbours differ and the left and right neighbours differ, replace all four cells with neighbours\") made an **isolated pixel vanish completely** — after upscaling, nothing of it was left. The published rules are applied now (check whether two neighbours are equal before changing a cell), so an isolated pixel grows into a solid 2×2 block (3×3 for Scale3x) and a one-pixel line never sprouts burrs. Layer and Selection scaling also no longer resize the canvas (that used to shove the other layers out of alignment), and scaling a selection no longer spins its wheels by scaling up and then fitting straight back."),
+    ],
+  },
+
   {
     v: "1.1.1.5",
     date: "2026-09-12",

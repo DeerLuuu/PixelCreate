@@ -15,20 +15,20 @@
 | 源码 | `src/`（入口 `src/main.tsx`），测试 `tests/` |
 | Web 产物 | `app2/www/js/app.js` + `app2/www/css/style.css`（esbuild IIFE） |
 | APK 产物 | `/sdcard/Download/PixelCraft-<版本号>.apk` 与 `build/PixelCraft.apk` |
-| 当前版本 | `1.1.0.0`（以 `src/ui/changelog.tsx` 的 `APP_VERSION` 为准） |
+| 当前版本 | `1.1.1.6`（以 `src/ui/changelog.tsx` 的 `APP_VERSION` 为准） |
 | 仓库根 | `/sdcard/Download/ds文件夹/pixelcraft`（= `/storage/emulated/0/Download/ds文件夹/pixelcraft`） |
 
 目录：
 
 ```
 src/app/       Session、设置注册表、引导注册表、手势映射、历史编解码
-src/engine/    文档模型、历史栈、像素操作、调色/对称/导出编码
+src/engine/    文档模型、历史栈、像素操作、调色/对称/导出编码、重采样（resample）、颜色分析（color-analysis）
 src/render/    视口、合成器、脏矩形、洋葱皮
 src/tools/     工具注册表、笔迹、选区变换
 src/io/        原生桥接、工程文件（.pxc）、Aseprite 读写（aseread/asewrite/zlib）、自动保存、参考图、安全区、base64
 src/ui/        React 外壳、弹窗、时间线、浮动球、i18n、样式
 android/       MainActivity（Java 层）+ AndroidManifest
-tests/         无 DOM 的引擎/逻辑回归（**3209 条断言**，`node .ts-out/tests/run-tests.js` 末尾会打印条数）
+tests/         无 DOM 的引擎/逻辑回归（**3392 条断言**，`node .ts-out/tests/run-tests.js` 末尾会打印条数）
 docs/          API.md / COMPARISON.md
 ```
 
@@ -268,6 +268,16 @@ PC 桌面化（1.0.8.5 / 1.0.8.6 批）：UI 规范与 `src/ui/kit` 控件库（
 Aseprite 兼容：`io/aseread.ts` / `io/asewrite.ts` / `io/zlib.ts`（自写同步 inflate；读 RGBA/灰度/索引色 + 图层/帧/链接 cel/调色板/标签，写 .aseprite 供 Aseprite 打开），打开流程按魔数识别、导出弹窗加 Aseprite 页签。
 动画标签：`engine/tags.ts`（命名帧区间的纯函数，帧结构操作在 `engine/ops.ts` 里统一维护范围）+ `app/playback.ts` 的 `PlayWindow`（从标签内的帧起播＝只循环这一段，起点不在标签里＝整条时间轴）+ 时间轴标签条（`ui/timeline.tsx`，点开 `TagModal` 改名/改范围/换色/删除/播放这一段）+ `.pxc` / `.aseprite` 双向存取。
 标签细节（同日追加）：循环按钮按模式换图标（`i-loop` / `i-loop-once` / `i-loop-pingpong` / `i-loop-reverse`）；**播放范围取法＝点标签永远播那个标签（`startPlayback(tag)`，重叠也不按帧优先），只有播放按钮才按当前帧推导**；播放中点其它标签的帧＝`Session.retargetPlay` 切换正在播的动画（仍在当前标签内则保持不动，点到所有标签之外＝回到整条时间轴）；重叠标签用 `tagLanes` 分层显示（每条一行，时间轴的标签区行数随之变化）；标签条手势＝轻点播放（`Session.tagPlay`）、拖左右边缘改范围（拖完才提交，一次拖动一条历史）、右键/长按打开编辑器。
+高级缩放与颜色分析（1.1.1.6）：`engine/resample.ts`（nearest / bilinear / bicubic(Catmull-Rom) / area / scale2x / scale3x，统一入口
+`resamplePixels` / `resampleRegion`，颜色插值一律走**预乘 alpha**，`opts.cleanTransparent` 清掉透明像素的 RGB，
+`SCALE_ALGOS` + `algoSupported` / `effectiveAlgo` 让 UI 不硬编码算法分支；**scale2x 用 Mazzoleni 的四条件式
+（先判两个邻居相等才改那一格）、scale3x 直译 `scale3x.c` 的 guard + `E!=对角` 形式**，画布外邻居按边缘钳制，
+不满足整数倍时降级最近邻）+ `ScaleModal`（算法 chips + 说明、宽高/锁比例/2×·3×·4×·÷2、作用范围、清透明、
+原图↔缩放后并排 canvas 预览）+ `Session.scaleAdvanced`（三个范围口径一致：**只有「整个图像」会改画布尺寸**，
+图层与选区都在画布内按左上角贴回、选区缩放后选区掩膜跟着变成新的大小；一次操作一条历史，且只在真改像素时压栈）。
+`engine/color-analysis.ts` + `ColorAnalysisModal`（颜色统计 / 近似色分组与一键合并 / 颜色替换 / 按颜色建选区 / CSV 导出，
+范围＝画布·图层·选区·所有帧，面板首屏即有内容）。变形抓手手感修正（`tools/xform.ts`）：抓手贴着选区框
+（缩放 6px / 旋转 30px / 斜切 30px，小选区收到 20px）并改成固定语义图标（方块＝缩放、圆箭头＝旋转、双斜线＝斜切）。
 
 ---
 

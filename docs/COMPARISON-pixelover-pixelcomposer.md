@@ -6,6 +6,10 @@
 >
 > 状态标记：`待核` = 本项目侧没能在源码或文档里确认（**不代表没有，只代表没查到**）。
 > 竞品侧凡原文已标「(待核)」的，本文照抄「待核」。
+>
+> **快照说明**：本文写于 2026-09-13，正文里「本项目」的代码量、测试文件数、断言数与版本号
+> 都是**当时的实测值**（33 个测试文件 / 2060 条断言 / `1.1.0.0`）。这些口径随时在变，
+> 要最新数字请看 `AGENTS.md` §1（当前 41 个测试文件 / 3392 条断言 / 版本 `1.1.1.6`）。
 
 ---
 
@@ -15,7 +19,7 @@
 
 | 代号 | 对象 | 说明 |
 |---|---|---|
-| **本项目** | PixelCraft 像素工坊 | 仓库 `/sdcard/Download/ds文件夹/pixelcraft`，当前版本 `1.1.0.0`（`src/ui/changelog.tsx` 的 `APP_VERSION`） |
+| **本项目** | PixelCraft 像素工坊 | 仓库 `/sdcard/Download/ds文件夹/pixelcraft`，当前版本 `1.1.1.6`（`src/ui/changelog.tsx` 的 `APP_VERSION`） |
 | **PixelOver** | Deakcor 的实时像素动画软件 | 资料：`/sdcard/Download/pixel-tools-features.md` §一、`/sdcard/Download/PixelOver-功能清单.md`（491 行，主依据是 Steam 官方新闻 API 的 57 条更新公告全文，来源编号 S1–S34） |
 | **Pixel Composer** | MakhamDev 的节点式像素合成器 | 资料：`/sdcard/Download/pixel-tools-features.md` §二、`/sdcard/Download/PixelComposer-功能清单.md`（2553 行，924 条节点全表，来源为官方文档站导航树 + 官方 GitHub 仓库 `datasrc/Nodes/**/info.json` + 120 条更新日志） |
 
@@ -58,7 +62,7 @@
 | 是否开源 | 源码在本仓库（`src/`、`android/`），**LICENSE 文件待核** | **不开源**（闭源商业软件，EULA，S6） | **开源，MIT**（GitHub `Ttanasart-pt/Pixel-Composer`，GML 编写，资料 §0） |
 | 技术栈 / 引擎 | TypeScript + React 18 + Canvas 2D，**无额外运行时框架**（`AGENTS.md` §1）；引擎层零 DOM | **Godot**（0.17 从 Godot 3.5.1 迁到 4.4，0.18.1 到 4.5→4.6，S7/S14） | **GameMaker（GML）**，源码 README 要求 GameMaker Studio IDE 2024.11（资料 §0） |
 | 体量 | `src/` **85 个** TS/TSX 文件 **24881 行**（分层：ui 9109 / app 5929 / render 3647 / io 2701 / engine 2108 / tools 1251 / data 64 / main 72；最大单文件 `session.ts` 3662、`view.ts` 3244、`App.tsx` 2706）；`tests/` **35 个**文件 **7108 行**（其中 33 个是测试文件）；另有 `src/ui/style.css` 1238 行 | 未找到代码量口径 → **待核** | 官方口径 "over 300 nodes" / Steam "200+ nodes"；实测**非 3D 节点 924 条（去重 821 个唯一）**、官方仓库 **941 个 `info.json`**（资料 §0、附录 A） | — |
-| 当前版本 | **1.1.0.0**（`src/ui/changelog.tsx` 的 `APP_VERSION` = `android/AndroidManifest.xml` 的 `versionName`，versionCode 56） | 稳定版 **0.19**（2026-08-11）+ 热修 0.19.0.1；最新预发布 **0.19.1 RC1**（2026-09-03）；Steam Early Access 自 2021-10-13 | 稳定版 **1.21.0**（2026-04-28）；最新 beta **1.21.9.2**（2026-08-31） |
+| 当前版本 | **1.1.1.6**（`src/ui/changelog.tsx` 的 `APP_VERSION` = `android/AndroidManifest.xml` 的 `versionName`，versionCode 63） | 稳定版 **0.19**（2026-08-11）+ 热修 0.19.0.1；最新预发布 **0.19.1 RC1**（2026-09-03）；Steam Early Access 自 2021-10-13 | 稳定版 **1.21.0**（2026-04-28）；最新 beta **1.21.9.2**（2026-08-31） |
 | 界面语言 | 中英双语（`src/ui/i18n.ts`，单文件双语，`tests/i18n.test.ts` 静态校验键完整） | 8 种语言，翻译托管 Crowdin（S2/S5） | 商店标注界面语言仅 **English**；官方提供本地化管理器，社区有多语言汉化仓库（资料 §0） |
 | 目标用户 | 手机/平板随手画的像素画创作者；自用 / 移植作品（`docs/COMPARISON.md` 一） | 独立游戏美术：需要把高清图/3D 转成像素精灵、做骨骼动画与导出管线 | 技术型美术 / 做程序化生成与批量管线的用户：做 VFX、模拟、精灵表自动化 |
 | 无 AI 声明 | 未在仓库找到相关声明 → **待核** | 官网明确声明**不含生成式 AI**（S1/S9） | 资料未涉及 → **待核** |
@@ -260,7 +264,7 @@
 
 | 能力 | PixelCraft | PixelOver | Pixel Composer | 备注 / 依据 |
 |---|---|---|---|---|
-| Android APK | 有。自研无 Gradle 打包链（`javac` + `d8` → 往模板 APK 塞 dex 与 www）；`android/AndroidManifest.xml`：`com.pixelcraft.app`、minSdk 24 / targetSdk 34、**权限只有 `android.permission.VIBRATE`**（无 INTERNET ⇒ 天然全离线）、versionCode 56 / versionName `1.1.0.0`；`MainActivity.java` 399 行、JS 桥 `PixelBridge` 8 个 `@JavascriptInterface` 方法（saveFile / openFile / toast / hasVibrator / vibrate / insets / setImmersive / keepAwake），加载 `file:///android_asset/www/index.html`。**注意**：仓库内**没有** apk 产物（`build/` 为空且在 `.gitignore` 里）、也**没有**出包脚本（`scripts/` 4 个全是 Web / 测试 / 部署），真正的打包链在容器 `/root/pk/`（`AGENTS.md` §6） | 无 | 无 | — |
+| Android APK | 有。自研无 Gradle 打包链（`javac` + `d8` → 往模板 APK 塞 dex 与 www）；`android/AndroidManifest.xml`：`com.pixelcraft.app`、minSdk 24 / targetSdk 34、**权限只有 `android.permission.VIBRATE`**（无 INTERNET ⇒ 天然全离线）、versionCode 63 / versionName `1.1.1.6`；`MainActivity.java` 399 行、JS 桥 `PixelBridge` 8 个 `@JavascriptInterface` 方法（saveFile / openFile / toast / hasVibrator / vibrate / insets / setImmersive / keepAwake），加载 `file:///android_asset/www/index.html`。**注意**：仓库内**没有** apk 产物（`build/` 为空且在 `.gitignore` 里）、也**没有**出包脚本（`scripts/` 4 个全是 Web / 测试 / 部署），真正的打包链在容器 `/root/pk/`（`AGENTS.md` §6） | 无 | 无 | — |
 | PWA / 网页版 | 有。`app2/www` + `manifest.webmanifest`；GitHub Pages 部署（`README.md` §5）；**无 service worker**（`app2/www/` 目录里没有 `sw.js`，源码里 `serviceWorker` 零命中；离线请装 APK） | 无 | 无 | — |
 | 桌面原生程序 | **无**（`docs/PC.md` §三「不做多窗口」；PC 模式只是 Web 界面的桌面化） | 有（Win/macOS/Linux） | 有（Win + Linux 构建 + macOS beta） | — |
 | 硬件要求 | 低（WebView / 浏览器；无 GPU 特性要求） | 高：**必须完整 Vulkan 1.2**，部分核显不支持；RAM 4GB（建议 8GB）（S5） | 中：Win10+ / 64 位 / 8GB / OpenGL / DX11 / 500MB（资料 §0） | 本项目门槛最低 |
@@ -268,7 +272,7 @@
 | 导出保护 / 预算 | 有。`src/io/exporters.ts` 的 `MAX_IMAGE_PIXELS = 16M`、`MAX_TOTAL_PIXELS = 48M`、`MAX_LAYER_FILES = 12`、`exportBudgetError` | 有导出进度对话框（可取消）（S22） | 有导出前目标文件校验、路径 token、外部编码器（ImageMagick/WebP/Gifski/FFmpeg）（资料 §8.2） | 本项目的像素预算限制是移动端的取舍 |
 | 测试规模 | 有。`tests/` **33 个测试文件**（`*.test.ts` 32 + `*.test.tsx` 1）+ `common.ts` / `run-tests.ts`，**无 DOM 依赖**（Node 直接跑；33 个测试文件共 6970 行）。**口径**：`tests/common.ts` 的 `eq`/`ok` 现在会累计条数，`finish()` 在 `ALL PASS` 之前打印 `assertions: N`，所以这个数字是**可复现**的——本次实测 **2060 条**。写这份文档时它还没有计数器，当时只能静态数断言调用点（1781 处）；随后已补上计数器并把 `README.md` / `AGENTS.md` / `docs/API.md` / `docs/UI.md` 里的旧口径（540+ / 约 1950 / 1949 项 / 1053 条 / 1108 项）统一改成 2060 | 未见测试口径 → 待核 | 官方开源仓库存在，但资料未给测试规模 → 待核 | 本项目是三者里唯一有公开可跑的无 DOM 回归套件的 |
 | 测试覆盖边界 | **有明确空白**：`tests/` 覆盖 `exporters.ts` 的纯函数（`frameRange` / `exportBudgetError` / `encodeGIF` 真编解码）、`aseread` / `asewrite` / `zlib`、`Session.pasteAs*`；但 `src/ui/modals.tsx` 的 `openFileBytes` / `decodeStill` / `SheetModal` / `ExportModal` 因依赖 DOM **零覆盖** ⇒ **整条导入/导出 UI 流程没有自动化测试**；`tests/view.test.ts` 里 `gesture` 零命中（画布手势的**触发**逻辑无单测，只有会话层的映射测试）；`jumpTo` 无测试；`safearea` / 主题无独立单测 | 未评估 | 未评估 | 这也是本文对「导入 / 导出」的结论只能停在源码级的原因之一 |
-| 版本号一致性 | `APP_VERSION`（`src/ui/changelog.tsx` = `1.1.0.0`）与 `android/AndroidManifest.xml` 的 `versionName` 一致，versionCode 56；已知缺口：**需手动同步、无自动校验**（`AGENTS.md` §7） | 不适用 | 不适用 | — |
+| 版本号一致性 | `APP_VERSION`（`src/ui/changelog.tsx` = `1.1.1.6`）与 `android/AndroidManifest.xml` 的 `versionName` 一致，versionCode 63；已知缺口：**需手动同步、无自动校验**（`AGENTS.md` §7） | 不适用 | 不适用 | — |
 | 代码可维护性（已知缺口） | `view.ts` / `session.ts` / `App.tsx` 仍偏大（`AGENTS.md` §7）；`session.ts` 被自家文档称为「上帝对象」（`docs/COMPARISON.md` 三.6，该评价写在早期版本，参考时注意时效） | 未评估 | 未评估 | — |
 
 ---
@@ -412,7 +416,7 @@
 | `src/data/palettes.ts` | `PALETTE_PACKS` / `defaultPalette` |
 | `src/ui/modals.tsx` | 弹窗清单、`H_ZH`/`H_EN` 历史动作名表、`.gpl` 导出入口 |
 | `src/ui/orb-layout.ts` / `pie-layout.ts` / `color-drag.tsx` / `refimg.tsx` / `fxparam.tsx` / `replay.tsx` / `uibar.ts`（经 `docs/API.md` §18） | 浮动球几何、快捷圆盘、颜色拖拽、参考图、特效参数、历史回放、界面定制 |
-| `src/ui/changelog.tsx` / `android/AndroidManifest.xml` | `APP_VERSION = 1.1.0.0` / `versionName 1.1.0.0` + `versionCode 56`（一致） |
+| `src/ui/changelog.tsx` / `android/AndroidManifest.xml` | `APP_VERSION = 1.1.1.6` / `versionName 1.1.1.6` + `versionCode 63`（一致） |
 | `src/ui/i18n.ts` | 中英双语 440 条键 |
 | `tests/`（33 个 `*.test.ts(x)`） | 测试文件计数；`tests/guide-anchors.test.ts` / `i18n.test.ts` / `ui-tokens.test.ts` / `ui-kit.test.tsx` 的静态校验机制 |
 
