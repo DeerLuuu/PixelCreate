@@ -668,6 +668,13 @@ const TAN_SKEW_LIMIT = Math.tan((85 * Math.PI) / 180);
 
 ### 10b.3 枢轴、干净角、像素精确通道
 
+**双击枢轴 = 复位到内容正中**（`View.resetXfPivot()`，真机反馈「枢轴拖出去以后拖不回来，只能一档档循环预设」）：
+它等价于 `setPivotPreset("cc")`，同样过 `pivotKeepPicture()` 补平移补偿，所以**画面逐字节不动**，
+只改「绕哪里转」；枢轴已经在中正时返回 `false`（不重复落历史）。
+判定在 `View.tryStartXf()` 里：只有**上一次点击是「按在枢轴上且没拖动」**（由 `xfEndDrag()` 登记
+`pivotTapT/pivotTapPt`）且在 `prefs.doubleTapMs` 内、落点相距 40px 以内，才算双击 ——
+所以「拖完枢轴再点一下」不会被误判。触屏双击与电脑双击都走同一条路（不依赖 `isPc()`）。
+
 ```ts
 type PivotPreset = "cc" | "tl" | "tc" | "tr" | "cl" | "cr" | "bl" | "bc" | "br";
 const PIVOT_PRESETS: PivotPreset[];
@@ -1191,6 +1198,7 @@ class View {
   setPivotPreset(k: PivotPreset): boolean;      // 9 档预设（拖拽枢轴后会被判成最近的一档）
   pivotPreset(): PivotPreset | null;            // 当前枢轴落在哪一档
   cyclePivot(step = 1): void;                   // 9 档循环（选区球的「枢轴」chip）
+  resetXfPivot(): boolean;                      // 双击枢轴：复位到内容正中（画面不动；已在中正返回 false）
   commitXf(): void;                             // 「完成」：落下一条历史并结束会话
   revertXf(): void;                             // 「还原」：会话整个丢掉，像素逐字节回滚（不进历史）
   xfHint: string | null;                        // PC 悬停提示（"scale:br" 这类）

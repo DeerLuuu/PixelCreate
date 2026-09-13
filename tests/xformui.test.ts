@@ -60,6 +60,8 @@ interface VX {
   transforming: boolean;
   pivotPreset(): string | null;
   setPivotPreset(k: string): boolean;
+  /** 双击枢轴 / 显式调用：把它复位到内容正中（画面不动） */
+  resetXfPivot(): boolean;
   cyclePivot(): string | null;
   commitXf(): void;
   revertXf(): void;
@@ -783,6 +785,36 @@ export function testXformUi(): void {
       ok("xformui.pivot.drag-follows-pointer",
         near(Math.round(pv3.x - pv2.x), ddx) && near(Math.round(pv3.y - pv2.y), ddy),
         JSON.stringify([pv2, pv3, ddx, ddy]));
+
+      // **双击枢轴 = 复位到内容正中**（真机反馈：枢轴拖出去以后没法一次拖回来）
+      {
+        const centre = pivotOfFrame(e.v)!;
+        const away = e.v.xfPivotScreen()!;
+        ok("xformui.pivot.reset.moved-away", Math.hypot(away.x - centre.x, away.y - centre.y) > 4,
+          JSON.stringify([away, centre]));
+        const bytes = celData(e.s).slice();
+        const pv = e.v.xfPivotScreen()!;
+        // 单点一下不算双击：枢轴不该动
+        e.v.onDown(ev(pv.x, pv.y, "touch"));
+        e.v.onUp(ev(pv.x, pv.y, "touch"));
+        dom.flush();
+        const afterOne = e.v.xfPivotScreen()!;
+        ok("xformui.pivot.reset.single-tap-keeps",
+          near(Math.round(afterOne.x), Math.round(pv.x)) && near(Math.round(afterOne.y), Math.round(pv.y)),
+          JSON.stringify([pv, afterOne]));
+        // 再点一下 = 双击 -> 回到内容正中，且画面逐字节不动
+        e.v.onDown(ev(pv.x, pv.y, "touch"));
+        e.v.onUp(ev(pv.x, pv.y, "touch"));
+        dom.flush();
+        const back = e.v.xfPivotScreen()!;
+        ok("xformui.pivot.reset.double-tap-centres",
+          near(Math.round(back.x), Math.round(centre.x)) && near(Math.round(back.y), Math.round(centre.y)),
+          JSON.stringify([back, centre]));
+        eq("xformui.pivot.reset.preset", e.v.pivotPreset(), "cc");
+        eq("xformui.pivot.reset.picture-still", diffBytes(celData(e.s), bytes), 0);
+        // 已经在中正时不再重复复位（返回 false，也不会多落一次历史）
+        ok("xformui.pivot.reset.already-centre", !e.v.resetXfPivot());
+      }
     }
     // 旋转之后枢轴**不动**：先把枢轴拖到框中心偏一点，再旋转，枢轴坐标必须一模一样
     {

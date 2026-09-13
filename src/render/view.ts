@@ -409,6 +409,9 @@ export class View {
   private gestureStartPx: PxPoint | null = null;
   /** the previous finished gesture was a no-move draw tap (dot) */
   private lastTapWasDraw = false;
+  /** 上一次「按在枢轴上」的时间与位置：双击枢轴＝把它复位到内容正中 */
+  private pivotTapT = 0;
+  private pivotTapPt: PxPoint | null = null;
   /** and that tap actually recorded a history step (so it can be rolled back) */
   private lastTapChanged = false;
   /** the gesture involved 2+ fingers (two-finger double-tap -> redo) */
@@ -3701,6 +3704,24 @@ export class View {
     return this.xfStart({ x: sx, y: sy }, "move");
   }
 
+  /**
+   * 双击枢轴 = 把它复位到**内容正中**（9 档预设里的 `cc`），返回是否真的挪了位置。
+   *
+   * 与拖动枢轴、`setPivotPreset()` 同款：`pivotKeepPicture()` 会补平移补偿，
+   * 所以复位枢轴**画面逐像素不动** —— 它只改「绕哪里转」。
+   */
+  resetXfPivot(): boolean {
+    const g = this.xf;
+    if (!g || g.mode === "warp" || !g.tp) return false;
+    const p = pivotPresetPoint(pivotBoxOf(g), "cc");
+    if (g.tp.pivot.x === p.x && g.tp.pivot.y === p.y) return false;
+    this.pivotKeepPicture(g, p);
+    g.pivotTouched = true;
+    g.moved = true;
+    this.xfApply();
+    return true;
+  }
+
   /** 当前枢轴落在哪一档预设（9 档循环 / 高亮用；没有会话返回 null） */
   pivotPreset(): PivotPreset | null {
     const g = this.xf;
@@ -3768,7 +3789,24 @@ export class View {
       if (this.selDrag) { this.selDrag.frameOnly = true; return true; }
     }
     const hit = this.xfHitAt(pt);
-    if (hit) return this.xfStart(pt, hit.kind, hit.anchor);
+    if (hit) {
+      // 双击枢轴＝复位到内容正中（真机反馈：枢轴拖到别处后拖不回来，只能一档档循环预设）。
+      // 「前一次点击」由 `xfEndDrag()` 登记（必须是**按下去没拖动**的那一下），
+      // 所以「拖完枢轴又点一下」不会被误判成双击。
+      if (hit.kind === "pivot") {
+        const near = !!this.pivotTapPt && Math.hypot(pt.x - this.pivotTapPt.x, pt.y - this.pivotTapPt.y) < 40;
+        if (this.pivotTapT > 0 && Date.now() - this.pivotTapT < s.prefs.doubleTapMs && near) {
+          this.pivotTapT = 0;
+          this.pivotTapPt = null;
+          if (this.resetXfPivot()) {
+            s.hapticTick("复位枢轴", 0.7);
+            this.drawOverlay();
+          }
+          return true;
+        }
+      }
+      return this.xfStart(pt, hit.kind, hit.anchor);
+    }
     // 会话里：没命中抓手但落在框内 = 接着移动内容
     if (this.inXform()) {
       if (!insideFrame(f, pt)) return false;
@@ -3794,6 +3832,18 @@ export class View {
     const d = this.xfDrag;
     this.xfDrag = null;
     if (!g || g.mode === "warp" || !d || !g.tp) return;
+    // 双击枢轴的「第一次点击」在这里登记：只有**按下去没拖动**（枢轴还在按下处）
+    // 才算一次点击，真正拖过枢轴的不算 —— 否则「拖完再点一下」会被当成双击复位。
+    if (d.kind === "pivot" && d.pivot0) {
+      const still = Math.hypot(g.tp.pivot.x - d.pivot0.x, g.tp.pivot.y - d.pivot0.y) < 1e-6;
+      if (still) {
+        this.pivotTapT = Date.now();
+        this.pivotTapPt = this.xfPivotScreen();
+      } else {
+        this.pivotTapT = 0;
+        this.pivotTapPt = null;
+      }
+    }
     // 枢轴的跟位（缩放后按归一化比例跟位、旋转后不动）已经**在拖动过程中实时做了**，
     // 见 `xfMove()` 的 scale 分支 + `pivotKeepPicture()`：实时做才不会在松手的一瞬间
     // 让枢轴标记跳一下（这里再算一次会变成「跟位两次」，是错的）。
