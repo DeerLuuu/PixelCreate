@@ -13,10 +13,10 @@ import {
   affineFrom, adjustPivot, axisOf, boxCenter, distToFrame, exactMove, grabAt, indexBox,
   insideFrame, isExactTransform, isIntegerShift, pivotComp, pivotPresetAt, pivotPresetPoint,
   scaleAnchor, screenAnchors, screenFrameOf, solveRotate, solveScale, solveSkew,
-  skewPivotOf, toFrameLocal, anchorPoint, ringHitAt, touchGrabs, touchLayout, touchHitRadius,
-  XF_LABEL, XF_LABEL_ORDER, PIVOT_PRESETS,
+  skewPivotOf, toFrameLocal, anchorPoint, ringHitAt, transformGrabs, grabOffsets, touchHitRadius,
+  edgeNormalOf, XF_LABEL, XF_LABEL_ORDER, PIVOT_PRESETS, ANCHORS,
   PC_HIT, TOUCH_HIT, type AnchorId, type ScreenFrame, type XfBox,
-  type XfKind, type XfParams, type PivotPreset, type Grab, type HitRadii,
+  type XfKind, type XfParams, type PivotPreset, type Grab, type GrabOffsets, type HitRadii,
 } from "../tools/xform";
 import type { Mat3 } from "../tools/warp";
 import type { Session } from "../app/session";
@@ -79,6 +79,105 @@ export const PIVOT_ORDER = ["tl", "tc", "tr", "cl", "cc", "cr", "bl", "bc", "br"
  */
 function pivotBoxOf(g: NonNullable<View["xf"]>): XfBox {
   return indexBox(g.st.content.w, g.st.content.h);
+}
+
+// 选区变换框上「固定图标抓手」的配色：与同文件选区框 / 手柄的现有画法同一套
+// （白底深边＝缩放，蓝＝旋转，橙＝斜切，暖黄＝悬停高亮），不引入新色板。
+const XF_ICON_FILL = "#ffffff";
+const XF_ICON_EDGE = "#20242f";
+const XF_ICON_ROT = "#aed1ff";
+const XF_ICON_ROT_EDGE = "#1b2a44";
+const XF_ICON_ROT_INK = "#14202e";
+const XF_ICON_SKEW = "#ffd8a8";
+const XF_ICON_SKEW_EDGE = "#3a2a12";
+const XF_ICON_HOT = "#ffd166";
+
+/** 缩放抓手：角＝方块、边中点＝沿边方向的扁矩形（中心都贴在选区框上） */
+const XF_SQ = 12;          // 角方块边长
+const XF_FLAT_L = 18;      // 边中点扁矩形的长（沿边）
+const XF_FLAT_W = 8;       // 边中点扁矩形的宽（沿法线）
+/** 旋转 / 斜切图标的外接半径（画出来约 22px，比两者 24px 的圆心距略小，肉眼分得开） */
+const XF_ROT_R = 11;
+
+/**
+ * 画一个抓手图标（两平台同一套固定图标，靠**形状**区分语义）：
+ *   · 缩放＝方块 / 扁矩形（白底深边）；
+ *   · 旋转＝圆形箭头（蓝底 + 深色箭头）；
+ *   · 斜切＝双向斜线（橙，带深色描边当底衬，任何底色上都看得清）。
+ * `hot` 为真时把该抓手点亮成暖黄（PC 悬停提示用）。
+ */
+function drawXfGrab(ctx: CanvasRenderingContext2D, g: Grab, tangent: { x: number; y: number },
+  normal: { x: number; y: number }, hot: boolean): void {
+  ctx.save();
+  if (g.kind === "scale") {
+    ctx.fillStyle = hot ? XF_ICON_HOT : XF_ICON_FILL;
+    ctx.strokeStyle = XF_ICON_EDGE;
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    if (g.anchor === "tl" || g.anchor === "tr" || g.anchor === "br" || g.anchor === "bl") {
+      // 角：方块
+      ctx.rect(g.x - XF_SQ / 2, g.y - XF_SQ / 2, XF_SQ, XF_SQ);
+    } else {
+      // 边中点：扁矩形，长边顺着那条边（框转过角度 / 斜切也照样贴着边）
+      ctx.translate(g.x, g.y);
+      ctx.rotate(Math.atan2(tangent.y, tangent.x));
+      ctx.rect(-XF_FLAT_L / 2, -XF_FLAT_W / 2, XF_FLAT_L, XF_FLAT_W);
+    }
+    ctx.fill();
+    ctx.stroke();
+  } else if (g.kind === "rotate") {
+    // 底盘 + 圆形箭头
+    ctx.beginPath();
+    ctx.fillStyle = hot ? XF_ICON_HOT : XF_ICON_ROT;
+    ctx.strokeStyle = XF_ICON_ROT_EDGE;
+    ctx.lineWidth = 1.4;
+    ctx.arc(g.x, g.y, XF_ROT_R, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    const r = XF_ROT_R * 0.56;
+    const a0 = -Math.PI * 0.35, a1 = Math.PI * 1.15;
+    ctx.strokeStyle = XF_ICON_ROT_INK;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(g.x, g.y, r, a0, a1);
+    ctx.stroke();
+    // 箭尾的小三角（缺了它只是一个圆弧，看不出方向）
+    const tip = { x: g.x + Math.cos(a1) * r, y: g.y + Math.sin(a1) * r };
+    const tx = -Math.sin(a1), ty = Math.cos(a1);
+    const nx = Math.cos(a1), ny = Math.sin(a1);
+    ctx.fillStyle = XF_ICON_ROT_INK;
+    ctx.beginPath();
+    ctx.moveTo(tip.x + tx * 4.4, tip.y + ty * 4.4);
+    ctx.lineTo(tip.x + nx * 3.2, tip.y + ny * 3.2);
+    ctx.lineTo(tip.x - nx * 3.2, tip.y - ny * 3.2);
+    ctx.closePath();
+    ctx.fill();
+  } else {
+    // 斜切：双向斜线（两条平行斜杠，方向＝边方向稍微偏法线，读起来就是「沿边推」）
+    const sx = tangent.x + normal.x * 0.55, sy = tangent.y + normal.y * 0.55;
+    const sl = Math.hypot(sx, sy) || 1;
+    const ux = sx / sl, uy = sy / sl;        // 斜杠方向
+    const px = -uy, py = ux;                 // 两条斜杠之间的错开方向
+    ctx.lineCap = "round";
+    for (const pass of [0, 1]) {
+      ctx.strokeStyle = pass === 0 ? XF_ICON_SKEW_EDGE : (hot ? XF_ICON_HOT : XF_ICON_SKEW);
+      ctx.lineWidth = pass === 0 ? 4.4 : 2.2;
+      ctx.beginPath();
+      for (const sgn of [1, -1]) {
+        const cx = g.x + px * 4.2 * sgn, cy = g.y + py * 4.2 * sgn;
+        ctx.moveTo(cx - ux * 6, cy - uy * 6);
+        ctx.lineTo(cx + ux * 6, cy + uy * 6);
+      }
+      ctx.stroke();
+    }
+  }
+  ctx.restore();
+}
+
+/** 边中点抓手的**边方向**（单位向量）：法线顺时针转 90°，与 `xform.ts` 的 `edgeNormalOf()` 互逆 */
+function grabTangent(normal: { x: number; y: number }): { x: number; y: number } {
+  const l = Math.hypot(normal.x, normal.y) || 1;
+  return { x: -normal.y / l, y: normal.x / l };
 }
 
 /** lock / unlock glyphs, matching the app's i-lock / i-unlock SVG symbols (24x24) */
@@ -348,8 +447,8 @@ export class View {
   } | null;
   /** 上一次 `beginWarp` 被拒的原因（UI 据此给不同提示；"locked" 已由 paintBlockedNote 说过） */
   lastWarpError: "noSel" | "tooThin" | "locked" | null = null;
-  /** PC 鼠标悬停在哪个抓手 / 圈上（画圈提示与光标形状用） */
-  private xfHover: { kind: XfKind; x: number; y: number } | null = null;
+  /** PC 鼠标悬停在哪个抓手 / 圈上（画圈提示与光标形状用；`anchor` 用于点亮那一个图标） */
+  private xfHover: { kind: XfKind; anchor?: AnchorId; x: number; y: number } | null = null;
   /** 正在拖变形控制点：画布上跟手显示当前坐标（`x, y`；半像素模式带一位小数） */
   private warpDragOn = false;
 
@@ -2162,7 +2261,7 @@ export class View {
       this.cancelPickTimer();
       return;
     }
-    // 常规自由变换（Aseprite 那套：内圈缩放 / 外圈旋转斜切 / 触屏独立抓手 / 枢轴 / 移动）：
+    // 常规自由变换（Aseprite 那套：贴着框的固定图标抓手 / 枢轴 / 移动；PC 另有双层圈兜底）：
     // 先让变换框抢命中（它压在选区上面），命中不了才落到选区手势
     if (!this.xfDrag && selOn && this.tryStartXf(pt)) { this.cancelPickTimer(); return; }
     // pressing inside an existing selection moves its content directly;
@@ -2379,13 +2478,15 @@ export class View {
       if (this.xf.drag !== undefined) this.warpMove(pt);
       return;
     }
-    // 变换中：抓住抓手就拖；没抓住时在 PC 上发布悬停提示（双层命中圈要知道「再往外一点」）
+    // 变换中：抓住抓手就拖；没抓住时在 PC 上发布悬停提示（点亮那个固定图标 + 外圈提示）
     if (this.inXform()) {
       if (this.xfDrag) { this.xfMove(pt); return; }
       if (isPc() && e.pointerType === "mouse") {
         const h = this.xfHitAt(pt);
-        const next = h && h.kind !== "move" ? { kind: h.kind, x: pt.x, y: pt.y } : null;
-        const same = (this.xfHover?.kind ?? null) === (next?.kind ?? null);
+        const next = h && h.kind !== "move" ? { kind: h.kind, anchor: h.anchor, x: pt.x, y: pt.y } : null;
+        // 换了抓手（或换了锚点）才重画：同 kind 的不同锚点也要重画，否则高亮留在上一个图标上
+        const same = (this.xfHover?.kind ?? null) === (next?.kind ?? null)
+          && (this.xfHover?.anchor ?? null) === (next?.anchor ?? null);
         this.xfHover = next;
         if (!same) {
           this.xfHint = h ? h.kind + (h.anchor ? ":" + h.anchor : "") : null;
@@ -2396,10 +2497,10 @@ export class View {
       this.xfHint = null;
       return;
     }
-    // PC 上没进会话时也发布一次悬停提示（画外层圈 / 光标），但不要拦着下面的选区手势
+    // PC 上没进会话时也发布一次悬停提示（点亮图标 / 外圈），但不要拦着下面的选区手势
     if (isPc() && e.pointerType === "mouse") {
       const h = this.xfHitAt(pt);
-      this.xfHover = h && h.kind !== "move" ? { kind: h.kind, x: pt.x, y: pt.y } : null;
+      this.xfHover = h && h.kind !== "move" ? { kind: h.kind, anchor: h.anchor, x: pt.x, y: pt.y } : null;
       this.xfHint = h ? h.kind + (h.anchor ? ":" + h.anchor : "") : null;
     }
     if (this.xf) {
@@ -2775,16 +2876,19 @@ export class View {
   // ------------------------------------------- selection transform box
   // ------------------------- 选区自由变换（Aseprite 那套：移动 / 缩放 / 旋转 / 斜切）---------
   //
-  // 交互模型（与 `warp` 模式的「常驻控制点」不同，这里是**桌面 Aseprite 的双层圈 + 触屏的独立抓手**）：
-  //   · PC：8 个物理锚点各带两层同心命中圈 —— 内圈（22px）＝缩放，外圈（34px）＝角旋转 / 边中点斜切；
-  //   · 触屏：把「外圈」换成画得出来的**独立抓手**（旋转 / 斜切抓手沿框轴外移 46px，命中半径 40px），
-  //     全靠「再往外一点」的隐形圈在手机上既看不见也点不准；
+  // 交互模型（与 `warp` 模式的「常驻控制点」不同；两平台共用同一套**贴着选区框的固定图标**）：
+  //   · 抓手：16 个固定图标 —— 缩放 ×8（4 角＝方块、4 边中点＝扁矩形，离框 6px）、
+  //     旋转 ×4（角外侧沿对角线 30px，圆形箭头）、斜切 ×4（边中点外侧沿法线 30px，双向斜线）；
+  //     形状固定 ⇒ 语义一眼可辨，不再靠「离框多远」区分；框变小只把旋转 / 斜切收窄到 20px，
+  //     **不隐藏类别**（隐藏会让拖动中途抓手消失、语义跳档）。见 `xform.ts` 的 `transformGrabs()`。
+  //   · 命中：图标先判（触屏半径 38 起、按同类间距收窄到 24 下限；PC 缩放 22 / 旋转斜切 34），
+  //     冲突时按 `GRAB_REACH` 的优先级（缩放 > 旋转 > 斜切）+ 最近优先；PC 图标没中再回落「双层圈」。
   //   · 框内拖动＝移动内容；贴着选区边框 ±2px 的环带＝只移动选区边框；
   //   · 枢轴可拖，另有 8 向 + 中心共 9 档预设；缩放后按归一化比例跟位、旋转后不动。
   //
   // 状态机由 `xf`（会话）+ `xfDrag`（本次拖拽）两层组成：**一次会话 = 一条 undo**。
 
-  /** 当前是 PC（鼠标 + 键盘）还是触屏 —— 决定双层圈还是独立抓手 */
+  /** 当前是 PC（鼠标 + 键盘）还是触屏 —— 只影响命中半径 / 圈提示，图标两平台一致 */
   private xfPc(): boolean {
     return isPc();
   }
@@ -2854,12 +2958,13 @@ export class View {
     };
   }
 
-  /** 触屏要摆的独立抓手（PC 返回空：PC 用两层圈，不画独立抓手） */
+  /** 屏幕上要摆的**固定图标抓手**（16 个：8 缩放 + 4 旋转 + 4 斜切；两平台同一套） */
   private xfGrabs(): Grab[] {
-    if (this.xfPc()) return [];
+    // 四点 / 网格自由变形（warp）是**另一套控制点**，不摆常规变换框的图标
+    if (this.xf && this.xf.mode === "warp") return [];
     const f = this.xfScreenFrame();
     if (!f) return [];
-    return touchGrabs(f, touchLayout(f.spanX, f.spanY));
+    return transformGrabs(f);
   }
 
   /** 枢轴在屏幕上的位置（没有会话＝null；枢轴活在下标空间，画出来加 0.5 到像素中心） */
@@ -2875,29 +2980,40 @@ export class View {
     };
   }
 
-  /** PC：两层同心圈的命中；触屏：独立抓手 → 折算成同一个 `{kind, anchor}` 语义 */
+  /**
+   * 命中判定：**固定图标抓手**（两平台共用）优先，PC 再叠加双层圈作为额外宽容；
+   * 枢轴与抓手**谁更贴手谁赢**。
+   *
+   * 枢轴不再无条件抢命中：新布局里缩放抓手贴着框，枢轴预设的四角 / 边中点与它几乎重合，
+   * 若枢轴仍在「按下第一下」时无条件优先，压在角上的缩放就永远起不来（实现 bug）。
+   */
   private xfHitAt(pt: PxPoint): { kind: XfKind; anchor?: AnchorId } | null {
     const f = this.xfScreenFrame();
     if (!f) return null;
-    // 一次判定里只取一次 PC / 触屏结论：`xfGrabs()` 会临时建会话，中途再问会把答案问歪
     const pc = this.xfPc();
+    const grabs = this.xfGrabs();
+    // 抓手：触屏＝收窄后的统一半径；PC＝按语义分层（缩放内圈 22 / 旋转斜切外圈 34）
+    let hit: { kind: XfKind; anchor?: AnchorId } | null = null;
+    let hd = Infinity;
+    const g = pc ? grabAt(grabs, pt, PC_HIT) : grabAt(grabs, pt, touchHitRadius(grabs));
+    if (g) { hit = { kind: g.kind, anchor: g.anchor }; hd = Math.hypot(pt.x - g.x, pt.y - g.y); }
+    if (!hit && pc) {
+      // 双层圈是 PC 上的**额外**手段：图标没中才回落（小框上「再往外一点」仍然好按）
+      const r = ringHitAt(f, pt, PC_HIT);
+      if (r) {
+        const a = screenAnchors(f)[ANCHORS.indexOf(r.anchor)];
+        hit = { kind: r.kind, anchor: r.anchor };
+        hd = Math.hypot(pt.x - a.x, pt.y - a.y);
+      }
+    }
+    // 枢轴：可拖，但**只在比抓手更贴手时**才赢（拖动中不再抢，交给本次拖拽）
     const pivotR = pc ? 14 : 26;
     const pv = this.xfPivotScreen();
-    const onPivot = !!pv && Math.hypot(pt.x - pv.x, pt.y - pv.y) <= pivotR;
-    // 枢轴**只在「没抓着别的抓手」时才抢命中**：
-    // 枢轴常常压在框内（甚至正好压在某个角上），如果无条件优先，
-    // 按下角抓手的那一下会被判成拖枢轴，缩放 / 旋转就再也起不来（实现 bug）。
-    if (onPivot && !this.xfDrag) return { kind: "pivot" };
-    if (pc) {
-      const h = ringHitAt(f, pt, PC_HIT);
-      if (h) return { kind: h.kind, anchor: h.anchor };
-      return onPivot ? { kind: "pivot" } : null;
+    if (pv && !this.xfDrag) {
+      const pd = Math.hypot(pt.x - pv.x, pt.y - pv.y);
+      if (pd <= pivotR && pd <= hd) return { kind: "pivot" };
     }
-    // 触屏的命中半径与「画出来的圈」用同一个函数算（小选区会自动收窄，见 touchHitRadius）
-    const grabs = this.xfGrabs();
-    const g = grabAt(grabs, pt, pc ? TOUCH_HIT.outer : touchHitRadius(grabs));
-    if (g) return { kind: g.kind, anchor: g.anchor };
-    return onPivot ? { kind: "pivot" } : null;
+    return hit;
   }
 
   /** 最近一次命中的语义描述（测试与状态栏共用） */
@@ -2908,10 +3024,10 @@ export class View {
     return this.xfPc() ? PC_HIT : TOUCH_HIT;
   }
 
-  /** 触屏抓手布局（导出给测试：小选区退化成角缩放 / 丢斜切就看它） */
-  touchLayoutNow(): ReturnType<typeof touchLayout> | null {
+  /** 抓手的实际外移距离（导出给测试：小选区收窄、但旋转 / 斜切不隐藏就看它） */
+  grabOffsetsNow(): GrabOffsets | null {
     const f = this.xfScreenFrame();
-    return f ? touchLayout(f.spanX, f.spanY) : null;
+    return f ? grabOffsets(Math.min(f.spanX, f.spanY)) : null;
   }
 
   /**
@@ -3584,75 +3700,27 @@ export class View {
     ctx.lineWidth = 1.4;
     ctx.strokeStyle = "rgba(255,255,255,.92)";
     ctx.stroke();
-    const anchorsS = screenAnchors(f);
-    if (pc) {
-      // PC：8 个锚点 + 两层同心命中圈（内圈＝缩放，外圈＝角旋转 / 边中点斜切）。
-      // 圈只是**命中提示**：悬停到哪一层就把那一层点亮，用户才知道「再往外一点」有东西
-      const hover = this.xfHover;
-      for (let i = 0; i < 8; i++) {
-        const p = anchorsS[i];
-        const hot = hover && hover.kind !== "move" && hover.kind !== "pivot";
-        ctx.fillStyle = "#ffffff";
-        ctx.strokeStyle = "#20242f";
-        ctx.lineWidth = 1.2;
-        ctx.beginPath();
-        ctx.rect(p.x - 4.5, p.y - 4.5, 9, 9);
-        ctx.fill();
-        ctx.stroke();
-        if (hot) {
-          ctx.beginPath();
-          ctx.strokeStyle = "rgba(174,209,255,.55)";
-          ctx.lineWidth = 1;
-          ctx.arc(p.x, p.y, PC_HIT.outer, 0, Math.PI * 2);
-          ctx.stroke();
-        }
-      }
-    } else {
-      // 触屏：**画得出来的独立抓手** —— 角/边缩放抓手画成方块，旋转抓手画圆形箭头，
-      // 斜切抓手画双向斜线。全部命中半径 ≥40px（手指），小选区时按需隐藏（见 touchLayout）
-      const grabs = this.xfGrabs();
-      for (const g of grabs) {
-        if (g.kind === "scale") {
-          ctx.fillStyle = "#ffffff";
-          ctx.strokeStyle = "#20242f";
-          ctx.lineWidth = 1.2;
-          ctx.beginPath();
-          ctx.rect(g.x - 7, g.y - 7, 14, 14);
-          ctx.fill();
-          ctx.stroke();
-        } else if (g.kind === "rotate") {
-          ctx.beginPath();
-          ctx.fillStyle = "#aed1ff";
-          ctx.strokeStyle = "#1b2a44";
-          ctx.lineWidth = 1.4;
-          ctx.arc(g.x, g.y, 13, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.stroke();
-          ctx.strokeStyle = "#14202e";
-          ctx.lineWidth = 2;
-          ctx.beginPath();
-          ctx.arc(g.x, g.y, 7, -Math.PI * 0.45, Math.PI * 1.1);
-          ctx.stroke();
-        } else {
-          // 斜切：两条沿框轴方向的斜线（双向）
-          ctx.strokeStyle = "#ffd8a8";
-          ctx.lineWidth = 2.2;
-          const ax = f.corners[1].x - f.corners[0].x, ay = f.corners[1].y - f.corners[0].y;
-          const al = Math.hypot(ax, ay) || 1;
-          const ux = ax / al, uy = ay / al;
-          const nx = -uy, ny = ux;
-          ctx.beginPath();
-          for (const sgn of [1, -1]) {
-            ctx.moveTo(g.x - ux * 8 * sgn + nx * 5, g.y - uy * 8 * sgn + ny * 5);
-            ctx.lineTo(g.x + ux * 8 * sgn - nx * 5, g.y + uy * 8 * sgn - ny * 5);
-          }
-          ctx.stroke();
-          ctx.beginPath();
-          ctx.fillStyle = "#3a2a12";
-          ctx.arc(g.x, g.y, 2.4, 0, Math.PI * 2);
-          ctx.fill();
-        }
-      }
+    // 抓手：**两平台同一套固定图标**（贴在选区框上的方块 / 扁矩形＝缩放，角外侧对角线方向的
+    // 圆形箭头＝旋转，边中点外侧法线方向的双向斜线＝斜切）。三种图标形状不同、位置固定，
+    // 靠形状一眼区分语义，不再依赖「离框多远」；框变小只是把旋转 / 斜切收窄，**不会整类消失**。
+    const grabs = this.xfGrabs();
+    const hover = this.xfHover;
+    for (const g of grabs) {
+      const hot = !!hover && hover.kind === g.kind && hover.anchor === g.anchor;
+      // 角图标（方块 / 圆）无方向；边中点图标要顺着那条边摆（扁矩形）或沿法线偏（双向斜线）
+      const corner = g.anchor === "tl" || g.anchor === "tr" || g.anchor === "br" || g.anchor === "bl";
+      const n = corner ? { x: 0, y: -1 } : edgeNormalOf(f, g.anchor!);
+      drawXfGrab(ctx, g, grabTangent(n), n, hot);
+    }
+    if (pc && hover && hover.kind !== "move" && hover.kind !== "pivot" && hover.anchor) {
+      // PC 的双层圈是**额外**的命中宽容（图标没中才回落，见 `xfHitAt()`）：
+      // 悬停到哪个锚点就把那一层圈点亮，告诉用户「图标外面一点也还算它」
+      const p = screenAnchors(f)[ANCHORS.indexOf(hover.anchor)];
+      ctx.beginPath();
+      ctx.strokeStyle = "rgba(174,209,255,.55)";
+      ctx.lineWidth = 1;
+      ctx.arc(p.x, p.y, PC_HIT.outer, 0, Math.PI * 2);
+      ctx.stroke();
     }
     // 枢轴：小圆点 + 十字（可拖；只有会话里才有意义）
     const pv = this.xfPivotScreen();

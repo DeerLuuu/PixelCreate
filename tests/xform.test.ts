@@ -13,11 +13,11 @@ import {
   isExactTransform, isIntegerShift, isRightAngle, linearOf, mulAffine, normAngle, pivotComp,
   pivotInBox, pivotPresetAt, pivotPresetOf, pivotPresetPoint, PIVOT_PRESETS, scaleAnchor,
   screenAnchors, screenFrameOf, snapCleanAngle, solveRotate, solveScale, solveSkew,
-  toFrameLocal, touchGrabs, touchLayout, transformedBox, ANCHORS, axisOf, isCorner,
+  toFrameLocal, transformGrabs, grabOffsets, minGrabGap, transformedBox, ANCHORS, axisOf, isCorner,
   outerKindOf, ringHitAt, grabAt, rightAngleSteps, rotatedSize, SCALE_MAX, SCALE_MIN,
-  TAN_SKEW_LIMIT, PC_HIT, TOUCH_HIT, TOUCH_OFF_CORNER, TOUCH_OFF_EDGE, TOUCH_OFF_OUTER, TOUCH_HIT_FLOOR,
-  TOUCH_FULL_SPAN, TOUCH_MID_SPAN, TOUCH_MIN_SPAN, touchHitRadius, touchOuterOffset,
-  skewBaseline, skewPivotOf, type AnchorId,
+  TAN_SKEW_LIMIT, PC_HIT, TOUCH_HIT, GRAB_OFF_SCALE, GRAB_OFF_OUTER, GRAB_OFF_OUTER_SMALL,
+  GRAB_SMALL_SPAN, GRAB_REACH, GRAB_ORDER, TOUCH_HIT_FLOOR, edgeNormalOf,
+  touchHitRadius, skewBaseline, skewPivotOf, type AnchorId,
 } from "../src/tools/xform";
 import type { Mat3 } from "../src/tools/warp";
 import { eq, ok } from "./common";
@@ -356,76 +356,148 @@ export function testXform(): void {
     eq("xform.ring.zoom-invariant-none", ringHitAt(z4, { x: a4.x - 40, y: a4.y - 40 }, PC_HIT), null);
   }
 
-  // ---------------------------------------------------------------- 触屏抓手布局与互不重叠
+  // ---------------------------------------------------------------- 抓手布局：贴着框的固定图标
   {
-    // 大框（短边 200）：16 个抓手全摆开，任意两个圆心 ≥ 2× 命中半径 → 触摸区不重叠
+    // 常规尺寸（短边 200）：**16 个固定图标**全在 —— 8 缩放（4 角 + 4 边中点）+ 4 旋转 + 4 斜切。
+    // 语义由位置决定：角＝缩放 + 旋转，边中点＝缩放 + 斜切；没有任何一类会因为框小而被砍掉。
     const f = screenFrameOf(affineFrom({ pivot: { x: 100, y: 100 }, angle: 0, sx: 1, sy: 1 }), 201, 201, 1, 0, 0);
-    const layout = touchLayout(f.spanX, f.spanY);
-    eq("xform.touch.layout-full", layout, { corners: true, edges: true, rotate: true, skew: true });
-    const grabs = touchGrabs(f, layout);
-    eq("xform.touch.grab-kinds", grabs.map((g) => g.kind),
+    const off = grabOffsets(Math.min(f.spanX, f.spanY));
+    eq("xform.grab.offsets", off, { scale: GRAB_OFF_SCALE, rotate: GRAB_OFF_OUTER, skew: GRAB_OFF_OUTER });
+    const grabs = transformGrabs(f, off);
+    eq("xform.grab.count", grabs.length, 16);
+    eq("xform.grab.kinds", grabs.map((g) => g.kind),
       ["scale", "rotate", "scale", "skew", "scale", "rotate", "scale", "skew",
         "scale", "rotate", "scale", "skew", "scale", "rotate", "scale", "skew"]);
-    let min = Infinity;
-    for (let i = 0; i < grabs.length; i++) {
-      for (let j = i + 1; j < grabs.length; j++) {
-        min = Math.min(min, Math.hypot(grabs[i].x - grabs[j].x, grabs[i].y - grabs[j].y));
+    eq("xform.grab.anchors", grabs.map((g) => g.anchor),
+      ["tl", "tl", "t", "t", "tr", "tr", "r", "r", "br", "br", "b", "b", "bl", "bl", "l", "l"]);
+    const anchorsS = screenAnchors(f);
+    const at = (kind: string, id: AnchorId) => grabs.find((g) => g.kind === kind && g.anchor === id)!;
+    // ① 缩放贴框：抓手中心离**框**（四条边）≤ 8px（规格要求），而且是沿「远离框中心」的方向外移
+    let worstScaleOff = 0;
+    for (const id of ANCHORS) {
+      const g = at("scale", id);
+      worstScaleOff = Math.max(worstScaleOff, distToFrame(f, g));
+    }
+    ok("xform.grab.scale-hugs-frame", worstScaleOff <= 8, "worst=" + worstScaleOff.toFixed(2));
+    // ② 旋转：角外侧沿**对角线**方向 28–34px；③ 斜切：边中点外侧沿该边**法线**方向 28–34px
+    let worstRot = 0, worstSkew = 0, worstRotDir = 0, worstSkewDir = 0;
+    const c = { x: (f.corners[0].x + f.corners[2].x) / 2, y: (f.corners[0].y + f.corners[2].y) / 2 };
+    for (let i = 0; i < ANCHORS.length; i++) {
+      const id = ANCHORS[i];
+      const a = anchorsS[i];
+      if (isCorner(id)) {
+        const g = at("rotate", id);
+        const d = Math.hypot(g.x - a.x, g.y - a.y);
+        worstRot = Math.max(worstRot, Math.abs(d - GRAB_OFF_OUTER));
+        // 方向必须与「框中心 → 角」同向（叉积为 0）
+        const ux = a.x - c.x, uy = a.y - c.y, ul = Math.hypot(ux, uy);
+        const vx = g.x - a.x, vy = g.y - a.y, vl = d || 1;
+        worstRotDir = Math.max(worstRotDir, Math.abs((ux / ul) * (vy / vl) - (uy / ul) * (vx / vl)));
+      } else {
+        const g = at("skew", id);
+        const d = Math.hypot(g.x - a.x, g.y - a.y);
+        worstSkew = Math.max(worstSkew, Math.abs(d - GRAB_OFF_OUTER));
+        // 方向必须与那条边的外法线一致（与 `screenAnchors()` 的边框同向）
+        const n = edgeNormalOf(f, id);
+        const vx = (g.x - a.x) / (d || 1), vy = (g.y - a.y) / (d || 1);
+        worstSkewDir = Math.max(worstSkewDir, Math.abs(vx - n.x), Math.abs(vy - n.y));
       }
     }
-    ok("xform.touch.no-overlap", min >= touchHitRadius(grabs) * 2, "min=" + min.toFixed(1));
-    // 尺寸扫描：每一档、任意大小都不许重叠（这是硬约束）
-    let worst = Infinity;
-    for (const s of [20, 40, 60, 79, 80, 100, 120, 159, 160, 200, 300, 400, 800]) {
+    ok("xform.grab.rotate-inside-spec", worstRot < 1e-9,
+      "要求 28–34px，常量 " + GRAB_OFF_OUTER);
+    ok("xform.grab.skew-inside-spec", worstSkew < 1e-9, "要求 28–34px，常量 " + GRAB_OFF_OUTER);
+    ok("xform.grab.rotate-diagonal", worstRotDir < 1e-9, String(worstRotDir));
+    ok("xform.grab.skew-normal", worstSkewDir < 1e-9, String(worstSkewDir));
+    ok("xform.grab.spec-range",
+      GRAB_OFF_SCALE <= 8 && GRAB_OFF_OUTER >= 28 && GRAB_OFF_OUTER <= 34
+      && GRAB_OFF_OUTER_SMALL <= GRAB_OFF_OUTER && GRAB_SMALL_SPAN === 64);
+
+    // 命中半径：常规尺寸下就是基准 38（同类抓手离得足够远，不用收窄）
+    const r = touchHitRadius(grabs);
+    eq("xform.grab.radius-normal", r, TOUCH_HIT.inner);
+    // 同类最近的一对是「角缩放 ↔ 相邻边中点缩放」＝ 半跨多一点，远大于 2×38
+    ok("xform.grab.same-kind-gap", minGrabGap(grabs, true) > 100, String(minGrabGap(grabs, true)));
+    ok("xform.grab.same-kind-no-overlap", minGrabGap(grabs, true) >= 2 * r,
+      "gap=" + minGrabGap(grabs, true).toFixed(1) + " 2r=" + (2 * r));
+    // 跨类最近的一对就是「同角 / 同边的缩放 ↔ 旋转（斜切）」，间距 = 30 - 6 = 24px（规格钉死的两档）
+    ok("xform.grab.cross-gap", near(minGrabGap(grabs), GRAB_OFF_OUTER - GRAB_OFF_SCALE, 1e-9),
+      String(minGrabGap(grabs)));
+    ok("xform.grab.each-hittable-normal",
+      grabs.every((g) => { const h = grabAt(grabs, g, r); return !!h && h.kind === g.kind && h.anchor === g.anchor; }));
+    // 语义优先级：同一距离下 缩放 > 旋转 > 斜切（`GRAB_REACH` 就是「等效半径倍率」）
+    eq("xform.grab.priority-order", GRAB_ORDER, ["scale", "rotate", "skew"]);
+    ok("xform.grab.priority-values",
+      GRAB_REACH.scale > GRAB_REACH.rotate && GRAB_REACH.rotate > GRAB_REACH.skew);
+    {
+      const kindAt = (list: typeof grabs, p: P): unknown => {
+        const h = grabAt(list, p, r);
+        return h ? [h.kind, h.anchor] : null;
+      };
+      const tlS = at("scale", "tl"), tlR = at("rotate", "tl");
+      // 同角上「缩放 ↔ 旋转」的中点：等距 → **缩放**赢
+      eq("xform.grab.priority-scale-over-rotate",
+        kindAt(grabs, { x: (tlS.x + tlR.x) / 2, y: (tlS.y + tlR.y) / 2 }), ["scale", "tl"]);
+      // 同一条边上「边中点缩放 ↔ 斜切」的中点：等距 → 还是**缩放**赢
+      const tS = at("scale", "t"), tK = at("skew", "t");
+      eq("xform.grab.priority-scale-over-skew",
+        kindAt(grabs, { x: (tS.x + tK.x) / 2, y: (tS.y + tK.y) / 2 }), ["scale", "t"]);
+      // 旋转 vs 斜切在真实布局里最近的是一角一边、隔了半跨，够不着同一根手指：
+      // 用一对等距的合成抓手把「旋转 > 斜切」这条顺序钉死（`GRAB_REACH` 的语义）
+      const synth = [
+        { kind: "rotate" as const, anchor: "tl" as const, x: 0, y: 0 },
+        { kind: "skew" as const, anchor: "t" as const, x: 20, y: 0 },
+        { kind: "scale" as const, anchor: "tl" as const, x: 40, y: 0 },
+      ];
+      const mid = { x: 10, y: 0 };                 // 离「旋转」与「斜切」都是 10px
+      eq("xform.grab.priority-rotate-over-skew", kindAt(synth, mid), ["rotate", "tl"]);
+      eq("xform.grab.priority-scale-over-both", kindAt(synth, { x: 30, y: 0 }), ["scale", "tl"]);
+      // 优先级不会让**更贴手**的那个输：手指压在斜切圆心附近（旋转离 30px）时斜切赢
+      eq("xform.grab.priority-nearest-still-wins", kindAt(synth, { x: 19, y: 0 }), ["skew", "t"]);
+      // 每个图标在自己的圆心处必定命中自己（优先级不会把内侧的旋转 / 斜切变成死区）
+      eq("xform.grab.centre-of-rotate", kindAt(grabs, tlR), ["rotate", "tl"]);
+      eq("xform.grab.centre-of-skew", kindAt(grabs, tK), ["skew", "t"]);
+    }
+
+    // 尺寸扫描（含极小选区）：**16 个抓手永远都在**（不隐藏类别）、每个都点得到、
+    // 同类抓手不重叠（半径触底时以 `TOUCH_HIT_FLOOR` 为准，见 `touchHitRadius()`）
+    let worstSlack = Infinity, tinyRadius = Infinity, hidden = 0, selfMiss = 0, floorBound = 0;
+    for (const s of [8, 20, 40, 63, 64, 79, 80, 100, 120, 151, 160, 200, 300, 400, 800]) {
       const sf = screenFrameOf(affineFrom({ pivot: { x: s / 2, y: s / 2 }, angle: 0, sx: 1, sy: 1 }), s + 1, s + 1, 1, 0, 0);
-      const sl = touchLayout(sf.spanX, sf.spanY);
-      const sg = touchGrabs(sf, sl);
-      let m = Infinity;
-      for (let i = 0; i < sg.length; i++) {
-        for (let j = i + 1; j < sg.length; j++) m = Math.min(m, Math.hypot(sg[i].x - sg[j].x, sg[i].y - sg[j].y));
+      const sg = transformGrabs(sf);
+      if (sg.length !== 16) hidden++;
+      const sr = touchHitRadius(sg);
+      tinyRadius = Math.min(tinyRadius, sr);
+      for (const g of sg) {
+        const h = grabAt(sg, g, sr);
+        if (!h || h.kind !== g.kind || h.anchor !== g.anchor) selfMiss++;
       }
-      if (sg.length > 1) worst = Math.min(worst, m - touchHitRadius(sg) * 2);
+      const gap = minGrabGap(sg, true);
+      if (2 * sr > gap) floorBound++;
+      else worstSlack = Math.min(worstSlack, gap - 2 * sr);
+      // 小选区：旋转 / 斜切收窄到 20px，但**仍在**（不是整类去掉）
+      const o = grabOffsets(Math.min(sf.spanX, sf.spanY));
+      const want = Math.min(sf.spanX, sf.spanY) < GRAB_SMALL_SPAN ? GRAB_OFF_OUTER_SMALL : GRAB_OFF_OUTER;
+      if (o.rotate !== want || o.skew !== want || o.scale !== GRAB_OFF_SCALE) hidden++;
     }
-    ok("xform.touch.sweep-no-overlap", worst >= 0, "worst slack=" + worst.toFixed(2));
-    ok("xform.touch.radius-floor", touchHitRadius([]) === TOUCH_HIT.inner && TOUCH_HIT_FLOOR < TOUCH_HIT.inner);
-    // 每个抓手都真的能命中（而且命中的就是它自己）
-    let ok2 = 0;
-    for (const g of grabs) {
-      const hit = grabAt(grabs, { x: g.x, y: g.y }, TOUCH_HIT.inner);
-      if (hit && hit.kind === g.kind && hit.anchor === g.anchor) ok2++;
-    }
-    eq("xform.touch.each-hittable", ok2, grabs.length);
-    // 旋转抓手在角外侧（离框中心更远），缩放抓手压在锚点上
-    const rot = grabs.find((g) => g.kind === "rotate")!;
-    const corner = grabs.find((g) => g.kind === "scale")!;
-    ok("xform.touch.rotate-outside", rot.x < corner.x && rot.y < corner.y, JSON.stringify([rot, corner]));
-    // 旋转抓手在角缩放的更外侧，两者都沿同一条角平分线 → 圆心距 =（两档外移距离之差）× √2
-    ok("xform.touch.grab-offset",
-      near(Math.hypot(rot.x - corner.x, rot.y - corner.y),
-        touchOuterOffset(Math.min(f.spanX, f.spanY)) - TOUCH_OFF_CORNER, 1e-9),
-      String(Math.hypot(rot.x - corner.x, rot.y - corner.y)));
-    // 中等选区（短边 100）：角缩放 + 角旋转（丢掉边中点与斜切），仍然不重叠
-    const small = screenFrameOf(affineFrom({ pivot: { x: 50, y: 50 }, angle: 0, sx: 1, sy: 1 }), 101, 101, 1, 0, 0);
-    const sl = touchLayout(small.spanX, small.spanY);
-    eq("xform.touch.layout-small", sl, { corners: true, edges: false, rotate: true, skew: false });
-    const sg = touchGrabs(small, sl);
-    eq("xform.touch.small-count", sg.length, 8);
-    let minS = Infinity;
-    for (let i = 0; i < sg.length; i++) {
-      for (let j = i + 1; j < sg.length; j++) {
-        minS = Math.min(minS, Math.hypot(sg[i].x - sg[j].x, sg[i].y - sg[j].y));
-      }
-    }
-    ok("xform.touch.small-no-overlap", minS >= touchHitRadius(sg) * 2, "min=" + minS.toFixed(1));
-    // 极小选区：只剩 4 个角缩放抓手
-    const tiny = screenFrameOf(affineFrom({ pivot: { x: 20, y: 20 }, angle: 0, sx: 1, sy: 1 }), 41, 41, 1, 0, 0);
-    eq("xform.touch.layout-tiny", touchLayout(tiny.spanX, tiny.spanY), { corners: true, edges: false, rotate: false, skew: false });
-    eq("xform.touch.tiny-count", touchGrabs(tiny, touchLayout(tiny.spanX, tiny.spanY)).length, 4);
-    // 阈值与常量本身
-    ok("xform.touch.threshold",
-      TOUCH_MID_SPAN === 80 && TOUCH_FULL_SPAN === 160 && TOUCH_MIN_SPAN === 60
-      && TOUCH_OFF_CORNER + TOUCH_OFF_EDGE === 92 && TOUCH_OFF_OUTER === 144);
-    ok("xform.touch.outer-grows", touchOuterOffset(160) === TOUCH_OFF_OUTER && touchOuterOffset(400) > TOUCH_OFF_OUTER);
-    ok("xform.touch.pc-radii-constant", PC_HIT.inner === 22 && PC_HIT.outer === 34);
+    eq("xform.grab.sweep-all-present", hidden, 0);
+    eq("xform.grab.sweep-each-hittable", selfMiss, 0);
+    ok("xform.grab.sweep-same-kind", worstSlack >= 0, "worst slack=" + worstSlack.toFixed(2));
+    ok("xform.grab.sweep-radius-floor", tinyRadius >= TOUCH_HIT_FLOOR && TOUCH_HIT_FLOOR === 24,
+      "min r=" + tinyRadius);
+    ok("xform.grab.sweep-floor-applies", floorBound > 0 && worstSlack >= 0,
+      "触底尺寸数 " + floorBound);
+    ok("xform.grab.radius-floor-empty", touchHitRadius([]) === TOUCH_HIT.inner);
+    ok("xform.grab.pc-radii-constant", PC_HIT.inner === 22 && PC_HIT.outer === 34);
+    // 小选区（短边 40 < 64）：旋转 / 斜切收窄到 20px，命中半径同步收窄（不低于下限）
+    const smallF = screenFrameOf(affineFrom({ pivot: { x: 20, y: 20 }, angle: 0, sx: 1, sy: 1 }), 41, 41, 1, 0, 0);
+    eq("xform.grab.offsets-small", grabOffsets(Math.min(smallF.spanX, smallF.spanY)),
+      { scale: GRAB_OFF_SCALE, rotate: GRAB_OFF_OUTER_SMALL, skew: GRAB_OFF_OUTER_SMALL });
+    eq("xform.grab.count-small", transformGrabs(smallF).length, 16);
+    ok("xform.grab.radius-small", touchHitRadius(transformGrabs(smallF)) < TOUCH_HIT.inner,
+      String(touchHitRadius(transformGrabs(smallF))));
+    // 退化框（宽高为 0）：方向退回屏幕轴上的兜底，不产生 NaN
+    const deg = screenFrameOf(affineFrom({ pivot: { x: 0, y: 0 }, angle: 0, sx: 1, sy: 1 }), 1, 1, 1, 0, 0);
+    ok("xform.grab.degenerate-finite", transformGrabs(deg).every((g) => Number.isFinite(g.x) && Number.isFinite(g.y)));
   }
 
   // ---------------------------------------------------------------- 像素精确搬运

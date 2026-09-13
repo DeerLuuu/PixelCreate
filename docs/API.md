@@ -406,23 +406,50 @@ screenAnchors(frame): Pt[];                // 8 个锚点的屏幕坐标
 interface ScreenFrame { corners: [Pt, Pt, Pt, Pt]; angle: number; spanX: number; spanY: number }
 screenFrameOf(m: Mat3, w, h, zoom, ox, oy): ScreenFrame;   // 变换后的框 → 屏幕四角
 
-const PC_HIT = { inner: 22, outer: 34 };   // PC：两层同心圈的命中半径（px）
+const PC_HIT = { inner: 22, outer: 34 };   // PC：两层同心圈的命中半径（px，**额外**手段，见下）
 const TOUCH_HIT = { inner: 38, outer: 38 }; // 触屏基础半径（还会被 touchHitRadius 自动收窄）
-const TOUCH_OFF_CORNER = 46;                // 触屏角上的缩放抓手离角 46px
-const TOUCH_OFF_EDGE = 46;                  // 触屏边中点的缩放抓手离边 46px
-const TOUCH_OFF_OUTER = 144;                // 触屏旋转 / 斜切抓手的基准偏移
-touchOuterOffset(span) = 144 + 0.6 * max(0, span - 160);
-touchHitRadius(grabs) = clamp(min(38, 相邻抓手最小距离 / 2), 28, 38);
-touchLayout(spanX, spanY): "full" | "mid" | "corner";   // ≥160 全 16 个 / ≥80 八个 / 否则只四个角
-touchGrabs(frame): Array<{ kind, anchor?, x, y }>;      // 触屏独立抓手（PC 返回空）
+const TOUCH_HIT_FLOOR = 24;                 // 收窄的下限（再小就按不准了）
+
+// —— 贴着选区框的**固定图标**（屏幕像素常量，不随画布 zoom 变）——
+const GRAB_OFF_SCALE = 6;         // 缩放抓手离框 6px（规格 ≤8px）：4 角 + 4 边中点
+const GRAB_OFF_OUTER = 30;        // 旋转（角外侧沿**对角线**）/ 斜切（边中点外侧沿**法线**）30px（规格 28–34）
+const GRAB_OFF_OUTER_SMALL = 20;  // 小选区收窄到 20px：**旋转 / 斜切仍在**，只是更贴框
+const GRAB_SMALL_SPAN = 64;       // 「小选区」的短边阈值（屏幕 px）
+
+grabOffsets(minSpan): { scale, rotate, skew };             // 按短边给出这一屏的外移距离
+transformGrabs(frame, off?): Array<{ kind, anchor?, x, y }>; // **16 个**固定图标（两平台同一套）
+minGrabGap(grabs, sameKind?): number;                      // 两两圆心距的最小值
+touchHitRadius(grabs, base = 38) = clamp(min(38, 同类最小圆心距 / 2), 24, 38);
+const GRAB_REACH = { scale: 1, rotate: 0.85, skew: 0.75 }; // 语义优先级（＝等效半径倍率）
+const GRAB_ORDER = ["scale", "rotate", "skew"];            // 高 → 低
 
 ringHitAt(frame, pt, radii): { kind: XfKind; anchor?: AnchorId; ring } | null;  // PC 两层圈
-grabAt(grabs, pt, radius): Grab | null;                                        // 触屏抓手
+grabAt(grabs, pt, radius | { inner, outer }): Grab | null;                     // 图标抓手命中
+edgeNormalOf(frame, id): Pt;                                                   // 边中点那条边的外法线
 ```
 
-**触屏为什么这么摆**：16 个抓手在屏幕上最坏情况下相邻中心距约 98px，而两个 38px 半径的圆要求 ≥76px，
-所以不会出现「两个抓手抢同一下按」。选区小到一定程度就自动降档（8 个 / 4 个），半径也会跟着收窄
-（下限 28px），保证小选区上也点得中。
+**抓手布局（2026-09 重排；原因：真机上「离框太远 / 太散」，语义靠"离框多远"不可发现）**：
+
+| 抓手 | 数量 | 位置 | 图标 | 命中半径 |
+|---|---|---|---|---|
+| 缩放 | 8 | 4 角 + 4 边中点，**贴在框上**（离框 6px） | 角＝方块、边＝扁矩形 | 38（收窄后 ≥24） |
+| 旋转 | 4 | 角的外侧沿**对角线**方向 30px | 圆形箭头 | 同上 |
+| 斜切 | 4 | 边中点外侧沿该边**法线**方向 30px | 双向斜线 | 同上 |
+
+- **两平台同一套**：PC 与触屏画的是同样的 16 个图标（`transformGrabs()` 一处出口，`View.xfGrabs()`）。
+- **不隐藏类别**：框再小也只是把旋转 / 斜切从 30px 收窄到 20px，**不会整类消失** ——
+  拖动中途消失会让「已显示的抓手」跳变、语义跟着跳档（旧版按 160/80/60 分档砍类，已删）。
+- **命中半径**：基准 38px，按「**同类**抓手两两最小圆心距 / 2」收窄，下限 24px。
+  按同类收窄的理由：缩放贴着框、旋转 / 斜切在 30px 外，同角那一对天然只隔 `30 − 6 = 24px`；
+  若把跨类也算进最小距，半径会被永久压在 24px 上、38px 基准形同虚设。
+  同类冲突（两个同语义抓手抢同一根手指）才是真问题，跨类冲突交给优先级。
+- **优先级：缩放 > 旋转 > 斜切**，实现为 `GRAB_REACH` 的「等效半径倍率」：候选按各自半径筛，
+  胜负按 `d / reach` 打分，于是**同一距离下缩放赢**，而每个抓手在**自己的圆心**处必定命中自己
+  （`d = 0`）—— 优先级不会把内侧的旋转 / 斜切图标变成点不到的死区（做成「整类先到先得」就会）。
+- **枢轴**与抓手**谁更贴手谁赢**（不再无条件抢命中）：缩放抓手贴着框，枢轴预设的四角 / 边中点
+  与它几乎重合，无条件优先会让压在角上的缩放永远起不来。
+- **PC 的两层同心圈**（`PC_HIT` / `ringHitAt()`）保留为**额外**的宽容命中：图标先判，图标没中才回落到
+  圈（缩放 ≤22px、旋转 / 斜切 ≤34px），悬停时把那一圈点亮当提示。
 
 ### 10b.2 解算
 
@@ -473,6 +500,7 @@ exactMove(content: { w; h; data: Uint8ClampedArray }, steps, flipX?, flipY?): Ex
 rotatedSize(w, h, steps): { w, h };
 transformedBox(m, w, h): XfBox;            // 变换后的包围盒（**目标空间**，与画布下标差一个 st.ox/oy）
 outerKindOf(id): XfKind;                   // 锚点在外圈上的语义：角＝rotate、边中点＝skew（内圈恒为 scale）
+// 抓手布局见 §10b.1（贴着框的固定图标：缩放 6px / 旋转 30px / 斜切 30px，小选区收窄到 20px）
 distToSegment(p, a, b): number;
 distToFrame(frame: ScreenFrame, pt): number;   // 点到框边的最短距离（±2px 环带用来判「只移动选区边框」）
 insideFrame(frame: ScreenFrame, pt): boolean;
@@ -831,9 +859,10 @@ class View {
   // —— 选区自由变换（会话＝一次事务，见 §10b；下面这些都是给 UI / 测试用的公开面）——
   transforming: boolean;                        // 会话是否开着（UI 据此显示「完成 / 还原 / 枢轴」）
   xfScreenFrame(): ScreenFrame | null;          // 当前变换框在屏幕上的四角（无选区 / 无会话 = null）
-  xfGrabs(): Grab[];                            // 触屏独立抓手（PC 返回空）
+  xfGrabs(): Grab[];                            // 屏幕上要摆的 16 个固定图标抓手（两平台同一套）
   xfPivotScreen(): PxPoint | null;              // 枢轴的屏幕位置
-  xfHitAt(pt): { kind: XfKind; anchor?: AnchorId } | null;   // 命中什么（PC 两层圈 / 触屏抓手 / 枢轴）
+  xfHitAt(pt): { kind: XfKind; anchor?: AnchorId } | null;   // 命中什么（图标 → PC 再回落两层圈 → 枢轴最近优先）
+  grabOffsetsNow(): GrabOffsets | null;         // 这一屏的实际外移距离（小选区收窄、但不隐藏类别）
   beginXfMoveAt(sx, sy): boolean;               // 显式以「移动内容」开会话（小选区上没有空白点）
   setXfPivotAt(lx, ly): boolean;                // 把枢轴钉到内容下标（顺手补平移补偿，画面不动）
   setPivotPreset(k: PivotPreset): boolean;      // 9 档预设（拖拽枢轴后会被判成最近的一档）
@@ -1572,7 +1601,7 @@ Stroke 侧：`BrushState.pattern` 一填，落笔统一走 `paintOne()`——图
 ### 测试
 
 ```bash
-npm test        # 2924 条断言：引擎 / 选区 / 历史 / 播放 / 设置 / 引导 / 渲染 / 导出 / Aseprite 读写 / 返回手势 / UI 控件与令牌（末尾打印 assertions: N）
+npm test        # 2968 条断言：引擎 / 选区 / 历史 / 播放 / 设置 / 引导 / 渲染 / 导出 / Aseprite 读写 / 返回手势 / UI 控件与令牌（末尾打印 assertions: N）
 ```
 
 新增纯逻辑（算法、布局、解析、决策）时，优先抽成无 DOM 依赖的函数再补一条 `tests/*.test.ts` 断言——这是本项目保持可回归的主要手段。

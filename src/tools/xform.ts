@@ -549,73 +549,51 @@ export function screenAnchors(f: ScreenFrame): Pt[] {
   ];
 }
 
-/** 命中半径（屏幕像素常量）：内圈＝缩放，外圈＝旋转 / 斜切 */
+/** 命中半径（屏幕像素常量）：PC 用两层圈（`inner` / `outer`），触屏两层同值（再由 `touchHitRadius()` 收窄） */
 export interface HitRadii { inner: number; outer: number }
 
 /**
  * PC：Aseprite 的**两层同心命中圈**。内圈（≈2× 手柄宽）＝缩放，
  * 外圈（≈3×）＝角上旋转、边中点上斜切。半径是**屏幕像素常量**：不随画布 zoom 变，
  * 所以放大画布时手柄不会变难按。
+ *
+ * 现在两平台**都画同一套固定图标**（见 `transformGrabs()`），所以圈只是 PC 上**额外**的宽容命中
+ * （图标位置与圈的分层一致：缩放贴在框上＝内圈，旋转 / 斜切在 30px 外＝外圈）；
+ * 命中时**图标优先**，图标没中才回落到圈，见 `View.xfHitAt()`。
  */
 export const PC_HIT: HitRadii = { inner: 22, outer: 34 };
-/**
- * 触屏：**独立抓手**（不是「再往外一点」）。半径与偏移全部是**屏幕像素常量**。
- *
- * 布局的硬约束：**任意两个抓手的触摸区不相交**（圆心距 ≥ 2×命中半径）。
- * 手机上一块选区在屏幕上的大小差别极大（画布 zoom 从 0.05× 到 8×），
- * 「所有抓手都 ≥40px 且互不重叠」在小选区上物理上做不到，所以按**分档**来：
- *
- * | 短边（屏幕 px） | 摆的抓手 | 命中半径 |
- * |---|---|---|
- * | ≥ 160 | 4 角缩放 + 4 边单轴缩放 + 4 旋转 + 4 斜切（16 个） | 41 |
- * | ≥ 80  | 4 角缩放 + 4 旋转（8 个） | 41 |
- * | ≥ 60  | 4 角旋转（4 个，兼作缩放） | 41 |
- * | < 60  | 4 角缩放（4 个，最不挤的排法） | max(28, 短边/2)，真实值由 `touchHitRadius()` 给 |
- *
- * 外移距离按「相邻抓手圆心距 ≥ 2×38px」反解：角缩放 46、边缩放 46、旋转 / 斜切 144
- * （见 `tests/xform.test.ts` 的 `touch.no-overlap`：各档实测最小圆心距 ≈ 98px ≥ 76px）。
- */
+/** 触屏抓手的**基础**命中半径（手指直径量级）＝38px；实际值还要按「同类抓手互不重叠」收窄 */
 export const TOUCH_HIT: HitRadii = { inner: 38, outer: 38 };
-/** 抓手沿「远离框中心」方向的外移距离（角 / 边 / 旋转与斜切三档） */
-export const TOUCH_OFF_CORNER = 46;
-export const TOUCH_OFF_EDGE = 46;
-export const TOUCH_OFF_OUTER = 144;
-/** 触屏分档阈值（框的短边，屏幕像素） */
-export const TOUCH_FULL_SPAN = 160;
-export const TOUCH_MID_SPAN = 80;
-export const TOUCH_MIN_SPAN = 60;
-/** 极小选区下命中半径的下限（再小就真的点不到了，宁可叠着） */
-export const TOUCH_HIT_FLOOR = 28;
-/** 旋转 / 斜切抓手的外移距离随框长大：`TOUCH_OFF_OUTER + 0.6 × max(0, 短边 - TOUCH_FULL_SPAN)`。
- *  这样「16 个抓手」那一档在任意尺寸下最小圆心距都 ≥ 75px（每 160px 多留 96px）。 */
-export function touchOuterOffset(minSpan: number): number {
-  return TOUCH_OFF_OUTER + 0.6 * Math.max(0, minSpan - TOUCH_FULL_SPAN);
-}
+/** 命中半径下限：再小就真的按不准了。极小选区上触摸区允许重叠，由「最近优先 + 语义优先级」裁决 */
+export const TOUCH_HIT_FLOOR = 24;
 
-/** 触屏抓手布局：每个物理锚点旁边挂哪几个独立抓手 */
-export interface TouchLayout {
-  /** 4 角缩放抓手 */
-  corners: boolean;
-  /** 4 边中点缩放抓手（单轴） */
-  edges: boolean;
-  /** 4 个旋转抓手（角外侧偏移） */
-  rotate: boolean;
-  /** 4 个斜切抓手（边中点外侧偏移） */
-  skew: boolean;
-}
+/**
+ * 抓手外移距离（**屏幕像素常量**，不随画布 zoom 变）—— 「贴着选区框的固定图标」就靠这几个数：
+ *
+ * | 抓手 | 位置 | 图标 |
+ * |---|---|---|
+ * | 缩放 ×8 | 4 角 + 4 边中点，**贴在框上**（离框 6px） | 角＝方块、边＝扁矩形 |
+ * | 旋转 ×4 | 角的外侧沿**对角线**方向 30px | 圆形箭头 |
+ * | 斜切 ×4 | 边中点的外侧沿该边**法线**方向 30px | 双向斜线 |
+ *
+ * 语义由**位置**决定（固定图标），不再靠「离框多远」区分；框变小也只是把外移距离收窄，
+ * **不会整类隐藏**（隐藏会让拖动中途抓手消失、语义跳变）。
+ */
+export const GRAB_OFF_SCALE = 6;
+/** 旋转 / 斜切抓手的常规外移距离（规格区间 28–34px 的中值） */
+export const GRAB_OFF_OUTER = 30;
+/** 小选区（短边 < `GRAB_SMALL_SPAN`）把旋转 / 斜切收窄到这一档：更贴近框，但**仍在** */
+export const GRAB_OFF_OUTER_SMALL = 20;
+/** 「小选区」的短边阈值（屏幕像素） */
+export const GRAB_SMALL_SPAN = 64;
 
-/** 触屏布局决策（分档见文件头那张表；保证同档内**互不重叠**） */
-export function touchLayout(spanX: number, spanY: number): TouchLayout {
-  const minSpan = Math.min(spanX, spanY);
-  if (minSpan >= TOUCH_MID_SPAN) {
-    return {
-      corners: true,
-      edges: minSpan >= TOUCH_FULL_SPAN,
-      rotate: true,
-      skew: minSpan >= TOUCH_FULL_SPAN,
-    };
-  }
-  return { corners: true, edges: false, rotate: false, skew: false };
+/** 三种抓手的外移距离（屏幕像素） */
+export interface GrabOffsets { scale: number; rotate: number; skew: number }
+
+/** 按框的短边给出外移距离：常规 30px，小选区收窄到 20px（旋转 / 斜切只是更贴框，不隐藏） */
+export function grabOffsets(minSpan: number): GrabOffsets {
+  const outer = minSpan < GRAB_SMALL_SPAN ? GRAB_OFF_OUTER_SMALL : GRAB_OFF_OUTER;
+  return { scale: GRAB_OFF_SCALE, rotate: outer, skew: outer };
 }
 
 /** 一个可点的抓手（屏幕坐标 + 语义） */
@@ -633,70 +611,140 @@ export function outerKindOf(id: AnchorId): XfKind {
 }
 
 /**
- * 触屏的抓手摆位：缩放抓手沿「远离框中心」的方向外移，旋转 / 斜切抓手再往外一档。
- * `layout` 决定摆哪几个（见 `touchLayout()`）。
+ * 语义**优先级**：缩放 > 旋转 > 斜切。值是「等效半径倍率」：命中打分 `d / reach`，分小者胜 ——
+ * 于是**同一距离下缩放优先**，而每个抓手在**自己的圆心**上必定命中自己（`d = 0`，分恒最小）。
  *
- * 角缩放沿**角平分线**外移（不是沿屏幕轴）：这样它与同角的旋转抓手、相邻角 / 相邻边的
- * 抓手之间距离都够，具体数值由 `tests/xform.test.ts` 钉住。
+ * 为什么不做成「按优先级整类先到先得」的硬顺序：旋转 / 斜切图标本来就只在框外 ~30px，
+ * 与同角的缩放抓手只隔 24px，硬顺序会让缩放把旋转整块吃掉（图标变成点不到的死区）。
+ * 倍率既表达了优先级，又保证每个图标都点得到（见 `tests/xform.test.ts` 的 `touch.priority-*`）。
  */
-export function touchGrabs(f: ScreenFrame, layout: TouchLayout, offCorner = TOUCH_OFF_CORNER,
-  offEdge = TOUCH_OFF_EDGE, offOuter = touchOuterOffset(Math.min(f.spanX, f.spanY))): Grab[] {
+export const GRAB_REACH: Record<"scale" | "rotate" | "skew", number> = { scale: 1, rotate: 0.85, skew: 0.75 };
+/** 优先级顺序（高 → 低），与 `GRAB_REACH` 的数值一一对应 */
+export const GRAB_ORDER: Array<"scale" | "rotate" | "skew"> = ["scale", "rotate", "skew"];
+
+/** 框中心（屏幕坐标；四角顺序固定，取 0 / 2 的中点最稳） */
+function frameCenterOf(f: ScreenFrame): Pt {
+  return { x: (f.corners[0].x + f.corners[2].x) / 2, y: (f.corners[0].y + f.corners[2].y) / 2 };
+}
+
+/** 角抓手的兜底外移方向（框退化成一个点时用）：沿对角线向外 */
+function cornerAway(id: AnchorId): Pt {
+  const s = Math.SQRT1_2;
+  switch (id) {
+    case "tl": return { x: -s, y: -s };
+    case "tr": return { x: s, y: -s };
+    case "br": return { x: s, y: s };
+    default: return { x: -s, y: s };
+  }
+}
+
+/** 边中点抓手的兜底外移方向（边退化成一点时用）：屏幕轴上的外法线 */
+function edgeAwayFallback(id: AnchorId): Pt {
+  switch (id) {
+    case "t": return { x: 0, y: -1 };
+    case "b": return { x: 0, y: 1 };
+    case "l": return { x: -1, y: 0 };
+    default: return { x: 1, y: 0 };
+  }
+}
+
+/**
+ * 边中点`id`所在那条边的**向外法线**（单位向量）。四角顺序是 tl→tr→br→bl（屏幕上顺时针），
+ * 于是「边向量顺时针转 90°」＝ `(dy, -dx)`，对四条边都朝外（斜切成平行四边形也照样成立）。
+ * 导出给绘制侧用（斜切图标要沿法线摆、边中点缩放图标要沿这条边摆平）。
+ */
+export function edgeNormalOf(f: ScreenFrame, id: AnchorId): Pt {
+  const seg: Record<string, [number, number]> = { t: [0, 1], r: [1, 2], b: [2, 3], l: [3, 0] };
+  const [i, j] = seg[id] ?? [0, 1];
+  const dx = f.corners[j].x - f.corners[i].x, dy = f.corners[j].y - f.corners[i].y;
+  const len = Math.hypot(dx, dy);
+  if (!(len > 1e-9)) return edgeAwayFallback(id);
+  return { x: dy / len, y: -dx / len };
+}
+
+/**
+ * 屏幕上要摆的**固定图标抓手**（两平台共用，与 `xfGrabs()` 画出来的完全一致）：
+ *
+ * - 缩放 ×8：4 角（沿对角线外移 6px）＋ 4 边中点（沿该边法线外移 6px）—— 贴着框；
+ * - 旋转 ×4：角外侧沿对角线外移 30px（小选区 20px）；
+ * - 斜切 ×4：边中点外侧沿法线外移 30px（小选区 20px）。
+ *
+ * 顺序与 `ANCHORS` 一致（每个锚点先缩放、再旋转 / 斜切），所以 `kind` 序列是稳定的：
+ * `scale, rotate / scale, skew / …` —— 这也是「同一次会话里图标的 kind → 语义映射不变」的来源。
+ */
+export function transformGrabs(f: ScreenFrame, off: GrabOffsets = grabOffsets(Math.min(f.spanX, f.spanY))): Grab[] {
   const anchors = screenAnchors(f);
-  const c = { x: (f.corners[0].x + f.corners[2].x) / 2, y: (f.corners[0].y + f.corners[2].y) / 2 };
-  const away = (p: Pt, d: number): Pt => {
-    const vx = p.x - c.x, vy = p.y - c.y;
-    const len = Math.hypot(vx, vy) || 1;
-    return { x: p.x + (vx / len) * d, y: p.y + (vy / len) * d };
-  };
+  const c = frameCenterOf(f);
   const out: Grab[] = [];
   for (let i = 0; i < ANCHORS.length; i++) {
     const id = ANCHORS[i];
+    const p = anchors[i];
     if (isCorner(id)) {
-      if (layout.corners) {
-        const p = away(anchors[i], offCorner);
-        out.push({ kind: "scale", anchor: id, x: p.x, y: p.y });
-      }
-      if (layout.rotate) {
-        const p = away(anchors[i], offOuter);
-        out.push({ kind: "rotate", anchor: id, x: p.x, y: p.y });
-      }
+      // 角：沿「框中心 → 角」的对角线方向朝外（框转过角度 / 斜切过也照样是外对角）
+      const vx = p.x - c.x, vy = p.y - c.y;
+      const len = Math.hypot(vx, vy);
+      const d = len > 1e-9 ? { x: vx / len, y: vy / len } : cornerAway(id);
+      out.push({ kind: "scale", anchor: id, x: p.x + d.x * off.scale, y: p.y + d.y * off.scale });
+      out.push({ kind: "rotate", anchor: id, x: p.x + d.x * off.rotate, y: p.y + d.y * off.rotate });
     } else {
-      if (layout.edges) {
-        const p = away(anchors[i], offEdge);
-        out.push({ kind: "scale", anchor: id, x: p.x, y: p.y });
-      }
-      if (layout.skew) {
-        const p = away(anchors[i], offOuter);
-        out.push({ kind: "skew", anchor: id, x: p.x, y: p.y });
-      }
+      // 边中点：沿该边的**外法线**（斜切抓手沿法线，与 Aseprite 的「往外拖＝斜切」一致）
+      const n = edgeNormalOf(f, id);
+      out.push({ kind: "scale", anchor: id, x: p.x + n.x * off.scale, y: p.y + n.y * off.scale });
+      out.push({ kind: "skew", anchor: id, x: p.x + n.x * off.skew, y: p.y + n.y * off.skew });
     }
   }
   return out;
 }
 
-/**
- * 触屏这一屏的**命中半径**：基准 41px（手指直径量级），但在小选区上会被
- * 「相邻抓手不许重叠」压下来（见 `touchLayout()` 的分档表）。
- * 取 `min(41, 两两最小圆心距 / 2)`，下限 `TOUCH_HIT_FLOOR`（28px）。
- * 调用方（`View.xfHitAt()`）拿它当命中半径，于是「画出来的圈」和「点得到的范围」永远一致。
- */
-export function touchHitRadius(grabs: Grab[], base = TOUCH_HIT.inner): number {
+/** 两两圆心距的最小值（`sameKind = true` 时只数**同类**抓手；没有可比的一对时返回 Infinity） */
+export function minGrabGap(grabs: Grab[], sameKind = false): number {
   let min = Infinity;
   for (let i = 0; i < grabs.length; i++) {
     for (let j = i + 1; j < grabs.length; j++) {
+      if (sameKind && grabs[i].kind !== grabs[j].kind) continue;
       min = Math.min(min, Math.hypot(grabs[i].x - grabs[j].x, grabs[i].y - grabs[j].y));
     }
   }
+  return min;
+}
+
+/**
+ * 这一屏的触屏**命中半径**：基准 38px（手指直径量级），在小选区上按
+ * `min(基准, 同类两两最小圆心距 / 2)` 收窄，下限 `TOUCH_HIT_FLOOR`（24px）。
+ *
+ * 为什么按**同类**收窄：缩放抓手贴着框、旋转 / 斜切在外移 30px 处，同角那一对**天然只隔
+ * `30 - 6 = 24px`**（规格钉死的两档距离）。若连跨类一起算最小值，半径会被永久压在 24px 上、
+ * 38px 的基准形同虚设；跨类冲突本来就该由**优先级**裁决（缩放 > 旋转 > 斜切），
+ * 同类冲突才是「两个同语义抓手抢同一个手指」的真问题 —— 那才需要靠收窄半径解决。
+ *
+ * 于是：同语义的两个抓手在任意尺寸下都不会共享一个触摸点（或半径已到下限）；
+ * 每个图标在自己的圆心上必定命中自己（见 `grabAt()`）。
+ */
+export function touchHitRadius(grabs: Grab[], base = TOUCH_HIT.inner): number {
+  const min = minGrabGap(grabs, true);
   if (!Number.isFinite(min)) return base;
   return Math.max(TOUCH_HIT_FLOOR, Math.min(base, min / 2));
 }
 
-/** 找到一个屏幕点命中的抓手（近的优先；`r` 为命中半径） */
-export function grabAt(grabs: Grab[], p: Pt, r: number): Grab | null {
-  let best: Grab | null = null, bd = r;
+/**
+ * 命中一个抓手。`r` 可以按语义分层给（PC：缩放＝内圈 22、旋转 / 斜切＝外圈 34），
+ * 给一个数就是三种同半径。
+ *
+ * 候选范围按各自的半径筛，胜负按 `d / GRAB_REACH[kind]` 打分（缩放 > 旋转 > 斜切）。
+ * 于是**同一距离下缩放优先**，而任一抓手在**自己的圆心**上（`d = 0`）必定胜出 ——
+ * 优先级不会把某个固定图标变成点不到的死区。
+ */
+export function grabAt(grabs: Grab[], p: Pt, r: number | HitRadii): Grab | null {
+  const inner = typeof r === "number" ? r : r.inner;
+  const outer = typeof r === "number" ? r : r.outer;
+  let best: Grab | null = null, bs = Infinity;
   for (const g of grabs) {
+    const lim = g.kind === "scale" ? inner : outer;
     const d = Math.hypot(p.x - g.x, p.y - g.y);
-    if (d <= bd) { bd = d; best = g; }
+    if (d > lim) continue;
+    const reach = GRAB_REACH[g.kind as "scale" | "rotate" | "skew"] ?? 1;
+    const s = d / reach;
+    if (s < bs) { bs = s; best = g; }
   }
   return best;
 }

@@ -2,7 +2,7 @@
 //
 // 与 `tests/warpui.test.ts` 的分工：
 //   · warpui   = 四点 / 网格自由变形（额外能力，口径不动）；
-//   · 本文件    = 内圈缩放 / 外圈旋转斜切（PC）、独立抓手（触屏）、枢轴、
+//   · 本文件    = 贴着框的固定图标抓手（两平台同一套）、枢轴、
 //                像素精确通道、以及「一次会话一条 undo」的事务语义。
 //
 // 全部走无头 View（`stubEnv()` + `stubViewDom()` + 指针事件注入），不依赖真 DOM。
@@ -12,8 +12,8 @@ import { View, PIVOT_ORDER } from "../src/render/view";
 import { beginMove, xformAffineFloating, xformAffineDestBox, type MoveState } from "../src/tools/select";
 import {
   affineFrom, applyAffine, exactMove, solveSkew, toFrameLocal,
-  ANCHORS, PIVOT_PRESETS, PC_HIT, TOUCH_HIT, TOUCH_MID_SPAN, TOUCH_OFF_CORNER, TOUCH_OFF_OUTER,
-  touchHitRadius, touchOuterOffset, solveRotate, CLEAN_ANGLES_DEG,
+  ANCHORS, PIVOT_PRESETS, PC_HIT, TOUCH_HIT, GRAB_OFF_SCALE, GRAB_OFF_OUTER, GRAB_OFF_OUTER_SMALL,
+  GRAB_SMALL_SPAN, touchHitRadius, solveRotate, CLEAN_ANGLES_DEG,
   type AnchorId, type XfKind,
 } from "../src/tools/xform";
 import { applyPcMode } from "../src/io/pcmode";
@@ -55,7 +55,8 @@ interface VX {
   xfGrabs(): Grab[];
   xfPivotScreen(): { x: number; y: number } | null;
   hitRadii(): { inner: number; outer: number };
-  touchLayoutNow(): { corners: boolean; edges: boolean; rotate: boolean; skew: boolean } | null;
+  /** 抓手的实际外移距离（小选区会把旋转 / 斜切收窄到 20px，但**不隐藏**） */
+  grabOffsetsNow(): { scale: number; rotate: number; skew: number } | null;
   transforming: boolean;
   pivotPreset(): string | null;
   setPivotPreset(k: string): boolean;
@@ -200,7 +201,7 @@ export function testXformUi(): void {
     v.onUp(ev(to.x, to.y, "mouse"));
     dom.flush();
   };
-  /** 外圈旋转抓手在屏幕上的位置（角的 45° 外侧 30px） */
+  /** 旋转抓手（固定图标）在屏幕上的位置：直接取画出来的那个抓手，避免坐标口径再抄一遍 */
   const rotGrabAt = (v: VX, id: AnchorId): { x: number; y: number } => {
     // 没有会话时 `xfScreenFrame()` 是 null：先按框内空白处按一下，把会话开起来（不移动）
     const pre = v.xfScreenFrame();
@@ -216,98 +217,223 @@ export function testXformUi(): void {
     const f = v.xfScreenFrame();
     ok("xformui.helper.frame", !!f, "取旋转抓手前必须先有选区（或会话）");
     if (!f) return { x: 0, y: 0 };
-    const a = anchorScreen(v, id);
-    const c = { x: (f.corners[0].x + f.corners[2].x) / 2, y: (f.corners[0].y + f.corners[2].y) / 2 };
-    const vx = a.x - c.x, vy = a.y - c.y;
-    const len = Math.hypot(vx, vy) || 1;
-    return { x: a.x + (vx / len) * 28, y: a.y + (vy / len) * 28 };
+    const g = v.xfGrabs().find((q) => q.kind === "rotate" && q.anchor === id);
+    ok("xformui.helper.rotate-grab", !!g, id);
+    return g ? { x: g.x, y: g.y } : { x: 0, y: 0 };
   };
 
-  // ================================================================ PC 的两层同心圈
+  // ================================================================ PC：固定图标抓手 + 双层圈（额外）
   {
     const { s, v } = mk(true);
-    paint(s, 10, 10, 24, 24);                     // 内容 24×24 → 屏幕 92×92
+    paint(s, 10, 10, 24, 24);                     // 内容 24×24 → 屏幕 96×96
     const tl = anchorScreen(v, "tl");
     const tlx = tl.x, tly = tl.y;
     eq("xformui.pc.radii", v.hitRadii(), PC_HIT);
-    // 内圈（22px）＝缩放：角往外 12px 处（离相邻的「上边中点」还有 28px）
-    eq("xformui.pc.inner-scale", v.xfHitAt({ x: tl.x + 12, y: tl.y }), { kind: "scale", anchor: "tl" });
-    // 外圈（22..34px）＝角旋转（沿对角线向外 30px 处，tl 比相邻的边中点更近）
-    eq("xformui.pc.outer-rotate", v.xfHitAt({ x: tl.x - 30 / Math.SQRT2, y: tl.y - 30 / Math.SQRT2 }),
-      { kind: "rotate", anchor: "tl" });
-    const top = anchorScreen(v, "t");
-    eq("xformui.pc.edge-skew", v.xfHitAt({ x: top.x, y: top.y - 30 }), { kind: "skew", anchor: "t" });
-    eq("xformui.pc.beyond", v.xfHitAt({ x: top.x, y: top.y - 40 }), null);
-    // 框正中（离一切锚点都超过 34px 的外圈）：什么也不算，交给「移动内容」
-    eq("xformui.pc.inside-none", v.xfHitAt({ x: tlx + 40, y: tly + 45 }), null);
-    // 半径是**屏幕常量**：画布缩到 1× 后 12px 处仍然算内圈（画布尺寸也缩了 4 倍）
-    v.zoom = 1; v.ox = 8; v.oy = 8;
-    const tl1 = anchorScreen(v, "tl");
-    eq("xformui.pc.zoom-invariant",
-      v.xfHitAt({ x: tl1.x + 6 / Math.SQRT2, y: tl1.y - 6 / Math.SQRT2 }), { kind: "scale", anchor: "tl" });
-    v.zoom = 4; v.ox = 8; v.oy = 8;
-    eq("xformui.pc.no-grabs", v.xfGrabs(), []);   // 独立抓手是触屏的画法
-  }
-
-  // ================================================================ 触屏独立抓手：命中 + 互不重叠
-  {
-    const { s, v } = mk(false);
-    paint(s, 10, 10, 46, 46);                     // 184×184 屏幕：够摆全部 16 个抓手
-    eq("xformui.touch.layout", v.touchLayoutNow(), { corners: true, edges: true, rotate: true, skew: true });
+    // 两平台同一套固定图标：PC 上也要画 / 也要能中（16 个：8 缩放 + 4 旋转 + 4 斜切）
     const grabs = v.xfGrabs();
-    eq("xformui.touch.count", grabs.length, 16);  // 8 个缩放 + 4 旋转 + 4 斜切
-    // 抓手按**锚点**成对摆：角＝缩放 + 旋转，边＝缩放 + 斜切
-    eq("xformui.touch.grab-kinds", grabs.map((g) => g.kind),
+    eq("xformui.pc.grabs", grabs.length, 16);
+    eq("xformui.pc.grab-kinds", grabs.map((g) => g.kind),
       ["scale", "rotate", "scale", "skew", "scale", "rotate", "scale", "skew",
         "scale", "rotate", "scale", "skew", "scale", "rotate", "scale", "skew"]);
-    const rotG = grabs.find((g) => g.kind === "rotate")!;
-    const corG = grabs.find((g) => g.kind === "scale")!;
-    ok("xformui.touch.grab-offset",
-      near(Math.hypot(rotG.x - corG.x, rotG.y - corG.y),
-        touchOuterOffset(v.xfScreenFrame()!.spanX) - TOUCH_OFF_CORNER, 1e-6),
-      String(Math.hypot(rotG.x - corG.x, rotG.y - corG.y)));
-    eq("xformui.touch.radii", v.hitRadii(), TOUCH_HIT);
-    ok("xformui.touch.radius-finger", TOUCH_HIT.inner >= 38 && touchHitRadius(v.xfGrabs()) >= 38);
+    // 缩放图标贴在框上（离角 ≤ 8px）
+    const tlS = grabs.find((g) => g.kind === "scale" && g.anchor === "tl")!;
+    ok("xformui.pc.scale-hugs-frame", Math.hypot(tlS.x - tl.x, tlS.y - tl.y) <= 8,
+      String(Math.hypot(tlS.x - tl.x, tlS.y - tl.y)));
+    // 内圈（22px）＝缩放：角往外 12px 处（离相邻的「上边中点」还有 36px）
+    eq("xformui.pc.inner-scale", v.xfHitAt({ x: tl.x + 12, y: tl.y }), { kind: "scale", anchor: "tl" });
+    // 旋转图标在角外侧对角线方向 30px（PC 直接点图标中心）
+    const tlR = grabs.find((g) => g.kind === "rotate" && g.anchor === "tl")!;
+    eq("xformui.pc.rotate-grab", v.xfHitAt({ x: tlR.x, y: tlR.y }), { kind: "rotate", anchor: "tl" });
+    // 外圈（22..34px）＝旋转：图标附近（差 2px）仍然算旋转
+    eq("xformui.pc.outer-rotate",
+      v.xfHitAt({ x: tlR.x + 2 / Math.SQRT2, y: tlR.y + 2 / Math.SQRT2 }), { kind: "rotate", anchor: "tl" });
+    const top = anchorScreen(v, "t");
+    const tK = grabs.find((g) => g.kind === "skew" && g.anchor === "t")!;
+    eq("xformui.pc.edge-skew", v.xfHitAt({ x: tK.x, y: tK.y }), { kind: "skew", anchor: "t" });
+    // 图标外围 34px 之内仍算它（外圈是**额外**的宽容），再远就没有了
+    eq("xformui.pc.icon-rim", v.xfHitAt({ x: tK.x, y: tK.y - 30 }), { kind: "skew", anchor: "t" });
+    eq("xformui.pc.beyond", v.xfHitAt({ x: top.x, y: top.y - 70 }), null);
+    // 框正中（离一切图标都超过各自半径）：什么也不算，交给「移动内容」
+    eq("xformui.pc.inside-none", v.xfHitAt({ x: tlx + 40, y: tly + 45 }), null);
+    // 偏移与半径都是**屏幕常量**：画布缩到 1× 后图标仍在离角 6px 处，往外一点仍算缩放
+    v.zoom = 1; v.ox = 8; v.oy = 8;
+    const tl1 = anchorScreen(v, "tl");
+    const g1 = v.xfGrabs().find((g) => g.kind === "scale" && g.anchor === "tl")!;
+    ok("xformui.pc.zoom-invariant-offset",
+      Math.abs(Math.hypot(g1.x - tl1.x, g1.y - tl1.y) - GRAB_OFF_SCALE) < 1e-9,
+      String(Math.hypot(g1.x - tl1.x, g1.y - tl1.y)));
+    eq("xformui.pc.zoom-invariant",
+      v.xfHitAt({ x: tl1.x - 9 / Math.SQRT2, y: tl1.y - 9 / Math.SQRT2 }), { kind: "scale", anchor: "tl" });
+    v.zoom = 4; v.ox = 8; v.oy = 8;
+  }
+
+  // ================================================================ 固定图标抓手：命中 + 互不重叠 + 不隐藏
+  {
+    const { s, v } = mk(false);
+    paint(s, 10, 10, 46, 46);                     // 184×184 屏幕：常规尺寸
+    eq("xformui.grab.offsets", v.grabOffsetsNow(),
+      { scale: GRAB_OFF_SCALE, rotate: GRAB_OFF_OUTER, skew: GRAB_OFF_OUTER });
+    const grabs = v.xfGrabs();
+    eq("xformui.grab.count", grabs.length, 16);   // 8 个缩放 + 4 旋转 + 4 斜切
+    eq("xformui.grab.kinds", grabs.map((g) => g.kind),
+      ["scale", "rotate", "scale", "skew", "scale", "rotate", "scale", "skew",
+        "scale", "rotate", "scale", "skew", "scale", "rotate", "scale", "skew"]);
+    // 三种图标语义稳定：角＝缩放 + 旋转，边中点＝缩放 + 斜切
+    eq("xformui.grab.semantics", grabs.map((g) => [g.anchor, g.kind]).filter(([, k]) => k !== "scale").length, 8);
+    ok("xformui.grab.corner-pairs",
+      grabs.filter((g) => g.anchor === "tl").map((g) => g.kind).join(",") === "scale,rotate");
+    ok("xformui.grab.edge-pairs",
+      grabs.filter((g) => g.anchor === "t").map((g) => g.kind).join(",") === "scale,skew");
+    // 缩放贴框（≤8px）、旋转 / 斜切在 28–34px
+    const anc = (id: AnchorId): { x: number; y: number } => anchorScreen(v, id);
+    const off = (kind: XfKind, id: AnchorId): number => {
+      const g = grabs.find((q) => q.kind === kind && q.anchor === id)!;
+      const a = anc(id);
+      return Math.hypot(g.x - a.x, g.y - a.y);
+    };
+    let worstScale = 0, worstOuter = 0;
+    for (const id of ANCHORS) {
+      worstScale = Math.max(worstScale, off("scale", id));
+      worstOuter = Math.max(worstOuter, off(id === "t" || id === "b" || id === "l" || id === "r" ? "skew" : "rotate", id));
+    }
+    ok("xformui.grab.scale-hug", worstScale <= 8, String(worstScale));
+    ok("xformui.grab.outer-offset", worstOuter >= 28 && worstOuter <= 34, String(worstOuter));
+    eq("xformui.grab.radii", v.hitRadii(), TOUCH_HIT);
+    ok("xformui.grab.radius-finger", TOUCH_HIT.inner >= 38 && touchHitRadius(grabs) === TOUCH_HIT.inner);
     let min = Infinity;
     for (let i = 0; i < grabs.length; i++) {
       for (let j = i + 1; j < grabs.length; j++) {
+        if (grabs[i].kind !== grabs[j].kind) continue;      // 同类才要求不重叠（跨类由优先级裁决）
         min = Math.min(min, Math.hypot(grabs[i].x - grabs[j].x, grabs[i].y - grabs[j].y));
       }
     }
-    ok("xformui.touch.no-overlap", min >= TOUCH_HIT.inner * 2, "min=" + min.toFixed(1));
+    ok("xformui.grab.same-kind-no-overlap", min >= touchHitRadius(grabs) * 2, "min=" + min.toFixed(1));
     let hits = 0;
     for (const g of grabs) {
       const h = v.xfHitAt({ x: g.x, y: g.y });
       if (h && h.kind === g.kind && h.anchor === g.anchor) hits++;
     }
-    eq("xformui.touch.each-hittable", hits, grabs.length);
-    // 小选区（短边 < 90px）：退化成角缩放 + 角旋转，仍不重叠
+    eq("xformui.grab.each-hittable", hits, grabs.length);
+    // 小选区（短边 44 < 64）：旋转 / 斜切**收窄**到 20px，但一个都不少
     const small = mk(false);
-    paint(small.s, 10, 10, 26, 26);               // 104×104 屏幕：角缩放 + 角旋转
-    eq("xformui.touch.small-layout", small.v.touchLayoutNow(), { corners: true, edges: false, rotate: true, skew: false });
+    paint(small.s, 10, 10, 12, 12);               // 44×44 屏幕
+    eq("xformui.grab.small-offsets", small.v.grabOffsetsNow(),
+      { scale: GRAB_OFF_SCALE, rotate: GRAB_OFF_OUTER_SMALL, skew: GRAB_OFF_OUTER_SMALL });
     const g2 = small.v.xfGrabs();
-    eq("xformui.touch.small-count", g2.length, 8);
-    let min2 = Infinity;
-    for (let i = 0; i < g2.length; i++) {
-      for (let j = i + 1; j < g2.length; j++) min2 = Math.min(min2, Math.hypot(g2[i].x - g2[j].x, g2[i].y - g2[j].y));
+    eq("xformui.grab.small-count", g2.length, 16);
+    ok("xformui.grab.small-keeps-categories",
+      g2.some((g) => g.kind === "rotate") && g2.some((g) => g.kind === "skew") && g2.some((g) => g.kind === "scale"));
+    let hits2 = 0;
+    for (const g of g2) {
+      const h = small.v.xfHitAt({ x: g.x, y: g.y });
+      if (h && h.kind === g.kind && h.anchor === g.anchor) hits2++;
     }
-    ok("xformui.touch.small-no-overlap", min2 >= TOUCH_HIT.inner * 2, "min=" + min2.toFixed(1));
-    // 极小选区：只剩 4 个角缩放
+    eq("xformui.grab.small-each-hittable", hits2, g2.length);
+    ok("xformui.grab.small-radius-narrowed",
+      touchHitRadius(g2) < TOUCH_HIT.inner, String(touchHitRadius(g2)));
+    ok("xformui.grab.threshold", GRAB_SMALL_SPAN === 64);
+    // 极小选区（24×24 屏幕）：一个都不隐藏（宁可触摸区叠着，由优先级裁决）
     const tiny = mk(false);
-    paint(tiny.s, 10, 10, 12, 12);                // 48×48 屏幕：只剩角缩放
-    eq("xformui.touch.tiny-layout", tiny.v.touchLayoutNow(), { corners: true, edges: false, rotate: false, skew: false });
-    eq("xformui.touch.tiny-count", tiny.v.xfGrabs().length, 4);
-    ok("xformui.touch.threshold", TOUCH_MID_SPAN === 80);
-    // 触屏抓手的拖动真的走对应语义（旋转抓手 → 旋转）
+    paint(tiny.s, 10, 10, 5, 5);                  // 20×20 屏幕
+    eq("xformui.grab.tiny-count", tiny.v.xfGrabs().length, 16);
+    eq("xformui.grab.tiny-offsets", tiny.v.grabOffsetsNow(),
+      { scale: GRAB_OFF_SCALE, rotate: GRAB_OFF_OUTER_SMALL, skew: GRAB_OFF_OUTER_SMALL });
+    // 枢轴仍然拖得动：手指压在框中心（离任何图标都远）＝拖枢轴，不会被缩放抓手抢走
+    const piv = mk(false);
+    paint(piv.s, 10, 10, 46, 46);
+    // 枢轴活在一次**会话**里：先点一下角上的缩放图标把会话开起来（不移动＝零改动），
+    // 再按框中心 —— 中心离一切图标都远，那一下必须是「枢轴」
+    const open = piv.v.xfGrabs().find((g) => g.kind === "scale" && g.anchor === "tl")!;
+    piv.v.onDown(ev(open.x, open.y));
+    piv.v.onUp(ev(open.x, open.y));
+    dom.flush();
+    const pc0 = pivotOfFrame(piv.v)!;
+    piv.v.onDown(ev(pc0.x, pc0.y));
+    dom.flush();
+    eq("xformui.grab.centre-is-pivot", piv.v.xfDrag?.kind, "pivot");
+    const keep0 = [piv.v.xf!.tp!.pivot.x, piv.v.xf!.tp!.pivot.y];
+    piv.v.onMove(ev(pc0.x + 24, pc0.y + 24));
+    dom.flush();
+    ok("xformui.grab.pivot-drag-moved",
+      !!piv.v.xf && piv.v.xf.tp!.pivot.x !== keep0[0] && piv.v.xf.tp!.pivot.y !== keep0[1],
+      piv.v.xf ? JSON.stringify([piv.v.xf.tp!.pivot.x, piv.v.xf.tp!.pivot.y, keep0]) : "no-session");
+    eq("xformui.grab.pivot-not-scale", piv.v.xfDrag?.kind, "pivot");
+    piv.v.onUp(ev(pc0.x + 24, pc0.y + 24));
+    piv.v.revertXf();
+    // 小选区上枢轴压在框中心、抓手离得更近：**最近的赢** → 正中那一下仍然是枢轴
+    const piv2 = mk(false);
+    paint(piv2.s, 10, 10, 5, 5);                  // 20×20 屏幕
+    const open2 = piv2.v.xfGrabs().find((g) => g.kind === "scale" && g.anchor === "tl")!;
+    piv2.v.onDown(ev(open2.x, open2.y));
+    piv2.v.onUp(ev(open2.x, open2.y));
+    dom.flush();
+    const pc1 = pivotOfFrame(piv2.v)!;
+    piv2.v.onDown(ev(pc1.x, pc1.y));
+    dom.flush();
+    eq("xformui.grab.small-centre-is-pivot", piv2.v.xfDrag?.kind, "pivot");
+    piv2.v.onUp(ev(pc1.x, pc1.y));
+    piv2.v.revertXf();
+    // 拖动过程中**已显示的抓手不得消失**（kind → anchor 的映射整场不变）
     const use = mk(false);
     paint(use.s, 10, 10, 46, 46);
+    const before = use.v.xfGrabs().map((g) => g.kind + ":" + g.anchor);
     const rotGrab = use.v.xfGrabs().find((g) => g.kind === "rotate" && g.anchor === "tl")!;
     use.v.onDown(ev(rotGrab.x, rotGrab.y));
     dom.flush();
-    eq("xformui.touch.rotate-grab-kind", use.v.xfDrag?.kind, "rotate");
-    eq("xformui.touch.rotate-grab-anchor", use.v.xfDrag?.anchor, "tl");
-    use.v.onUp(ev(rotGrab.x, rotGrab.y));
+    eq("xformui.grab.rotate-grab-kind", use.v.xfDrag?.kind, "rotate");
+    eq("xformui.grab.rotate-grab-anchor", use.v.xfDrag?.anchor, "tl");
+    use.v.onMove(ev(rotGrab.x + 40, rotGrab.y + 24));
+    dom.flush();
+    eq("xformui.grab.stable-during-drag", use.v.xfGrabs().map((g) => g.kind + ":" + g.anchor), before);
+    use.v.onUp(ev(rotGrab.x + 40, rotGrab.y + 24));
     use.v.revertXf();
+  }
+
+  // ================================================================ 画出来的图标：两个平台同一套
+  {
+    const g = globalThis as unknown as Record<string, unknown>;
+    const d = g.document as { createElement: (t: string) => unknown };
+    const origCreate = d.createElement;
+    const probe = origCreate("canvas") as { getContext: (k: string) => Record<string, unknown> };
+    const base = probe.getContext("2d");
+    // 录下画图调用（只记形状类方法，别的照旧交给原来的桩）——用来证明「PC 与触屏画的是同一套图标」
+    let log: string[] = [];
+    const recCtx = new Proxy({}, {
+      get: (_t, k: string) => {
+        if (k === "rect" || k === "arc" || k === "moveTo" || k === "lineTo") {
+          return (...a: number[]) => {
+            log.push(k + "(" + a.map((n) => Math.round(n * 100) / 100).join(",") + ")");
+          };
+        }
+        return base[k];
+      },
+      set: () => true,
+    });
+    d.createElement = (tag: string) => (tag === "canvas"
+      ? {
+        width: 0, height: 0, style: {}, getContext: () => recCtx,
+        getBoundingClientRect: () => ({ left: 0, top: 0, width: 320, height: 240 }),
+      }
+      : origCreate(tag));
+    try {
+      const drawn = (pc: boolean): string[] => {
+        const { s, v } = mk(pc);
+        paint(s, 10, 10, 24, 24);
+        log = [];
+        (v as unknown as { drawSelTransform(): void }).drawSelTransform();
+        return log.slice();
+      };
+      const touch = drawn(false);
+      const pcd = drawn(true);
+      // 先证明真的画了东西（否则「两边都空」也会判相等）
+      ok("xformui.draw.not-empty", touch.length >= 24, "画图调用 " + touch.length + " 次");
+      eq("xformui.draw.same-on-both-platforms", pcd, touch);
+      eq("xformui.draw.scale-icons", touch.filter((l) => l.startsWith("rect(")).length, 8);
+      eq("xformui.draw.rotate-icons", touch.filter((l) => l.startsWith("arc(")).length, 8);
+      ok("xformui.draw.skew-icons", touch.length > 0 && touch.some((l) => l.startsWith("moveTo(")), "有斜线");
+    } finally {
+      d.createElement = origCreate;
+    }
   }
 
   // ================================================================ 缩放：内圈 + 等比 + 镜像 + 网格吸附

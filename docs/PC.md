@@ -44,7 +44,7 @@
 | ✅ 跨画布拖选区**实时预览**落点幽灵 + 目标画布虚线框 | `View.dropTargetOf` + `drawOverlay` |
 | ✅ 色板小球与环形子球**同尺寸**；PC 球里隐藏复制/剪切/粘贴（有快捷键） | `orb-layout.ts`、`App.tsx` 的 `selItems` |
 | ✅ PC 模式**多个浮动球同时展开**且不拦截画布操作（Esc 收球） | `App.tsx`（`!pcMode` 才渲染 `.radial-back`） |
-| ✅ **选区自由变换用「双层同心圈」**：内圈 22px＝缩放、角外圈 34px＝旋转、边中点外圈 34px＝斜切；未按住时悬停会把可抓的那圈点亮（`xfHint`），抓手与枢轴都用鼠标友好的窄命中；拖动中 Shift＝等比、Alt＝网格吸附取反、Ctrl＝复制（chip 同名同义） | `src/tools/xform.ts`（`PC_HIT` / `ringHitAt` / `outerKindOf`）、`View.xfHitAt` / `xfMove`、`View.beginXfMoveAt` |
+| ✅ **选区自由变换：贴着选区框的固定图标（触屏与 PC 同一套）** —— 8 个缩放（角＝方块 / 边中点＝扁矩形，离框 6px）+ 4 个旋转（角外侧对角线 30px，圆形箭头）+ 4 个斜切（边中点外侧法线 30px，双向斜线），小选区把旋转 / 斜切收窄到 20px 但**不隐藏**；**双层同心圈保留为额外的宽容命中**（图标先判，图标没中才回落：缩放 ≤22px、旋转 / 斜切 ≤34px），未按住时悬停会把那一圈点亮（`xfHint`）；拖动中 Shift＝等比、Alt＝网格吸附取反、Ctrl＝复制（chip 同名同义） | `src/tools/xform.ts`（`transformGrabs` / `grabOffsets` / `grabAt` / `PC_HIT` / `ringHitAt`）、`View.xfGrabs` / `xfHitAt` / `xfMove`、`View.beginXfMoveAt` |
 | ✅ **快捷圆盘 + 装备槽**（Blender 式，按住 `F`）：装备槽、圆盘、圆盘尺寸/半径设置**全部只在电脑模式存在**——移动端没有键盘发动不了它，渲染它只是白占画面 | `App.tsx`（装备槽的 `pcMode &&` 门槛、`hiddenById` 里的 `pcMode && pieEquip === id`）、`src/app/settings.ts`（`display.pieItem/pieRadius` 的 `visible`）、`src/ui/pie-layout.ts` |
 
 ## 二、还没做的（按优先级）
@@ -67,10 +67,10 @@
 ### P1 —— 效率与一致性
 
 7. ✅ ~~选区变换手柄命中半径固定 20px~~（已随 1.1.0.0 后的自由变换重做解决）：旧的
-   `View.handleAt` / `selFramePts` 已删除，改成 `src/tools/xform.ts` 的
-   **两层同心圈**（`PC_HIT = { inner: 22, outer: 34 }`）+ `ringHitAt()`：
-   角锚点的缩放圈在 22px 内、旋转圈在 34px 内，边中点只有缩放圈 + 斜切圈，
-   两圈**同心不同半径**所以不会互抢；触屏则换成带自动收窄半径的独立抓手（`touchHitRadius()`）。
+   `View.handleAt` / `selFramePts` 已删除，改成 `src/tools/xform.ts` 的**固定图标抓手**
+   （`transformGrabs()`，两平台同一套）+ **两层同心圈**（`PC_HIT = { inner: 22, outer: 34 }`）+ `ringHitAt()`。
+   图标是主语义（缩放贴框、旋转 / 斜切在 30px 外），圈是 PC 上**额外**的宽容命中：图标先判、
+   图标没中才回落（缩放 ≤22px、旋转 / 斜切 ≤34px），所以「再往外一点」在 PC 上仍然好按。
    仍可调的是「半径是否该随 zoom 缩放」——现在是屏幕固定像素，缩放很大时手感偏小，留给下一批。
 8. ⬜ **环形菜单展开时输入仍然打到画布**：滚轮会缩放、右键会画到下面的画布。建议弹出层置顶时吞掉画布输入。
 9. ⬜ **悬停读数每跨一个像素就 `changedUI()`**（`Session.setHover`）：PC 上鼠标移动密集，整屏 React 重渲染
