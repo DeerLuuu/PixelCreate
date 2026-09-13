@@ -12,8 +12,8 @@ import { rgbToHsl } from "./adjust";
 import { SHADING_DEFAULTS, shadingRamps, type ShadingParams } from "./shading";
 import type { RGBA } from "./types";
 
-/** 每格像素宽（2:1 固定：顶面 T×T/2、每单位高度 T/2） */
-export const ISO_TILES = [8, 16, 32] as const;
+/** 每格像素宽（2:1 固定：顶面 T×T/2、每单位高度 T/2）。4 = 图标尺寸的迷你方块（4×4 px） */
+export const ISO_TILES = [4, 8, 16, 32] as const;
 export type IsoTile = (typeof ISO_TILES)[number];
 export const ISO_TILE_DEFAULT: IsoTile = 16;
 

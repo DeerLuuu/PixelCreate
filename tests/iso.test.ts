@@ -9,7 +9,7 @@ import {
   isoRender, isoShapeVoxels, isoShadowOffset, isoWithinBudget, normalizeShapeParams,
   voxelAt, voxelCount,
 } from "../src/engine/iso";
-import type { IsoLook, IsoShapeParams } from "../src/engine/iso";
+import type { IsoLook, IsoShapeParams, IsoTile } from "../src/engine/iso";
 import type { RGBA } from "../src/engine/types";
 import { eq, ok } from "./common";
 
@@ -18,7 +18,7 @@ const TOP: RGBA = [255, 210, 160, 255];
 const RIGHT: RGBA = [200, 140, 90, 255];
 const LEFT: RGBA = [120, 80, 50, 255];
 
-function look(tile: 8 | 16 | 32, over: Partial<IsoLook> = {}): IsoLook {
+function look(tile: IsoTile, over: Partial<IsoLook> = {}): IsoLook {
   return {
     tile, faces: { top: TOP, right: RIGHT, left: LEFT },
     shadow: "off", shadowColor: [0, 0, 0, 90], outline: false, outlineColor: [20, 20, 20, 255],
@@ -73,6 +73,9 @@ const shape = (over: Partial<IsoShapeParams>): Partial<IsoShapeParams> => ({ ...
 
 export function testIso(): void {
   // --- 行宽模板：与文档里的黄金值逐项相等 ---
+  eq("iso.tiles.list", ISO_TILES.join(","), "4,8,16,32");
+  eq("iso.diamond.t4", isoDiamondRows(4).join(","), "2,2");
+  eq("iso.hex.t4", isoHexRows(4).join(","), "2,4,4,2");
   eq("iso.diamond.t16", isoDiamondRows(16).join(","), "2,6,10,14,14,10,6,2");
   eq("iso.diamond.t8", isoDiamondRows(8).join(","), "2,6,6,2");
   eq("iso.hex.t16", isoHexRows(16).join(","), "2,6,10,14,16,16,16,16,16,16,16,16,14,10,6,2");
@@ -91,6 +94,7 @@ export function testIso(): void {
     eq("iso.cube.size." + t, [r.w, r.h], [t, t]);
     eq("iso.cube.voxels." + t, r.voxels, 1);
     eq("iso.cube.area." + t, r.pixels, (3 * t * t) / 4);
+    eq("iso.cube.origin." + t, [r.originAt.x, r.originAt.y], [0, 0]);   // 锚点 = 格 (0,0) 的 stamp 左上角
     const rows: number[] = [];
     for (let y = 0; y < r.h; y++) rows.push(rowWidth(r.px, r.w, r.h, y));
     eq("iso.cube.rows." + t, rows.join(","), isoHexRows(t).join(","));
@@ -98,6 +102,20 @@ export function testIso(): void {
     eq("iso.cube.top-px." + t, countColour(r.px, TOP), (t * t) / 4);
     eq("iso.cube.right-px." + t, countColour(r.px, RIGHT), (t * t) / 4);
     eq("iso.cube.left-px." + t, countColour(r.px, LEFT), (t * t) / 4);
+  }
+  // 4px 是「图标尺寸」的迷你方块：4×4 外框、顶面 2×2 行宽、三个面各 4 px
+  {
+    const r = isoRender(isoShapeVoxels(shape({ w: 1, d: 1, h: 1 })), look(4));
+    eq("iso.t4.cube", [r.w, r.h, r.pixels], [4, 4, 12]);
+    // 3×3×2：外接框 = (w+d)·T/4 宽、(w+d)·T/4 + h·T/2 高
+    const plain = isoRender(isoShapeVoxels(shape({ w: 3, d: 3, h: 2 })), look(4));
+    eq("iso.t4.shape.size", [plain.w, plain.h], [12, 10]);
+    const deco = isoRender(isoShapeVoxels(shape({ w: 3, d: 3, h: 2 })), look(4, { shadow: "contact", outline: true }));
+    // 描边左右各 1px、阴影只往右下扩（4px 图块的偏移是 (1,1)）
+    const sh4 = isoShadowOffset(4);
+    eq("iso.t4.deco-grows", [deco.w, deco.h], [plain.w + 2 + sh4.x, plain.h + 2 + sh4.y]);
+    eq("iso.t4.shape.convex", rowConvex(deco.px, deco.w, deco.h), true);
+    eq("iso.t4.shadow-offset", [isoShadowOffset(4).x, isoShadowOffset(4).y], [1, 1]);
   }
 
   // --- 相邻两格：外框按 (T/2, T/4) 扩展，行必须连续（无洞），近处那格盖住远处的侧面 ---

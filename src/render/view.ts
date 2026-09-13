@@ -2136,7 +2136,7 @@ export class View {
     const s = this.session;
     if (!s.isoOn) return null;
     const hs = this.isoHandles();
-    // 半径随抓手密度收窄：小形状下四个角会挤在一起，固定 24px 会让「高度」抓手永远点不到
+    // 半径随抓手密度收窄：小图块（4px）下四个角会挤在一起，固定 24px 会让「高度」抓手永远点不到
     let minPair = Infinity;
     for (let i = 0; i < hs.length; i++) {
       for (let j = i + 1; j < hs.length; j++) {
@@ -2144,12 +2144,17 @@ export class View {
         if (d < minPair) minPair = d;
       }
     }
-    const R = Math.max(8, Math.min(isPc() ? 13 : 24, minPair / 2));
-    // 高度抓手优先：它悬在顶面上方，最容易被别的抓手盖住
-    const order = [...hs].sort((a, b) => (a.kind === "height" ? -1 : b.kind === "height" ? 1 : 0));
-    for (const h of order) {
-      if (Math.hypot(pt.x - h.x, pt.y - h.y) <= R) return h.kind;
+    const R = Math.max(6, Math.min(isPc() ? 13 : 24, minPair / 2));
+    // 命中最近的那个（挤在一起时「先匹配到谁」会变得不可预测）；
+    // 高度抓手给 1.5 倍半径的优待 —— 它悬在顶面上方，最容易被别的抓手盖住，也是唯一调高的入口
+    let best: typeof hs[number]["kind"] | null = null;
+    let bestD = Infinity;
+    for (const h of hs) {
+      const d = Math.hypot(pt.x - h.x, pt.y - h.y);
+      const lim = h.kind === "height" ? R * 1.5 : R;
+      if (d <= lim && d < bestD) { best = h.kind; bestD = d; }
     }
+    if (best) return best;
     const pv = this.isoPreview();
     if (!pv) return "move";
     const inside = pt.x >= pv.ax && pt.y >= pv.ay && pt.x < pv.ax + pv.r.w * this.zoom && pt.y < pv.ay + pv.r.h * this.zoom;

@@ -160,7 +160,7 @@ export function IsoBar({ t, onOpenPalette }: { t: ReturnType<typeof makeT>; onOp
 
       <div className="iso-row iso-acts">
         <Btn icon="i-plus" label={t("iso.generate")} className="primary" onClick={() => generate("layer")} guide="iso-generate" />
-        <Btn icon="i-dupe" label={t("iso.newLayer")} onClick={() => generate("new")} guide="iso-new-layer" />
+        <Btn icon="i-dupe" label={t("iso.newLayerShort")} title={t("iso.newLayer")} onClick={() => generate("new")} guide="iso-new-layer" />
         <Btn icon="i-palette" label={t(look ? "iso.lookHide" : "iso.look")} onClick={() => setLook((v) => !v)} active={look} guide="iso-look" />
         <Btn label={t("iso.exit")} onClick={() => SESSION.exitIso()} guide="iso-exit" />
       </div>
