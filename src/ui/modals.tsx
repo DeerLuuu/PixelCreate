@@ -37,6 +37,7 @@ import { SHORTCUT_SHEET } from "../app/shortcuts";
 import { REBINDABLE, chordForAction, chordLabel, chordOf, isOverridden, overrides } from "../app/keymap";
 import { CBAR_ACTIONS, LAYOUT_KEYS, ORB_IDS, TOPBAR_ACTIONS, fullOrder } from "../app/uibar";
 import { GROUP_TOLERANCE, type ColourAnalysis, type ColourEntry, type ColourGroup } from "../engine/color-analysis";
+import { FEATURE_ICONS } from "./feature-icons";
 
 /** 打开颜色分析面板：App 侧监听这个事件切到 ColorAnalysisModal，
  *  同时把调色板面板收起来（面板与弹窗是两套状态，只有 App 能同时改） */
@@ -142,18 +143,18 @@ export function PalettePanel({ t, onClose }: { t: ReturnType<typeof makeT>; onCl
           }} />
         </RowActions>
         <RowActions>
-          <Btn icon="i-indexed" label={t("indexedMode")} active={SESSION.prefs.indexed}
+          <Btn icon={FEATURE_ICONS.palette.indexed} label={t("indexedMode")} active={SESSION.prefs.indexed}
             title={t(SESSION.prefs.indexed ? "indexedOn" : "indexedOff")}
             onClick={() => SESSION.setIndexed(!SESSION.prefs.indexed)} guide="pal-indexed" />
           {SESSION.prefs.indexed && (
-            <Btn icon="i-dedupe" label={t("indexedRemap")} title={t("indexedRemapHint")}
+            <Btn icon={FEATURE_ICONS.palette.remap} label={t("indexedRemap")} title={t("indexedRemapHint")}
               onClick={() => SESSION.remapToPalette("canvas")} guide="pal-remap" />
           )}
-          <Btn icon="i-pal-from-canvas" label={t("palFromCanvas")} title={t("palFromCanvasHint")}
+          <Btn icon={FEATURE_ICONS.palette.fromCanvas} label={t("palFromCanvas")} title={t("palFromCanvasHint")}
             onClick={() => SESSION.paletteFromCanvas()} guide="pal-from-canvas" />
-          <Btn icon="i-search" label={t("ca.open")} title={t("ca.hint")}
+          <Btn icon={FEATURE_ICONS.palette.colorAnalysis} label={t("ca.open")} title={t("ca.hint")}
             onClick={openColorAnalysis} guide="pal-color-analysis" />
-          <Btn icon="i-dedupe" label={t("sh.open")} title={t("sh.hint")}
+          <Btn icon={FEATURE_ICONS.palette.shading} label={t("sh.open")} title={t("sh.hint")}
             onClick={openShading} guide="pal-shading" />
         </RowActions>
         <div data-guide="pal-ops">
@@ -177,7 +178,7 @@ export function PalettePanel({ t, onClose }: { t: ReturnType<typeof makeT>; onCl
               <button type="button" className="iconbtn" title={t("palDedupeHint")} onClick={() => {
                 const n = SESSION.paletteDedupe();
                 bridge.toast(n ? t("palDedupeDone") + n : t("palDedupeNone"));
-              }}><Icon id="i-dedupe" size={15} /></button>
+              }}><Icon id={FEATURE_ICONS.palette.dedupe} size={15} /></button>
             </>}
           />
         </div>
@@ -417,19 +418,19 @@ export function MenuModal({ t, snap, onClose, onOpen, onSheet, onRef, onGuide }:
     <>
       <Dialog title={t("menu")} onClose={onClose} bodyClass="col">
         {!sub ? (<>
-          {go("newproject")(t("newProject"), "i-new", "menu-new")}
-          {act(t("save"), "i-save", () => void saveProject(), "menu-save")}
-          {go("export")(t("exportCanvas"), "i-export", "menu-export")}
-          {act(t("open"), "i-open", () => void openFlow("new"), "menu-open")}
-          <Btn label={t("import")} icon="i-import" className="menuitem" guide="menu-import" onClick={() => setSub("import")} />
-          {go("coloranalysis")(t("ca.open"), "i-search", "menu-color-analysis")}
-          {go("shading")(t("sh.open"), "i-dedupe", "menu-shading")}
-          {act(t("iso.open"), "i-grid", () => SESSION.enterIso(), "menu-iso")}
-          {go("settings")(t("settings"), "i-gear", "menu-settings")}
-          {go("shortcuts")(t("shortcutHelp"), "i-keys", "menu-shortcuts")}
-          {go("customise")(t("customise"), "i-grid", "menu-customise")}
-          <Btn label={t("guideReplay")} icon="i-guide" className="menuitem" guide="menu-guide" onClick={onGuide} />
-          {go("changelog")(t("changelog"), "i-news", "menu-changelog")}
+          {go("newproject")(t("newProject"), FEATURE_ICONS.menu.newProject, "menu-new")}
+          {act(t("save"), FEATURE_ICONS.menu.save, () => void saveProject(), "menu-save")}
+          {go("export")(t("exportCanvas"), FEATURE_ICONS.menu.export, "menu-export")}
+          {act(t("open"), FEATURE_ICONS.menu.open, () => void openFlow("new"), "menu-open")}
+          <Btn label={t("import")} icon={FEATURE_ICONS.menu.import} className="menuitem" guide="menu-import" onClick={() => setSub("import")} />
+          {go("coloranalysis")(t("ca.open"), FEATURE_ICONS.menu.colorAnalysis, "menu-color-analysis")}
+          {go("shading")(t("sh.open"), FEATURE_ICONS.menu.shading, "menu-shading")}
+          {act(t("iso.open"), FEATURE_ICONS.menu.iso, () => SESSION.enterIso(), "menu-iso")}
+          {go("settings")(t("settings"), FEATURE_ICONS.menu.settings, "menu-settings")}
+          {go("shortcuts")(t("shortcutHelp"), FEATURE_ICONS.menu.shortcuts, "menu-shortcuts")}
+          {go("customise")(t("customise"), FEATURE_ICONS.menu.customise, "menu-customise")}
+          <Btn label={t("guideReplay")} icon={FEATURE_ICONS.menu.guide} className="menuitem" guide="menu-guide" onClick={onGuide} />
+          {go("changelog")(t("changelog"), FEATURE_ICONS.menu.changelog, "menu-changelog")}
         </>) : (
           <>
             <Btn label={"\u2039 " + t("import")} icon="" className="menuitem sub-back" onClick={() => setSub(null)} />

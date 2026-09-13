@@ -6,6 +6,10 @@
 //     i-tile-row / i-tile-col were literally the same picture);
 //  3. one id reused for two unrelated meanings, so the glyph lies about the
 //     action (i-size served both "resize dialog" and "resize mode").
+//
+// 4) 真机反馈「最近的新功能图标和别的重复，分不清」——`src/ui/feature-icons.ts`
+//    给每个功能入口登记了专属图标：同组（同一屏同时出现）不得重复，且都必须在 sprite 里。
+import { FEATURE_ICONS } from "../src/ui/feature-icons";
 import { eq, ok } from "./common";
 
 declare const require: (m: string) => any;
@@ -72,6 +76,16 @@ export function testIcons(): void {
     ["i-canvas", "i-paste-canvas"],
     ["i-crop", "i-fx-crop"],
     ["i-select", "i-rect"],
+    // 新功能的专属图标：等距图形 / 颜色分析 / 色彩明暗 / 索引色重映射 / 变形与吸附
+    ["i-iso", "i-grid"],
+    ["i-iso", "i-layers"],
+    ["i-ca", "i-search"],
+    ["i-shade", "i-dedupe"],
+    ["i-remap", "i-dedupe"],
+    ["i-skew", "i-resize-mode"],
+    ["i-mesh", "i-grid"],
+    ["i-snap", "i-grid"],
+    ["i-snap-half", "i-snap"],
   ];
   for (const [a, b] of pairs) {
     const A = byId.get(a), B = byId.get(b);
@@ -79,7 +93,32 @@ export function testIcons(): void {
     ok("icons.pair.differs." + a + "." + b, !!A && !!B && A.body !== B.body);
   }
   // the new purpose-built icons really are in the sprite
-  for (const id of ["i-resize-mode", "i-sel-grow", "i-sel-shrink", "i-indexed", "i-paste-layer", "i-paste-canvas"]) {
+  for (const id of ["i-resize-mode", "i-sel-grow", "i-sel-shrink", "i-indexed", "i-paste-layer", "i-paste-canvas",
+    "i-iso", "i-ca", "i-shade", "i-remap", "i-skew", "i-mesh", "i-snap", "i-snap-half"]) {
     ok("icons.new." + id, byId.has(id));
   }
+
+  // 4) 功能图标表：组内唯一 + 都真实存在（新增功能忘了画图标 / 借了别人的图标都会红）
+  //    表是 `as const`，比较前先放宽成 string（否则 TS 直接判定两个不同字面量不相等）
+  const F = FEATURE_ICONS as unknown as Record<string, Record<string, string>>;
+  const groups = Object.entries(F);
+  ok("icons.table.groups", groups.length >= 5, "groups=" + groups.length);
+  for (const [name, table] of groups) {
+    const keys = Object.keys(table);
+    ok("icons.table." + name + ".keys", keys.length > 0, name + "=" + keys.length);
+    eq("icons.table." + name + ".exists", keys.filter((k) => !byId.has(table[k])).join(","), "");
+    const seen = new Map<string, string>();
+    let dup = "";
+    for (const k of keys) {
+      const prev = seen.get(table[k]);
+      if (prev) dup += prev + " 与 " + k + " 都用 " + table[k] + "; ";
+      else seen.set(table[k], k);
+    }
+    eq("icons.table." + name + ".unique", dup, "");
+  }
+  // 近期新功能的图标没有被改回「借来的」那个
+  ok("icons.entry.iso", F.menu.iso === F.fxOrb.iso);
+  ok("icons.entry.iso-not-customise", F.menu.iso !== F.menu.customise);
+  ok("icons.entry.shading-not-remap", F.palette.shading !== F.palette.remap);
+  ok("icons.entry.ca-not-shading", F.palette.colorAnalysis !== F.palette.shading);
 }

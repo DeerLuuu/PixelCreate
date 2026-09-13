@@ -266,10 +266,75 @@ export function isoDeltaToCells(tile: IsoTile, ddx: number, ddy: number): { a: n
   return { a: (ddx + 2 * ddy) / T, b: (2 * ddy - ddx) / T };
 }
 
-/** 对齐到 2:1 栅格（原点吸附用；步长 = T/2 与 T/4） */
+/**
+ * 落点是否正好在 2:1 栅格**节点**上。
+ *
+ * 栅格节点＝两条等距轴各走整数格的点：`i·(T/2, T/4) + j·(-T/2, T/4)`，
+ * 所以 x 是 T/2 的整数倍、y 是 T/4 的整数倍，**并且两者同奇偶**
+ * （x/(T/2) 与 y/(T/4) 的奇偶性必须一致）。
+ *
+ * 为什么不能分别对 x、y 取整：那样会吸到 `(0, T/4)` 这种「格子边缘中点」上，
+ * 形状看着就在两行网格线中间 —— 用户看到的现象就是「生成的图形没和网格对齐」。
+ */
+export function isoOnLattice(tile: IsoTile, x: number, y: number): boolean {
+  const sx = tile / 2, sy = tile / 4;
+  const u = x / sx, v = y / sy;
+  return Number.isInteger(u) && Number.isInteger(v) && (((u + v) % 2) + 2) % 2 === 0;
+}
+
+/** 吸附到**最近的栅格节点**（在候选里按像素距离取最近，保证结果一定在栅格上） */
 export function isoSnapOrigin(tile: IsoTile, x: number, y: number): { x: number; y: number } {
   const sx = tile / 2, sy = tile / 4;
-  return { x: Math.round(x / sx) * sx, y: Math.round(y / sy) * sy };
+  const u0 = Math.round(x / sx), v0 = Math.round(y / sy);
+  let bx = u0 * sx, by = v0 * sy, bd = Infinity;
+  for (let du = -1; du <= 1; du++) {
+    for (let dv = -1; dv <= 1; dv++) {
+      const u = u0 + du, v = v0 + dv;
+      if ((((u + v) % 2) + 2) % 2 !== 0) continue;      // 半格位置：不是节点
+      const px = u * sx, py = v * sy;
+      const d = (px - x) * (px - x) + (py - y) * (py - y);
+      if (d < bd) { bd = d; bx = px; by = py; }
+    }
+  }
+  return { x: bx, y: by };
+}
+
+/**
+ * 落点：把理想位置吸到栅格上，再保证整块缓冲**落在画布内**。
+ *
+ * 移动只能沿栅格轴走（`+x` 一格 = `(+T/2, +T/4)`，`+y` 一格 = `(-T/2, +T/4)`），
+ * 所以「往右挪一点」必然带着往下一点 —— 早先按 x / y 各自加减 T/2 / T/4，
+ * 挪完就离开了栅格（形状和网格错半格）。形状比画布还大时只保证左上不越界。
+ */
+export function isoPlaceOrigin(
+  tile: IsoTile,
+  box: { w: number; h: number; originAt: { x: number; y: number } },
+  docW: number, docH: number,
+  want: { x: number; y: number },
+): { x: number; y: number } {
+  const s = isoSnapOrigin(tile, want.x, want.y);
+  const sx = tile / 2, sy = tile / 4;
+  const left = (o: { x: number; y: number }) => o.x - box.originAt.x;
+  const top = (o: { x: number; y: number }) => o.y - box.originAt.y;
+  const fits = (o: { x: number; y: number }) =>
+    left(o) >= 0 && top(o) >= 0 && left(o) + box.w <= docW && top(o) + box.h <= docH;
+  if (fits(s)) return s;
+  // 按「离理想节点几格」从近到远扫，先撞上完全放得下的就返回；
+  // 一个都没有（形状比画布大）就退到「左上不越界」里最近的那个
+  let loose: { x: number; y: number } | null = null;
+  const N = 96;
+  for (let cost = 1; cost <= 2 * N; cost++) {
+    for (let i = -cost; i <= cost; i++) {
+      const jAbs = cost - Math.abs(i);
+      const js = jAbs === 0 ? [0] : [jAbs, -jAbs];
+      for (const j of js) {
+        const o = { x: s.x + (i - j) * sx, y: s.y + (i + j) * sy };
+        if (fits(o)) return o;
+        if (!loose && left(o) >= 0 && top(o) >= 0) loose = o;
+      }
+    }
+  }
+  return loose ?? s;
 }
 
 /**
@@ -345,9 +410,12 @@ export function isoRender(v: Voxels, look: IsoLook): IsoRenderResult {
   minX -= pad; minY -= pad; maxX += pad + sh.x; maxY += pad + sh.y;
   const w = maxX - minX + 1, h = maxY - minY + 1;
   const px = new Uint8ClampedArray(w * h * 4);
-  // 地面原点：与「有没有体素」无关的几何点，所以圆柱这类 (0,0) 不在足迹里的形状也有稳定锚点
+  // 地面原点：与「有没有体素」无关的几何点，所以圆柱这类 (0,0) 不在足迹里的形状也有稳定锚点。
+  // 取的是格 (0,0) 顶面菱形的**顶点**（stamp 的对称轴 `c` 处），不是 stamp 左上角：
+  // stamp 从 `-T/2` 起画，左上角比顶点偏左 T/2，早先直接拿左上角当锚点，
+  // 栅格 / 足迹虚线 / 抓手就整体比形状偏左半格 —— 看起来正是「生成图形没和网格对齐」。
   const g0 = voxelOrigin(T, 0, 0, 0);
-  const originAt = { x: g0.ox - minX, y: g0.oy - minY };
+  const originAt = { x: g0.ox + c - minX, y: g0.oy - minY };
 
   const put = (x: number, y: number, col: RGBA) => {
     if (x < 0 || y < 0 || x >= w || y >= h) return;

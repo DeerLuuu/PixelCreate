@@ -28,7 +28,7 @@ src/tools/     工具注册表、笔迹、选区变换
 src/io/        原生桥接、工程文件（.pxc）、Aseprite 读写（aseread/asewrite/zlib）、自动保存、参考图、安全区、base64
 src/ui/        React 外壳、弹窗、时间线、浮动球、i18n、样式
 android/       MainActivity（Java 层）+ AndroidManifest
-tests/         无 DOM 的引擎/逻辑回归（**3747 条断言**，`node .ts-out/tests/run-tests.js` 末尾会打印条数）
+tests/         无 DOM 的引擎/逻辑回归（**3847 条断言**，`node .ts-out/tests/run-tests.js` 末尾会打印条数）
 docs/          API.md / COMPARISON.md
 ```
 
@@ -111,6 +111,9 @@ java -jar /root/pk/apksigner.jar verify --print-certs /sdcard/Download/PixelCraf
 ### 5.2 声明式优先
 - 设置项写进 `src/app/settings.ts`（一条声明 + i18n 文案），设置界面自动生成；
 - 引导步骤写进 `src/app/guide.ts`；手势映射写进 `src/app/gestures.ts`；
+- **功能图标写进 `src/ui/feature-icons.ts`**：每个功能入口一个专属 SVG（画在 `app2/www/index.html` 的 sprite 里），
+  同一屏同时出现的入口不得共用图标 —— 真机反馈过「新功能借旧图标，并排时根本分不清」，
+  `tests/icons.test.ts` 会校验组内唯一 + 图标真实存在；
 - 新增功能优先「加一条声明」，不要在 UI 里硬编码分支。
 
 ### 5.3 文档同步（**每次改功能都必须做，不是「有空再补」**）
@@ -343,6 +346,17 @@ Aseprite 兼容：`io/aseread.ts` / `io/asewrite.ts` / `io/zlib.ts`（自写同�
 直接操作（四角改宽深、黄块调高、整块移动，全部吸附栅格，松手才落笔）；参数条 `ui/iso.tsx`；
 入口按用户要求放**魔法球**（画布球不放）+ 主菜单。口径与计划见 `docs/PLAN-isobuilder.md`，
 接口见 docs/API.md §6d。
+等距对齐 + 功能专属图标（同日第二轮反馈「iso 生成的图形没有与网格对齐 / 新功能图标重复分不清」）：
+`isoRender` 的 `originAt` 从「stamp 左上角」改成**格 (0,0) 顶面菱形的顶点**（`g0.ox + c`）——
+stamp 从 `-T/2` 起画，早先的锚点比顶点偏左 `T/2`，栅格 / 足迹虚线 / 抓手就整体比图形偏左半格；
+新增 `isoOnLattice()`（节点要求 x/(T/2) 与 y/(T/4) **同奇偶**）与 `isoSnapOrigin()` 的最近节点吸附
+（分别取整会吸到 `(0, T/4)` 这种格子边缘中点）、`isoPlaceOrigin()`（越界只能沿等距轴挪格，
+早先按 x / y 各自加减 T/2 / T/4，挪完就离开栅格）；iso 模式期间 `drawIsoGuide()`（30° 参考网格）
+主动不画（30° 与 2:1 不可能重合，两套网格并存 = 「没对齐」的观感）。
+新增 `src/ui/feature-icons.ts`：**每个功能入口一个专属 SVG**（`i-iso` / `i-ca` / `i-shade` /
+`i-remap` / `i-skew` / `i-mesh` / `i-snap` / `i-snap-half`，画在 `app2/www/index.html` 的 sprite 里），
+分组 = 同一屏同时出现的入口，组内不得重复；主菜单 / 调色板动作行 / 魔法球 / 选择球 / iso 参数条全部接线。
+接口见 docs/API.md §6d + §17.5，`tests/icons.test.ts` 校验组内唯一与存在性。
 
 ---
 

@@ -353,7 +353,9 @@ isoDiamondRows(tile) / isoHexRows(tile): number[]         // 行宽模板（顶�
 isoGroundCorners(tile, w, d): { top; right; bottom; left }  // 足迹四角（相对**地面原点**的局部像素）
 isoHeightHandle(tile, w, d, h): Pt                        // 顶面中心（高度抓手）
 isoDeltaToCells(tile, ddx, ddy): { a; b }                 // 屏幕增量拆成两条等距轴走了几格
-isoSnapOrigin(tile, x, y): Pt                             // 吸附到 2:1 栅格（步长 T/2 与 T/4）
+isoOnLattice(tile, x, y): boolean                         // 这个落点是不是正好在栅格**节点**上
+isoSnapOrigin(tile, x, y): Pt                             // 吸附到最近的栅格节点
+isoPlaceOrigin(tile, box, docW, docH, want): Pt           // 吸附 + 越界收紧（只沿等距轴挪格，挪完仍在栅格上）
 isoRender(v, look: IsoLook): IsoRenderResult              // { px, w, h, originAt, voxels, pixels }
 isoRenderShape(shape, base, look?): IsoRenderResult       // 便捷入口
 ```
@@ -371,9 +373,18 @@ isoRenderShape(shape, base, look?): IsoRenderResult       // 便捷入口
   顶面菱形是其中 `2,6,10,14,14,10,6,2`（面积 `T²/4`），六边形总面积 `3T²/4`；
   **相邻格的 stamp 会重叠**（等距投影本来多对一），靠画家顺序（`x+y` 递增、同深度 `z` 递增）解决，
   每个体素只画**没被遮挡**的面（顶面：上方空；右面：`+x` 空；左面：`+y` 空）。
-- `originAt` 是**格 `(0,0)` stamp 的左上角**（即投影点 `(0,0,0)` 落在缓冲里的位置，尺寸为 `T×T` 的那个框的左上角）：
+- `originAt` 是**格 `(0,0)` 顶面菱形的顶点**（stamp 的对称轴 `c = T/2` 处；投影点 `(0,0,0)` 落在缓冲里的位置）：
   换形状 / 改尺寸时缓冲大小会变，只有拿它当锚点，画布上的预览与抓手才不会跳
   （圆柱这类 `(0,0)` 不在足迹里的形状也有稳定锚点）。
+  **不要改回「stamp 左上角」**：stamp 从 `-T/2` 起画，左上角比顶点偏左 `T/2`，
+  早先拿它当锚点，栅格 / 足迹虚线 / 抓手就整体比形状偏左半格 —— 真机表现就是「生成的图形没和网格对齐」。
+- **栅格节点**（`isoOnLattice` / `isoSnapOrigin`）：节点 = 两条等距轴各走整数格的点
+  `i·(T/2, T/4) + j·(-T/2, T/4)`，即 x 是 `T/2` 的整数倍、y 是 `T/4` 的整数倍**且两者同奇偶**。
+  分别对 x / y 取整会把 `(0, T/4)` 这种「格子边缘中点」当成合法落点（形状横跨两行网格线；
+  两次生成的图形也会互相错半格）。`isoSnapOrigin` 在 ±1 格候选里按像素距离取最近的合法节点。
+- `isoPlaceOrigin` 用于进模式时的落点：先吸附，再保证整块缓冲落进画布；挪动只能沿等距轴
+  （`+x` 一格 = `(+T/2, +T/4)`，`+y` 一格 = `(-T/2, +T/4)`），所以「往右挪一点」必然带着往下一点 ——
+  早先按 x / y 各自加减 `T/2` / `T/4`，挪完就离开了栅格。形状比画布大时退到「左上不越界」的最近节点。
 - `IsoLook` = `{ tile, faces{top,right,left}, shadow: "off"|"contact", shadowColor, outline, outlineColor }`；
   接触阴影 = 足迹上每个有内容的格画一块**偏移 (T/8,T/16)** 的顶面菱形，物体压在上面只露出下缘一条暗边。
 
@@ -390,9 +401,12 @@ isoRenderShape(shape, base, look?): IsoRenderResult       // 便捷入口
 **高度抓手优先**）、`isoDragTo()`（屏幕增量 → 格数：`top` 反向长、`right` 改 W、`left` 改 D、
 `bottom` 同时改 W/D、`height` 按 `T/2` 改高）、`drawIsoMode()`（2:1 栅格 → 半透明预览 → 足迹虚线 →
 抓手 → 尺寸浮标）、`isoCancelDrag()`。模式期间画布手势被接管（按下不落笔迹）。
+模式期间 `drawIsoGuide()`（设置里的 30° 等距参考网格）**主动让位不画** —— 30° 与 2:1 不可能重合，
+两套网格同时在屏幕上只会让人以为「图形没对齐网格」。
 
-**入口**：魔法球「等距图形」（`fxI("iso", …)`）+ 主菜单（`SESSION.enterIso()`）；
+**入口**：魔法球「等距图形」（`fxI("iso", …)`，图标 `i-iso`）+ 主菜单（`SESSION.enterIso()`）；
 参数条 `IsoBar`（`src/ui/iso.tsx`）在模式期间常驻，形状 chips / 尺寸 / 图块 / 外观折叠 / 生成 / 完成。
+功能图标登记在 `src/ui/feature-icons.ts`（见 §17.5）。
 
 ## 7. 撤销栈
 
@@ -1610,7 +1624,7 @@ nextPlayFrameIn(mode, fi, dir, w): PlayStep                    // 循环/乒乓�
 | `TabBar` / `DropMenu` | `ui/tabs.tsx` | 共用选项卡与可展开下拉（色板 / 导出 / 更新日志 / 播放速度）。**下拉列表用 `createPortal` 挂到 `document.body` 并 `position:fixed`**（坐标按按钮的视口位置算）：时间轴控制条是 `overflow-x:auto` 的滚动容器，绝对定位的列表会被它整块裁掉——「播放速度色片点了没反应」就是这么来的；任何放在滚动容器里的下拉都靠这条活着 |
 | `ChangelogModal` | `ui/changelog.tsx` | 更新日志：`CHANGELOG`（`ClgVersion[]`，每项 `it(kind, zh, en)`）+ `APP_VERSION` / `BUILD_TAG`；PC 竖排版本列表、触屏横向标签条，分类（add/imp/fix）可折叠。**条目文案是纯文本渲染**（`<li>{x.zh}</li>`，没有 Markdown 解析）——`**加粗**` 与反引号会原样显示，所以文案里不许出现它们，测试 `tests/changelog.test.ts` 会拦（同时校验 `APP_VERSION` 与 `AndroidManifest.xml` 的 `versionName` 一致、条目单行格式、中英一一对应） |
 | `ShadingModal` | `ui/modals.tsx` | 色彩明暗（调色板生成器）：算法在 `engine/shading.ts`，面板只摆控件与色块；基色块打开调色板挑色（`onOpenPalette` + `SESSION.awaitColorPick`），生成色块轻点＝前景色 / 长按＝加进色卡 / 电脑右键＝背景色，每行的「+」加入当前色卡、「保存」存成新色卡（`savePalettePresetOf`）。入口＝调色板面板 + 主菜单（`openShading()` → `pc-shading` → App 里 `setModal("shading")`） |
-| `IsoBar` | `ui/iso.tsx` | 等距图形模式的**参数条**（常驻浮层，不是弹窗——模式的手感全在画布上）：形状 chips（6）/ 宽深高 / 图块 8·16·32 / 实时读数（尺寸·体素·越界）/ 折叠外观（颜色模式、三面颜色、明暗、阴影、描边、形状专属参数）/ 生成 / 生成到新图层 / 完成。入口＝魔法球「等距图形」+ 主菜单 |
+| `IsoBar` | `ui/iso.tsx` | 等距图形模式的**参数条**（常驻浮层，不是弹窗——模式的手感全在画布上）：形状 chips（6）/ 宽深高 / 图块 4·8·16·32 / 实时读数（尺寸·体素·越界）/ 折叠外观（颜色模式、三面颜色、明暗、阴影、描边、形状专属参数）/ 生成 / 生成到新图层 / 完成。入口＝魔法球「等距图形」+ 主菜单。动作图标走 `feature-icons.ts`（§17.5） |
 | `useBlankTap` | `ui/base.tsx` | 点容器空白处执行动作（调色板面板点击关闭） |
 | 时间线分割线 | `ui/App.tsx`（`.tl-grip`） | 时间线面板顶部的拖动条：上下拖动 = `setTlHeight()`（面板总高度 140–520px，默认 200），拖动时显示 px 浮标，双击复位 200；`prefs.tlH` 是整块面板高度，矩阵 `flex:1` 填充，图层行不足时用 `.ase-fill` 单元格补底 |
 | 安全区 | `io/safearea.ts` | 把原生 insets 写成 CSS 变量 `--sat/--sab/--sal/--sar`，贴边控件统一用它们留白 |
@@ -1638,6 +1652,28 @@ nextPlayFrameIn(mode, fi, dir, w): PlayStep                    // 循环/乒乓�
 ### 17.4 i18n
 
 `src/ui/i18n.ts` 导出 `makeT(lang)`，`Dict` 为递归结构；所有面向用户的字符串都走 key，中英各一份。新增文案 = 两个字典各加一条。
+
+### 17.5 功能图标表 `src/ui/feature-icons.ts`
+
+```ts
+const FEATURE_ICONS = {
+  menu:    { iso: "i-iso", colorAnalysis: "i-ca", shading: "i-shade", customise: "i-grid", … },
+  palette: { remap: "i-remap", dedupe: "i-dedupe", shading: "i-shade", … },
+  fxOrb:   { iso: "i-iso", outline: "i-fx-o1", … },
+  selRing: { gridSnap: "i-snap", mesh: "i-mesh", quad: "i-skew", halfSnap: "i-snap-half", … },
+  isoBar:  { generate: "i-plus", newLayer: "i-layers", look: "i-palette" },
+} as const;
+```
+
+- **每个功能入口一个专属 SVG**，画在 `app2/www/index.html` 的 sprite 里（`<symbol id="i-…" viewBox="0 0 24 24">`，
+  用 `fill/stroke="currentColor"` 跟随主题色）。真机反馈：新功能借用旧图标（等距图形曾用 `i-grid`、
+  色彩明暗曾用 `i-dedupe`、颜色分析曾用 `i-search`）在菜单里并排出现，根本分不清哪个是哪个。
+- 一组 = **同一屏上会同时出现**的一批入口（主菜单首屏 / 调色板动作行 / 魔法球 / 选择球 /
+  等距参数条）；**组内图标不得重复**。选择球在电脑模式下四页铺成一屏，所以整组一起算。
+- 确实属于同一个动作的入口（自由变换的「重置」与「还原」都走 `View.revertXf()`）用
+  `FEATURE_ICONS.selRing.reset` 引用同一个值，不要各写一份字面量。
+- `tests/icons.test.ts` 静态校验：组内唯一、每个 id 在 sprite 里存在、`src/` 里出现的所有
+  `i-*` 字面量都存在、两个 id 不得共用同一份画稿、以及若干「含义不同必须长得不一样」的图标对。
 
 ---
 

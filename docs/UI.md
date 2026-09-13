@@ -192,6 +192,12 @@ const hover = useHoverTip({ title: t("brushSize"), desc: bd(snap.lang, "brush"),
 | `ScrubNum` | `input` + `.calcpad` | 拖动 / 算式 |
 | `TabBar` / `DropMenu` | `.tabbar*` / `.dropmenu*` | 见 `tabs.tsx` |
 
+**图标（`Icon`）**：`<svg><use href="#i-…">`，画稿全在 `app2/www/index.html` 的 sprite 里，
+`fill/stroke="currentColor"` 跟随主题。**每个功能入口要有自己的图标**，登记在
+`src/ui/feature-icons.ts`（分组 = 同一屏同时出现的入口，组内不得重复；`tests/icons.test.ts` 会拦）。
+真机反馈：新功能借用旧图标（等距图形用 `i-grid`、色彩明暗用 `i-dedupe`、颜色分析用 `i-search`）
+在菜单里并排出现时完全分不清 —— 详情见 `docs/API.md` §17.5。
+
 **色阶条（色彩明暗面板）**：一行 = `.sh-row`（`.sh-rowlabel` 定宽标签 + `.sh-strip` 等宽网格），
 每个色块是 `.sh-swatch`（`.big` 用于基色与温度色），背景一律走 `chipCss()` 内联样式（诚实显示不透明度），
 组件侧 `.sh-` 已进 `tests/ui-tokens.test.ts` 的 `SHELL` 名单——新面板照这个模式加类前缀，别在 CSS 里写死颜色。

@@ -8,7 +8,7 @@ import { hexToRgba, rgbaToHex } from "../engine/color";
 import * as ops from "../engine/ops";
 import { resamplePixels, resampleRegion, type ResampleAlgo } from "../engine/resample";
 import {
-  ISO_SHAPES, ISO_SHAPE_DEFAULTS, ISO_TILES, ISO_TILE_DEFAULT, isoFaceColours, isoRender, isoShapeVoxels, isoSnapOrigin,
+  ISO_SHAPES, ISO_SHAPE_DEFAULTS, ISO_TILES, ISO_TILE_DEFAULT, isoFaceColours, isoPlaceOrigin, isoRender, isoShapeVoxels, isoSnapOrigin,
   normalizeShapeParams, type IsoLook, type IsoShapeId, type IsoShapeParams, type IsoTile,
 } from "../engine/iso";
 import * as fxE from "../engine/effects";
@@ -2961,18 +2961,15 @@ export class Session {
     this.isoOn = true;
     if (!this.isoOrigin) {
       // 按**渲染出来的外接框**居中（不是按足迹菱形估算）：缓冲大小随参数变，
-      // 只有拿真实的 `originAt` 反推，落点才不会压到画布边（早先估算过一次，进模式就「超出画布」）
+      // 只有拿真实的 `originAt` 反推，落点才不会压到画布边（早先估算过一次，进模式就「超出画布」）。
+      // 吸附 / 越界收紧都交给 `isoPlaceOrigin` —— 它只沿等距轴挪格，挪完仍在栅格节点上
       const T = this.prefs.iso.tile;
       const r = isoRender(isoShapeVoxels(this.isoShape()), this.isoLook());
-      const o = isoSnapOrigin(T, Math.round((this.doc.w - r.w) / 2) + r.originAt.x, Math.round((this.doc.h - r.h) / 2) + r.originAt.y);
-      const push = (v: number, step: number): number => Math.ceil(Math.max(0, v) / step) * step;
-      // 左右 / 上下都夹回画布内（形状比画布大时只保证左上不越界，其它交给读数提示）
-      const left = o.x - r.originAt.x, top = o.y - r.originAt.y;
-      const right = left + r.w - this.doc.w, bottom = top + r.h - this.doc.h;
-      this.isoOrigin = {
-        x: o.x + (left < 0 ? push(-left, T / 2) : r.w <= this.doc.w ? -push(right, T / 2) : 0),
-        y: o.y + (top < 0 ? push(-top, T / 4) : r.h <= this.doc.h ? -push(bottom, T / 4) : 0),
+      const want = {
+        x: Math.round((this.doc.w - r.w) / 2) + r.originAt.x,
+        y: Math.round((this.doc.h - r.h) / 2) + r.originAt.y,
       };
+      this.isoOrigin = isoPlaceOrigin(T, r, this.doc.w, this.doc.h, want);
     }
     this.setTool("select");
     this.doc.sel = null;

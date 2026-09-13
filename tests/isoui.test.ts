@@ -4,7 +4,7 @@
 // 与 tests/xformui.test.ts 同一套打法。
 import { Session } from "../src/app/session";
 import { View } from "../src/render/view";
-import { isoGroundCorners, isoHeightHandle, isoRender, isoShapeVoxels } from "../src/engine/iso";
+import { isoGroundCorners, isoHeightHandle, isoOnLattice, isoRender, isoShapeVoxels } from "../src/engine/iso";
 import { applyPcMode } from "../src/io/pcmode";
 import { stubEnv } from "./session.test";
 import { stubViewDom } from "./view.test";
@@ -126,20 +126,29 @@ export function testIsoUi(): void {
     v.onUp(ev(hh.x, hh.y - (T / 2) * v.zoom * 2));
     dom.flush();
     eq("isoui.drag.height", s.prefs.iso.h, 4);
-    // 整块移动：从**足迹中心**抓起（离所有抓手都够远），拖一点点也吸附到栅格
+    // 整块移动：从**足迹中心**抓起（离所有抓手都够远）。拖满一格（+x 轴 = (+T/2, +T/4)）
+    // 正好走到相邻的栅格节点；只拖一点点则最近节点还是原位（不会停在两行网格线中间）
     const org0 = { ...s.isoOrigin! };
     const ctr = {
       x: handle(v, "top").x + ((s.prefs.iso.w - s.prefs.iso.d) * T) / 4 * v.zoom,
       y: handle(v, "top").y + ((s.prefs.iso.w + s.prefs.iso.d) * T) / 8 * v.zoom,
     };
     v.onDown(ev(ctr.x, ctr.y));
-    v.onMove(ev(ctr.x + v.zoom * 1.5, ctr.y + v.zoom * 1.5));
-    v.onUp(ev(ctr.x + v.zoom * 1.5, ctr.y + v.zoom * 1.5));
+    v.onMove(ev(ctr.x + (T / 2) * v.zoom, ctr.y + (T / 4) * v.zoom));
+    v.onUp(ev(ctr.x + (T / 2) * v.zoom, ctr.y + (T / 4) * v.zoom));
     dom.flush();
     eq("isoui.drag.move-shape", [s.prefs.iso.w, s.prefs.iso.d, s.prefs.iso.h], [4, 3, 4]);
-    ok("isoui.drag.move-origin", s.isoOrigin!.x !== org0.x || s.isoOrigin!.y !== org0.y,
-      JSON.stringify([org0, s.isoOrigin]));
+    eq("isoui.drag.move-origin", [s.isoOrigin!.x, s.isoOrigin!.y], [org0.x + T / 2, org0.y + T / 4]);
     eq("isoui.drag.move-snapped", [s.isoOrigin!.x % (T / 2), s.isoOrigin!.y % (T / 4)], [0, 0]);
+    const org1 = { ...s.isoOrigin! };
+    const ctr1 = { x: ctr.x + (T / 2) * v.zoom, y: ctr.y + (T / 4) * v.zoom };
+    v.onDown(ev(ctr1.x, ctr1.y));
+    v.onMove(ev(ctr1.x + (T / 4) * v.zoom, ctr1.y + (T / 8) * v.zoom));
+    v.onUp(ev(ctr1.x + (T / 4) * v.zoom, ctr1.y + (T / 8) * v.zoom));
+    dom.flush();
+    eq("isoui.drag.half-step-stays", [s.isoOrigin!.x, s.isoOrigin!.y], [org1.x, org1.y]);
+    ok("isoui.drag.on-lattice", isoOnLattice(T, s.isoOrigin!.x, s.isoOrigin!.y),
+      JSON.stringify(s.isoOrigin));
     // 抓手坐标与引擎口径一致：地面原点 + 局部角坐标 × zoom
     const c = isoGroundCorners(T, s.prefs.iso.w, s.prefs.iso.d);
     const anchor = handle(v, "top");

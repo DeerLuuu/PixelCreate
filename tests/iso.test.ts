@@ -6,8 +6,8 @@
 import { rgbToHsl } from "../src/engine/adjust";
 import {
   ISO_MAX_VOXELS, ISO_SHAPE_DEFAULTS, ISO_TILES, isoDiamondRows, isoFaceColours, isoHexRows,
-  isoRender, isoShapeVoxels, isoShadowOffset, isoWithinBudget, normalizeShapeParams,
-  voxelAt, voxelCount,
+  isoOnLattice, isoPlaceOrigin, isoRender, isoShapeVoxels, isoShadowOffset, isoSnapOrigin,
+  isoWithinBudget, normalizeShapeParams, voxelAt, voxelCount,
 } from "../src/engine/iso";
 import type { IsoLook, IsoShapeParams, IsoTile } from "../src/engine/iso";
 import type { RGBA } from "../src/engine/types";
@@ -94,7 +94,7 @@ export function testIso(): void {
     eq("iso.cube.size." + t, [r.w, r.h], [t, t]);
     eq("iso.cube.voxels." + t, r.voxels, 1);
     eq("iso.cube.area." + t, r.pixels, (3 * t * t) / 4);
-    eq("iso.cube.origin." + t, [r.originAt.x, r.originAt.y], [0, 0]);   // 锚点 = 格 (0,0) 的 stamp 左上角
+    eq("iso.cube.origin." + t, [r.originAt.x, r.originAt.y], [t / 2, 0]);   // 锚点 = 格 (0,0) 顶面菱形的顶点
     const rows: number[] = [];
     for (let y = 0; y < r.h; y++) rows.push(rowWidth(r.px, r.w, r.h, y));
     eq("iso.cube.rows." + t, rows.join(","), isoHexRows(t).join(","));
@@ -116,6 +116,77 @@ export function testIso(): void {
     eq("iso.t4.deco-grows", [deco.w, deco.h], [plain.w + 2 + sh4.x, plain.h + 2 + sh4.y]);
     eq("iso.t4.shape.convex", rowConvex(deco.px, deco.w, deco.h), true);
     eq("iso.t4.shadow-offset", [isoShadowOffset(4).x, isoShadowOffset(4).y], [1, 1]);
+  }
+
+  // --- 对齐网格：地面原点必须正好是 2:1 栅格的**节点**，顶面斜边也得贴着栅格线 ---
+  // （真机反馈「生成的图形没有与网格对齐」：早先拿 stamp 左上角当锚点，栅格/足迹/抓手整体偏左 T/2）
+  {
+    /** 缓冲最上面那行不透明像素的中点（顶面菱形顶点） */
+    const topVertex = (r: { px: Uint8ClampedArray; w: number; h: number }): { y: number; x: number } | null => {
+      for (let y = 0; y < r.h; y++) {
+        let lo = -1, hi = -1;
+        for (let x = 0; x < r.w; x++) {
+          if (!r.px[(y * r.w + x) * 4 + 3]) continue;
+          if (lo < 0) lo = x;
+          hi = x;
+        }
+        if (lo >= 0) return { y, x: (lo + hi) / 2 };
+      }
+      return null;
+    };
+    for (const t of ISO_TILES) {
+      const r = isoRender(isoShapeVoxels(shape({ w: 1, d: 1, h: 1 })), look(t));
+      const v = topVertex(r)!;
+      // 锚点就在顶点上（偶图块的顶点是 2px 宽，对称轴落在两列之间 → 差 0.5 算重合）
+      ok("iso.align.origin-x." + t, Math.abs(v.x - r.originAt.x) <= 0.5, JSON.stringify([v, r.originAt]));
+      eq("iso.align.origin-y." + t, r.originAt.y, v.y);
+      // 顶面菱形在缓冲里的位置／行宽必须与栅格模板逐行对上：
+      // 第 j 行 = [originAt.x - dia[j]/2, originAt.x + dia[j]/2)，也就是预览里画的那块足迹
+      const dia = isoDiamondRows(t);
+      let face = true;
+      for (let j = 0; j < dia.length && face; j++) {
+        let lo = -1, hi = -1;
+        for (let x = 0; x < r.w; x++) {
+          const i = (j * r.w + x) * 4;
+          if (r.px[i] !== TOP[0] || r.px[i + 1] !== TOP[1] || r.px[i + 2] !== TOP[2]) continue;
+          if (lo < 0) lo = x;
+          hi = x;
+        }
+        if (lo !== r.originAt.x - dia[j] / 2 || hi !== r.originAt.x + dia[j] / 2 - 1) face = false;
+      }
+      ok("iso.align.top-face." + t, face, "t=" + t);
+    }
+    // 吸附：任何落点都只能吸到节点上；(0, T/4) 这种「格子边缘中点」不是节点，早先会被当成合法落点
+    for (const t of ISO_TILES) {
+      const sy = t / 4;
+      let allOn = true;
+      for (let k = 0; k < 97; k++) {
+        const p = isoSnapOrigin(t, ((k * 7) % 40) - 20 + 0.3, ((k * 11) % 30) - 15 + 0.7);
+        if (!isoOnLattice(t, p.x, p.y)) allOn = false;
+      }
+      ok("iso.snap.lattice." + t, allOn);
+      eq("iso.snap.half-cell-is-not-node." + t, isoOnLattice(t, 0, sy), false);
+      const moved = isoSnapOrigin(t, 0, sy);
+      ok("iso.snap.half-cell-moved." + t, isoOnLattice(t, moved.x, moved.y), JSON.stringify(moved));
+    }
+    // 落点钳制：越界的理想位置会被沿等距轴挪进画布，挪完仍在栅格上
+    {
+      const r = isoRender(isoShapeVoxels(shape({ w: 2, d: 2, h: 2 })), look(16));
+      const o = isoPlaceOrigin(16, r, 48, 48, { x: -40, y: -40 });
+      ok("iso.place.inside-left", o.x - r.originAt.x >= 0, JSON.stringify(o));
+      ok("iso.place.inside-top", o.y - r.originAt.y >= 0, JSON.stringify(o));
+      ok("iso.place.inside-right", o.x - r.originAt.x + r.w <= 48, JSON.stringify(o));
+      ok("iso.place.inside-bottom", o.y - r.originAt.y + r.h <= 48, JSON.stringify(o));
+      ok("iso.place.on-lattice", isoOnLattice(16, o.x, o.y), JSON.stringify(o));
+      // 放得下时就是「吸附后的理想点」
+      const fits = isoPlaceOrigin(16, r, 64, 64, { x: 20, y: 20 });
+      const snap = isoSnapOrigin(16, 20, 20);
+      eq("iso.place.ideal", [fits.x, fits.y], [snap.x, snap.y]);
+      // 形状比画布还大：只保证左上不越界
+      const big = isoPlaceOrigin(16, r, 8, 8, { x: -100, y: -100 });
+      ok("iso.place.huge", big.x - r.originAt.x >= 0 && big.y - r.originAt.y >= 0 && isoOnLattice(16, big.x, big.y),
+        JSON.stringify(big));
+    }
   }
 
   // --- 相邻两格：外框按 (T/2, T/4) 扩展，行必须连续（无洞），近处那格盖住远处的侧面 ---

@@ -3,6 +3,7 @@ import { SESSION } from "./singleton";
 import type { Snapshot } from "../app/session";
 import { makeT } from "./i18n";
 import type { Lang } from "./i18n";
+import { FEATURE_ICONS } from "./feature-icons";
 import { CORE_TOOLS, SHAPE_TOOLS, SELECT_TOOLS, isShapeTool, isSelectTool, isSymTool, type ToolId } from "../tools/registry";
 import { View, PIVOT_ORDER } from "../render/view";
 import { rgbaToHex, hexToRgba, chipCss } from "../engine/color";
@@ -1530,10 +1531,10 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasScaleAdv, o
     setSel((g) => (g ? { ...g, open: false } : g));
   };
   const selPage1: Item[] = [
-    { id: "sel.all", icon: "i-sel-all", label: t("sel.all"), act: () => { selOps.selOps.selectAll(d); SESSION.repaint(); } },
-    { id: "sel.invert", icon: "i-sel-invert", label: t("sel.invert"), act: () => SESSION.maskOp("sel.invert", () => selOps.selOps.invert(d)) },
-    { id: "sel.clear", icon: "i-sel-none", label: t("sel.clear"), act: () => { selOps.selOps.clear(d); SESSION.repaint(); } },
-    { id: "sel.fill", icon: "i-bucket", label: t("sel.fill"), act: () => { if (!(d.sel && d.sel.hasAny())) { bridge.toast(t("noSel")); return; } selOps.selOps.fill(d, SESSION.history, li, fi, SESSION.color); repaintChanged(); } },
+    { id: "sel.all", icon: FEATURE_ICONS.selRing.all, label: t("sel.all"), act: () => { selOps.selOps.selectAll(d); SESSION.repaint(); } },
+    { id: "sel.invert", icon: FEATURE_ICONS.selRing.invert, label: t("sel.invert"), act: () => SESSION.maskOp("sel.invert", () => selOps.selOps.invert(d)) },
+    { id: "sel.clear", icon: FEATURE_ICONS.selRing.clear, label: t("sel.clear"), act: () => { selOps.selOps.clear(d); SESSION.repaint(); } },
+    { id: "sel.fill", icon: FEATURE_ICONS.selRing.fill, label: t("sel.fill"), act: () => { if (!(d.sel && d.sel.hasAny())) { bridge.toast(t("noSel")); return; } selOps.selOps.fill(d, SESSION.history, li, fi, SESSION.color); repaintChanged(); } },
     // ⑧ 电脑模式有 Ctrl+C / Ctrl+X / Ctrl+V，球里不再重复这三个按钮；
     //    手机端保留，并且把「粘贴为新图层 / 新画布」也放进来（⑮）
     ...(pcMode ? [] : [
@@ -1556,26 +1557,26 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasScaleAdv, o
    */
   const selPage2: Item[] = [
     { id: "sel-back", icon: "", label: "\u2039", act: () => setSelSub(null), guide: "sel-back" },
-    { id: "selXfAspect", icon: "i-resize-mode", label: t("selXfAspect"), desc: t("selXfAspectDesc"),
+    { id: "selXfAspect", icon: FEATURE_ICONS.selRing.aspect, label: t("selXfAspect"), desc: t("selXfAspectDesc"),
       active: SESSION.prefs.selXformAspect,
       act: () => SESSION.setSetting("tools.selXformAspect", !SESSION.prefs.selXformAspect) },
-    { id: "selXfAngleSnap", icon: "i-rotate", label: t("selXfAngleSnap"), desc: t("selXfAngleSnapDesc"),
+    { id: "selXfAngleSnap", icon: FEATURE_ICONS.selRing.angleSnap, label: t("selXfAngleSnap"), desc: t("selXfAngleSnapDesc"),
       active: SESSION.prefs.selXformAngleSnap,
       act: () => SESSION.setSetting("tools.selXformAngleSnap", !SESSION.prefs.selXformAngleSnap) },
-    { id: "selXfGridSnap", icon: "i-grid", label: t("selXfGridSnap"), desc: t("selXfGridSnapDesc"),
+    { id: "selXfGridSnap", icon: FEATURE_ICONS.selRing.gridSnap, label: t("selXfGridSnap"), desc: t("selXfGridSnapDesc"),
       active: SESSION.prefs.selXformGridSnap,
       act: () => SESSION.setSetting("tools.selXformGridSnap", !SESSION.prefs.selXformGridSnap) },
-    { id: "selXfCopy", icon: "i-dupe", label: t("selXfCopy"), desc: t("selXfCopyDesc"),
+    { id: "selXfCopy", icon: FEATURE_ICONS.selRing.copyOnXf, label: t("selXfCopy"), desc: t("selXfCopyDesc"),
       active: SESSION.prefs.selXformCopy,
       act: () => SESSION.setSetting("tools.selXformCopy", !SESSION.prefs.selXformCopy) },
-    { id: "selXfPivot", icon: "i-sym", label: t("selXfPivot"),
+    { id: "selXfPivot", icon: FEATURE_ICONS.selRing.pivot, label: t("selXfPivot"),
       desc: t("selXfPivot") + "：" + pivotName(pivotIdx),
       act: () => {
         const next = (pivotIdx + 1) % 9;
         setPivotIdx(next);
         if (!SESSION.view?.setPivotPreset(PIVOT_ORDER[next])) bridge.toast(t("selXfNone"));
       } },
-    { id: "selXfReset", icon: "i-undo", label: t("selXfReset"), desc: t("selXfResetDesc"),
+    { id: "selXfReset", icon: FEATURE_ICONS.selRing.reset, label: t("selXfReset"), desc: t("selXfResetDesc"),
       act: () => SESSION.view?.revertXf(), guide: "sel-warp-revert" },
     ...(pcMode ? [] : [{
       id: "sel-more-tools", icon: "i-more", label: t("selMoreWarp"), desc: t("selMoreWarpDesc"),
@@ -1585,22 +1586,22 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasScaleAdv, o
   /** 第三页：自由变形（斜切 / 透视、网格）+ 完成 / 还原 + 吸附粒度（额外能力，保留不动） */
   const selPage3: Item[] = [
     { id: "sel-back", icon: "", label: "\u2039", act: () => setSelSub("xform"), guide: "sel-back" },
-    { id: "selWarpQuad", icon: "i-resize-mode", label: t("selWarpQuad"), desc: t("selWarpQuadDesc"),
+    { id: "selWarpQuad", icon: FEATURE_ICONS.selRing.quad, label: t("selWarpQuad"), desc: t("selWarpQuadDesc"),
       act: () => startWarp("quad"), guide: "sel-warp-quad" },
-    { id: "selWarpMesh", icon: "i-grid", label: t("selWarpMesh"), desc: t("selWarpMeshDesc"),
+    { id: "selWarpMesh", icon: FEATURE_ICONS.selRing.mesh, label: t("selWarpMesh"), desc: t("selWarpMeshDesc"),
       act: () => startWarp("mesh"), guide: "sel-warp-mesh" },
-    { id: "selWarpDone", icon: "i-check", label: t("selWarpDone"), desc: t("selWarpDoneDesc"),
+    { id: "selWarpDone", icon: FEATURE_ICONS.selRing.done, label: t("selWarpDone"), desc: t("selWarpDoneDesc"),
       act: () => SESSION.view?.commitXf(), guide: "sel-warp-done" },
-    { id: "selWarpRevert", icon: "i-undo", label: t("selWarpRevert"), desc: t("selWarpRevertDesc"),
+    { id: "selWarpRevert", icon: FEATURE_ICONS.selRing.reset, label: t("selWarpRevert"), desc: t("selWarpRevertDesc"),
       act: () => SESSION.view?.revertXf(), guide: "sel-warp-revert" },
     // 变形控制点的吸附粒度（设置项 tools.selWarpHalfSnap 的快捷开关）：
     // 选中态走 Item.active（.orb-item.on 高亮），点一下就地切换、当前状态一眼可见
-    { id: "selWarpHalf", icon: "i-grid", label: t("selWarpHalfSnap"),
+    { id: "selWarpHalf", icon: FEATURE_ICONS.selRing.halfSnap, label: t("selWarpHalfSnap"),
       desc: t(SESSION.prefs.selWarpHalfSnap ? "selWarpHalfOn" : "selWarpHalfOff"),
       active: SESSION.prefs.selWarpHalfSnap,
       act: () => { const on = !SESSION.prefs.selWarpHalfSnap; SESSION.setSelWarpHalfSnap(on); bridge.toast(t(on ? "selWarpHalfSnap" : "selWarpHalfOff")); },
       guide: "sel-warp-half" },
-    { id: "selCrop", icon: "i-fx-crop", label: t("selCrop"), desc: t("selCropDesc"), act: () => { if (SESSION.cropToSelection()) repaintChanged(); } },
+    { id: "selCrop", icon: FEATURE_ICONS.selRing.crop, label: t("selCrop"), desc: t("selCropDesc"), act: () => { if (SESSION.cropToSelection()) repaintChanged(); } },
     ...(pcMode ? [] : [{
       id: "sel-more-more", icon: "i-more", label: t("selMoreTools"), desc: t("selMoreToolsDesc"),
       act: () => setSelSub("tools"), guide: "sel-more-more",
@@ -1609,12 +1610,12 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasScaleAdv, o
   // 第四页：翻转 / 扩展收缩 / 描边 / 删除
   const selPage4: Item[] = [
     { id: "sel-back", icon: "", label: "\u2039", act: () => setSelSub("warp"), guide: "sel-back" },
-    { id: "sel.fliph", icon: "i-fliph", label: t("sel.fliph"), act: () => { selOps.selOps.flip(d, SESSION.history, li, fi, true); repaintChanged(); } },
-    { id: "sel.flipv", icon: "i-flipv", label: t("sel.flipv"), act: () => { selOps.selOps.flip(d, SESSION.history, li, fi, false); repaintChanged(); } },
-    { id: "sel.grow", icon: "i-sel-grow", label: t("sel.grow"), act: () => SESSION.maskOp("sel.grow", () => selOps.growSelection(d, 1)) },
-    { id: "sel.shrink", icon: "i-sel-shrink", label: t("sel.shrink"), act: () => SESSION.maskOp("sel.shrink", () => selOps.shrinkSelection(d, 1)) },
-    { id: "sel.outline", icon: "i-fx-o1", label: t("sel.outline"), act: () => { selOps.outlineSelected(d, SESSION.history, li, fi, SESSION.color); repaintChanged(); } },
-    { id: "sel.delete", icon: "i-sel-del", label: t("sel.delete"), act: () => { SESSION.deleteSelection(); } },
+    { id: "sel.fliph", icon: FEATURE_ICONS.selRing.fliph, label: t("sel.fliph"), act: () => { selOps.selOps.flip(d, SESSION.history, li, fi, true); repaintChanged(); } },
+    { id: "sel.flipv", icon: FEATURE_ICONS.selRing.flipv, label: t("sel.flipv"), act: () => { selOps.selOps.flip(d, SESSION.history, li, fi, false); repaintChanged(); } },
+    { id: "sel.grow", icon: FEATURE_ICONS.selRing.grow, label: t("sel.grow"), act: () => SESSION.maskOp("sel.grow", () => selOps.growSelection(d, 1)) },
+    { id: "sel.shrink", icon: FEATURE_ICONS.selRing.shrink, label: t("sel.shrink"), act: () => SESSION.maskOp("sel.shrink", () => selOps.shrinkSelection(d, 1)) },
+    { id: "sel.outline", icon: FEATURE_ICONS.selRing.outline, label: t("sel.outline"), act: () => { selOps.outlineSelected(d, SESSION.history, li, fi, SESSION.color); repaintChanged(); } },
+    { id: "sel.delete", icon: FEATURE_ICONS.selRing.del, label: t("sel.delete"), act: () => { SESSION.deleteSelection(); } },
   ];
   const selItems: Item[] = pcMode
     ? [
@@ -1715,7 +1716,7 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasScaleAdv, o
     id: "fx." + key, icon, label: fxZh ? labelZh : labelEn, desc: fxZh ? descZh : descEn, act, ...(active ? { active: true } : {}),
   });
   const fxItems: Item[] = [
-    fxI("o1", "i-fx-o1", "描边", "Edge", "描边样式：宽度 / 位置（内·外·居中）/ 颜色，弹窗实时预览", "Outline style: width / position (outside, inside, center) / colour, live preview", () => openFx({
+    fxI("o1", FEATURE_ICONS.fxOrb.outline, "描边", "Edge", "描边样式：宽度 / 位置（内·外·居中）/ 颜色，弹窗实时预览", "Outline style: width / position (outside, inside, center) / colour, live preview", () => openFx({
       label: "fx-outline", title: "fxOutlineTitle", desc: "fxOutlineDesc",
       params: [
         { key: "w", kind: "int", label: "fxOutlineWidth", min: 1, max: 16, unit: "px", def: 1 },
@@ -1725,7 +1726,7 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasScaleAdv, o
       ],
       apply: (dd, w, h, v) => fxE.outlineCel(dd, w, h, Number(v.w), hexToRgba(String(v.color)), v.pos as fxE.OutlinePos),
     })),
-    fxI("inline", "i-fx-inline", "内描边", "Inline", "在轮廓内侧画一条线，保留最外圈原色（可带透明度混合），弹窗实时预览", "Draw a line just inside the silhouette, keeping the outer ring as it is (optionally blended), live preview", () => openFx({
+    fxI("inline", FEATURE_ICONS.fxOrb.inline, "内描边", "Inline", "在轮廓内侧画一条线，保留最外圈原色（可带透明度混合），弹窗实时预览", "Draw a line just inside the silhouette, keeping the outer ring as it is (optionally blended), live preview", () => openFx({
       label: "fx-inline", title: "fxInlineTitle", desc: "fxInlineDesc",
       params: [
         { key: "w", kind: "int", label: "fxInlineWidth", min: 1, max: 8, unit: "px", def: 1 },
@@ -1734,7 +1735,7 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasScaleAdv, o
       ],
       apply: (dd, w, h, v) => fxE.inlineCel(dd, w, h, Number(v.w), hexToRgba(String(v.color)), Math.round(Number(v.alpha) * 2.55)),
     })),
-    fxI("round", "i-fx-round", "圆角化", "Round", "把硬直角削成圆角（1–8 层），可选是否同时补内凹角；细线与斜线不会被啃掉", "Knock hard right-angle corners into rounded ones (1–8 layers), optionally filling inner corners too; thin lines and diagonals survive", () => openFx({
+    fxI("round", FEATURE_ICONS.fxOrb.round, "圆角化", "Round", "把硬直角削成圆角（1–8 层），可选是否同时补内凹角；细线与斜线不会被啃掉", "Knock hard right-angle corners into rounded ones (1–8 layers), optionally filling inner corners too; thin lines and diagonals survive", () => openFx({
       label: "fx-round", title: "fxRoundTitle", desc: "fxRoundDesc",
       params: [
         { key: "r", kind: "int", label: "fxRoundRadius", min: 1, max: 8, unit: "", def: 2 },
@@ -1743,13 +1744,13 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasScaleAdv, o
       ],
       apply: (dd, w, h, v) => fxE.roundCornersCel(dd, w, h, Number(v.r), v.mode as fxE.RoundMode),
     })),
-    fxI("blur", "i-fx-blur", "模糊", "Blur", "模糊滤镜：弹窗设置半径，可实时预览", "Blur filter: set the radius in a dialog, live preview", () => openFx({
+    fxI("blur", FEATURE_ICONS.fxOrb.blur, "模糊", "Blur", "模糊滤镜：弹窗设置半径，可实时预览", "Blur filter: set the radius in a dialog, live preview", () => openFx({
       label: "fx-blur", title: "fxBlurTitle", desc: "fxBlurDesc",
       params: [{ key: "r", kind: "int", label: "fxBlurRadius", min: 1, max: 32, unit: "px", def: 2 }],
       apply: (dd, w, h, v) => fxE.blurCel(dd, w, h, Number(v.r)),
     })),
-    fxI("crop", "i-fx-crop", "智能裁剪", "Crop", "自动裁剪画布四周空白（全部图层/帧）", "Auto-crop empty canvas borders (all layers/frames)", () => SESSION.cropSmart()),
-    fxI("shadow", "i-fx-shadow", "投影", "Shadow", "投影参数：偏移 x/y、颜色与不透明度，弹窗实时预览", "Drop shadow: offset x/y, colour and opacity, live preview", () => openFx({
+    fxI("crop", FEATURE_ICONS.fxOrb.crop, "智能裁剪", "Crop", "自动裁剪画布四周空白（全部图层/帧）", "Auto-crop empty canvas borders (all layers/frames)", () => SESSION.cropSmart()),
+    fxI("shadow", FEATURE_ICONS.fxOrb.shadow, "投影", "Shadow", "投影参数：偏移 x/y、颜色与不透明度，弹窗实时预览", "Drop shadow: offset x/y, colour and opacity, live preview", () => openFx({
       label: "fx-shadow", title: "fxShadowTitle", desc: "fxShadowDesc",
       params: [
         { key: "dx", kind: "int", label: "fxShadowX", min: -64, max: 64, unit: "px", def: 3 },
@@ -1771,18 +1772,18 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasScaleAdv, o
           [c[0], c[1], c[2], Math.round((Number(v.alpha) / 100) * 255)], SESSION.prefs.shadowNewLayer);
       },
     })),
-    fxI("iso", "i-grid", "等距图形", "Iso shapes",
+    fxI("iso", FEATURE_ICONS.fxOrb.iso, "等距图形", "Iso shapes",
       "拖出一个 2:1 等距体（立方体 / 楼梯 / 楔形 / 圆柱 / 金字塔 / 空心框）：画布上拖抓手改宽深与高度，松手才落笔",
       "Drag out a 2:1 isometric solid (cube / steps / wedge / cylinder / pyramid / frame): resize and raise it on the canvas, nothing commits until you let go",
       () => { setFx((v) => ({ ...v, open: false })); SESSION.enterIso(); }, snap.isoOn),
-    fxI("clear", "i-clear", "清空画布", "Clear", "清空当前帧所有图层的画布内容", "Empty the current frame on all layers", () => SESSION.clearCanvas()),
-    fxI("glow", "i-fx-glow", "外发光", "Glow", "一键外发光：用当前颜色向外发光 2px 并逐层淡出", "Outer glow: current colour fading outwards 2px", () => {
+    fxI("clear", FEATURE_ICONS.fxOrb.clear, "清空画布", "Clear", "清空当前帧所有图层的画布内容", "Empty the current frame on all layers", () => SESSION.clearCanvas()),
+    fxI("glow", FEATURE_ICONS.fxOrb.glow, "外发光", "Glow", "一键外发光：用当前颜色向外发光 2px 并逐层淡出", "Outer glow: current colour fading outwards 2px", () => {
       const base = SESSION.color;
       fxDo("fx-glow", (dd, w, h) => fxE.outerGlowCel(dd, w, h, 2, [base[0], base[1], base[2], 255]));
     }),
-    fxI("inv", "i-fx-inv", "反色", "Inv", "反色：把不透明像素的 RGB 取反（保留透明）", "Invert RGB of visible pixels", () => fxDo("fx-invert", (dd) => fxE.invertCel(dd))),
-    fxI("gray", "i-fx-gray", "灰度", "B/W", "去饱和：把不透明像素变为灰度", "Desaturate visible pixels to grayscale", () => fxDo("fx-gray", (dd) => fxE.desaturateCel(dd))),
-    fxI("ctr", "i-fx-ctr", "居中", "Ctr", "把当前图层内容居中到画布中心（有选区时居中到选区）", "Center the layer content in the canvas (or inside the selection when one is active)", () => fxDo("fx-center", (data, w, h) => {
+    fxI("inv", FEATURE_ICONS.fxOrb.invert, "反色", "Inv", "反色：把不透明像素的 RGB 取反（保留透明）", "Invert RGB of visible pixels", () => fxDo("fx-invert", (dd) => fxE.invertCel(dd))),
+    fxI("gray", FEATURE_ICONS.fxOrb.gray, "灰度", "B/W", "去饱和：把不透明像素变为灰度", "Desaturate visible pixels to grayscale", () => fxDo("fx-gray", (dd) => fxE.desaturateCel(dd))),
+    fxI("ctr", FEATURE_ICONS.fxOrb.center, "居中", "Ctr", "把当前图层内容居中到画布中心（有选区时居中到选区）", "Center the layer content in the canvas (or inside the selection when one is active)", () => fxDo("fx-center", (data, w, h) => {
       const tgt = (d.sel && d.sel.hasAny() ? d.sel.bounds() : null) ?? { x: 0, y: 0, w: d.w, h: d.h };
       let minX = w, minY = h, maxX = -1, maxY = -1;
       for (let y = 0; y < h; y++) {

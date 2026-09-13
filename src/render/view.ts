@@ -1577,6 +1577,9 @@ export class View {
   /** cached isometric guide grid (true 30° line families), non-pixel lines */
   private drawIsoGuide(ctx: CanvasRenderingContext2D): void {
     if (this.session.prefs.gridMode !== "iso") return;
+    // 等距图形模式下由 `drawIsoMode` 铺 2:1 栅格，这里必须让位：
+    // 30° 与 2:1 不可能重合，两套网格同时出现在屏幕上，用户只会看到「图形没对齐网格」
+    if (this.session.isoOn) return;
     const doc = this.session.doc;
     const step = Math.max(2, Math.round(this.session.prefs.gridSize));
     const key = doc.w + "x" + doc.h + "|" + step;

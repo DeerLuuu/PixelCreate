@@ -8,6 +8,7 @@
 import { useMemo, useState } from "react";
 import { SESSION } from "./singleton";
 import { makeT } from "./i18n";
+import { FEATURE_ICONS } from "./feature-icons";
 import { Btn, useSession } from "./base";
 import { ChipGroup, ScrubNum, Switch } from "./kit";
 import { isoRender, isoShapeVoxels, ISO_SHAPES, ISO_TILES, type IsoShapeId } from "../engine/iso";
@@ -159,9 +160,9 @@ export function IsoBar({ t, onOpenPalette }: { t: ReturnType<typeof makeT>; onOp
       )}
 
       <div className="iso-row iso-acts">
-        <Btn icon="i-plus" label={t("iso.generate")} className="primary" onClick={() => generate("layer")} guide="iso-generate" />
-        <Btn icon="i-dupe" label={t("iso.newLayerShort")} title={t("iso.newLayer")} onClick={() => generate("new")} guide="iso-new-layer" />
-        <Btn icon="i-palette" label={t(look ? "iso.lookHide" : "iso.look")} onClick={() => setLook((v) => !v)} active={look} guide="iso-look" />
+        <Btn icon={FEATURE_ICONS.isoBar.generate} label={t("iso.generate")} className="primary" onClick={() => generate("layer")} guide="iso-generate" />
+        <Btn icon={FEATURE_ICONS.isoBar.newLayer} label={t("iso.newLayerShort")} title={t("iso.newLayer")} onClick={() => generate("new")} guide="iso-new-layer" />
+        <Btn icon={FEATURE_ICONS.isoBar.look} label={t(look ? "iso.lookHide" : "iso.look")} onClick={() => setLook((v) => !v)} active={look} guide="iso-look" />
         <Btn label={t("iso.exit")} onClick={() => SESSION.exitIso()} guide="iso-exit" />
       </div>
       <div className="iso-hint">{t("iso.hint")}</div>
