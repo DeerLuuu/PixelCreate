@@ -294,6 +294,11 @@ Aseprite 兼容：`io/aseread.ts` / `io/asewrite.ts` / `io/zlib.ts`（自写同�
 1:1 跟手），缩放分支不再需要手写「跟位」；变形控制点改成**直接落在指针那一点上**（不记偏移，拖到哪就是哪），
 命中半径按相邻点间距的一半自适应（下限 8px）；变形模式里按在内容上拖动＝**整块内容连控制点一起走**
 （`xf.move`，从起点重算不累加）。
+对比预览修正（同日第三轮反馈「两个图片都没显示任何内容」）：新增纯函数模块 `src/ui/scale-preview.ts`
+（`flatFrame` / `previewSource` / `previewPatchGeometry` / `cropPatch` / `scaleFactorLabel`，有单测）——
+源像素改成 **sprite 范围读当前帧可见图层的压平结果**（＝画布上看到的画面；早先只读当前 cel，画在别的图层
+就是空的），取块**对准内容包围盒**（早先固定取区域正中，内容在角落就一片空白），空块给一行提示，
+预览画布加透明棋盘格底；`ScalePreview` 只负责把纯函数的结果画进 canvas，高按内容宽高比自适应。
 
 ---
 

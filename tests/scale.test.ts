@@ -15,6 +15,7 @@ import {
   type ResampleAlgo,
 } from "../src/engine/resample";
 import { stubEnv } from "./session.test";
+import { cropPatch, previewPatchGeometry, previewSource, scaleFactorLabel } from "../src/ui/scale-preview";
 import { eq, ok } from "./common";
 
 declare const require: (m: string) => any;
@@ -615,6 +616,58 @@ export function testScale(): void {
     eq("sess.hist.undo-two", [s.doc.w, s.doc.h], [2, 2]);
     s.redo(); s.redo();
     eq("sess.hist.redo-all", [s.doc.w, s.doc.h], [8, 8]);
+  }
+
+  // ------------------------------------------- 对比预览的取块（纯函数，UI 只负责画）
+  //
+  // 真机反馈「对比预览两个图都没显示任何内容」：早先固定读**当前 cel 的区域正中**，
+  // 内容在角落 / 画在别的图层上时取到的就是一块空的。这几个断言把这个口径钉住。
+  {
+    const doc = new Doc(16, 16, "preview");
+    const c0 = doc.ensureCel(0, 0);
+    for (let y = 12; y < 15; y++) for (let x = 1; x < 4; x++) {
+      const i = c0.idx(x, y);
+      c0.data[i] = 200; c0.data[i + 1] = 40; c0.data[i + 2] = 40; c0.data[i + 3] = 255;
+    }
+    const region = { x: 0, y: 0, w: 16, h: 16 };
+    const src = previewSource(doc, "sprite", 0, 0);
+
+    // ① 取块对准内容包围盒：2× 缩放时取 8×8 的一块，必须把左下角那块内容框进去
+    const g2 = previewPatchGeometry(src, doc.w, doc.h, region, 32, 32);
+    ok("preview.patch.covers-content",
+      g2.x <= 1 && g2.x + g2.w >= 4 && g2.y <= 12 && g2.y + g2.h >= 15,
+      JSON.stringify(g2));
+    ok("preview.patch.not-centre-only", g2.x !== 4 || g2.y !== 4, JSON.stringify(g2));
+    eq("preview.patch.scaled-size", [g2.tw, g2.th], [16, 16]);
+    const patch2 = cropPatch(src, doc.w, doc.h, g2);
+    let opaque = 0;
+    for (let i = 3; i < patch2.length; i += 4) if (patch2[i] > 0) opaque++;
+    ok("preview.patch.has-pixels", opaque > 0, String(opaque));
+
+    // ② 内容为空时 `empty` 为真（组件据此给提示，而不是画两个空框）
+    const blank = new Uint8ClampedArray(16 * 16 * 4);
+    eq("preview.patch.empty-flag", previewPatchGeometry(blank, 16, 16, region, 32, 32).empty, true);
+    eq("preview.patch.not-empty-flag", g2.empty, false);
+    const gb = previewPatchGeometry(blank, 16, 16, region, 32, 32);
+    eq("preview.patch.empty-centre", [gb.x, gb.y], [4, 4]);
+
+    // ③ 源像素＝**可见图层压平**（sprite 范围）：把内容放到隐藏图层上就不该出现
+    doc.layers.push({ id: "art", name: "art", visible: true, opacity: 100, blend: "normal", locked: false });
+    const c1 = doc.ensureCel(1, 0);
+    c1.data.set(c0.data);
+    c0.data.fill(0);
+    eq("preview.source.visible-layers", previewSource(doc, "sprite", 0, 0)[(13 * 16 + 2) * 4 + 3], 255);
+    doc.layers[1].visible = false;
+    eq("preview.source.hidden-dropped", previewSource(doc, "sprite", 0, 0)[(13 * 16 + 2) * 4 + 3], 0);
+    doc.layers[1].visible = true;
+    // layer 范围只读当前图层（与 `scaleAdvanced()` 的作用范围口径一致）
+    eq("preview.source.layer-scope", previewSource(doc, "layer", 0, 0)[(13 * 16 + 2) * 4 + 3], 0);
+    eq("preview.source.layer-current", previewSource(doc, "layer", 1, 0)[(13 * 16 + 2) * 4 + 3], 255);
+
+    // ④ 倍率文案：整数不写小数，两轴不同就都写出来
+    eq("preview.label.int", scaleFactorLabel(32, 32, region), "2\u00d7");
+    eq("preview.label.xy", scaleFactorLabel(32, 24, region), "2\u00d7 / 1.5\u00d7");
+    eq("preview.label.down", scaleFactorLabel(8, 8, region), "0.5\u00d7");
   }
 }
 

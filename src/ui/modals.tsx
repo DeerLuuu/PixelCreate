@@ -6,6 +6,7 @@ import { SETTING_GROUPS, settingsOfGroup, isDefault, resetSetting, exportSetting
 import type { ScaleScope, Snapshot } from "../app/session";
 import { Doc } from "../engine/doc";
 import { Cel } from "../engine/cel";
+import { cropPatch, previewPatchGeometry, previewSource, scaleFactorLabel } from "./scale-preview";
 import { hexToRgba, rgbaToHex, hexToRgba as hrgb, chipCss } from "../engine/color";
 import { HsvWheel } from "./HsvWheel";
 import { HoldAdjust } from "./hold";
@@ -549,62 +550,55 @@ export function ScaleModal({ t, onClose }: { t: ReturnType<typeof makeT>; onClos
   );
 }
 
-/** 预览：当前图层（或选区）中心区域，「原图」与「按当前设置缩放后」并排 */
+/**
+ * 预览：「原图」与「按当前设置缩放后」并排，两侧显示**同样多的内容**、同样的屏幕像素大小。
+ *
+ * 读哪张像素、取哪一块都交给 `scale-preview.ts` 的纯函数（那边有单测钉住：sprite 范围读的是
+ * **可见图层压平**的结果，取块**对准内容包围盒**）—— 早先固定读当前 cel 的**区域正中**，
+ * 内容不在正中（或画在别的图层上）时预览就一片空白。
+ */
 function ScalePreview({ t, algo, scope, cw, ch, clean, box, size = 44 }:
 { t: ReturnType<typeof makeT>; algo: ResampleAlgo; scope: ScaleScope; cw: number; ch: number; clean: boolean; box: { x: number; y: number; w: number; h: number } | null; size?: number }) {
   const doc = SESSION.doc;
   const refA = useRef<HTMLCanvasElement | null>(null);
   const refB = useRef<HTMLCanvasElement | null>(null);
   const region = scope === "selection" && box ? box : { x: 0, y: 0, w: doc.w, h: doc.h };
-  const SW = size;   // 预览画布边长（css px）
+  const SW = size;   // 预览宽度（css px），高度按取到的那块内容的宽高比
+  const [dispH, setDispH] = useState(size);
+  const [empty, setEmpty] = useState(false);
   useEffect(() => {
-    const cel = doc.celAt(SESSION.curLayer(), SESSION.curFrame());
     const cvs = [refA.current, refB.current];
     if (!cvs[0] || !cvs[1]) return;
-    // 取区域中心的一小块：源块大小按缩放的「放大倍数」反过来定，两边看到同样多内容
-    const kx = cw / Math.max(1, region.w), ky = ch / Math.max(1, region.h);
-    const spanX = Math.max(1, Math.min(region.w, Math.round(region.w / Math.max(1, kx))));
-    const spanY = Math.max(1, Math.min(region.h, Math.round(region.h / Math.max(1, ky))));
-    const sx = region.x + Math.max(0, Math.floor((region.w - spanX) / 2));
-    const sy = region.y + Math.max(0, Math.floor((region.h - spanY) / 2));
-    const patch = new Uint8ClampedArray(spanX * spanY * 4);
-    if (cel) {
-      for (let y = 0; y < spanY; y++) {
-        for (let x = 0; x < spanX; x++) {
-          const si = cel.idx(Math.min(doc.w - 1, sx + x), Math.min(doc.h - 1, sy + y));
-          const di = (y * spanX + x) * 4;
-          patch[di] = cel.data[si]; patch[di + 1] = cel.data[si + 1];
-          patch[di + 2] = cel.data[si + 2]; patch[di + 3] = cel.data[si + 3];
-        }
-      }
-    }
-    const tw = Math.max(1, Math.round(spanX * kx)), th = Math.max(1, Math.round(spanY * ky));
-    const scaled = resamplePixels(patch, spanX, spanY, tw, th, algo, { cleanTransparent: clean });
+    const src = previewSource(doc, scope, SESSION.curLayer(), SESSION.curFrame());
+    const g = previewPatchGeometry(src, doc.w, doc.h, region, cw, ch);
+    const patch = cropPatch(src, doc.w, doc.h, g);
+    const scaled = resamplePixels(patch, g.w, g.h, g.tw, g.th, algo, { cleanTransparent: clean });
     const draw = (cv: HTMLCanvasElement, data: Uint8ClampedArray, dw: number, dh: number): void => {
       cv.width = dw; cv.height = dh;
       const ctx = cv.getContext("2d");
       if (!ctx) return;
       ctx.putImageData(new ImageData(new Uint8ClampedArray(data), dw, dh), 0, 0);
     };
-    draw(cvs[0] as HTMLCanvasElement, patch, spanX, spanY);
-    draw(cvs[1] as HTMLCanvasElement, scaled, tw, th);
-  }, [doc, doc.w, doc.h, SESSION.curLayer(), SESSION.curFrame(), algo, scope, cw, ch, clean, region.x, region.y, region.w, region.h]);
-  const kx = cw / Math.max(1, region.w), ky = ch / Math.max(1, region.h);
-  const lab = (kx === Math.round(kx) && ky === Math.round(ky) ? Math.round(kx) + "\u00d7" : kx.toFixed(2) + "\u00d7")
-    + (kx === ky ? "" : " / " + (ky === Math.round(ky) ? Math.round(ky) + "\u00d7" : ky.toFixed(2) + "\u00d7"));
+    draw(cvs[0] as HTMLCanvasElement, patch, g.w, g.h);
+    draw(cvs[1] as HTMLCanvasElement, scaled, g.tw, g.th);
+    setDispH(Math.max(20, Math.round((SW * g.h) / Math.max(1, g.w))));
+    setEmpty(g.empty);
+  }, [doc, doc.w, doc.h, SESSION.curLayer(), SESSION.curFrame(), algo, scope, cw, ch, clean, region.x, region.y, region.w, region.h, SW]);
+  const lab = scaleFactorLabel(cw, ch, region);
   return (
     <Row label={t("scalePreview")} hint={t("scalePreviewNote")}>
       <div className="scale-frames">
         <div className="scale-frame">
-          <canvas ref={refA} className="scale-cv" style={{ width: SW, height: SW }} />
+          <canvas ref={refA} className="scale-cv" style={{ width: SW, height: dispH }} />
           <span className="scale-cap">{t("scalePreviewOrig")}</span>
         </div>
         <div className="scale-arrow">{lab}</div>
         <div className="scale-frame">
-          <canvas ref={refB} className="scale-cv" style={{ width: SW, height: SW }} />
+          <canvas ref={refB} className="scale-cv" style={{ width: SW, height: dispH }} />
           <span className="scale-cap">{t("scalePreviewNew")}</span>
         </div>
       </div>
+      {empty ? <div className="row-note scale-warn">{t("scalePreviewEmpty")}</div> : null}
     </Row>
   );
 }

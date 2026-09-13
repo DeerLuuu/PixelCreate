@@ -841,6 +841,15 @@ scaleAdvanced(o: { w, h, algo?, scope?, cleanTransparent? }): boolean
   // UI：ScaleModal 只放参数，**原图↔缩放后的对比图在单独的「对比预览」面板里**
   //（弹窗底部 i-compare 按钮 → portal 出去的 .dlg-scale-compare，预览块 128px），
   // 组件仍是 ScalePreview（size 可调，默认 44px 的小图）。
+  // 预览的**取块与取像素**是纯函数，在 `src/ui/scale-preview.ts`（可单测）：
+  //   · 源像素：sprite 范围＝当前帧**可见图层压平**（＝画布上看到的画面），
+  //     layer / selection＝当前图层的那张 cel —— 早先一律只读当前 cel，
+  //     内容画在别的图层上时预览全空；
+  //   · 取哪一块：大小＝按缩放倍数反推（`region / k`，两侧显示同样多的内容），
+  //     位置**对准内容包围盒**（空内容退回区域中心）—— 早先固定取区域正中，
+  //     内容在角落时预览也是一片空白（真机反馈「两个图都没显示任何内容」）；
+  //   · `empty`（这一块里没有可见像素）由组件渲染成一行提示，而不是两个空框；
+  //     预览画布带透明棋盘格底，取到透明像素时看得出是「透明」而不是「坏了」。
 cropToSelection(): boolean              // 画布裁切到选区外接矩形（一条结构历史）
 resizeModeOn / setResizeMode(on) / toggleResizeMode()   // 拖画布四边改尺寸的模式
 sampleComposite(x, y): RGBA | null        // 取合成后的颜色
