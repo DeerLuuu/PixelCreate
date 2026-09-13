@@ -1345,7 +1345,8 @@ html[data-pc] .dlg-sh{width:min(600px,64vw)}
 .sh-swatch{height:26px;min-width:10px;padding:0;border:1px solid var(--line);border-radius:var(--r-2);cursor:pointer}
 .sh-swatch.big{height:34px;min-width:34px}
 .sh-swatch:active{border-color:var(--accent)}
-.sh-base{flex:1;display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.sh-base{flex:1;display:flex;align-items:center;gap:6px;flex-wrap:wrap;min-width:0}
+.sh-base .btn{flex:0 0 auto}
 .sh-temps{display:flex;align-items:center;gap:6px;flex:1}
 .sh-temps .sh-swatch{flex:0 0 34px}
 .sh-opts{gap:12px}

@@ -280,7 +280,7 @@ const zh: Dict = {
     title: "色彩明暗",
     open: "色彩明暗",
     hint: "给一个基色，一次生成整组明暗阶（明暗 / 亮部 / 饱和 / 混色 / 微差 / 色相），也可以要互补 / 三角 / 四角配色；点色块＝设前景色，长按（电脑右键）＝设背景色",
-    base: "基色", baseA: "前景色", baseB: "背景色", get: "取当前前景 / 背景色", baseHint: "点这两个色块可以换基色，整组配色立刻重算",
+    base: "基色", baseA: "前景色", baseB: "背景色", get: "取当前", baseHint: "点这两个色块可以换基色，整组配色立刻重算",
     rows: {
       shade: "明暗", light: "亮部", sat: "饱和", mix: "混色", nuance: "微差", hue: "色相",
       complementary: "互补", triadic: "三角", tetradic: "四角",
@@ -670,7 +670,7 @@ const en: Dict = {
     title: "Colour shading",
     open: "Colour shading",
     hint: "From one base colour, generate a whole set of ramps at once (shade / light / sat / mix / nuance / hue), plus complementary, triadic and tetradic options. Tap a swatch to set the foreground, hold it (right-click on desktop) for the background",
-    base: "Base", baseA: "Foreground", baseB: "Background", get: "Use the current foreground / background", baseHint: "Tap either swatch to make it the base colour — every ramp is recomputed from it",
+    base: "Base", baseA: "Foreground", baseB: "Background", get: "Get", baseHint: "Tap either swatch to make it the base colour — every ramp is recomputed from it",
     rows: {
       shade: "Shade", light: "Light", sat: "Sat.", mix: "Mix", nuance: "Nuance", hue: "Hue",
       complementary: "Compl.", triadic: "Triad", tetradic: "Tetrad",
