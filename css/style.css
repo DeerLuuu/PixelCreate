@@ -379,6 +379,9 @@ html[data-pc] .orb-item{width:48px;height:48px}
 .ase-tlbar .tlctrl{flex:0 0 auto;display:flex;align-items:center;gap:2px;overflow-x:auto;scrollbar-width:none;max-width:100%}
 .ase-tlbar .tlctrl::-webkit-scrollbar{display:none}
 .ase-tlbar .tlctrl .btn{width:28px;min-width:28px;height:28px;min-height:28px}
+/* 播放速度色片：和时间轴按钮同高，窄屏也不挤掉别的按钮 */
+.ase-tlbar .tlctrl .dropmenu-btn{height:28px;padding:0 7px;font-size:12px;white-space:nowrap}
+.ase-tlbar .tlctrl>.dropmenu{flex:0 0 auto}
 .ase-scroll{display:grid;gap:1px;overflow:auto;overflow-y:auto;overflow-x:scroll;max-height:116px;min-height:56px;
   background:var(--line);border:1px solid var(--line);border-radius:8px;flex:0 0 auto;width:100%;touch-action:none}
 .ase-cell{display:flex;align-items:center;justify-content:center;background:var(--bg2);min-width:0;position:relative}
@@ -1331,3 +1334,20 @@ html[data-pc] .dlg-ca{width:min(680px,70vw)}
 .ca-flabel{font-size:11px;color:var(--dim);flex:0 0 34px}
 .ca-opts{display:flex;flex-direction:column;gap:3px}
 .ca-opt{display:flex;align-items:center;gap:7px;font-size:11px;color:var(--text-2);cursor:pointer}
+/* 色彩明暗（Color Shading）：一行色阶 = 标签 + 一条等宽色块 */
+.dlg-sh{width:min(94vw,560px);max-height:min(92vh,calc(100dvh - var(--sat) - var(--sab) - 16px))}
+html[data-pc] .dlg-sh{width:min(600px,64vw)}
+.sh-note{color:var(--dim-2)}
+.sh-tiny{font-size:11px;color:var(--dim);margin-top:-2px}
+.sh-row{display:flex;align-items:center;gap:6px}
+.sh-rowlabel{flex:0 0 54px;text-align:right;font-size:11px;color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sh-strip{flex:1;display:grid;grid-auto-flow:column;grid-auto-columns:1fr;gap:3px;min-width:0}
+.sh-swatch{height:26px;min-width:10px;padding:0;border:1px solid var(--line);border-radius:var(--r-2);cursor:pointer}
+.sh-swatch.big{height:34px;min-width:34px}
+.sh-swatch:active{border-color:var(--accent)}
+.sh-base{flex:1;display:flex;align-items:center;gap:6px;flex-wrap:wrap;min-width:0}
+.sh-base .btn{flex:0 0 auto}
+.sh-temps{display:flex;align-items:center;gap:6px;flex:1}
+.sh-temps .sh-swatch{flex:0 0 34px}
+.sh-opts{gap:12px}
+.sh-opt{display:flex;align-items:center;gap:7px;font-size:11px;color:var(--text-2);cursor:pointer}
