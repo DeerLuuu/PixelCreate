@@ -1,6 +1,6 @@
 # AGENTS.md
 
-> 给 AI 编码代理 / 后续会话的**唯一约定来源**。动手前先读本文件；改完按 §5.5 提交；**提问 / 调用 / 派活规范见 §10**。
+> 给 AI 编码代理 / 后续会话的**唯一约定来源**。动手前先读本文件；改完**先按 §5.3 同步 API 文档**，再按 §5.5 提交；**提问 / 调用 / 派活规范见 §10**。
 > 面向用户的功能说明 → [`README.md`](README.md)；模块接口 → [`docs/API.md`](docs/API.md)；竞品对比 → [`docs/COMPARISON.md`](docs/COMPARISON.md)。
 
 ---
@@ -15,7 +15,7 @@
 | 源码 | `src/`（入口 `src/main.tsx`），测试 `tests/` |
 | Web 产物 | `app2/www/js/app.js` + `app2/www/css/style.css`（esbuild IIFE） |
 | APK 产物 | `/sdcard/Download/PixelCraft-<版本号>.apk` 与 `build/PixelCraft.apk` |
-| 当前版本 | `1.1.1.6`（以 `src/ui/changelog.tsx` 的 `APP_VERSION` 为准） |
+| 当前版本 | `1.1.1.7`（以 `src/ui/changelog.tsx` 的 `APP_VERSION` 为准） |
 | 仓库根 | `/sdcard/Download/ds文件夹/pixelcraft`（= `/storage/emulated/0/Download/ds文件夹/pixelcraft`） |
 
 目录：
@@ -28,7 +28,7 @@ src/tools/     工具注册表、笔迹、选区变换
 src/io/        原生桥接、工程文件（.pxc）、Aseprite 读写（aseread/asewrite/zlib）、自动保存、参考图、安全区、base64
 src/ui/        React 外壳、弹窗、时间线、浮动球、i18n、样式
 android/       MainActivity（Java 层）+ AndroidManifest
-tests/         无 DOM 的引擎/逻辑回归（**3392 条断言**，`node .ts-out/tests/run-tests.js` 末尾会打印条数）
+tests/         无 DOM 的引擎/逻辑回归（**3462 条断言**，`node .ts-out/tests/run-tests.js` 末尾会打印条数）
 docs/          API.md / COMPARISON.md
 ```
 
@@ -113,8 +113,17 @@ java -jar /root/pk/apksigner.jar verify --print-certs /sdcard/Download/PixelCraf
 - 引导步骤写进 `src/app/guide.ts`；手势映射写进 `src/app/gestures.ts`；
 - 新增功能优先「加一条声明」，不要在 UI 里硬编码分支。
 
-### 5.3 文档同步
-- 改了对外 API / 新功能 → 更新 `docs/API.md`（接口签名）与 `README.md`（功能表）；`docs/COMPARISON.md` 的「最新进展」表一并刷新。
+### 5.3 文档同步（**每次改功能都必须做，不是「有空再补」**）
+- **改了哪块代码，就更新 `docs/API.md` 里对应那一节** —— 这是硬要求：改完功能、跑完测试，
+  **提交之前**把被改模块的签名 / 参数 / 行为约定 / 坑点写进对应小节（新增模块要新增小节，
+  并在 §9 文档地图与 README 的目录结构里露面）。
+  - 引擎与工具（`src/engine/*`、`src/tools/*`）：写进它已有的那一节（如变换见 §10b、变形见 §18.11、重采样见 §6a）；
+  - 视图 / 会话 / UI（`src/render/view.ts`、`src/app/session.ts`、`src/ui/*`）：更新对应小节的公开面列表与状态机约定；
+  - 行为变了（哪怕签名没变）也要改：口径、边界、优先级、修掉的 bug 都写一句「为什么」，
+    免得下一个人照着旧注释把 bug 改回去（本仓库的注释里已经有多处这种「不要改回去」的记录）。
+- 用户可见的新功能 / 行为变化 → 同时更新 `README.md` 的功能表；竞品能力有变化时刷新 `docs/COMPARISON.md` 的「最新进展」。
+- 涉及界面规范 / 控件 / 覆盖层顺序 → `docs/UI.md`；新增设置项 / 引导步骤 / 手势 → 改对应声明（`src/app/*.ts`）并在这里提一句。
+- 提交信息正文里带一行「文档：docs/API.md §X」，方便回溯「这次改了什么、写在哪」。
 
 ### 5.4 测试副本与输出
 - 容器里的 `/root/pcbuild/app/src`、`app/tests` 用 `cp -r <repo>/src/. app/src/` **增量覆盖**同步，`tests/.ts-out` 用 tsc 增量编译，**不要 `rm -rf`**。

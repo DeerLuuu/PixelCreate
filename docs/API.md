@@ -866,6 +866,28 @@ resizeModeOn / setResizeMode(on) / toggleResizeMode()   // 拖画布四边改尺
 sampleComposite(x, y): RGBA | null        // 取合成后的颜色
 ```
 
+### 11.8b 缩放对比预览的取块 `src/ui/scale-preview.ts`
+
+`ScaleModal` 的两张预览图**不自己算**，全部走这个纯函数模块（无 React / 无 DOM，`tests/scale.test.ts` 直接跑）：
+
+```ts
+flatFrame(doc, fi): Uint8ClampedArray          // 当前帧**可见图层**压平（复用 engine/color-analysis 的 flattenLayers）
+previewSource(doc, scope, li, fi): Uint8ClampedArray
+                                               // sprite＝flatFrame（缩放改所有 cel，画面就是它）；
+                                               // layer / selection＝当前图层那张 cel 的拷贝
+contentBounds(src, docW, docH, region): { x0; y0; x1; y1 } | null   // 区域里 alpha>0 的包围盒
+previewPatchGeometry(src, docW, docH, region, cw, ch): PreviewGeometry
+                                               // { x, y, w, h, tw, th, empty }：
+                                               // 取块大小＝按缩放倍数反推（`region / k`），位置**对准内容包围盒**
+                                               // （内容为空退回区域中心），整块夹在区域内；empty＝这一块没有可见像素
+cropPatch(src, docW, docH, g): Uint8ClampedArray    // 裁出那一块（画布外保持透明）
+scaleFactorLabel(cw, ch, region): string       // "2×" / "2× / 1.5×"（整数不写小数、不留尾零）
+```
+
+`ScalePreview` 组件只负责把结果画进 canvas（`putImageData`），高度按取到那块内容的宽高比自适应；
+`empty` 时渲染一行 `scalePreviewEmpty` 提示。**改这里之前先读**：源像素口径必须与 `scaleAdvanced()`
+的作用范围一致，取块必须跟着内容走（这两条各对应一次真机反馈，见 §11.8 的注释）。
+
 ### 11.9 撤销与结构变更
 
 ```ts
@@ -1103,6 +1125,7 @@ class View {
   xfHitAt(pt): { kind: XfKind; anchor?: AnchorId } | null;   // 命中什么（图标 → PC 再回落两层圈 → 枢轴最近优先）
   grabOffsetsNow(): GrabOffsets | null;         // 这一屏的实际外移距离（小选区收窄、但不隐藏类别）
   beginXfMoveAt(sx, sy): boolean;               // 显式以「移动内容」开会话（小选区上没有空白点）
+  grabIconAt(kind, anchor, pt): PxPoint;        // 按下时「被抓的那个图标」自己的屏幕位（解算参照，见 §10b.4）
   setXfPivotAt(lx, ly): boolean;                // 把枢轴钉到内容下标（顺手补平移补偿，画面不动）
   setPivotPreset(k: PivotPreset): boolean;      // 9 档预设（拖拽枢轴后会被判成最近的一档）
   pivotPreset(): PivotPreset | null;            // 当前枢轴落在哪一档
@@ -1111,6 +1134,15 @@ class View {
   revertXf(): void;                             // 「还原」：会话整个丢掉，像素逐字节回滚（不进历史）
   xfHint: string | null;                        // PC 悬停提示（"scale:br" 这类）
   hitRadii(): HitRadii;                         // 当前该用哪套命中半径（PC / 触屏 + 自动收窄）
+
+  // —— 四点 / 网格自由变形（会话同样是 `xf` 槽，见 §18.11）——
+  beginWarp(kind: "quad" | "mesh"): boolean;    // 进入变形（不改图层）；失败原因见 `lastWarpError`
+  finishWarp(revert = false): void;             // 完成＝落一条历史；revert＝还原
+  lastWarpError: "noSel" | "tooThin" | "locked" | null;
+  warpHandles(): Pt[];                          // 控制点的屏幕位（整数下标画在像素中心）
+  warpHandleAt(pt): number;                     // 命中第几个控制点（半径 ≤ 相邻点间距一半，下限 8px）
+  warpStartMove(pt): boolean;                   // 按在内容上＝拖动整块（控制点一起走），见 §18.11
+  warpMoveContent(pt): void;                    // 拖动内容中：从起点重算位移、按吸附粒度取整
 
   markDirty(rect?: Rect | null): void;   // 标记脏区（无参 = 全帧 + 全量重绘）
   invalidate(rect?: Rect | null): void;  // 标记 + rAF 合并重绘（Session.repaint 用）
@@ -1721,6 +1753,8 @@ PC 专属的 Blender 式饼菜单：浮动球存储区边的**装备槽**里装�
 | `gridLine(count, i, divs)` | 第 `i` 条网格线在 `0..count-1` 像素下标上的位置（首尾＝`0` / `count-1`，中间按 `i*(count-1)/divs` 取**最近的像素下标**）—— 这是**进入变形时的初始分布**，拖动后各点走 `snapWarpCoord()` |
 | `snapWarpCoord(v, half)` | **吸附粒度**：`half=true`（默认）→ `Math.round(v*2)/2`（整数＝像素中心，`x.5`＝两格之间的边界线）；`half=false` → `Math.floor(v)`（整像素）。容差 `1e-9 × max(1, abs(v))` 用来吸掉浮点毛刺 |
 | `warpPointFromScreen(sx, sy, zoom, ox, oy, half)` | 屏幕 → 控制点下标：绘制公式 `(q+0.5)*zoom+ox` 的**逆运算**。先反解连续坐标再吸附；两种模式都幂等（抓住控制点不动不跳位） |
+| `warpPointRaw(sx, sy, zoom, ox, oy)` | 同上但**不做吸附**（连续下标）—— 拖动浮标 / 算「拖动整块内容」的位移时用 |
+| `snapWarpIndex(v, half)` | 连续下标 → 落点：`half` 走 `snapWarpCoord(v,true)`，否则**就近取整**（不是 `floor`，见 `warpPointFromScreen()` 的说明） |
 | `warpCoordLabel(p, half)` | 拖动浮标的坐标文案 `"x, y"`（半像素一位小数 `12.5`，整像素整数；`-0` 归一成 `0`） |
 | `warpQuad(src, quad, outW, outH, srcQuad?, tieDown?)` | **四点自由变换（斜切 / 透视）**：目标四边形固定顺序（左上→右上→右下→左下），逐目标像素反查源像素，最近邻采样（**就近取整**），画面外保持透明。`tieDown` 见下 |
 | `meshWarp(src, grid, outW, outH, divs = 2, tieDown?)` | **网格变形**：`(n+1)²` 个控制点，每个格子拆两个三角形做仿射逆映射 → 拉伸不留洞 |

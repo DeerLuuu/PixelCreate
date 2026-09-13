@@ -9,10 +9,10 @@ import { useKitPcMode } from "./kit";
 import { Dialog } from "./kit";
 
 /** keep in sync with android/AndroidManifest.xml versionName on every release */
-export const APP_VERSION = "1.1.1.6";
+export const APP_VERSION = "1.1.1.7";
 /** build stamp shown next to the version (support/debug: identifies the exact
  *  package a user is running when the version number itself does not change) */
-export const BUILD_TAG = "c1109ab";
+export const BUILD_TAG = "cf6e1c0";
 
 export type ClgKind = "add" | "imp" | "fix";
 export interface ClgItem { kind: ClgKind; zh: string; en: string }
@@ -21,6 +21,17 @@ export interface ClgVersion { v: string; date: string; items: ClgItem[] }
 const it = (kind: ClgKind, zh: string, en: string): ClgItem => ({ kind, zh, en });
 
 export const CHANGELOG: ClgVersion[] = [
+  {
+    v: "1.1.1.7",
+    date: "2026-09-13",
+    items: [
+      it("fix", "**选区自由变换的抓手终于是「抓得住、跟得手」了**（一批修完）：① 旋转中心以前漏算了画布偏移，选区不在画布原点时拖着转 90° 只转出 37°，框和全部抓手一起甩走；② 缩放的不动点是**你拖的那个抓手的对角**（拖右下角时左上角钉住不动），斜切的基准线是**被拖那条边的对面**（拖哪条边哪条边跟手、对面一动不动），以前一个绕中心两边一起长、一个各走一半；③ 同一会话里拖第二次会**在上一次的结果上继续**（以前会把上一次的缩放 / 旋转 / 斜切抹掉）；④ 解算以**你抓住的那个图标**为参照（以前以手指落点为参照，命中半径 38px 一按偏，图标就永远隔着一截，最多偏出 40px）；⑤ 原地转 90° 以前框转了、里面的像素一格没动（走进了「像素精确通道」却没转）；⑥ 进入会话的瞬间 16 个抓手不再整组跳位（恒等变换下变换框与选中框逐像素重合）。", "**The selection transform handles finally grab and follow properly** (a batch of fixes): (1) the rotation centre forgot the canvas offset — with a selection away from the origin, dragging a handle through 90° gave only 37° and threw the frame and every handle off; (2) scaling now pivots around **the opposite anchor of the handle you drag** (grab the bottom-right corner and the top-left stays nailed) and skew uses **the opposite edge** as its baseline (the edge you drag follows your finger, the far one never moves) — before, one grew from the centre and the other split the difference; (3) a second drag in the same session now **continues from the previous result** instead of wiping the scale, rotation and skew; (4) the solver references **the icon you grabbed** rather than where your finger landed — with a 38px hit radius an off-centre press used to freeze that gap for the whole drag, up to 40px; (5) a plain 90° rotation used to rotate the frame while the pixels stayed put (it took the pixel-exact path without turning); (6) the 16 handles no longer jump as a group the moment a session starts (at identity the transform frame now coincides with the selection frame, pixel for pixel)."),
+      it("fix", "**变形（斜切 / 透视、网格变形）的抓手同样跟手、也不再被图像盖住**：控制点直接落在指针那一点上（拖到哪就是哪），命中半径按相邻点间距的一半自适应，密网格里也能抓准；**按在内容上拖动＝整块内容连同控制点一起走**；从「移动 / 缩放 / 旋转」中途切进网格变形时先把当前画面**烘焙**进浮动内容（控制点落在眼前这块上，不再跳回原位）；控制点与网格线改成画在**图像之上**（以前一拖动就被自己变出来的像素盖住）；变形期间视口不再自动平移。另外：选区贴到画布边时，落在**画布外**的旋转 / 斜切图标以前一按就变成拖动相机、根本按不到，现在抓手优先。", "**Warp handles (skew/perspective and mesh) follow the finger too, and are never hidden by the image**: a control point lands exactly on the pointer (what you drag is where it goes), and its hit radius adapts to half the distance between neighbours so dense meshes still grab the right point. **Dragging inside the content moves the whole block together with its control points**, and switching into mesh warp from a move/scale/rotate **bakes** the current picture into the floating content first (the points sit on what you see instead of snapping back). Control points and grid lines are now drawn **above the image** (they used to be covered by the very pixels the warp produced), and the viewport no longer auto-pans during a warp. Also: with a selection against the canvas edge, the rotate/skew icons that fall **outside the canvas** used to start a camera drag instead of being pressable — handles now win."),
+      it("fix", "**高级缩放的「对比预览」以前两张图都是空的**：预览改成读**所有可见图层叠起来**的画面（以前只读当前图层，画在别的图层上就是空白），并且取的是**内容所在的那一块**（以前固定取区域正中，内容在角落就什么都看不到）；整块透明时会给一行提示，预览底也加了透明棋盘格，一眼能分清「透明」和「坏了」。", "**Advanced Scale's compare preview used to show two empty frames**: it now samples **all visible layers flattened** (it used to read only the current layer, so artwork on another layer showed nothing) and takes the patch **where the artwork is** (it used to take the dead centre of the region, so artwork in a corner showed nothing). A fully transparent patch gets a hint line, and the previews sit on a transparency checkerboard so \"empty\" is clearly different from \"broken\"."),
+      it("imp", "**对比图单独一屏、手机面板整屏**：高级缩放的对比预览从参数表单里挪出来，点弹窗左下角的对比按钮才打开（128px 并排，看得清）；调色板等抽屉面板在**手机竖屏**下改为铺满全屏（横屏与电脑模式仍是右侧抽屉），不再左留一条缝。", "**Compare on its own screen, panels full-screen on phones**: Advanced Scale's before/after preview moved out of the settings form into its own panel, opened from the compare button at the bottom left of the dialog (128px side by side, actually readable). Drawer panels such as the palette now **fill the screen on a portrait phone** (landscape and desktop keep the right-hand drawer) instead of leaving a sliver on the left."),
+    ],
+  },
+
   {
     v: "1.1.1.6",
     date: "2026-09-13",
