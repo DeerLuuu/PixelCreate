@@ -2262,11 +2262,15 @@ export class View {
       return;
     }
     // ① 选区类工具（框选 / 套索 / 魔棒 / 轮廓填充）在画布外的空白处按下＝平移视图，
-    //    与画笔工具一致：不用先切工具就能拖着看画布
+    //    与画笔工具一致：不用先切工具就能拖着看画布。
+    //    **但抓手优先**：旋转 / 斜切的图标画在选区框**外** 30px（缩放 6px），选区贴着画布边时
+    //    它们必然落在画布外 —— 早先这里无条件平移，等于这些图标一跑到画布外就按不到
+    //    （用户报的「按钮不在画布内时触发拖动相机」）。变形模式的控制点同理。
     const outsideDoc = pp.x < 0 || pp.y < 0 || pp.x >= doc.w || pp.y >= doc.h;
     const blankPan = isPc() && e.pointerType === "mouse" &&
       (tool === "select" || tool === "lasso" || tool === "wand" || tool === "outline");
-    if (blankPan && outsideDoc) {
+    const onGrab = blankPan && outsideDoc && (this.warpHandleAt(pt) >= 0 || !!this.xfHitAt(pt));
+    if (blankPan && outsideDoc && !onGrab) {
       this.panLast = pt;
       this.gestureMoved = false;
       this.syncCursor();

@@ -1175,4 +1175,33 @@ export function testXformUi(): void {
     ok("xformui.rotate.repeat-adds", a1 - a0 > 40 && a2 - a1 > 40, JSON.stringify([a0, a1, a2]));
     v.revertXf();
   }
+
+  // ================================================ 画布外的抓手不能被「空白处拖动＝平移」抢走
+  // 旋转 / 斜切图标画在选区框**外** 30px（缩放 6px）：选区贴着画布边时它们必然落在画布外，
+  // 早先 PC 模式这里无条件进入「拖动视图」，那些图标在画布外就永远按不到。
+  {
+    const { s, v } = mk(true);
+    paint(s, 0, 0, 8, 8);
+    v.zoom = 2; v.ox = 100; v.oy = 100;                 // 画布缩到中间，四周留出空白
+    const rot = v.xfGrabs().find((g) => g.kind === "rotate" && g.anchor === "tl")!;
+    const asPixel = { x: (rot.x - v.ox) / v.zoom, y: (rot.y - v.oy) / v.zoom };
+    ok("xformui.outside.icon-is-outside-doc", asPixel.x < 0 || asPixel.y < 0, JSON.stringify(asPixel));
+    const panOf = (): unknown => (v as unknown as { panLast: unknown }).panLast;
+    v.onDown(ev(rot.x, rot.y, "mouse"));
+    dom.flush();
+    ok("xformui.outside.grab-wins", v.xfDrag?.kind === "rotate", JSON.stringify(v.xfDrag));
+    eq("xformui.outside.no-pan", panOf(), null);
+    v.onMove(ev(rot.x + 6, rot.y + 4, "mouse"));
+    dom.flush();
+    ok("xformui.outside.rotated", Math.abs(v.xf!.tp!.angle) > 0.005, String(v.xf!.tp!.angle));
+    v.onUp(ev(rot.x + 6, rot.y + 4, "mouse"));
+    v.revertXf();
+    // 空白处（画布外、离所有抓手都远）仍然要能拖动视图平移
+    const blank = { x: 20, y: 20 };
+    ok("xformui.outside.blank-is-blank", v.xfHitAt(blank) === null, JSON.stringify(v.xfHitAt(blank)));
+    v.onDown(ev(blank.x, blank.y, "mouse"));
+    dom.flush();
+    eq("xformui.outside.blank-pans", panOf() !== null, true);
+    v.onUp(ev(blank.x, blank.y, "mouse"));
+  }
 }
