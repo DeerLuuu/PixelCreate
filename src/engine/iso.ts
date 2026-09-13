@@ -229,9 +229,47 @@ export interface IsoRenderResult {
   px: Uint8ClampedArray;
   w: number;
   h: number;
+  /**
+   * **地面原点**（格 `(0,0,0)` 的顶顶点）在这个缓冲里的位置。
+   * 变形状 / 变尺寸时缓冲大小会变，靠它当锚点，预览才不会跳 —— 调用方按
+   * `screen = 画布原点 + originAt` 摆缓冲即可。
+   */
+  originAt: { x: number; y: number };
   /** 实际点亮的体素数 / 写下的像素数 */
   voxels: number;
   pixels: number;
+}
+
+/** 足迹菱形的四个角（相对**地面原点**的局部像素坐标；± 与投影口径一致） */
+export function isoGroundCorners(tile: IsoTile, w: number, d: number): {
+  top: { x: number; y: number }; right: { x: number; y: number };
+  bottom: { x: number; y: number }; left: { x: number; y: number };
+} {
+  const T = tile;
+  return {
+    top: { x: 0, y: 0 },
+    right: { x: (w * T) / 2, y: (w * T) / 4 },
+    bottom: { x: ((w - d) * T) / 2, y: ((w + d) * T) / 4 },
+    left: { x: (-d * T) / 2, y: (d * T) / 4 },
+  };
+}
+
+/** 顶面中心（高度抓手的锚点）：足迹菱形中心再往上 `h * T/2` */
+export function isoHeightHandle(tile: IsoTile, w: number, d: number, h: number): { x: number; y: number } {
+  const T = tile;
+  return { x: ((w - d) * T) / 4, y: ((w + d) * T) / 8 - (h * T) / 2 };
+}
+
+/** 把屏幕增量拆成「沿两条等距轴走几格」：a = +x 方向，b = +y 方向（doc 像素单位） */
+export function isoDeltaToCells(tile: IsoTile, ddx: number, ddy: number): { a: number; b: number } {
+  const T = tile;
+  return { a: (ddx + 2 * ddy) / T, b: (2 * ddy - ddx) / T };
+}
+
+/** 对齐到 2:1 栅格（原点吸附用；步长 = T/2 与 T/4） */
+export function isoSnapOrigin(tile: IsoTile, x: number, y: number): { x: number; y: number } {
+  const sx = tile / 2, sy = tile / 4;
+  return { x: Math.round(x / sx) * sx, y: Math.round(y / sy) * sy };
 }
 
 /**
@@ -303,10 +341,13 @@ export function isoRender(v: Voxels, look: IsoLook): IsoRenderResult {
       }
     }
   }
-  if (!any) return { px: new Uint8ClampedArray(0), w: 0, h: 0, voxels: 0, pixels: 0 };
+  if (!any) return { px: new Uint8ClampedArray(0), w: 0, h: 0, originAt: { x: 0, y: 0 }, voxels: 0, pixels: 0 };
   minX -= pad; minY -= pad; maxX += pad + sh.x; maxY += pad + sh.y;
   const w = maxX - minX + 1, h = maxY - minY + 1;
   const px = new Uint8ClampedArray(w * h * 4);
+  // 地面原点：与「有没有体素」无关的几何点，所以圆柱这类 (0,0) 不在足迹里的形状也有稳定锚点
+  const g0 = voxelOrigin(T, 0, 0, 0);
+  const originAt = { x: g0.ox - minX, y: g0.oy - minY };
 
   const put = (x: number, y: number, col: RGBA) => {
     if (x < 0 || y < 0 || x >= w || y >= h) return;
@@ -400,7 +441,7 @@ export function isoRender(v: Voxels, look: IsoLook): IsoRenderResult {
     for (let i = 0; i < ring.length; i += 2) put(ring[i], ring[i + 1], look.outlineColor);
   }
 
-  return { px, w, h, voxels: order.length, pixels };
+  return { px, w, h, originAt, voxels: order.length, pixels };
 }
 
 /** 便捷：从基色 + 形状参数直接出图（单色三档） */

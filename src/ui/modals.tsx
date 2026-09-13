@@ -424,6 +424,7 @@ export function MenuModal({ t, snap, onClose, onOpen, onSheet, onRef, onGuide }:
           <Btn label={t("import")} icon="i-import" className="menuitem" guide="menu-import" onClick={() => setSub("import")} />
           {go("coloranalysis")(t("ca.open"), "i-search", "menu-color-analysis")}
           {go("shading")(t("sh.open"), "i-dedupe", "menu-shading")}
+          {act(t("iso.open"), "i-grid", () => SESSION.enterIso(), "menu-iso")}
           {go("settings")(t("settings"), "i-gear", "menu-settings")}
           {go("shortcuts")(t("shortcutHelp"), "i-keys", "menu-shortcuts")}
           {go("customise")(t("customise"), "i-grid", "menu-customise")}

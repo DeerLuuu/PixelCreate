@@ -330,6 +330,60 @@ flatRamps(ramps, rows?, dedupe = true): RGBA[]         // 摊平（「加入调�
 
 入口：调色板面板的动作行与主菜单（`openShading()` 派发 `pc-shading`，App 侧收面板再开弹窗，同 `pc-color-analysis`）。
 
+## 6d. 等距图形 `src/engine/iso.ts`
+
+2:1 像素几何的**基础等距体生成器**（≈26.57°，像素画惯例；**不是**真等距 30°）：
+一格顶面 = `T×T/2` 像素的菱形，**1 单位高度 = `T/2` 像素**，所以 **1×1×1 立方体正好是 `T×T` 像素**。
+
+```
+sx = (x - y) * (T/2)        // 每 +1 格 x：屏幕 (+T/2, +T/4)
+sy = (x + y) * (T/4) - z * (T/2)
+```
+
+```ts
+const ISO_TILES = [8, 16, 32];  ISO_TILE_DEFAULT = 16;   // 每格像素宽（T/4 保证整数像素）
+const ISO_SHAPES = ["box","steps","wedge","cylinder","pyramid","frame"];
+const ISO_MAX_VOXELS = 262144;                            // 误填 999 的护城河
+
+interface Voxels { w; d; h; data: Uint8Array }            // 1 = 实心，下标 (z*d + y)*w + x
+isoShapeVoxels(p: Partial<IsoShapeParams>): Voxels        // 六个形状，各参数化（级数 / 坡向 / 半径 / 空心 / 平顶 / 壁厚）
+normalizeShapeParams(p): IsoShapeParams                   // 夹取（w/d/h ≤ 64、半径、壁厚、体素上限）
+isoFaceColours(base, shade?): { top; right; left }        // 单色三档：复用 engine/shading.ts 的明暗行（默认 sway 0）
+isoDiamondRows(tile) / isoHexRows(tile): number[]         // 行宽模板（顶面菱形 / 立方体轮廓），黄金值来源
+isoGroundCorners(tile, w, d): { top; right; bottom; left }  // 足迹四角（相对**地面原点**的局部像素）
+isoHeightHandle(tile, w, d, h): Pt                        // 顶面中心（高度抓手）
+isoDeltaToCells(tile, ddx, ddy): { a; b }                 // 屏幕增量拆成两条等距轴走了几格
+isoSnapOrigin(tile, x, y): Pt                             // 吸附到 2:1 栅格（步长 T/2 与 T/4）
+isoRender(v, look: IsoLook): IsoRenderResult              // { px, w, h, originAt, voxels, pixels }
+isoRenderShape(shape, base, look?): IsoRenderResult       // 便捷入口
+```
+
+- **行宽模板**（T=16 立方体，自上而下 16 行）：`2,6,10,14,16×8,14,10,6,2`，
+  顶面菱形是其中 `2,6,10,14,14,10,6,2`（面积 `T²/4`），六边形总面积 `3T²/4`；
+  **相邻格的 stamp 会重叠**（等距投影本来多对一），靠画家顺序（`x+y` 递增、同深度 `z` 递增）解决，
+  每个体素只画**没被遮挡**的面（顶面：上方空；右面：`+x` 空；左面：`+y` 空）。
+- `originAt` 是**地面原点**（格 `(0,0,0)` 顶顶点）在缓冲里的位置：换形状 / 改尺寸时缓冲大小会变，
+  只有拿它当锚点，画布上的预览与抓手才不会跳（圆柱这类 `(0,0)` 不在足迹里的形状也有稳定锚点）。
+- `IsoLook` = `{ tile, faces{top,right,left}, shadow: "off"|"contact", shadowColor, outline, outlineColor }`；
+  接触阴影 = 足迹上每个有内容的格画一块**偏移 (T/8,T/16)** 的顶面菱形，物体压在上面只露出下缘一条暗边。
+
+**会话侧**（`src/app/session.ts`）：`isoOn`（模式）/ `isoOrigin`（画布像素里的地面原点）/
+`isoLast`（上次生成的矩形）；`isoShape()` / `isoLook()` 把参数解析成引擎口径；
+`setIsoPref(patch)`（夹取 + 存 `prefs.iso` + 重画覆盖层）、`enterIso()`（结束变换会话、清选区、
+把外接框夹进画布居中）、`exitIso()`、`setIsoOrigin(x, y, snap)`、`isoStats()`（读数：像素尺寸 / 体素 /
+是否越界）、`isoGenerate("layer" | "new")`。
+**历史**：`layer` 用 `pushPixels` 一条像素差分；`new` 用 `struct()`（整档快照）把「新建图层 + 写像素」
+合成**一条** undo。全在画布外时直接拒绝（`reason: "outside"`），锁定图层走 `paintBlockedNote()`。
+
+**视图侧**（`src/render/view.ts`）：`isoPreview()`（渲染 + 按 `originAt` 摆位 + 参数签名缓存离屏画布）、
+`isoHandles()`（四角 + 高度，测试直接读它）、`isoHitAt()`（半径随抓手密度收窄 `max(8, min(pc?13:24, 最近两点/2))`，
+**高度抓手优先**）、`isoDragTo()`（屏幕增量 → 格数：`top` 反向长、`right` 改 W、`left` 改 D、
+`bottom` 同时改 W/D、`height` 按 `T/2` 改高）、`drawIsoMode()`（2:1 栅格 → 半透明预览 → 足迹虚线 →
+抓手 → 尺寸浮标）、`isoCancelDrag()`。模式期间画布手势被接管（按下不落笔迹）。
+
+**入口**：魔法球「等距图形」（`fxI("iso", …)`）+ 主菜单（`SESSION.enterIso()`）；
+参数条 `IsoBar`（`src/ui/iso.tsx`）在模式期间常驻，形状 chips / 尺寸 / 图块 / 外观折叠 / 生成 / 完成。
+
 ## 7. 撤销栈
 
 `src/engine/history.ts`
@@ -1546,6 +1600,7 @@ nextPlayFrameIn(mode, fi, dir, w): PlayStep                    // 循环/乒乓�
 | `TabBar` / `DropMenu` | `ui/tabs.tsx` | 共用选项卡与可展开下拉（色板 / 导出 / 更新日志 / 播放速度）。**下拉列表用 `createPortal` 挂到 `document.body` 并 `position:fixed`**（坐标按按钮的视口位置算）：时间轴控制条是 `overflow-x:auto` 的滚动容器，绝对定位的列表会被它整块裁掉——「播放速度色片点了没反应」就是这么来的；任何放在滚动容器里的下拉都靠这条活着 |
 | `ChangelogModal` | `ui/changelog.tsx` | 更新日志：`CHANGELOG`（`ClgVersion[]`，每项 `it(kind, zh, en)`）+ `APP_VERSION` / `BUILD_TAG`；PC 竖排版本列表、触屏横向标签条，分类（add/imp/fix）可折叠。**条目文案是纯文本渲染**（`<li>{x.zh}</li>`，没有 Markdown 解析）——`**加粗**` 与反引号会原样显示，所以文案里不许出现它们，测试 `tests/changelog.test.ts` 会拦（同时校验 `APP_VERSION` 与 `AndroidManifest.xml` 的 `versionName` 一致、条目单行格式、中英一一对应） |
 | `ShadingModal` | `ui/modals.tsx` | 色彩明暗（调色板生成器）：算法在 `engine/shading.ts`，面板只摆控件与色块；基色块打开调色板挑色（`onOpenPalette` + `SESSION.awaitColorPick`），生成色块轻点＝前景色 / 长按＝加进色卡 / 电脑右键＝背景色，每行的「+」加入当前色卡、「保存」存成新色卡（`savePalettePresetOf`）。入口＝调色板面板 + 主菜单（`openShading()` → `pc-shading` → App 里 `setModal("shading")`） |
+| `IsoBar` | `ui/iso.tsx` | 等距图形模式的**参数条**（常驻浮层，不是弹窗——模式的手感全在画布上）：形状 chips（6）/ 宽深高 / 图块 8·16·32 / 实时读数（尺寸·体素·越界）/ 折叠外观（颜色模式、三面颜色、明暗、阴影、描边、形状专属参数）/ 生成 / 生成到新图层 / 完成。入口＝魔法球「等距图形」+ 主菜单 |
 | `useBlankTap` | `ui/base.tsx` | 点容器空白处执行动作（调色板面板点击关闭） |
 | 时间线分割线 | `ui/App.tsx`（`.tl-grip`） | 时间线面板顶部的拖动条：上下拖动 = `setTlHeight()`（面板总高度 140–520px，默认 200），拖动时显示 px 浮标，双击复位 200；`prefs.tlH` 是整块面板高度，矩阵 `flex:1` 填充，图层行不足时用 `.ase-fill` 单元格补底 |
 | 安全区 | `io/safearea.ts` | 把原生 insets 写成 CSS 变量 `--sat/--sab/--sal/--sar`，贴边控件统一用它们留白 |

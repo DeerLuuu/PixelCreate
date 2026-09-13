@@ -7,6 +7,10 @@ import { defaultPalette } from "../data/palettes";
 import { hexToRgba, rgbaToHex } from "../engine/color";
 import * as ops from "../engine/ops";
 import { resamplePixels, resampleRegion, type ResampleAlgo } from "../engine/resample";
+import {
+  ISO_SHAPES, ISO_SHAPE_DEFAULTS, ISO_TILES, ISO_TILE_DEFAULT, isoFaceColours, isoRender, isoShapeVoxels, isoSnapOrigin,
+  normalizeShapeParams, type IsoLook, type IsoShapeId, type IsoShapeParams, type IsoTile,
+} from "../engine/iso";
 import * as fxE from "../engine/effects";
 import * as compositor from "../render/compositor";
 import * as project from "../io/project";
@@ -220,6 +224,24 @@ export interface Prefs {
   selXformGridSnap: boolean;
   /** 自由变换 sticky：拖动＝复制，原内容不从图层挖走（PC 上等价 Ctrl+拖动） */
   selXformCopy: boolean;
+  /** 等距图形：形状/外观参数（跨启动保持；原点是画布级的，不存这里） */
+  iso: IsoPrefs;
+}
+
+/** 等距图形（Color Shading 那套面板的邻居）：参数都在这里，形状库在 engine/iso.ts */
+export interface IsoPrefs {
+  shape: IsoShapeId;
+  w: number; d: number; h: number;
+  steps: number; axis: "x" | "y"; dir: 1 | -1;
+  radius: number; hollow: boolean; topW: number; topD: number; thickness: number;
+  tile: IsoTile;
+  colorMode: "mono" | "fg" | "custom";
+  faceTop: string; faceRight: string; faceLeft: string;
+  intensity: number; peak: number; sway: number;
+  shadow: "off" | "contact";
+  outline: boolean;
+  /** 「生成到新图层」用的图层名 */
+  layerName: string;
 }
 
 /** 高级缩放的作用范围：整张画布 / 当前图层 / 当前选区 */
@@ -262,6 +284,8 @@ export interface Snapshot {
   frameSel: number[];
   /** true while the timeline is in "pick frames" mode */
   frameSelOn: boolean;
+  /** 等距图形模式开着（底部参数条据此显示） */
+  isoOn: boolean;
   /** how many canvases are open in the space, which one is focused */
   canvasCount: number;
   canvasIdx: number;
@@ -856,6 +880,7 @@ export class Session {
       playTag: this.playTag ? { ...this.playTag } : null,
       frameSel: this.frameSelList(),
       frameSelOn: this.frameSelOn,
+      isoOn: this.isoOn,
       canvasCount: this.docs.length,
       canvasIdx: this.docIdx,
       canvasName: this.doc.name,
@@ -1360,6 +1385,15 @@ export class Session {
       bucketGlobal: false, fillSimilar: false, fillTolerance: 32, fillGaps: 0, indexed: false,
       loopMode: "loop", playSpeed: 1, recentColorsMax: 16, selectionTolerance: 8, selWarpHalfSnap: true,
       selXformAspect: false, selXformAngleSnap: false, selXformGridSnap: false, selXformCopy: false,
+      iso: {
+        shape: ISO_SHAPE_DEFAULTS.shape, w: 3, d: 3, h: 2,
+        steps: ISO_SHAPE_DEFAULTS.steps, axis: ISO_SHAPE_DEFAULTS.axis, dir: ISO_SHAPE_DEFAULTS.dir,
+        radius: 3, hollow: false, topW: 0, topD: 0, thickness: 1,
+        tile: ISO_TILE_DEFAULT, colorMode: "mono",
+        faceTop: "#ffd8a8", faceRight: "#c88c5a", faceLeft: "#7a4f2e",
+        intensity: 18, peak: 55, sway: 0,
+        shadow: "contact", outline: true, layerName: "iso",
+      },
       bucketGrad: false, bucketGradMode: "rgb",
       airbrushMin: 1, airbrushMax: 3, airbrushRate: 20,
       brushSize: 1, brushAlpha: 255, fgColor: "#141414", bgColor: "#ffffff",
@@ -1493,6 +1527,29 @@ export class Session {
       if (typeof saved.selXformAngleSnap === "boolean") p.selXformAngleSnap = saved.selXformAngleSnap;
       if (typeof saved.selXformGridSnap === "boolean") p.selXformGridSnap = saved.selXformGridSnap;
       if (typeof saved.selXformCopy === "boolean") p.selXformCopy = saved.selXformCopy;
+      // 等距图形：形状/外观整块读回，逐项校验（旧版本没有这段就是默认值）
+      if (saved.iso && typeof saved.iso === "object") {
+        const i = saved.iso as Partial<IsoPrefs>;
+        const num = (v: unknown, d: number): number => (typeof v === "number" && Number.isFinite(v) ? v : d);
+        const str = (v: unknown, d: string): string => (typeof v === "string" && v ? v : d);
+        const shapeArg = normalizeShapeParams({
+          shape: (ISO_SHAPES as readonly string[]).includes(String(i.shape)) ? (i.shape as IsoShapeId) : ISO_SHAPE_DEFAULTS.shape,
+          w: num(i.w, 3), d: num(i.d, 3), h: num(i.h, 2),
+          steps: num(i.steps, ISO_SHAPE_DEFAULTS.steps),
+          axis: i.axis === "y" ? "y" : "x", dir: i.dir === -1 ? -1 : 1,
+          radius: num(i.radius, 3), hollow: !!i.hollow, topW: num(i.topW, 0), topD: num(i.topD, 0), thickness: num(i.thickness, 1),
+        });
+        p.iso = {
+          ...p.iso, ...shapeArg,
+          tile: (ISO_TILES as readonly number[]).includes(num(i.tile, ISO_TILE_DEFAULT)) ? (i.tile as IsoTile) : ISO_TILE_DEFAULT,
+          colorMode: i.colorMode === "fg" || i.colorMode === "custom" ? i.colorMode : "mono",
+          faceTop: str(i.faceTop, p.iso.faceTop), faceRight: str(i.faceRight, p.iso.faceRight), faceLeft: str(i.faceLeft, p.iso.faceLeft),
+          intensity: num(i.intensity, 18), peak: num(i.peak, 55), sway: num(i.sway, 0),
+          shadow: i.shadow === "off" ? "off" : "contact",
+          outline: typeof i.outline === "boolean" ? i.outline : true,
+          layerName: str(i.layerName, "iso"),
+        };
+      }
       // remembered tool / colour / symmetry / document state
       const hex = (v: unknown): string | null => (typeof v === "string" && /^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$/.test(v) ? v.toLowerCase() : null);
       if (typeof saved.brushSize === "number") p.brushSize = Math.max(1, Math.min(64, Math.round(saved.brushSize)));
@@ -2840,6 +2897,194 @@ export class Session {
   struct(label: string, fn: () => void): void {
     this.history.pushStruct(label, this.doc, fn);
     this.syncAfterDocChange();
+  }
+
+  // ---------- 等距图形（iso）----------
+  /**
+   * 等距图形**模式**：画布上铺 2:1 栅格 + 半透明预览 + 抓手，参数在底部参数条里。
+   * 与「画布调整模式」（`resizeModeOn`）同一套做法：进模式后画布手势被模式接管，
+   * 退出时把工具状态原样交还。
+   */
+  isoOn = false;
+  /** 生成物「地面原点」（格 0,0 顶点）在画布像素里的位置；对齐 2:1 栅格所以是整数 */
+  isoOrigin: { x: number; y: number } | null = null;
+  /** 上一次生成的画布矩形（参数条显示「上次 …」用） */
+  isoLast: { x: number; y: number; w: number; h: number } | null = null;
+
+  /** 形状参数（面板改动写回 prefs.iso，形状库在 engine/iso.ts） */
+  isoShape(): IsoShapeParams {
+    const p = this.prefs.iso;
+    return normalizeShapeParams({
+      shape: p.shape, w: p.w, d: p.d, h: p.h, steps: p.steps, axis: p.axis, dir: p.dir,
+      radius: p.radius, hollow: p.hollow, topW: p.topW, topD: p.topD, thickness: p.thickness,
+    });
+  }
+
+  /** 外观参数：颜色按 colorMode 解析成实际三面（单色三档 / 当前前景色三档 / 三面自定） */
+  isoLook(): IsoLook {
+    const p = this.prefs.iso;
+    const base = p.colorMode === "fg" ? this.fg : hexToRgba(p.faceRight);
+    const auto = isoFaceColours(base, { intensity: p.intensity, peak: p.peak, sway: p.sway });
+    const faces = p.colorMode === "custom"
+      ? { top: hexToRgba(p.faceTop), right: hexToRgba(p.faceRight), left: hexToRgba(p.faceLeft) }
+      : auto;
+    return {
+      tile: p.tile,
+      faces,
+      shadow: p.shadow,
+      shadowColor: [0, 0, 0, 110],
+      outline: p.outline,
+      outlineColor: isoFaceColours(base, { intensity: p.intensity, peak: 90, sway: 0 }).left,
+    };
+  }
+
+  /** 改等距参数：夹取 + 存盘 + 通知 UI（不动像素，预览由 View 重画） */
+  setIsoPref(patch: Partial<IsoPrefs>): void {
+    const p = { ...this.prefs.iso, ...patch };
+    const s = normalizeShapeParams(p);
+    this.prefs.iso = {
+      ...p,
+      shape: s.shape, w: s.w, d: s.d, h: s.h, steps: s.steps, axis: s.axis, dir: s.dir,
+      radius: s.radius, hollow: s.hollow, topW: s.topW, topD: s.topD, thickness: s.thickness,
+      tile: p.tile, intensity: Math.max(0, Math.min(100, p.intensity)), peak: Math.max(0, Math.min(100, p.peak)),
+      sway: Math.max(0, Math.min(100, p.sway)),
+    };
+    this.savePrefs();
+    this.changed();
+    this.view_?.refreshOverlay();   // 预览长在覆盖层上，改参数必须让它重画
+  }
+
+  /** 进模式：结束变换会话、收起选区相关交互，把原点放到画布中心（没放过时） */
+  enterIso(): void {
+    if (this.isoOn) return;
+    this.view_?.commitXf();
+    this.isoOn = true;
+    if (!this.isoOrigin) {
+      // 按**渲染出来的外接框**居中（不是按足迹菱形估算）：缓冲大小随参数变，
+      // 只有拿真实的 `originAt` 反推，落点才不会压到画布边（早先估算过一次，进模式就「超出画布」）
+      const T = this.prefs.iso.tile;
+      const r = isoRender(isoShapeVoxels(this.isoShape()), this.isoLook());
+      const o = isoSnapOrigin(T, Math.round((this.doc.w - r.w) / 2) + r.originAt.x, Math.round((this.doc.h - r.h) / 2) + r.originAt.y);
+      const push = (v: number, step: number): number => Math.ceil(Math.max(0, v) / step) * step;
+      // 左右 / 上下都夹回画布内（形状比画布大时只保证左上不越界，其它交给读数提示）
+      const left = o.x - r.originAt.x, top = o.y - r.originAt.y;
+      const right = left + r.w - this.doc.w, bottom = top + r.h - this.doc.h;
+      this.isoOrigin = {
+        x: o.x + (left < 0 ? push(-left, T / 2) : r.w <= this.doc.w ? -push(right, T / 2) : 0),
+        y: o.y + (top < 0 ? push(-top, T / 4) : r.h <= this.doc.h ? -push(bottom, T / 4) : 0),
+      };
+    }
+    this.setTool("select");
+    this.doc.sel = null;
+    this.changed();
+    this.view_?.refreshOverlay();
+  }
+
+  exitIso(): void {
+    if (!this.isoOn) return;
+    this.isoOn = false;
+    this.view_?.isoCancelDrag();
+    this.changed();
+    this.view_?.refreshOverlay();
+  }
+
+  /** 原点吸附到 2:1 栅格（拖动时用；传 snap=false 可以放任意整数像素） */
+  setIsoOrigin(x: number, y: number, snap = true): void {
+    const T = this.prefs.iso.tile;
+    const p = snap ? isoSnapOrigin(T, Math.round(x), Math.round(y)) : { x: Math.round(x), y: Math.round(y) };
+    if (this.isoOrigin && this.isoOrigin.x === p.x && this.isoOrigin.y === p.y) return;
+    this.isoOrigin = p;
+    this.changed();
+    this.view_?.refreshOverlay();
+  }
+
+  /**
+   * 生成：把当前预览写进图层（`target = "new"` 时先新建一个图层，两步合成**一条历史**）。
+   * 返回写进去的像素数 / 被画布裁掉多少 / 失败原因，面板据此给提示。
+   */
+  isoGenerate(target: "layer" | "new" = "layer"): { ok: boolean; w: number; h: number; voxels: number; pixels: number; clipped: number; reason?: "locked" | "empty" | "outside" } {
+    const look = this.isoLook();
+    const v = isoShapeVoxels(this.isoShape());
+    const r = isoRender(v, look);
+    if (!r.w || !r.h) return { ok: false, w: 0, h: 0, voxels: 0, pixels: 0, clipped: 0, reason: "empty" };
+    if (!this.isoOrigin) this.enterIso();
+    const ox = (this.isoOrigin?.x ?? 0) - r.originAt.x;
+    const oy = (this.isoOrigin?.y ?? 0) - r.originAt.y;
+    const doc = this.doc;
+    const li0 = this.curLayer(), fi = this.curFrame();
+    // 全在外面的情况先挡住（写进去一个空操作只会让人困惑）
+    if (ox + r.w <= 0 || oy + r.h <= 0 || ox >= doc.w || oy >= doc.h) {
+      return { ok: false, w: r.w, h: r.h, voxels: r.voxels, pixels: 0, clipped: r.w * r.h, reason: "outside" };
+    }
+    // 写像素的核心：只碰 `li` 这一层的当前帧，返回 { pixels, clipped }
+    const paint = (li: number): { pixels: number; clipped: number; before: Uint8ClampedArray; cel: Cel } | null => {
+      if (this.doc.layers[li]?.locked) { this.paintBlockedNote(); return null; }
+      const cel = doc.ensureCel(li, fi);
+      const before = new Uint8ClampedArray(cel.data);
+      let pixels = 0, clipped = 0;
+      for (let y = 0; y < r.h; y++) {
+        const dy = oy + y;
+        for (let x = 0; x < r.w; x++) {
+          const dx = ox + x;
+          const si = (y * r.w + x) * 4;
+          const a = r.px[si + 3] / 255;
+          if (a <= 0) continue;
+          if (dx < 0 || dy < 0 || dx >= doc.w || dy >= doc.h) { clipped++; continue; }
+          const di = cel.idx(dx, dy);
+          if (a >= 1) {
+            cel.data[di] = r.px[si]; cel.data[di + 1] = r.px[si + 1]; cel.data[di + 2] = r.px[si + 2]; cel.data[di + 3] = 255;
+          } else {
+            const da = cel.data[di + 3] / 255;
+            const oa = a + da * (1 - a);
+            cel.data[di] = (r.px[si] * a + cel.data[di] * da * (1 - a)) / oa;
+            cel.data[di + 1] = (r.px[si + 1] * a + cel.data[di + 1] * da * (1 - a)) / oa;
+            cel.data[di + 2] = (r.px[si + 2] * a + cel.data[di + 2] * da * (1 - a)) / oa;
+            cel.data[di + 3] = oa * 255;
+          }
+          pixels++;
+        }
+      }
+      return { pixels, clipped, before, cel };
+    };
+
+    // 「生成到新图层」：新建图层 + 写像素是一条历史（整档快照），undo 一次全回来
+    if (target === "new") {
+      let out = { pixels: 0, clipped: 0 };
+      this.struct("iso-shape", () => {
+        ops.addLayer(this.doc, this.curLayer() + 1);
+        const li = this.curLayer();
+        if (this.prefs.iso) this.doc.layers[li].name = this.prefs.iso.layerName || "iso";
+        const res = paint(li);
+        if (res) out = { pixels: res.pixels, clipped: res.clipped };
+      });
+      this.isoLast = { x: Math.max(0, ox), y: Math.max(0, oy), w: r.w, h: r.h };
+      this.repaintAll();
+      this.changed();
+      this.scheduleAutosave();
+      return { ok: out.pixels > 0, w: r.w, h: r.h, voxels: r.voxels, pixels: out.pixels, clipped: out.clipped };
+    }
+
+    const res = paint(li0);
+    if (!res) return { ok: false, w: r.w, h: r.h, voxels: r.voxels, pixels: 0, clipped: 0, reason: "locked" };
+    let changed = false;
+    for (let i = 0; i < res.before.length; i++) if (res.before[i] !== res.cel.data[i]) { changed = true; break; }
+    if (changed) {
+      this.history.pushPixels("iso-shape", doc, [{ li: li0, fi, before: res.before, after: new Uint8ClampedArray(res.cel.data) }]);
+      this.isoLast = { x: Math.max(0, ox), y: Math.max(0, oy), w: r.w, h: r.h };
+      this.repaintAll();
+      this.changed();
+      this.scheduleAutosave();
+    }
+    return { ok: changed, w: r.w, h: r.h, voxels: r.voxels, pixels: res.pixels, clipped: res.clipped };
+  }
+
+  /** 参数条上的实时读数：当前参数会生成多大 / 多少体素 / 会不会出画布 */
+  isoStats(): { w: number; h: number; voxels: number; clipped: boolean } {
+    const r = isoRender(isoShapeVoxels(this.isoShape()), this.isoLook());
+    const ox = (this.isoOrigin?.x ?? 0) - r.originAt.x;
+    const oy = (this.isoOrigin?.y ?? 0) - r.originAt.y;
+    const clipped = ox < 0 || oy < 0 || ox + r.w > this.doc.w || oy + r.h > this.doc.h;
+    return { w: r.w, h: r.h, voxels: r.voxels, clipped };
   }
 
   /** one-time user hint (persisted in localStorage) — used when the OS steals

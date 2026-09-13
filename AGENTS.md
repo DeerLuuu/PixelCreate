@@ -28,7 +28,7 @@ src/tools/     工具注册表、笔迹、选区变换
 src/io/        原生桥接、工程文件（.pxc）、Aseprite 读写（aseread/asewrite/zlib）、自动保存、参考图、安全区、base64
 src/ui/        React 外壳、弹窗、时间线、浮动球、i18n、样式
 android/       MainActivity（Java 层）+ AndroidManifest
-tests/         无 DOM 的引擎/逻辑回归（**3605 条断言**，`node .ts-out/tests/run-tests.js` 末尾会打印条数）
+tests/         无 DOM 的引擎/逻辑回归（**3747 条断言**，`node .ts-out/tests/run-tests.js` 末尾会打印条数）
 docs/          API.md / COMPARISON.md
 ```
 
@@ -336,6 +336,13 @@ Aseprite 兼容：`io/aseread.ts` / `io/asewrite.ts` / `io/zlib.ts`（自写同�
 （新增 `Session.savePalettePresetOf()`，只动 `myPalettes`）；`DropMenu` 改成 **portal + `position:fixed`**
 —— 时间轴控制条是 `overflow-x:auto` 的滚动容器，绝对定位的下拉被它整块裁掉，这就是「速度色片点了没反应」，
 `tests/ui-kit.test.tsx` 加了三断言防止改回去。
+等距图形（同日实现）：`engine/iso.ts` 的 2:1 几何 + 六个基础形状（长方体 / 楼梯 / 楔形 / 圆柱 / 金字塔 /
+空心框）+ `isoRender`（只画可见面、画家顺序、三面着色、接触阴影、1px 描边、`originAt` 稳定锚点）；
+`Session` 的 iso 模式（`enterIso` / `isoGenerate`，`new` 用整档快照把「新建图层 + 写像素」合成一条 undo）；
+`View` 的 `drawIsoMode` 覆盖层（2:1 栅格 / 半透明预览 / 足迹虚线 / 四角 + 高度抓手 / 尺寸浮标）与
+直接操作（四角改宽深、黄块调高、整块移动，全部吸附栅格，松手才落笔）；参数条 `ui/iso.tsx`；
+入口按用户要求放**魔法球**（画布球不放）+ 主菜单。口径与计划见 `docs/PLAN-isobuilder.md`，
+接口见 docs/API.md §6d。
 
 ---
 

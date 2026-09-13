@@ -58,6 +58,8 @@ const SHELL = [
   ".ca-",
   // 色彩明暗（Color Shading）：色阶条 / 基色 / 温度色块
   ".sh-",
+  // 等距图形参数条：形状 chips / 尺寸 / 面颜色
+  ".iso-",
 ];
 
 const BANNER = "   2/5  base";

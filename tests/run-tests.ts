@@ -43,6 +43,7 @@ import { testScale } from "./scale.test";
 import { testChangelog } from "./changelog.test";
 import { testShading, testShadingPaletteSave } from "./shading.test";
 import { testIso } from "./iso.test";
+import { testIsoUi } from "./isoui.test";
 
 async function main(): Promise<void> {
   console.log("--- history ---");
@@ -135,6 +136,8 @@ async function main(): Promise<void> {
   testShadingPaletteSave();
   console.log("--- isometric shapes ---");
   testIso();
+  console.log("--- isometric mode (UI) ---");
+  testIsoUi();
   finish();
 }
 

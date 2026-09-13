@@ -37,6 +37,7 @@ import { isPc } from "../io/pcmode";
 import { GUIDE, bootOverlay, guideStepsFor, type GuideAction, type GuideStep } from "../app/guide";
 import { GuideOverlay, simulateTap } from "./guide";
 import type { ModalId, SizeMode, SheetData } from "./modals";
+import { IsoBar } from "./iso";
 import { Dialog, useKitPcMode } from "./kit";
 
 type PanelId = "palette" | null;
@@ -730,6 +731,8 @@ export function App() {
       <Keep on={modal === "patterns"} el={modal === "patterns" ? <PatternPanel t={t} onClose={() => setModal(null)} /> : null} />
       <Keep on={modal === "coloranalysis"} el={modal === "coloranalysis" ? <ColorAnalysisModal t={t} onClose={() => setModal(null)} /> : null} />
       <Keep on={modal === "shading"} el={modal === "shading" ? <ShadingModal t={t} onClose={() => setModal(null)} onOpenPalette={() => setPanel("palette")} /> : null} />
+      {/* 等距图形：模式开着时常驻一条紧凑参数条（不是弹窗，画布要看得见） */}
+      {snap.isoOn && <IsoBar t={t} onOpenPalette={() => setPanel("palette")} />}
       <Keep on={modal === "changelog"} el={modal === "changelog" ? <ChangelogModal onClose={() => { setModal(null); setClgBlock(false); }} /> : null} />
       {guide && <GuideOverlay steps={guide} actions={guideActions} onDone={finishGuide} />}
       {textQ && (
@@ -1768,6 +1771,10 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasScaleAdv, o
           [c[0], c[1], c[2], Math.round((Number(v.alpha) / 100) * 255)], SESSION.prefs.shadowNewLayer);
       },
     })),
+    fxI("iso", "i-grid", "等距图形", "Iso shapes",
+      "拖出一个 2:1 等距体（立方体 / 楼梯 / 楔形 / 圆柱 / 金字塔 / 空心框）：画布上拖抓手改宽深与高度，松手才落笔",
+      "Drag out a 2:1 isometric solid (cube / steps / wedge / cylinder / pyramid / frame): resize and raise it on the canvas, nothing commits until you let go",
+      () => { setFx((v) => ({ ...v, open: false })); SESSION.enterIso(); }, snap.isoOn),
     fxI("clear", "i-clear", "清空画布", "Clear", "清空当前帧所有图层的画布内容", "Empty the current frame on all layers", () => SESSION.clearCanvas()),
     fxI("glow", "i-fx-glow", "外发光", "Glow", "一键外发光：用当前颜色向外发光 2px 并逐层淡出", "Outer glow: current colour fading outwards 2px", () => {
       const base = SESSION.color;

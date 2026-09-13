@@ -20,6 +20,7 @@ import {
   type XfKind, type XfParams, type PivotPreset, type Grab, type GrabOffsets, type HitRadii,
 } from "../tools/xform";
 import type { Mat3 } from "../tools/warp";
+import { isoDeltaToCells, isoGroundCorners, isoHeightHandle, isoRender, isoShapeVoxels } from "../engine/iso";
 import type { Session } from "../app/session";
 import type { GestureActionId } from "../app/gesture-ids";
 import type { Pt } from "../tools/warp";
@@ -409,6 +410,16 @@ export class View {
   private gestureStartPx: PxPoint | null = null;
   /** the previous finished gesture was a no-move draw tap (dot) */
   private lastTapWasDraw = false;
+  /** 等距图形模式：正在拖的抓手 / 整块（含按下那一刻的形状尺寸与原点） */
+  private isoDrag: {
+    kind: "move" | "top" | "right" | "bottom" | "left" | "height";
+    x0: number; y0: number;
+    origin0: { x: number; y: number };
+    w0: number; d0: number; h0: number;
+  } | null = null;
+  /** 预览离屏画布的缓存（键 = 参数签名） */
+  private isoPrevCv: HTMLCanvasElement | null = null;
+  private isoPrevKey = "";
   /** 上一次「按在枢轴上」的时间与位置：双击枢轴＝把它复位到内容正中 */
   private pivotTapT = 0;
   private pivotTapPt: PxPoint | null = null;
@@ -1219,6 +1230,8 @@ export class View {
       ctx.fill();
       ctx.restore();
     }
+    // ⑧ 等距图形模式：地面栅格 + 半透明预览 + 抓手 + 尺寸浮标
+    if (this.session.isoOn) this.drawIsoMode(ctx);
     // ⑦ 画布调整模式：四条边 + 四个角的把手，拖动时显示新尺寸
     if (this.session.resizeModeOn) {
       const doc = this.session.doc;
@@ -2070,6 +2083,210 @@ export class View {
     this.samplePickCell(x, y, true);
   }
 
+  // ---------------- 等距图形模式（iso）----------------
+  /**
+   * 预览：渲染当前参数 + 原点，返回缓冲与它在屏幕上的左上角。
+   *
+   * 摆位靠引擎给的 `originAt`（地面原点在缓冲里的位置）—— 换形状 / 改尺寸时
+   * 缓冲大小会变，只有锚在地面原点上预览才不会跳。
+   */
+  private isoPreview(): { r: import("../engine/iso").IsoRenderResult; ax: number; ay: number; key: string } | null {
+    const s = this.session;
+    if (!s.isoOn) return null;
+    const p = s.prefs.iso;
+    const shape = s.isoShape();
+    const look = s.isoLook();
+    const r = isoRender(isoShapeVoxels(shape), look);
+    if (!r.w || !r.h) return null;
+    const org = s.isoOrigin ?? { x: 0, y: 0 };
+    const ax = this.ox + (org.x - r.originAt.x) * this.zoom;
+    const ay = this.oy + (org.y - r.originAt.y) * this.zoom;
+    const key = [shape.shape, shape.w, shape.d, shape.h, shape.steps, shape.axis, shape.dir, shape.radius,
+      shape.hollow, shape.topW, shape.topD, shape.thickness, p.tile, p.colorMode, p.faceTop, p.faceRight, p.faceLeft,
+      p.intensity, p.peak, p.sway, p.shadow, p.outline, r.w, r.h].join("|");
+    return { r, ax, ay, key };
+  }
+
+  /** 地面原点的屏幕位置（抓手、栅格都以它为准） */
+  private isoAnchorScreen(): { x: number; y: number } {
+    const pv = this.isoPreview();
+    if (!pv) return { x: 0, y: 0 };
+    return { x: pv.ax + pv.r.originAt.x * this.zoom, y: pv.ay + pv.r.originAt.y * this.zoom };
+  }
+
+  /** 五个抓手 + 整块移动的屏幕位置（测试直接读它，交互与绘制共用同一套坐标） */
+  isoHandles(): Array<{ kind: "top" | "right" | "bottom" | "left" | "height"; x: number; y: number }> {
+    const s = this.session;
+    const p = s.prefs.iso;
+    const a = this.isoAnchorScreen();
+    const z = this.zoom;
+    const c = isoGroundCorners(p.tile, p.w, p.d);
+    const h = isoHeightHandle(p.tile, p.w, p.d, p.h);
+    return [
+      { kind: "top", x: a.x + c.top.x * z, y: a.y + c.top.y * z },
+      { kind: "right", x: a.x + c.right.x * z, y: a.y + c.right.y * z },
+      { kind: "bottom", x: a.x + c.bottom.x * z, y: a.y + c.bottom.y * z },
+      { kind: "left", x: a.x + c.left.x * z, y: a.y + c.left.y * z },
+      { kind: "height", x: a.x + h.x * z, y: a.y + h.y * z },
+    ];
+  }
+
+  /** 命中哪个抓手 / 是否落在预览里（null = 落在预览外，仍然按「移动」处理） */
+  private isoHitAt(pt: PxPoint): "top" | "right" | "bottom" | "left" | "height" | "move" | null {
+    const s = this.session;
+    if (!s.isoOn) return null;
+    const hs = this.isoHandles();
+    // 半径随抓手密度收窄：小形状下四个角会挤在一起，固定 24px 会让「高度」抓手永远点不到
+    let minPair = Infinity;
+    for (let i = 0; i < hs.length; i++) {
+      for (let j = i + 1; j < hs.length; j++) {
+        const d = Math.hypot(hs[i].x - hs[j].x, hs[i].y - hs[j].y);
+        if (d < minPair) minPair = d;
+      }
+    }
+    const R = Math.max(8, Math.min(isPc() ? 13 : 24, minPair / 2));
+    // 高度抓手优先：它悬在顶面上方，最容易被别的抓手盖住
+    const order = [...hs].sort((a, b) => (a.kind === "height" ? -1 : b.kind === "height" ? 1 : 0));
+    for (const h of order) {
+      if (Math.hypot(pt.x - h.x, pt.y - h.y) <= R) return h.kind;
+    }
+    const pv = this.isoPreview();
+    if (!pv) return "move";
+    const inside = pt.x >= pv.ax && pt.y >= pv.ay && pt.x < pv.ax + pv.r.w * this.zoom && pt.y < pv.ay + pv.r.h * this.zoom;
+    return inside ? "move" : null;
+  }
+
+  /** iso 拖动的每一步：把屏幕增量换算成格数 / 像素，写回 Session（预览实时跟手） */
+  private isoDragTo(pt: PxPoint): void {
+    const s = this.session;
+    const g = this.isoDrag;
+    if (!g) return;
+    const T = s.prefs.iso.tile;
+    const z = Math.max(0.01, this.zoom);
+    const ddx = (pt.x - g.x0) / z, ddy = (pt.y - g.y0) / z;     // doc 像素
+    if (g.kind === "height") {
+      s.setIsoPref({ h: g.h0 - Math.round(ddy / (T / 2)) });
+      return;
+    }
+    if (g.kind === "move") {
+      s.setIsoOrigin(g.origin0.x + ddx, g.origin0.y + ddy);
+      return;
+    }
+    const { a, b } = isoDeltaToCells(T, ddx, ddy);
+    if (g.kind === "right") s.setIsoPref({ w: g.w0 + Math.round(a) });
+    else if (g.kind === "left") s.setIsoPref({ d: g.d0 + Math.round(b) });
+    else if (g.kind === "bottom") s.setIsoPref({ w: g.w0 + Math.round(a), d: g.d0 + Math.round(b) });
+    else s.setIsoPref({ w: g.w0 - Math.round(a), d: g.d0 - Math.round(b) });   // top：背面角，往外长
+  }
+
+  /** 抓手的图标：足迹四角画实心菱形，高度抓手画一个方块 */
+  private drawIsoMode(ctx: CanvasRenderingContext2D): void {
+    const s = this.session;
+    const p = s.prefs.iso;
+    const z = this.zoom;
+    const pv = this.isoPreview();
+    if (!pv) return;
+    const { r, ax, ay, key } = pv;
+    const a = this.isoAnchorScreen();
+    const T = p.tile;
+    ctx.save();
+    // ① 地面栅格：两条等距轴方向、过地面原点的线族（只铺在预览外扩一格的范围里）
+    if ((T / 4) * z >= 3) {
+      const stepX = { x: (T / 2) * z, y: (T / 4) * z };
+      const stepY = { x: -(T / 2) * z, y: (T / 4) * z };
+      const clipX = ax - T * z, clipY = ay - T * z, clipW = r.w + 2 * T * z, clipH = r.h + 2 * T * z;
+      ctx.beginPath();
+      ctx.rect(clipX, clipY, clipW, clipH);
+      ctx.clip();
+      ctx.strokeStyle = "rgba(120,165,225,.32)";
+      ctx.lineWidth = 1;
+      const span = Math.hypot(clipW, clipH);
+      const n = Math.ceil(span / Math.max(1, (T / 4) * z)) + 2;
+      const len = span + 40;
+      const nx = stepX.x / Math.hypot(stepX.x, stepX.y), ny = stepX.y / Math.hypot(stepX.x, stepX.y);
+      const mx = stepY.x / Math.hypot(stepY.x, stepY.y), my = stepY.y / Math.hypot(stepY.x, stepY.y);
+      ctx.beginPath();
+      for (let k = -n; k <= n; k++) {
+        const px1 = a.x + k * stepY.x, py1 = a.y + k * stepY.y;
+        ctx.moveTo(px1 - nx * len, py1 - ny * len);
+        ctx.lineTo(px1 + nx * len, py1 + ny * len);
+        const px2 = a.x + k * stepX.x, py2 = a.y + k * stepX.y;
+        ctx.moveTo(px2 - mx * len, py2 - my * len);
+        ctx.lineTo(px2 + mx * len, py2 + my * len);
+      }
+      ctx.stroke();
+      ctx.restore();
+      ctx.save();
+    }
+    // ② 半透明预览（拖动时就是「所见即所得」，松手才落笔）
+    const cv = this.isoPreviewCanvas(r, key);
+    if (cv) {
+      ctx.globalAlpha = 0.72;
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(cv, ax, ay, r.w * z, r.h * z);
+      ctx.globalAlpha = 1;
+    }
+    // ③ 足迹外框（预览的落地轮廓）
+    const c = isoGroundCorners(T, p.w, p.d);
+    ctx.beginPath();
+    ctx.moveTo(a.x + c.top.x * z, a.y + c.top.y * z);
+    ctx.lineTo(a.x + c.right.x * z, a.y + c.right.y * z);
+    ctx.lineTo(a.x + c.bottom.x * z, a.y + c.bottom.y * z);
+    ctx.lineTo(a.x + c.left.x * z, a.y + c.left.y * z);
+    ctx.closePath();
+    ctx.strokeStyle = "rgba(99,245,197,.85)";
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([5, 4]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    // ④ 抓手
+    for (const h of this.isoHandles()) {
+      ctx.beginPath();
+      if (h.kind === "height") {
+        ctx.rect(h.x - 5, h.y - 5, 10, 10);
+        ctx.fillStyle = "#ffd166";
+      } else {
+        ctx.moveTo(h.x, h.y - 7); ctx.lineTo(h.x + 7, h.y); ctx.lineTo(h.x, h.y + 7); ctx.lineTo(h.x - 7, h.y);
+        ctx.closePath();
+        ctx.fillStyle = h.kind === "top" || h.kind === "bottom" ? "#63f5c5" : "#8fd0ff";
+      }
+      ctx.fill();
+      ctx.strokeStyle = "rgba(10,14,22,.85)";
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+    }
+    // ⑤ 尺寸浮标
+    const label = p.w + "×" + p.d + "×" + p.h + " · " + r.w + "×" + r.h + " px";
+    ctx.font = "600 13px system-ui, sans-serif";
+    const tw = ctx.measureText(label).width + 14;
+    const lx = Math.round(ax + (r.w * z) / 2 - tw / 2);
+    const ly = Math.max(4, Math.round(ay - 30));
+    ctx.fillStyle = "rgba(0,0,0,.65)";
+    ctx.fillRect(lx, ly, tw, 22);
+    ctx.fillStyle = "#eaf0ff";
+    ctx.fillText(label, lx + 7, ly + 16);
+    ctx.restore();
+  }
+
+  /** 预览用的离屏画布（按参数签名缓存，参数一变就重画） */
+  private isoPreviewCanvas(r: import("../engine/iso").IsoRenderResult, key: string): HTMLCanvasElement | null {
+    if (this.isoPrevCv && this.isoPrevKey === key) return this.isoPrevCv;
+    if (typeof ImageData === "undefined" || typeof document === "undefined") return null;
+    try {
+      const cv = document.createElement("canvas");
+      cv.width = r.w;
+      cv.height = r.h;
+      const cx = cv.getContext("2d");
+      if (!cx) return null;
+      cx.putImageData(new ImageData(new Uint8ClampedArray(r.px), r.w, r.h), 0, 0);
+      this.isoPrevCv = cv;
+      this.isoPrevKey = key;
+      return cv;
+    } catch {
+      return null;
+    }
+  }
+
   /** ⑦ 画布调整模式：命中哪条边/哪个角（返回固定的那一侧 ax/ay，null = 没命中） */
   private resizeHit(pt: PxPoint): { ax: -1 | 0 | 1; ay: -1 | 0 | 1 } | null {
     const doc = this.session.doc;
@@ -2258,6 +2475,19 @@ export class View {
       }
       return;
     }
+    // ⑧ 等距图形模式：按下即接管 —— 抓手改尺寸/高度，其它地方拖动＝整块移动（都吸附栅格）
+    if (s.isoOn) {
+      const kind = this.isoHitAt(pt) ?? "move";
+      const p = s.prefs.iso;
+      this.isoDrag = {
+        kind, x0: pt.x, y0: pt.y,
+        origin0: { ...(s.isoOrigin ?? { x: 0, y: 0 }) },
+        w0: p.w, d0: p.d, h0: p.h,
+      };
+      s.hapticTick("等距", 0.35);
+      this.drawOverlay();
+      return;
+    }
     // Alt+单击：快速取色（与触屏长按取色等价，PC 上更顺手）
     if (e.altKey && e.pointerType === "mouse" && e.button === 0) {
       const c = s.sampleComposite(pp.x, pp.y);
@@ -2427,6 +2657,12 @@ export class View {
       const nw = Math.max(1, Math.min(1024, Math.round(g.w0 + (g.ax === 1 ? -dx : g.ax === -1 ? dx : 0))));
       const nh = Math.max(1, Math.min(1024, Math.round(g.h0 + (g.ay === 1 ? -dy : g.ay === -1 ? dy : 0))));
       if (nw !== g.w || nh !== g.h) { g.w = nw; g.h = nh; g.moved = true; }
+      this.drawOverlay();
+      return;
+    }
+    // ⑧ 等距图形模式拖动中：抓手改尺寸 / 高度，其它地方拖动＝整块移动（都按栅格吸附）
+    if (this.isoDrag) {
+      this.isoDragTo(pt);
       this.drawOverlay();
       return;
     }
@@ -2650,6 +2886,12 @@ export class View {
     }
     if (this.pointers.size < 2) this.pinchBase = null;
     if (this.hold && this.pointers.size < this.hold.n) this.cancelHold();
+    if (this.pointers.size === 0 && this.isoDrag) {
+      this.isoDrag = null;
+      this.session.changedUI();   // 参数条上的读数刷新
+      this.drawOverlay();
+      return;
+    }
     if (this.pointers.size === 0 && this.resizeDrag) {
       const g = this.resizeDrag;
       this.resizeDrag = null;
@@ -3761,6 +4003,13 @@ export class View {
     const i = (PIVOT_PRESETS.indexOf(cur) + 1) % PIVOT_PRESETS.length;
     const next = PIVOT_PRESETS[i];
     return this.setPivotPreset(next) ? next : null;
+  }
+
+  /** 退出等距模式时清掉进行中的拖动（Session 调它，免得抓手状态留在下一次会话里） */
+  isoCancelDrag(): void {
+    this.isoDrag = null;
+    this.isoPrevCv = null;
+    this.isoPrevKey = "";
   }
 
   /** 只让「视图」重画一次覆盖层（滑块 / 设置改动后调用） */
