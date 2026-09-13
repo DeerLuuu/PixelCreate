@@ -454,22 +454,31 @@ export function ScaleModal({ t, onClose }: { t: ReturnType<typeof makeT>; onClos
   const [locked, setLocked] = useState(true);
   const [clean, setClean] = useState(false);
   const [dirty, setDirty] = useState(false);   // 用户手改过尺寸才显示「尺寸没变」提示
-  const ratio = doc.w > 0 ? doc.h / doc.w : 1;
-  const cw = Math.max(1, Math.min(1024, parseInt(w, 10) || doc.w));
-  const ch = Math.max(1, Math.min(1024, parseInt(h, 10) || doc.h));
+  // 「当前图层 / 选区」不改画布尺寸，所以基准尺寸＝该范围本身的尺寸（选区就是选区大小）
+  const scaleBase = scope === "selection" && selBox ? { w: selBox.w, h: selBox.h } : { w: doc.w, h: doc.h };
+  const ratio = scaleBase.w > 0 ? scaleBase.h / scaleBase.w : 1;
+  const cw = Math.max(1, Math.min(1024, parseInt(w, 10) || scaleBase.w));
+  const ch = Math.max(1, Math.min(1024, parseInt(h, 10) || scaleBase.h));
   const onW = (v: string) => { setW(v); setDirty(true); if (locked) { const n = parseInt(v, 10); if (n > 0) setH(String(Math.max(1, Math.min(1024, Math.round(n * ratio))))); } };
   const onH = (v: string) => { setH(v); setDirty(true); if (locked) { const n = parseInt(v, 10); if (n > 0) setW(String(Math.max(1, Math.min(1024, Math.round(n / ratio))))); } };
-  /** 按倍率设尺寸；÷2 只在能整除时给出整数 */
+  /** 换范围时把宽高重置成该范围的当前尺寸：否则一换到「选区」就立刻变成"要缩放"的状态 */
+  const switchScope = (v: ScaleScope) => {
+    setScope(v);
+    const b = v === "selection" && selBox ? selBox : { w: doc.w, h: doc.h };
+    setW(String(b.w));
+    setH(String(b.h));
+    setDirty(false);
+  };
+  /** 按倍率设尺寸（基准＝当前范围的尺寸）；÷2 只在能整除时给出整数 */
   const setFactor = (kx: number, ky: number) => {
-    setW(String(Math.max(1, Math.min(1024, Math.round(doc.w * kx)))));
-    setH(String(Math.max(1, Math.min(1024, Math.round(doc.h * ky)))));
+    setW(String(Math.max(1, Math.min(1024, Math.round(scaleBase.w * kx)))));
+    setH(String(Math.max(1, Math.min(1024, Math.round(scaleBase.h * ky)))));
     setDirty(true);
   };
-  const scaleBase = scope === "selection" && selBox ? { w: selBox.w, h: selBox.h } : { w: doc.w, h: doc.h };
   const selSupported = algoSupported(algo, scaleBase.w, scaleBase.h, cw, ch);
   const selFallback = effectiveAlgo(algo, scaleBase.w, scaleBase.h, cw, ch);
   const noSel = scope === "selection" && !selBox;
-  const sameSize = scope !== "selection" && cw === doc.w && ch === doc.h;
+  const sameSize = cw === scaleBase.w && ch === scaleBase.h;
   const blocked = noSel || sameSize;
   const apply = () => {
     if (blocked) { bridge.toast(noSel ? t("scaleSelEmpty") : t("scaleSameSize")); return; }
@@ -496,18 +505,19 @@ export function ScaleModal({ t, onClose }: { t: ReturnType<typeof makeT>; onClos
           <div className="chips scale-quick">
             {([[2, 2, "2\u00d7"], [3, 3, "3\u00d7"], [4, 4, "4\u00d7"]] as Array<[number, number, string]>).map(([kx, ky, lab]) =>
               <button key={lab} type="button" className="chip" onClick={() => setFactor(kx, ky)}>{lab}</button>)}
-            {doc.w % 2 === 0 && doc.h % 2 === 0
+            {scaleBase.w % 2 === 0 && scaleBase.h % 2 === 0
               ? <button type="button" className="chip" onClick={() => setFactor(0.5, 0.5)}>{"\u00f72"}</button>
               : null}
             <button type="button" className="chip" onClick={() => { setFactor(1, 1); setDirty(false); }}>{t("resetLabel")}</button>
           </div>
         </Row>
         <Row label={t("scaleScope")}>
-          <ChipGroup value={scope} onChange={(v) => setScope(v)} options={[
+          <ChipGroup value={scope} onChange={switchScope} options={[
             { id: "sprite", label: t("scaleScopeSprite") },
             { id: "layer", label: t("scaleScopeLayer") },
             { id: "selection", label: t("scaleScopeSel"), hidden: !selBox },
           ]} />
+          {scope !== "sprite" ? <div className="row-note">{scope === "selection" ? t("scaleSelHint") : t("scaleKeepCanvas")}</div> : null}
         </Row>
         <Row label={t("scaleClean")} hint={t("scaleCleanDesc")}>
           <Switch checked={clean} onChange={setClean} label={t("scaleClean")} />

@@ -198,6 +198,35 @@ export function testScale(): void {
     eq("s2x.dot.block", [pxAt(d2, 2, 2, 6), pxAt(d2, 3, 3, 6)], [red, red]);
     eq("s2x.dot.isolated-transparent", pxAt(d2, 0, 0, 6), [0, 0, 0, 0]);
 
+    // ★ 反例：孤立像素的上下左右是四种**互不相同**的颜色。
+    // 最经典的写错方式是「B!=H && D!=F 就把四格全换成邻居」——那样中心像素会整格
+    // 消失（放大后一个都不剩）。正确规则必须先判相等（D==B / B==F / D==H / H==F），
+    // 中心像素必须原样长出 2×2。这条断言就是用来钉死这个坑的。
+    const four = px(
+      0, 0, 0, 0, 255, 0, 0, 255, 0, 0, 0, 0,
+      0, 0, 255, 255, 255, 255, 255, 255, 0, 255, 0, 255,
+      0, 0, 0, 0, 255, 255, 0, 255, 0, 0, 0, 0,
+    );
+    const four2 = resamplePixels(four, 3, 3, 6, 6, "scale2x");
+    let fourWhite = 0;
+    for (let i = 0; i < 36; i++) if (at(four2, i).join() === "255,255,255,255") fourWhite++;
+    eq("s2x.isolated-4colours.survives", fourWhite, 4);
+    eq("s2x.isolated-4colours.block", pxAt(four2, 2, 2, 6).join(), pxAt(four2, 3, 3, 6).join());
+    eq("s2x.isolated-4colours.reference", Array.from(four2), Array.from(refScale2x(four, 3, 3)));
+
+    // 1 像素宽的水平线放大后必须正好 2 像素厚（不能保持 1 像素，也不能糊出半透明渐变）
+    const hline = px(
+      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+      255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    );
+    const hl2 = resamplePixels(hline, 5, 3, 10, 6, "scale2x");
+    let hlWhite = 0;
+    for (let i = 0; i < 60; i++) if (at(hl2, i).join() === "255,255,255,255") hlWhite++;
+    eq("s2x.hline.white", hlWhite, 20);
+    eq("s2x.hline.row0-empty", pxAt(hl2, 4, 0, 10).join(), "0,0,0,0");
+    eq("s2x.hline.row2-full", pxAt(hl2, 4, 2, 10).join(), "255,255,255,255");
+
     // 斜线：单像素宽的 45° 线在 Scale2x 下不出台阶毛刺（保持硬边）
     const diag = px(
       255, 255, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0,
@@ -208,9 +237,16 @@ export function testScale(): void {
     // 和「按定义独立写一遍的」Scale2x 参考实现逐字节比对：斜线、棋盘、单点三种
     // 图案都要一致。这样断言既钉住了规则本身，也不会让人肉推演算错写成假绿。
     eq("s2x.matches-reference.diag", Array.from(dg2), Array.from(refScale2x(diag, 3, 3)));
-    // 斜线上被补出来的子像素：源(2,0) 的 E3 格拿到下方邻像素 H=(2,1)?——那里是透明，
-    // 所以补的是"没有"，斜线保持一像素宽；而右下角块的 E1 格补成了亮色
-    eq("s2x.diag.corner-sub", pxAt(dg2, 1, 0, 6).join(), [0, 0, 0, 0].join());
+    // 斜线起始那个亮像素的 2×2（边界外按钳制＝自己）：
+    //   E0 = D==B && B!=F && D!=H ? D : E → 上/左都是自己 → 白
+    //   E1 = B==F && …            ? F : E → 上(白) vs 右(透明) 不等 → 白
+    //   E2 = D==H && …            ? D : E → 左(白) vs 下(透明) 不等 → 白
+    //   E3 = H==F && D!=H && B!=F ? F : E → 下/右都是透明、且都≠自己 → 透明
+    // 即 Scale2x 会把斜线端点抹圆（算法固有特性，不是缺陷）。
+    eq("s2x.diag.corner", [
+      pxAt(dg2, 0, 0, 6).join(), pxAt(dg2, 1, 0, 6).join(), pxAt(dg2, 0, 1, 6).join(),
+    ], [white.join(), white.join(), white.join()]);
+    eq("s2x.diag.corner-sub", pxAt(dg2, 1, 1, 6).join(), [0, 0, 0, 0].join());
     eq("s2x.diag.tail-sub", pxAt(dg2, 5, 4, 6).join(), white.join());
     // 不混合颜色：所有输出像素必须是原图出现过的颜色之一
     const palette = new Set(["255,255,255,255", "0,0,0,0"]);
@@ -231,10 +267,13 @@ export function testScale(): void {
       if (s !== black && s !== whiteS) ckStrange++;
     }
     eq("s2x.checker.no-blend", ckStrange, 0);
-    // 2×2 棋盘：每个 2×2 块按 EPX 规则填（左上＝自己，右下＝对角邻居），
-    // 重要的是**颜色只取自原图**、硬边没有被插值糊成灰
+    // 2×2 棋盘：颜色只取自原图（不插值成灰），四格分别按规则取
+    //   (0,0) 块＝K K / K W（左上像素：左/上都是自己 → E0/E1/E2 保持 K，右下被 F 抢走）
+    //   (1,0) 块＝W W / K W（右上像素：上与右钳制到自己是白 → E0 白，左下被判给 D）
     eq("s2x.checker.block", [pxAt(ck2, 0, 0, 4).join(), pxAt(ck2, 3, 3, 4).join()], [black, black]);
-    eq("s2x.checker.block2", [pxAt(ck2, 2, 0, 4).join(), pxAt(ck2, 3, 1, 4).join()], [black, black]);
+    eq("s2x.checker.block2", [
+      pxAt(ck2, 2, 0, 4).join(), pxAt(ck2, 2, 1, 4).join(), pxAt(ck2, 3, 1, 4).join(),
+    ], [whiteS, black, whiteS]);
 
     // 棋盘 / 单点也必须与参考实现逐字节一致（棋盘纹最密，规则最容易写错）
     eq("s2x.matches-reference.checker", Array.from(ck2), Array.from(refScale2x(checker, 2, 2)));
@@ -267,6 +306,15 @@ export function testScale(): void {
     // Scale3x 的规则确实会「补角」：单像素亮点的 3×3 里，四角会被邻域规则填上
     const dot3 = resamplePixels(dot, 3, 3, 9, 9, "scale3x");
     eq("s3x.dot.center", pxAt(dot3, 4, 4, 9).join(), red.join());
+
+    // ★ Scale3x 的同款反例：九格必须**全部**是中心像素自己。
+    // 漏掉 E1/E3/E5/E7 里的 `E!=对角` 条件时，四边会被四种邻居颜色各占一格，
+    // 中心只剩 5 格；参考实现（C 版 border/center 转写）逐字节对照兜住这条。
+    const four3 = resamplePixels(four, 3, 3, 9, 9, "scale3x");
+    let four3White = 0;
+    for (let i = 0; i < 81; i++) if (at(four3, i).join() === "255,255,255,255") four3White++;
+    eq("s3x.isolated-4colours.survives", four3White, 9);
+    eq("s3x.isolated-4colours.reference", Array.from(four3), Array.from(refScale3x(four, 3, 3)));
 
     // 只有整数倍可用：不满足时与 nearest 完全一致
     const wrong = resamplePixels(diag, 3, 3, 7, 7, "scale3x");
@@ -407,8 +455,8 @@ export function testScale(): void {
     eq("sess.clamp.max", s.doc.w, 1024);
     s.undo();
 
-    // layer 作用域：只动当前图层，其余图层保持原样
-    s.doc.w = 2; s.doc.h = 2; s.doc.cels.clear();
+    // layer 作用域：只动当前图层，**画布尺寸不变**（其余图层连尺寸都不动）
+    s.doc.w = 4; s.doc.h = 4; s.doc.cels.clear();
     const l0 = s.doc.ensureCel(0, 0);
     l0.data[l0.idx(0, 0)] = 30; l0.data[l0.idx(0, 0) + 3] = 255;
     s.layerAdd();               // 在第 0 层之上插入新层（插入后仍停留在原图层）
@@ -419,63 +467,77 @@ export function testScale(): void {
     const l1 = s.doc.ensureCel(li, 0);
     l1.data[l1.idx(1, 1)] = 90; l1.data[l1.idx(1, 1) + 3] = 255;
     s.history.clear();
-    ok("sess.layer.ok", s.scaleAdvanced({ w: 4, h: 4, algo: "nearest", scope: "layer" }));
+    ok("sess.layer.ok", s.scaleAdvanced({ w: 8, h: 8, algo: "nearest", scope: "layer" }));
     eq("sess.layer.dims", [s.doc.w, s.doc.h], [4, 4]);
     eq("sess.layer.one-step", s.history.list().labels, ["scale-layer"]);
     const nl0 = s.doc.celAt(0, 0)!;
-    // 未被缩放的图层被重采样到新尺寸，内容仍在左上角（同 sprite 行为）
+    // 别的图层一个像素都不动（画布没变，所以也不会被重采样）
     eq("sess.layer.other-untouched", [nl0.data[nl0.idx(0, 0)], nl0.data[nl0.idx(0, 0) + 3], nl0.data[nl0.idx(1, 0) + 3]], [30, 255, 0]);
     const nl1 = s.doc.celAt(li, 0)!;
-    // 只有当前图层被放大：源 (1,1) 的 90 铺满右下 2×2，左上 2×2 仍是空的
+    // 当前图层内容放大到 8×8 后按左上角贴回 4×4：源 (1,1) 的 90 落在 (2,2)-(3,3)，其余为空
     eq("sess.layer.target-scaled", [nl1.data[nl1.idx(2, 2)], nl1.data[nl1.idx(3, 3)]], [90, 90]);
     eq("sess.layer.target-topleft-empty", [nl1.data[nl1.idx(0, 0) + 3], nl1.data[nl1.idx(1, 1) + 3]], [0, 0]);
+    // cel 必须始终与画布等大（engine/cel.ts 的约定），图层缩放不能把它撑大
+    eq("sess.layer.cel-size-kept", [nl1.w, nl1.h], [4, 4]);
     s.undo();
-    eq("sess.layer.undo", [s.doc.w, s.doc.h], [2, 2]);
+    const ul1 = s.doc.celAt(li, 0)!;
+    eq("sess.layer.undo", [ul1.data[ul1.idx(1, 1)], ul1.data[ul1.idx(2, 2) + 3]], [90, 0]);
 
     // selection 作用域：画布尺寸不变；没有选区时明确失败
     s.setLayer(0);                     // 选区缩放作用于「当前图层」，切回有内容的那一层
     s.doc.w = 4; s.doc.h = 4; s.doc.cels.clear();
     const sc = s.doc.ensureCel(0, 0);
     sc.data[sc.idx(0, 0)] = 5; sc.data[sc.idx(0, 0) + 3] = 255;
+    sc.data[sc.idx(1, 0)] = 9; sc.data[sc.idx(1, 0) + 3] = 255;
+    sc.data[sc.idx(0, 1)] = 11; sc.data[sc.idx(0, 1) + 3] = 255;
     sc.data[sc.idx(1, 1)] = 7; sc.data[sc.idx(1, 1) + 3] = 255;
-    sc.data[sc.idx(3, 3)] = 66; sc.data[sc.idx(3, 3) + 3] = 255;
+    sc.data[sc.idx(3, 3)] = 66; sc.data[sc.idx(3, 3) + 3] = 255;   // 选区外的参照像素
     s.doc.sel = null;
     s.history.clear();
     ok("sess.sel.no-selection", !s.scaleAdvanced({ w: 2, h: 2, algo: "nearest", scope: "selection" }));
     ok("sess.sel.no-selection-no-hist", !s.history.canUndo());
 
-    // 选区里放 4 个不同的颜色，缩放后能看出对应的搬运关系
-    sc.data[sc.idx(1, 0)] = 9; sc.data[sc.idx(1, 0) + 3] = 255;
-    sc.data[sc.idx(0, 1)] = 11; sc.data[sc.idx(0, 1) + 3] = 255;
-    // 选住 (0,0)-(1,1) 的 2×2，放大到 4×4：画布尺寸不变、选区内容被重采样
+    // 选住 (0,0)-(1,1) 的 2×2、放大到 3×3：内容以选区左上角为锚点铺开，盖住 (0,0)-(2,2)
     s.doc.sel = newSel(4, 4, [[0, 0], [1, 0], [0, 1], [1, 1]]);
     s.history.clear();
-    ok("sess.sel.ok", s.scaleAdvanced({ w: 4, h: 4, algo: "nearest", scope: "selection" }));
+    ok("sess.sel.ok", s.scaleAdvanced({ w: 3, h: 3, algo: "nearest", scope: "selection" }));
     eq("sess.sel.canvas-unchanged", [s.doc.w, s.doc.h], [4, 4]);
     eq("sess.sel.one-step", s.history.list().labels, ["scale-sel"]);
     const sc2 = s.doc.celAt(0, 0)!;
-    // 中心放大再按最近邻搬回 2×2：四个像素各自回到原位（往返一致，没有错位/串色）
-    eq("sess.sel.round-trip", [sc2.data[sc2.idx(0, 0)], sc2.data[sc2.idx(1, 0)], sc2.data[sc2.idx(0, 1)], sc2.data[sc2.idx(1, 1)]], [5, 9, 11, 7]);
-    // 选区之外完全不动（画布没有被整体重采样）：原来 (3,3) 的 66 还在
+    // 最近邻 2×2→3×3 的映射：i=0,1→源 0；i=2→源 1，所以每个源像素占 2 格
+    eq("sess.sel.grown.row0", [sc2.data[sc2.idx(0, 0)], sc2.data[sc2.idx(1, 0)], sc2.data[sc2.idx(2, 0)]], [5, 5, 9]);
+    eq("sess.sel.grown.row2", [sc2.data[sc2.idx(0, 2)], sc2.data[sc2.idx(2, 2)]], [11, 7]);
+    // 选区之外完全不动：原来 (3,3) 的 66 还在
     eq("sess.sel.outside-kept", [sc2.data[sc2.idx(3, 3)], sc2.data[sc2.idx(3, 3) + 3]], [66, 255]);
+    // 选区跟着内容变成 3×3（「选区＝刚缩放出来的那块」，后续操作才对得上）
+    const sb2 = s.doc.sel ? s.doc.sel.bounds() : null;
+    eq("sess.sel.mask-grown", sb2 ? [sb2.x, sb2.y, sb2.w, sb2.h] : null, [0, 0, 3, 3]);
     s.undo();
     const sc3 = s.doc.celAt(0, 0)!;
-    eq("sess.sel.undo", [sc3.data[sc3.idx(0, 0)], sc3.data[sc3.idx(3, 3)]], [5, 66]);
+    eq("sess.sel.undo", [sc3.data[sc3.idx(0, 0)], sc3.data[sc3.idx(2, 0)], sc3.data[sc3.idx(3, 3)]], [5, 0, 66]);
+    const sb3 = s.doc.sel ? s.doc.sel.bounds() : null;
+    eq("sess.sel.undo-mask", sb3 ? [sb3.x, sb3.y, sb3.w, sb3.h] : null, [0, 0, 2, 2]);
 
-    // 缩到一半：选区内像素被合并（1×1 结果铺回整块选区），仍是一条历史
+    // 缩到 1×1：选区里 4 个像素被 area 合并成一个、写回选区左上角，选区也变成 1×1
     s.history.clear();
     ok("sess.sel.shrink-ok", s.scaleAdvanced({ w: 1, h: 1, algo: "area", scope: "selection" }));
     eq("sess.sel.shrink-steps", s.history.list().labels, ["scale-sel"]);
     const sc4 = s.doc.celAt(0, 0)!;
-    eq("sess.sel.shrink-fills-box", [sc4.data[sc4.idx(0, 0) + 3], sc4.data[sc4.idx(1, 1) + 3]], [255, 255]);
+    // 4 个像素等权平均：(5+9+11+7)/4 = 8，落在选区左上角；选区外的老像素原样保留
+    eq("sess.sel.shrink-merged", [sc4.data[sc4.idx(0, 0)], sc4.data[sc4.idx(0, 0) + 3]], [8, 255]);
+    eq("sess.sel.shrink-keeps-old", [sc4.data[sc4.idx(1, 1)], sc4.data[sc4.idx(1, 1) + 3]], [7, 255]);
+    const sb4 = s.doc.sel ? s.doc.sel.bounds() : null;
+    eq("sess.sel.shrink-mask", sb4 ? [sb4.x, sb4.y, sb4.w, sb4.h] : null, [0, 0, 1, 1]);
     s.undo();
     const sc5 = s.doc.celAt(0, 0)!;
     eq("sess.sel.shrink-undo", [sc5.data[sc5.idx(0, 0)], sc5.data[sc5.idx(1, 0)], sc5.data[sc5.idx(1, 1)]], [5, 9, 7]);
 
-    // 选区缩放不影响画布尺寸，因此不需要清掉选区掩膜
-    ok("sess.sel.keeps-mask", !!s.doc.sel && s.doc.sel.hasAny());
+    // 同尺寸重采样等于原样：必须当"没操作"（不压历史、不返回成功）
+    s.history.clear();
+    ok("sess.sel.same-size-noop", !s.scaleAdvanced({ w: 2, h: 2, algo: "bilinear", scope: "selection" }));
+    ok("sess.sel.same-size-no-hist", !s.history.canUndo());
 
-    // 选区缩放遇到 scale2x 但比例不符 -> 自动降级到 nearest（结果仍可用）
+    // 选区缩放遇到 scale2x 但比例不符（2×2 → 3×3 不是 2×）-> 自动降级到 nearest
     s.doc.sel = newSel(4, 4, [[0, 0], [1, 0], [0, 1], [1, 1]]);
     s.history.clear();
     ok("sess.sel.downgrade-ok", s.scaleAdvanced({ w: 3, h: 3, algo: "scale2x", scope: "selection" }));
@@ -555,8 +617,11 @@ function newSel(w: number, h: number, pts: number[][]): Sel {
 }
 
 /**
- * Scale2x / EPX 的独立参考实现（照公开规则逐字重写，与本项目引擎实现互不共享代码）。
- * 只用于测试对照：两边对同一张图给出逐字节一样的结果，才算规则实现正确。
+ * Scale2x / EPX 的独立参考实现。刻意用**和引擎不同的写法**：这是 Eric 的 EPX 形式——
+ * 先判 guard(B!=H && D!=F)，成立时逐格问「这个邻居是不是顺着边接过来的」
+ * （D==B / B==F / D==H / H==F），guard 不成立就整块保留自己。
+ * 它与 Andrea Mazzoleni 的 Scale2x 四个条件式数学等价（可互推），但代码结构完全不同，
+ * 所以两边逐字节一致才说明规则真写对了——照抄引擎写一遍的"参考实现"是假绿。
  */
 function refScale2x(src: Uint8ClampedArray, sw: number, sh: number): Uint8ClampedArray {
   const dw = sw * 2, dh = sh * 2;
@@ -577,22 +642,35 @@ function refScale2x(src: Uint8ClampedArray, sw: number, sh: number): Uint8Clampe
   for (let y = 0; y < sh; y++) {
     for (let x = 0; x < sw; x++) {
       const E = at2(x, y), B = at2(x, y - 1), H = at2(x, y + 1), D = at2(x - 1, y), F = at2(x + 1, y);
-      put(x * 2, y * 2, !eqPx(B, H) && !eqPx(D, F) ? D : E);
-      put(x * 2 + 1, y * 2, !eqPx(B, H) && !eqPx(F, D) ? F : E);
-      put(x * 2, y * 2 + 1, !eqPx(D, F) && !eqPx(B, H) ? B : E);
-      put(x * 2 + 1, y * 2 + 1, !eqPx(F, D) && !eqPx(H, B) ? H : E);
+      if (!eqPx(B, H) && !eqPx(D, F)) {
+        put(x * 2, y * 2, eqPx(D, B) ? D : E);
+        put(x * 2 + 1, y * 2, eqPx(B, F) ? F : E);
+        put(x * 2, y * 2 + 1, eqPx(D, H) ? D : E);
+        put(x * 2 + 1, y * 2 + 1, eqPx(H, F) ? F : E);
+      } else {
+        put(x * 2, y * 2, E);
+        put(x * 2 + 1, y * 2, E);
+        put(x * 2, y * 2 + 1, E);
+        put(x * 2 + 1, y * 2 + 1, E);
+      }
     }
   }
   return out;
 }
 
 /**
- * Scale3x / AdvMAME3x 的独立参考实现（照公开规则重写，只用于测试对照）。
- * 每个源像素出 3×3，E4 永远是自己；其余八格按 3×3 邻域的不等式决定。
+ * Scale3x 的独立参考实现：**逐行直译 scale2x 项目 `scale3x.c` 的 C 代码**——
+ * border()/center() 两个函数 + 首像素/中间像素/末像素三段特判 + 上下边界行钳制，
+ * 而不是引擎那版「外层 guard + 3×3 九格」的紧凑写法。
+ * 两条结构完全不同的路径逐字节一致，才能说明紧凑写法没把 E1/E3/E5/E7 里的
+ * `E!=<对角>` 条件写漏（漏掉就会把无关的邻居颜色糊进来）。
+ * 注意：C 源码本身 assert(count >= 2)，所以本参考实现只用于 sw >= 2 的图；
+ * sw === 1 的边界行为由引擎侧的独立断言覆盖（引擎那里四邻按边缘钳制）。
  */
 function refScale3x(src: Uint8ClampedArray, sw: number, sh: number): Uint8ClampedArray {
   const dw = sw * 3, dh = sh * 3;
   const out = new Uint8ClampedArray(dw * dh * 4);
+  const idx = (x: number, y: number): number => (y * sw + x) * 4;
   const same = (a: number, b: number): boolean => {
     for (let k = 0; k < 4; k++) if (src[a + k] !== src[b + k]) return false;
     return true;
@@ -601,28 +679,84 @@ function refScale3x(src: Uint8ClampedArray, sw: number, sh: number): Uint8Clampe
     const di = (y * dw + x) * 4;
     out[di] = src[si]; out[di + 1] = src[si + 1]; out[di + 2] = src[si + 2]; out[di + 3] = src[si + 3];
   };
-  const at3 = (x: number, y: number): number => {
-    const cx = x < 0 ? 0 : x >= sw ? sw - 1 : x;
-    const cy = y < 0 ? 0 : y >= sh ? sh - 1 : y;
-    return (cy * sw + cx) * 4;
-  };
+  const last = sw - 1;
   for (let y = 0; y < sh; y++) {
-    for (let x = 0; x < sw; x++) {
-      const A = at3(x - 1, y - 1), B = at3(x, y - 1), C = at3(x + 1, y - 1);
-      const D = at3(x - 1, y), E = at3(x, y), F = at3(x + 1, y);
-      const G = at3(x - 1, y + 1), H = at3(x, y + 1), I = at3(x + 1, y + 1);
-      const e0 = same(D, B) && !same(B, F) && !same(D, H) ? D : E;
-      const e1 = !same(B, F) && !same(D, H) && (!same(B, D) || !same(E, C)) ? B : E;
-      const e2 = same(B, F) && !same(B, D) && !same(F, H) ? F : E;
-      const e3 = !same(D, H) && !same(B, F) && (!same(D, B) || !same(E, G)) ? D : E;
-      const e5 = !same(F, H) && !same(B, F) && (!same(F, B) || !same(E, I)) ? F : E;
-      const e6 = same(D, H) && !same(D, B) && !same(H, F) ? D : E;
-      const e7 = !same(H, B) && !same(D, H) && (!same(H, D) || !same(E, A)) ? H : E;
-      const e8 = same(H, F) && !same(D, H) && !same(B, F) ? F : E;
-      put(x * 3, y * 3, e0); put(x * 3 + 1, y * 3, e1); put(x * 3 + 2, y * 3, e2);
-      put(x * 3, y * 3 + 1, e3); put(x * 3 + 1, y * 3 + 1, E); put(x * 3 + 2, y * 3 + 1, e5);
-      put(x * 3, y * 3 + 2, e6); put(x * 3 + 1, y * 3 + 2, e7); put(x * 3 + 2, y * 3 + 2, e8);
-    }
+    const ry0 = y > 0 ? y - 1 : y;         // 上一行（第一行钳制成自己，对应 C 调用方传 src0=src1）
+    const ry2 = y < sh - 1 ? y + 1 : y;    // 下一行（最后一行钳制成自己）
+    const U = (x: number): number => idx(x, ry0);   // C 里的 src0
+    const B = (x: number): number => idx(x, y);     // C 里的 src1（本行）
+    const Dn = (x: number): number => idx(x, ry2);  // C 里的 src2
+
+    /** C: scale3x_*_border(dst, src0, src1, src2) 的完整转写（九个输出格只写三行里的一行） */
+    const border = (dstRow: number, s0: (x: number) => number, s2: (x: number) => number): void => {
+      const oy = y * 3 + dstRow;
+      if (!same(s0(0), s2(0)) && !same(B(0), B(1))) {
+        put(0, oy, B(0));
+        put(1, oy, (same(B(0), s0(0)) && !same(B(0), s0(1))) || (same(B(1), s0(0)) && !same(B(0), s0(0))) ? s0(0) : B(0));
+        put(2, oy, same(B(1), s0(0)) ? B(1) : B(0));
+      } else {
+        put(0, oy, B(0)); put(1, oy, B(0)); put(2, oy, B(0));
+      }
+      for (let x = 1; x < last; x++) {
+        if (!same(s0(x), s2(x)) && !same(B(x - 1), B(x + 1))) {
+          put(3 * x, oy, same(B(x - 1), s0(x)) ? B(x - 1) : B(x));
+          put(3 * x + 1, oy, (same(B(x - 1), s0(x)) && !same(B(x), s0(x + 1)))
+            || (same(B(x + 1), s0(x)) && !same(B(x), s0(x - 1))) ? s0(x) : B(x));
+          put(3 * x + 2, oy, same(B(x + 1), s0(x)) ? B(x + 1) : B(x));
+        } else {
+          put(3 * x, oy, B(x)); put(3 * x + 1, oy, B(x)); put(3 * x + 2, oy, B(x));
+        }
+      }
+      if (sw > 1) {
+        if (!same(s0(last), s2(last)) && !same(B(last - 1), B(last))) {
+          put(3 * last, oy, same(B(last - 1), s0(last)) ? B(last - 1) : B(last));
+          put(3 * last + 1, oy, (same(B(last - 1), s0(last)) && !same(B(last), s0(last)))
+            || (same(B(last), s0(last)) && !same(B(last), s0(last - 1))) ? s0(last) : B(last));
+          put(3 * last + 2, oy, B(last));
+        } else {
+          put(3 * last, oy, B(last)); put(3 * last + 1, oy, B(last)); put(3 * last + 2, oy, B(last));
+        }
+      }
+    };
+
+    /** C: scale3x_*_center(dst, src0, src1, src2) 的完整转写（中间那一行，E4 永远是本行像素） */
+    const center = (dstRow: number, s0: (x: number) => number, s2: (x: number) => number): void => {
+      const oy = y * 3 + dstRow;
+      if (!same(s0(0), s2(0)) && !same(B(0), B(1))) {
+        put(0, oy, B(0));
+        put(1, oy, B(0));
+        put(2, oy, (same(B(1), s0(0)) && !same(B(0), s2(1)))
+          || (same(B(1), s2(0)) && !same(B(0), s0(1))) ? B(1) : B(0));
+      } else {
+        put(0, oy, B(0)); put(1, oy, B(0)); put(2, oy, B(0));
+      }
+      for (let x = 1; x < last; x++) {
+        if (!same(s0(x), s2(x)) && !same(B(x - 1), B(x + 1))) {
+          put(3 * x, oy, (same(B(x - 1), s0(x)) && !same(B(x), s2(x - 1)))
+            || (same(B(x - 1), s2(x)) && !same(B(x), s0(x - 1))) ? B(x - 1) : B(x));
+          put(3 * x + 1, oy, B(x));
+          put(3 * x + 2, oy, (same(B(x + 1), s0(x)) && !same(B(x), s2(x + 1)))
+            || (same(B(x + 1), s2(x)) && !same(B(x), s0(x + 1))) ? B(x + 1) : B(x));
+        } else {
+          put(3 * x, oy, B(x)); put(3 * x + 1, oy, B(x)); put(3 * x + 2, oy, B(x));
+        }
+      }
+      if (sw > 1) {
+        if (!same(s0(last), s2(last)) && !same(B(last - 1), B(last))) {
+          put(3 * last, oy, (same(B(last - 1), s0(last)) && !same(B(last), s2(last - 1)))
+            || (same(B(last - 1), s2(last)) && !same(B(last), s0(last - 1))) ? B(last - 1) : B(last));
+          put(3 * last + 1, oy, B(last));
+          put(3 * last + 2, oy, B(last));
+        } else {
+          put(3 * last, oy, B(last)); put(3 * last + 1, oy, B(last)); put(3 * last + 2, oy, B(last));
+        }
+      }
+    };
+
+    // C 的 scale3x_*_def()：dst0 = border(src0,src1,src2)、dst1 = center(...)、dst2 = border(src2,src1,src0)
+    border(0, U, Dn);
+    center(1, U, Dn);
+    border(2, Dn, U);
   }
   return out;
 }

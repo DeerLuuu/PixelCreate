@@ -240,7 +240,12 @@ scaleFactor(sw, sh, dw, dh): { fx: number; fy: number }
 - `bicubic` 是 Catmull-Rom 样条，权重按轴归一化（纯色下逐字节恒等），越界坐标**钳到边缘**而不是补零；
 - `area` 按源/目标像素的重叠长度加权（缩小＝真正的面积平均），权重放在连续区间表里，
   缩小 1024 倍也不会溢出、每像素零分配；
-- `scale2x` / `scale3x` 是 EPX 系列：整数比较 3×3 邻域、不做任何颜色混合，硬边原样保留；
+- `scale2x` / `scale3x` 是像素画放大算法（`scale3x.c` 的 C 实现直译）：
+  `scale2x` 用 Mazzoleni 的 Scale2x 四条件式（`E0 = D==B && B!=F && D!=H ? D : E` …，
+  与 Eric 的 EPX 等价）：**必须先判"两个邻居相等"才把那一格改成邻居**，否则保留自己；
+  孤立像素（上下左右四色各不相同）因此原样长成 2×2 块，1 像素宽的线也不会长毛刺。
+  `scale3x` 先判外层 `B!=H && D!=F`，再逐格判（`E1/E3/E5/E7` 里的 `E!=<对角>` 项不能漏）。
+  两者都只做整数比较、不做任何颜色混合，画布外邻居按边缘钳制；
   比例不匹配时 `resamplePixels` **安全降级到 nearest**，UI 用 `algoSupported` / `effectiveAlgo` 提前提示。
 
 ---
@@ -764,12 +769,16 @@ setOnionAlpha(n) / setOnionTint(on) / setOnionWrap(on)
 setGridMode("off"|"pixel"|"iso") / setGridSize(n)
 canvasSize(w, h, ax, ay) / spriteSize(w, h) / cropSmart()
 scaleAdvanced(o: { w, h, algo?, scope?, cleanTransparent? }): boolean
-  // 高级缩放（画布球 →「高级缩放」）。scope：
-  //   "sprite"    整张画布（所有图层 × 所有帧），画布尺寸随之改变
-  //   "layer"     只缩放当前图层（该层所有帧），画布尺寸随之改变
-  //   "selection" 只缩放选区外接矩形再贴回原位置，画布尺寸不变（没有选区时提示并返回 false）
-  // 一次操作只落一条历史：结构快照（尺寸变了）/ 选区缩放则执行即落一条；
-  // 返回 true 表示「这次缩放执行了」，不是「像素一定变了」。
+  // 高级缩放（画布球 →「高级缩放」）。三个范围口径一致：把该范围的内容重采样成 w×h。
+  //   "sprite"    整张画布（所有图层 × 所有帧），**画布尺寸变成 w×h**
+  //   "layer"     只缩放当前图层（该层所有帧）：画布尺寸不变，结果以 (0,0) 为锚点贴回、超出裁掉
+  //   "selection" 只缩放选区外接矩形里的内容：画布尺寸不变，结果以选区左上角为锚点贴回，
+  //               并把选区更新成缩放后的矩形（没有选区时提示并返回 false）
+  // 只有 "sprite" 会改画布尺寸——本工程的 cel 一律与画布等大（engine/cel.ts），
+  // 图层/选区若也改画布尺寸，别的图层就会跟画布错位。
+  // 目标尺寸＝源尺寸（选区＝选区尺寸）时直接当没操作，返回 false 且不压历史。
+  // 一次操作只落一条历史（结构快照），且只在真的改了像素时才压栈；
+  // 返回 true 表示「这次缩放执行并改动过像素」。
 cropToSelection(): boolean              // 画布裁切到选区外接矩形（一条结构历史）
 resizeModeOn / setResizeMode(on) / toggleResizeMode()   // 拖画布四边改尺寸的模式
 sampleComposite(x, y): RGBA | null        // 取合成后的颜色

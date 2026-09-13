@@ -325,13 +325,20 @@ function storePx(d: Uint8ClampedArray, i: number, v: number): void {
 }
 
 /**
- * Scale2x / EPX（2×）。规则（每个源像素 → 2×2）：
- *   E0 = (B != H && D != F) ? D : E
- *   E1 = (B != H && F != D) ? F : E
- *   E2 = (D != F && B != H) ? B : E
- *   E3 = (F != D && H != B) ? H : E
- * 其中 E 是当前像素，B/D/F/H 是上下左右。这四行的条件其实只有两种取值
- * （两个不等式同真或同假），所以每个像素最多算两个布尔量。
+ * Scale2x（2×）——公开规则（Andrea Mazzoleni 的 Scale2x；与 Eric 的 EPX 等价）：
+ *   E0 = D == B && B != F && D != H ? D : E
+ *   E1 = B == F && B != D && F != H ? F : E
+ *   E2 = D == H && D != B && H != F ? D : E
+ *   E3 = H == F && D != H && B != F ? F : E
+ * 其中 E 是当前像素，B/D/F/H 是上下左右（画布外按边缘钳制，等于把边界像素自己当邻居）。
+ *
+ * **关键在于「先相等才改」**：只有当某个邻居和另一个邻居相等、且和当前像素不同
+ * 时，那一格才改成邻居的颜色；否则一律保留当前像素。所以
+ *   - 孤立像素（上下左右四色各不相同）会原样长成 2×2 实心块，绝不被邻居瓜分掉；
+ *   - 1 像素宽的斜线不会长毛刺；纯色块内部也不会有任何变化。
+ * 曾经写成「B!=H && D!=F 就把四格全换成邻居」是错的：那会让孤立像素整个消失
+ * （四格分别被四个邻居占掉），tests/scale.test.ts 里有专门钉这个 case 的断言。
+ *
  * 全部用整数比较（含 alpha，全透明算同色），**不做任何颜色混合**——硬边原样保留。
  * 只在 dw===sw*2 && dh===sh*2 时调用（调度层已保证）。
  */
@@ -345,34 +352,45 @@ function scale2xTo(src: Uint8ClampedArray, sw: number, sh: number, dst: Uint8Cla
     for (let x = 0; x < sw; x++) {
       const xm = x > 0 ? x - 1 : x;
       const xp = x < sw - 1 ? x + 1 : x;
-      const ei = rc + x * 4;
-      const e = loadPx(src, ei);
+      const e = loadPx(src, rc + x * 4);
       const b = loadPx(src, rm + x * 4);
       const h = loadPx(src, rp + x * 4);
       const d = loadPx(src, rc + xm * 4);
       const f = loadPx(src, rc + xp * 4);
-      const c1 = b !== h && d !== f;
-      const c2 = b !== h && f !== d;
-      const c3 = d !== f && b !== h;
-      const c4 = f !== d && h !== b;
+      const c0 = d === b && b !== f && d !== h;
+      const c1 = b === f && b !== d && f !== h;
+      const c2 = d === h && d !== b && h !== f;
+      const c3 = h === f && d !== h && b !== f;
       const o = x * 2 * 4;
-      storePx(dst, dm0 + o, c1 ? d : e);
-      storePx(dst, dm0 + o + 4, c2 ? f : e);
-      storePx(dst, dm1 + o, c3 ? b : e);
-      storePx(dst, dm1 + o + 4, c4 ? h : e);
+      storePx(dst, dm0 + o, c0 ? d : e);
+      storePx(dst, dm0 + o + 4, c1 ? f : e);
+      storePx(dst, dm1 + o, c2 ? d : e);
+      storePx(dst, dm1 + o + 4, c3 ? f : e);
     }
   }
 }
 
 /**
- * Scale3x / AdvMAME3x（3×）。3×3 邻域，把规则「放大」到 3 格：
- *   E0 = (D==B && B!=F && D!=H) ? D : E ,  E1 = (B!=F && D!=H && (B!=D||E!=C)) ? B : E
- *   E2 = (B==F && B!=D && F!=H) ? F : E ,  E3 = (D!=H && B!=F && (D!=B||E!=C)) ? D : E
- *   …（E4 = E）…                        E5 = (F!=H && B!=F && (F!=B||E!=C)) ? F : E
- *   E6 = (D==H && D!=B && H!=F) ? D : E , E7 = (H!=B && D!=H && (H!=D||E!=A)) ? H : E
- *   E8 = (H==F && D!=H && B!=F) ? F : E
- * 同样只做整数比较、不混合颜色。邻域值全部现算成变量，**每像素不分配数组**。
- * 只在 dw===sw*3 && dh===sh*3 时调用。
+ * Scale3x（3×）——公开规则（scale2x 项目 `scale3x.c` 的 C 实现直译）：
+ *   A B C        输出 3×3：E0 E1 E2 / E3 E4 E5 / E6 E7 E8（E4 永远是 E）
+ *   D E F
+ *   G H I        先判外层条件 guard = (B != H && D != F)：
+ *
+ *   guard 为假 → 九格全部保留 E（和 Scale2x 一样：没有"对角冲突"就不动）
+ *   guard 为真 → E0 = D == B                             ? D : E
+ *                E1 = (D==B && E!=C) || (F==B && E!=A)   ? B : E
+ *                E2 = F == B                             ? F : E
+ *                E3 = (D==B && E!=G) || (D==H && E!=A)   ? D : E
+ *                E5 = (F==B && E!=I) || (F==H && E!=C)   ? F : E
+ *                E6 = D == H                             ? D : E
+ *                E7 = (D==H && E!=I) || (F==H && E!=G)   ? H : E
+ *                E8 = F == H                             ? F : E
+ *
+ * E1/E3/E5/E7 里的 `E!=<对角>` 项不能漏：斜角邻居只有"顺着边接过来"时才补，
+ * 漏掉就变成"只要 guard 成立就把邻居糊进四边"，孤立像素会被糊掉、线条会长毛刺。
+ * 画布外邻居按边缘钳制（第一行 B:=E、最后一行 H:=E、最左列 D:=E、最右列 F:=E），
+ * 与 C 实现里对首末像素的特判逐字节等价。
+ * 同样只做整数比较、不混合颜色。只在 dw===sw*3 && dh===sh*3 时调用。
  */
 function scale3xTo(src: Uint8ClampedArray, sw: number, sh: number, dst: Uint8ClampedArray): void {
   const dw = sw * 3;
@@ -397,24 +415,27 @@ function scale3xTo(src: Uint8ClampedArray, sw: number, sh: number, dst: Uint8Cla
       const g = loadPx(src, rp + xm * 4);
       const i2 = loadPx(src, rp + xp * 4);
       const o = x * 3 * 4;
-      // E0: (D==B && B!=F && D!=H) ? D : E
-      storePx(dst, d0 + o, d === b && b !== f && d !== h ? d : e);
-      // E1: (B!=F && D!=H && (B!=D || E!=C)) ? B : E
-      storePx(dst, d0 + o + 4, b !== f && d !== h && (b !== d || e !== c) ? b : e);
-      // E2: (B==F && B!=D && F!=H) ? F : E
-      storePx(dst, d0 + o + 8, b === f && b !== d && f !== h ? f : e);
-      // E3: (D!=H && B!=F && (D!=B || E!=G)) ? D : E
-      storePx(dst, d1 + o, d !== h && b !== f && (d !== b || e !== g) ? d : e);
-      // E4: E
+      const db = d === b, fb = f === b, dh = d === h, fh = f === h;
+      let e0 = e, e1 = e, e2 = e, e3 = e, e5 = e, e6 = e, e7 = e, e8 = e;
+      if (b !== h && d !== f) {
+        e0 = db ? d : e;
+        e1 = (db && e !== c) || (fb && e !== a) ? b : e;
+        e2 = fb ? f : e;
+        e3 = (db && e !== g) || (dh && e !== a) ? d : e;
+        e5 = (fb && e !== i2) || (fh && e !== c) ? f : e;
+        e6 = dh ? d : e;
+        e7 = (dh && e !== i2) || (fh && e !== g) ? h : e;
+        e8 = fh ? f : e;
+      }
+      storePx(dst, d0 + o, e0);
+      storePx(dst, d0 + o + 4, e1);
+      storePx(dst, d0 + o + 8, e2);
+      storePx(dst, d1 + o, e3);
       storePx(dst, d1 + o + 4, e);
-      // E5: (F!=H && B!=F && (F!=B || E!=I)) ? F : E
-      storePx(dst, d1 + o + 8, f !== h && b !== f && (f !== b || e !== i2) ? f : e);
-      // E6: (D==H && D!=B && H!=F) ? D : E
-      storePx(dst, d2 + o, d === h && d !== b && h !== f ? d : e);
-      // E7: (H!=B && D!=H && (H!=D || E!=A)) ? H : E
-      storePx(dst, d2 + o + 4, h !== b && d !== h && (h !== d || e !== a) ? h : e);
-      // E8: (H==F && D!=H && B!=F) ? F : E
-      storePx(dst, d2 + o + 8, h === f && d !== h && b !== f ? f : e);
+      storePx(dst, d1 + o + 8, e5);
+      storePx(dst, d2 + o, e6);
+      storePx(dst, d2 + o + 4, e7);
+      storePx(dst, d2 + o + 8, e8);
     }
   }
 }

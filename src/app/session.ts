@@ -3717,14 +3717,18 @@ export class Session {
   /**
    * 高级缩放（画布球 →「高级缩放」）：带算法的重采样，一次操作只落**一条**历史。
    *
-   * scope：
-   *   "sprite"    整张画布（所有图层 × 所有帧）缩放到 w×h，画布尺寸随之改变
-   *   "layer"     只缩放当前图层（该层所有帧），画布尺寸随之改变
-   *   "selection" 只缩放选区外接矩形内的像素、再贴回**原来的位置**（画布尺寸不变）
+   * 三个范围的口径是**一致的**：把内容重采样成用户在对话框里填的 w×h。
+   *   "sprite"    整张画布（所有图层 × 所有帧）→ 画布尺寸变成 w×h
+   *   "layer"     只缩放当前图层（该层所有帧）→ 画布尺寸不变，结果以 (0,0) 为锚点贴回、超出裁掉
+   *   "selection" 只缩放选区外接矩形里的内容 → 画布尺寸不变，结果以选区左上角为锚点贴回，
+   *               并把选区更新成缩放后的矩形（这样"选区＝刚缩放出来的内容"，后续操作才对得上）
    *
-   * 历史用 pushPixels（像素差分）而不是结构快照：涉及的 cel 在动手前就全都知道，
-   * 差分够用，也不必给整档做两次深拷贝。算法本身见 `engine/resample.ts`，
-   * 不支持的算法（scale2x/scale3x 遇到非整数倍）由引擎安全降级到最近邻。
+   * 「整张」是唯一会改画布尺寸的范围：本工程的 cel 一律与画布等大（见 engine/cel.ts），
+   * 图层/选区若也改画布尺寸，别的图层就会跟画布错位。
+   *
+   * 撤销用结构快照（会换缓冲区、选区也可能变），但只在真的改了东西时才压栈，
+   * 免得空白画布缩放留下一条空历史。算法本身见 `engine/resample.ts`，
+   * 不适用的比例（scale2x/scale3x 遇到非整数倍）由引擎安全降级到最近邻。
    */
   scaleAdvanced(o: { w: number; h: number; algo?: ResampleAlgo; scope?: ScaleScope; cleanTransparent?: boolean }): boolean {
     const doc = this.doc;
@@ -3733,18 +3737,20 @@ export class Session {
     const clean = o.cleanTransparent === true;
     const dw = Math.max(1, Math.min(1024, Math.round(o.w)));
     const dh = Math.max(1, Math.min(1024, Math.round(o.h)));
-    if (scope === "sprite" && dw === doc.w && dh === doc.h) return false;
-    // 当前图层被锁定时与其它绘制操作口径一致：给提示、不动像素
-    if (scope !== "sprite" && this.layerLocked()) { this.paintBlockedNote(); return false; }
+    const cw = doc.w, ch = doc.h;
     const sel = doc.sel;
     const box = sel && sel.hasAny() ? sel.bounds() : null;
     if (scope === "selection" && !box) {
       toastFn(this.prefs.lang === "en" ? "Make a selection first" : "请先建立选区");
       return false;
     }
+    // 目标尺寸＝源尺寸时重采样等于原样，直接当没操作（否则会白压一条历史）
+    const srcW = scope === "selection" && box ? box.w : cw;
+    const srcH = scope === "selection" && box ? box.h : ch;
+    if (dw === srcW && dh === srcH) return false;
+    // 当前图层被锁定时与其它绘制操作口径一致：给提示、不动像素
+    if (scope !== "sprite" && this.layerLocked()) { this.paintBlockedNote(); return false; }
 
-    // 画布尺寸 + 每个 cel 的缓冲区都会换，所以撤销用结构快照（与 spriteSize 同口径）。
-    // 快照只在真的改了东西时才压栈：整张空白画布缩放不该留下一条空历史。
     const before = doc.capture();
     /** 改动前的像素（判断这一步是否真的改了东西，只看涉及的 cel） */
     const versions = new Map<string, Uint8ClampedArray>();
@@ -3757,80 +3763,84 @@ export class Session {
       if (!beforePx) return false;
       const sep = k.indexOf(":");
       const cel = doc.celAt(Number(k.slice(0, sep)), Number(k.slice(sep + 1)));
-      if (!cel) return false;
+      if (!cel) return true;
+      if (cel.data.length !== beforePx.length) return true; // 换了尺寸就是改了
       for (let i = 0; i < beforePx.length; i++) if (beforePx[i] !== cel.data[i]) return true;
       return false;
     };
-    /** 把一个 cel 重采样到 tw×th（尺寸没变就原地换缓冲区，省一次 Map 写入） */
-    const apply = (li: number, fi: number, tw: number, th: number): void => {
-      const cel = doc.celAt(li, fi);
-      if (!cel) return;
-      const out = resamplePixels(cel.data, cel.w, cel.h, tw, th, algo, { cleanTransparent: clean });
-      if (cel.w === tw && cel.h === th) cel.data = out;
-      else {
-        const next = new Cel(tw, th);
-        next.data.set(out);
-        doc.cels.set(doc.key(li, fi), next);
-      }
+    /** 把 tw×th 的重采样结果贴进一个「画布等大」的新缓冲区（左上角对齐，超出裁掉） */
+    const fitIntoCanvas = (src: Uint8ClampedArray, tw: number, th: number): Uint8ClampedArray => {
+      if (tw === cw && th === ch) return src;
+      const dst = new Uint8ClampedArray(cw * ch * 4);
+      const w2 = Math.min(tw, cw), h2 = Math.min(th, ch);
+      for (let y = 0; y < h2; y++) dst.set(src.subarray(y * tw * 4, y * tw * 4 + w2 * 4), y * cw * 4);
+      return dst;
     };
 
     let touched = 0;
     let ran = false;
-    if (scope === "selection" && box) {
-      // 只缩放选区外接矩形、再贴回**原来的位置**：画布尺寸不变、选区外一个像素都不动。
-      // 没有选区时上面已经提示并返回，所以进到这里 box 一定有。
-      const li = this.curLayer(), fi = this.curFrame();
-      const cel = doc.celAt(li, fi);
-      if (cel) {
+    const li = this.curLayer();
+    if (scope === "sprite") {
+      for (const k of Array.from(doc.cels.keys())) {
+        const sep = k.indexOf(":");
+        const l = Number(k.slice(0, sep)), fi = Number(k.slice(sep + 1));
+        const cel = doc.celAt(l, fi);
+        if (!cel) continue;
         ran = true;
-        snap(li, fi);
-        // 结果先落到一个「和选区等大」的缓冲区：缩放结果 out 是 dw×dh（用户在对话框里填的
-        // 尺寸），而贴回画布的位置只有选区那么大，两者尺寸不同，直接按偏移搬会错位。
-        // 这里再把 out 按同一种算法重采样到 box.w×box.h，等于把「缩放后的画面」适配进选区，
-        // 每个像素都有确定来源，放大缩小都不会漏写或串色。
-        const out = resampleRegion(cel.data, doc.w, doc.h, box.x, box.y, box.w, box.h, dw, dh, algo, { cleanTransparent: clean });
-        const fitted = box.w === dw && box.h === dh ? out : resamplePixels(out, dw, dh, box.w, box.h, algo, { cleanTransparent: clean });
-        for (let j = 0; j < box.h; j++) {
-          const dy = box.y + j;
-          if (dy >= doc.h) break;
-          for (let i = 0; i < box.w; i++) {
-            const dx = box.x + i;
-            if (dx >= doc.w) break;
-            const si = (j * box.w + i) * 4;
-            const di = cel.idx(dx, dy);
-            cel.data[di] = fitted[si];
-            cel.data[di + 1] = fitted[si + 1];
-            cel.data[di + 2] = fitted[si + 2];
-            cel.data[di + 3] = fitted[si + 3];
-          }
-        }
-        if (diff(doc.key(li, fi))) touched++;
-      }
-    } else {
-      const li = this.curLayer();
-      // sprite＝所有图层×所有帧；layer＝当前图层的所有帧
-      const keys = scope === "layer"
-        ? Array.from({ length: doc.frames.length }, (_, fi) => ({ li, fi }))
-        : Array.from(doc.cels.keys()).map((k) => {
-          const sep = k.indexOf(":");
-          return { li: Number(k.slice(0, sep)), fi: Number(k.slice(sep + 1)) };
-        });
-      for (const { li: l, fi } of keys) {
-        if (!doc.celAt(l, fi)) continue;
-        ran = true;
-        const k = doc.key(l, fi);
         snap(l, fi);
-        apply(l, fi, dw, dh);
+        const next = new Cel(dw, dh);
+        next.data.set(resamplePixels(cel.data, cel.w, cel.h, dw, dh, algo, { cleanTransparent: clean }));
+        doc.cels.set(k, next);
         if (diff(k)) touched++;
       }
       doc.w = dw;
       doc.h = dh;
       doc.sel = null; // 尺寸变了，旧掩膜没有意义（与 spriteSize 同规则）
+    } else if (scope === "layer") {
+      // 画布尺寸不变：只换当前图层这些 cel 的缓冲区，保持 cel 与画布等大
+      for (let fi = 0; fi < doc.frames.length; fi++) {
+        const cel = doc.celAt(li, fi);
+        if (!cel) continue;
+        ran = true;
+        const k = doc.key(li, fi);
+        snap(li, fi);
+        cel.data = fitIntoCanvas(resamplePixels(cel.data, cw, ch, dw, dh, algo, { cleanTransparent: clean }), dw, dh);
+        if (diff(k)) touched++;
+      }
+    } else if (box) {
+      const fi = this.curFrame();
+      const cel = doc.celAt(li, fi);
+      if (cel) {
+        ran = true;
+        const k = doc.key(li, fi);
+        snap(li, fi);
+        // 只取选区那一块来重采样，再以选区左上角为锚点写回：两个方向都按 w×h 走，
+        // 放大就是真的铺开、缩小就是真的丢掉细节，不会出现"缩放完又缩回原大小"的空转。
+        const out = resampleRegion(cel.data, cw, ch, box.x, box.y, box.w, box.h, dw, dh, algo, { cleanTransparent: clean });
+        const w2 = Math.max(0, Math.min(dw, cw - box.x));
+        const h2 = Math.max(0, Math.min(dh, ch - box.y));
+        for (let j = 0; j < h2; j++) {
+          const di0 = cel.idx(box.x, box.y + j);
+          for (let i = 0; i < w2; i++) {
+            const si = (j * dw + i) * 4;
+            const di = di0 + i * 4;
+            cel.data[di] = out[si];
+            cel.data[di + 1] = out[si + 1];
+            cel.data[di + 2] = out[si + 2];
+            cel.data[di + 3] = out[si + 3];
+          }
+        }
+        if (w2 > 0 && h2 > 0) {
+          const ns = new Sel(cw, ch);
+          for (let j = 0; j < h2; j++) ns.mask.fill(1, (box.y + j) * cw + box.x, (box.y + j) * cw + box.x + w2);
+          ns.bump();
+          doc.sel = ns;
+        }
+        if (diff(k)) touched++;
+      }
     }
 
-    // 选区缩放就地改像素、连尺寸都不变，所以只要执行了就落一条历史（好让用户能撤销）；
-    // 整张画布 / 单个图层的缩放会改画布尺寸，没改动就不留空步骤。
-    if (touched > 0 || (ran && scope === "selection")) {
+    if (touched > 0) {
       const after = doc.capture();
       const restore = (s: import("../engine/doc").DocSnapshot): void => { doc.restore(s); };
       this.history.record(scope === "selection" ? "scale-sel" : scope === "layer" ? "scale-layer" : "scale-adv",
@@ -3838,10 +3848,9 @@ export class Session {
     }
     this.syncAll();
     this.scheduleAutosave();
-    // 「有没有真的改动像素」决定要不要压历史（空白画布缩放不留空步骤），
-    // 但返回值回答的是「这次缩放有没有执行」——用户点了确定就该看到结果，
-    // 哪怕选中的正好是同色块、像素值一对一没变。
-    return ran;
+    // 返回值回答的是「这次缩放有没有执行」：用户点了确定就该看到结果，
+    // 哪怕选中的正好是同色块、像素值一对一没变（那种情况不压历史）。
+    return ran && touched > 0;
   }
 
   /**
