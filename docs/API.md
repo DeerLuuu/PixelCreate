@@ -1462,6 +1462,7 @@ nextPlayFrameIn(mode, fi, dir, w): PlayStep                    // 循环/乒乓�
 | `View` | `render/view.ts` | 画布视口（非 React 组件） |
 | `HsvWheel` / `HoldAdjust` / `PreviewBox` / `RefImageBox` / `ReplayOverlay` | 各自文件 | 色轮、长按拖动数值、预览浮窗（右上角按钮 = 二级菜单：白底/黑底/格子底 + 灰度预览，灰度只作用于画面本身）、参考图、历史回放 |
 | `TabBar` / `DropMenu` | `ui/tabs.tsx` | 共用选项卡与可展开下拉（色板 / 导出 / 更新日志） |
+| `ChangelogModal` | `ui/changelog.tsx` | 更新日志：`CHANGELOG`（`ClgVersion[]`，每项 `it(kind, zh, en)`）+ `APP_VERSION` / `BUILD_TAG`；PC 竖排版本列表、触屏横向标签条，分类（add/imp/fix）可折叠。**条目文案是纯文本渲染**（`<li>{x.zh}</li>`，没有 Markdown 解析）——`**加粗**` 与反引号会原样显示，所以文案里不许出现它们，测试 `tests/changelog.test.ts` 会拦（同时校验 `APP_VERSION` 与 `AndroidManifest.xml` 的 `versionName` 一致、条目单行格式、中英一一对应） |
 | `useBlankTap` | `ui/base.tsx` | 点容器空白处执行动作（调色板面板点击关闭） |
 | 时间线分割线 | `ui/App.tsx`（`.tl-grip`） | 时间线面板顶部的拖动条：上下拖动 = `setTlHeight()`（面板总高度 140–520px，默认 200），拖动时显示 px 浮标，双击复位 200；`prefs.tlH` 是整块面板高度，矩阵 `flex:1` 填充，图层行不足时用 `.ase-fill` 单元格补底 |
 | 安全区 | `io/safearea.ts` | 把原生 insets 写成 CSS 变量 `--sat/--sab/--sal/--sar`，贴边控件统一用它们留白 |

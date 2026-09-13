@@ -40,6 +40,7 @@ import { testWarpUi } from "./warpui.test";
 import { testSelOrb } from "./selorb.test";
 import { testColorAnalysis } from "./color-analysis.test";
 import { testScale } from "./scale.test";
+import { testChangelog } from "./changelog.test";
 
 async function main(): Promise<void> {
   console.log("--- history ---");
@@ -125,6 +126,8 @@ async function main(): Promise<void> {
   console.log("--- animation tags ---");
   testTags();
   await testTagsIo();
+  console.log("--- changelog ---");
+  testChangelog();
   finish();
 }
 

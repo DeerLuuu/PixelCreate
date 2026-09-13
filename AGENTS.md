@@ -28,7 +28,7 @@ src/tools/     工具注册表、笔迹、选区变换
 src/io/        原生桥接、工程文件（.pxc）、Aseprite 读写（aseread/asewrite/zlib）、自动保存、参考图、安全区、base64
 src/ui/        React 外壳、弹窗、时间线、浮动球、i18n、样式
 android/       MainActivity（Java 层）+ AndroidManifest
-tests/         无 DOM 的引擎/逻辑回归（**3462 条断言**，`node .ts-out/tests/run-tests.js` 末尾会打印条数）
+tests/         无 DOM 的引擎/逻辑回归（**3482 条断言**，`node .ts-out/tests/run-tests.js` 末尾会打印条数）
 docs/          API.md / COMPARISON.md
 ```
 
@@ -123,6 +123,11 @@ java -jar /root/pk/apksigner.jar verify --print-certs /sdcard/Download/PixelCraf
     免得下一个人照着旧注释把 bug 改回去（本仓库的注释里已经有多处这种「不要改回去」的记录）。
 - 用户可见的新功能 / 行为变化 → 同时更新 `README.md` 的功能表；竞品能力有变化时刷新 `docs/COMPARISON.md` 的「最新进展」。
 - 涉及界面规范 / 控件 / 覆盖层顺序 → `docs/UI.md`；新增设置项 / 引导步骤 / 手势 → 改对应声明（`src/app/*.ts`）并在这里提一句。
+- **更新日志文案（`src/ui/changelog.tsx`）用纯文本渲染**（`<li>{x.zh}</li>`，没有 Markdown 解析）：
+  `**加粗**`、反引号、`#` 之类会连着符号原样显示给用户，所以一律不写。文案按「以前什么样 → 现在什么样」
+  写一句事实，不要感叹、不要 ①②③ 编号、不要营销腔；一条只讲一件事（一条里塞 4 件以上就拆成多条），
+  数字 / 角度 / 快捷键 / 取值范围照抄不能丢；每条占一行 `      it("fix", "中文", "English"),`（拼装与测试都按行解析）。
+  `tests/changelog.test.ts` 会静态校验这些（外加 `APP_VERSION` 与 `AndroidManifest.xml` 的 `versionName` 一致）。
 - 提交信息正文里带一行「文档：docs/API.md §X」，方便回溯「这次改了什么、写在哪」。
 
 ### 5.4 测试副本与输出
@@ -255,7 +260,8 @@ java -jar /root/pk/apksigner.jar verify --print-certs /sdcard/Download/PixelCraf
 
 ## 7. 已知缺口 / 待办
 
-- `AndroidManifest.xml` 版本号与 changelog 的 `APP_VERSION` 需手动同步（无自动校验，容易漏）。
+- `AndroidManifest.xml` 版本号与 changelog 的 `APP_VERSION` 已由 `tests/changelog.test.ts` 静态校验（不一致会测试失败）；
+  改版本号仍然要手动改两处 + 加一条更新日志（见 §6.1）。
 - `view.ts` / `session.ts` / `App.tsx` 仍偏大：手势/渲染、会话、UI 可继续拆。
 - PC 模式按**输入证据**识别（`src/io/pcmode.ts` 的 `resolvePcMode`：真实鼠标事件 > 触摸事件/触摸点否决 > 媒体查询 `(pointer: fine)` + `(hover: hover)`），**不看屏幕宽度**；设置里可强制开关；渲染已做脏矩形增量，仍未做 overlay 笔迹层 / Web Worker（优先级见 `docs/COMPARISON.md`）。
 
