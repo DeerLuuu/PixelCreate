@@ -13,10 +13,18 @@ import type { ColourAnalysis } from "../src/engine/color-analysis";
 declare const require: (m: string) => any;
 declare const __dirname: string;
 const fs = require("fs");
+const nodePath = require("path");
+/** **已编译**的 src/ 目录：用例跑在 <app>/tests/.ts-out/tests，编译产物在
+ *  <app>/tests/.ts-out/src（require 只能拿编译后的 JS，不能读原始 .ts） */
+const SRC = nodePath.resolve(__dirname, "../src");
 import type { RGBA } from "../src/engine/types";
 import { Session } from "../src/app/session";
 import { Sel } from "../src/engine/doc";
 import { stubEnv } from "./session.test";
+// 副作用导入：把 ui/modals.tsx 拉进编译图（它平时只被 App.tsx 引用，而 App 不在
+// 测试入口里）。面板的 SSR 冒烟测试要 require 编译后的 modals.js，没有这一行
+// 编译产物里就没有这个文件。用命名空间形式"用一下"是为了不被 noUnusedLocals 拦下。
+import * as modalsModule from "../src/ui/modals";
 import { eq, ok } from "./common";
 
 /** 测试用小画布：按 (x,y) -> RGBA 填像素（缺省 = 全透明） */
@@ -609,6 +617,9 @@ function testSessionDegenerate(): void {
   eq("ca.session.short-cel.total", s.analyseCanvas("layer").totalPixels, 1);
 }
 
+// 让 tsc 保留上面那条副作用导入（see_modals 只用于此处）
+export const CA_MODALS_LOADED: boolean = typeof modalsModule.ColorAnalysisModal === "function";
+
 export function testColorAnalysis(): void {
   testColourKey();
   testAnalyze();
@@ -655,4 +666,33 @@ export function testColorAnalysisPanel(): void {
   }
   // 面板不许自己写死颜色：色块一律走 chipCss（诚实显示不透明度）
   ok("ca.panel.chipCss", modals.indexOf("chipCss(e.rgba)") >= 0 && modals.indexOf("chipCss(from)") >= 0);
+
+  // 真渲染一遍：没有 jsdom，但 react-dom/server 能把面板的 DOM 结构吐出来。
+  // 这一条能抓住"面板打不开/渲染就抛"这类错误（静态扫描看不到）。
+  // 必须在 stubEnv 之后 require：session/singleton 在模块加载时就建实例。
+  stubEnv();
+  /* eslint-disable @typescript-eslint/no-var-requires */
+  const React = require("react");
+  const { renderToStaticMarkup } = require("react-dom/server");
+  eq("ca.panel.markup.exported", CA_MODALS_LOADED, true);
+  const { ColorAnalysisModal } = modalsModule;
+  const { SESSION } = require(SRC + "/ui/singleton");
+  const { makeT } = require(SRC + "/ui/i18n");
+  const d = SESSION.doc;
+  d.cels.clear();
+  d.w = 2; d.h = 2; d.sel = null;
+  const cel = d.ensureCel(0, 0);
+  cel.data.set(buf(2, 2, (x, y) => (y === 0 ? (x === 0 ? RED : [251, 2, 2, 255] as RGBA) : (x === 0 ? GREEN : BLUE))));
+  // 三个板色都被"用到"（蓝归到最近的黑），第四个才是真正没用到的
+  d.palette = [[9, 9, 9, 255], [0, 255, 0, 255], [255, 0, 0, 255], [75, 0, 130, 255]];
+  const html: string = renderToStaticMarkup(React.createElement(ColorAnalysisModal, { t: makeT("zh"), onClose: () => { /* noop */ } }));
+  ok("ca.panel.markup.renders", html.length > 200, "len=" + html.length);
+  ok("ca.panel.markup.dialog", html.indexOf('data-guide="dlg-color-analysis"') >= 0);
+  ok("ca.panel.markup.hex", html.indexOf("#ff0000") >= 0 && html.indexOf("#fb0202") >= 0, "统计表里应有红与近红");
+  eq("ca.panel.markup.rows", (html.match(/class="ca-row"/g) || []).length, 4);
+  ok("ca.panel.markup.hist", (html.match(/class="ca-hcell"/g) || []).length >= 36, "三条直方图共 12~24 格 ×3");
+  ok("ca.panel.markup.unused", html.indexOf("ca-unused") >= 0, "未使用板色应有一块");
+  ok("ca.panel.markup.scope", html.indexOf("ca-scope-canvas") >= 0 && html.indexOf("ca-scope-frames") >= 0);
+  ok("ca.panel.markup.replace", html.indexOf('data-guide="ca-replace"') >= 0 && html.indexOf('data-guide="ca-run"') >= 0);
+  ok("ca.panel.markup.no-raw-inline-colour", html.indexOf("rgb(9,9,9)") < 0);
 }

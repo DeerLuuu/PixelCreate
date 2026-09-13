@@ -1628,8 +1628,10 @@ export function ColorAnalysisModal({ t, onClose }: { t: ReturnType<typeof makeT>
   const snap = useSession();                 // 画布/选区/调色板变了要重算
   const [scope, setScope] = useState<CaScope>("canvas");
   const [sort, setSort] = useState<CaSort>("count");
-  const [ana, setAna] = useState<ColourAnalysis | null>(null);
-  const [groups, setGroups] = useState<ColourGroup[]>([]);
+  // 首屏就在 lazy 初始化里算一次：面板一出现就有内容（也顺带让 SSR/结构测试
+  // 能拿到真实的统计表，而不是"加载中"的空壳）
+  const [ana, setAna] = useState<ColourAnalysis | null>(() => SESSION.analyseCanvas("canvas", "count"));
+  const [groups, setGroups] = useState<ColourGroup[]>(() => SESSION.colourGroups(SESSION.analyseCanvas("canvas", "count"), GROUP_TOLERANCE));
   const [groupTol, setGroupTol] = useState(GROUP_TOLERANCE);
   const [from, setFrom] = useState<[number, number, number, number]>(
     () => [SESSION.fg[0], SESSION.fg[1], SESSION.fg[2], SESSION.fg[3]]);
@@ -1659,12 +1661,6 @@ export function ColorAnalysisModal({ t, onClose }: { t: ReturnType<typeof makeT>
     setInPal(hit);
   };
 
-  // 打开面板先算一次；换图层/换帧/选区变化/换范围/换排序都会重算
-  useEffect(() => {
-    run(scope, sort, groupTol, true);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [snap.layerIdx, snap.frameIdx, snap.selActive, snap.canUndo, snap.canRedo, scope, sort]);
-
   const runScope = (): CaScope => scope;
   // 选区本身没有"在选区里再选一次"的说法：按颜色选像素时选区范围＝当前图层
   const selScope = (): "canvas" | "layer" | "allFrames" => (scope === "selection" ? "layer" : scope);
@@ -1693,6 +1689,15 @@ export function ColorAnalysisModal({ t, onClose }: { t: ReturnType<typeof makeT>
     bridge.toast(n ? t("ca.merged") + n : t("ca.mergeNone"));
     run(scope, sort, groupTol, true);
   };
+
+  useEffect(() => {
+    run(scope, sort, groupTol, true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scope, sort]);
+  useEffect(() => {
+    run(scope, sort, groupTol, true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [snap.layerIdx, snap.frameIdx, snap.selActive]);
 
   const opa = ana ? ana.opaquePixels + ana.semiPixels : 0;
   const hud = ana ? [
