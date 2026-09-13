@@ -38,6 +38,7 @@ import { testXform } from "./xform.test";
 import { testXformUi } from "./xformui.test";
 import { testWarpUi } from "./warpui.test";
 import { testSelOrb } from "./selorb.test";
+import { testColorAnalysis } from "./color-analysis.test";
 
 async function main(): Promise<void> {
   console.log("--- history ---");
@@ -116,6 +117,8 @@ async function main(): Promise<void> {
   testXformUi();
   console.log("--- select orb pages ---");
   testSelOrb();
+  console.log("--- colour analysis ---");
+  testColorAnalysis();
   console.log("--- animation tags ---");
   testTags();
   await testTagsIo();
