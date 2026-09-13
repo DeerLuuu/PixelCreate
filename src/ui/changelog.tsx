@@ -9,10 +9,10 @@ import { useKitPcMode } from "./kit";
 import { Dialog } from "./kit";
 
 /** keep in sync with android/AndroidManifest.xml versionName on every release */
-export const APP_VERSION = "1.1.1.7";
+export const APP_VERSION = "1.1.1.8";
 /** build stamp shown next to the version (support/debug: identifies the exact
  *  package a user is running when the version number itself does not change) */
-export const BUILD_TAG = "cf6e1c0";
+export const BUILD_TAG = "0b14e45";
 
 export type ClgKind = "add" | "imp" | "fix";
 export interface ClgItem { kind: ClgKind; zh: string; en: string }
@@ -21,6 +21,16 @@ export interface ClgVersion { v: string; date: string; items: ClgItem[] }
 const it = (kind: ClgKind, zh: string, en: string): ClgItem => ({ kind, zh, en });
 
 export const CHANGELOG: ClgVersion[] = [
+  {
+    v: "1.1.1.8",
+    date: "2026-09-13",
+    items: [
+      it("add", "色彩明暗（调色板面板的「色彩明暗」或主菜单进入）：给一个基色，一次生成六条色阶。明暗行把温度色、饱和度、明度一起算进去，亮部行只动明度，饱和行只动饱和度，混色行是前景色与背景色之间的过渡，微差行是肉眼难分的近似色，色相行沿色环等距推进。另有互补、三角、四角三种和声配色，按需打开。", "Colour shading (palette panel → Colour shading, or the main menu): from one base colour it generates six ramps at once. Shade moves temperature, saturation and lightness together, Light moves lightness alone, Sat moves saturation alone, Mix runs between the foreground and background colours, Nuance keeps colours nearly identical, and Hue steps evenly around the wheel. Complementary, triadic and tetradic options sit behind a switch."),
+      it("add", "色彩明暗的参数：暗部温度与亮部温度（默认 215° 偏冷 / 50° 偏暖，各带一个色块）、强度、亮度峰值、温度权重（0 就是纯明暗不掺色相）、槽位 3–25。槽位居中那一格就是基色本身，填偶数会自动加一。色块轻点设为前景色，长按或电脑右键设为背景色；「加入调色板」把六条色阶去重后追加进当前调色板，算一条撤销。这一版移植自 Aseprite 脚本 Color Shading v5.0。", "The controls: dark and light temperature (215° cool and 50° warm by default, each with its own swatch), intensity, peak, sway (0 means pure light and dark with no hue shift) and 3-25 slots. The middle slot is the base colour itself and an even number of slots is bumped up by one. Tap a swatch to set the foreground colour, hold it (right-click on desktop) for the background, and Add to palette appends the six ramps, de-duplicated, in one undo step. Ported from the Aseprite script Color Shading v5.0."),
+      it("imp", "播放速度可以调了：时间轴控制条上循环按钮右边多了一个速度色片，可选 0.25x、0.5x、1x、1.5x、2x，改完立刻生效，重启后还记得。速度不改帧本身的时长，导出的 GIF 与 .aseprite 仍是原来写的时长。", "Playback speed is adjustable: a speed chip sits right of the loop button in the timeline, offering 0.25x, 0.5x, 1x, 1.5x and 2x. A change takes effect right away and is remembered across restarts. Speed never touches the frame durations themselves, so exported GIF and .aseprite files keep the lengths you authored."),
+      it("add", "双击枢轴即复位：变换会话里双击那个枢轴标记（锚点），它就放回内容正中，画面一格不动，只改「绕哪里转」。枢轴拖远了不用再一次次点预设把它绕回来。", "Double-tap the pivot to reset it: in a transform session, double-tapping the pivot marker puts it back at the centre of the content without moving a single pixel of the picture — only the point you rotate around changes. No more cycling through presets to bring a dragged-away pivot home."),
+    ],
+  },
   {
     v: "1.1.1.7",
     date: "2026-09-13",

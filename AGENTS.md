@@ -15,7 +15,7 @@
 | 源码 | `src/`（入口 `src/main.tsx`），测试 `tests/` |
 | Web 产物 | `app2/www/js/app.js` + `app2/www/css/style.css`（esbuild IIFE） |
 | APK 产物 | `/sdcard/Download/PixelCraft-<版本号>.apk` 与 `build/PixelCraft.apk` |
-| 当前版本 | `1.1.1.7`（以 `src/ui/changelog.tsx` 的 `APP_VERSION` 为准） |
+| 当前版本 | `1.1.1.8`（以 `src/ui/changelog.tsx` 的 `APP_VERSION` 为准） |
 | 仓库根 | `/sdcard/Download/ds文件夹/pixelcraft`（= `/storage/emulated/0/Download/ds文件夹/pixelcraft`） |
 
 目录：
@@ -28,7 +28,7 @@ src/tools/     工具注册表、笔迹、选区变换
 src/io/        原生桥接、工程文件（.pxc）、Aseprite 读写（aseread/asewrite/zlib）、自动保存、参考图、安全区、base64
 src/ui/        React 外壳、弹窗、时间线、浮动球、i18n、样式
 android/       MainActivity（Java 层）+ AndroidManifest
-tests/         无 DOM 的引擎/逻辑回归（**3482 条断言**，`node .ts-out/tests/run-tests.js` 末尾会打印条数）
+tests/         无 DOM 的引擎/逻辑回归（**3586 条断言**，`node .ts-out/tests/run-tests.js` 末尾会打印条数）
 docs/          API.md / COMPARISON.md
 ```
 
@@ -322,6 +322,15 @@ Aseprite 兼容：`io/aseread.ts` / `io/asewrite.ts` / `io/zlib.ts`（自写同�
 画布外抓手（同日第五轮反馈「按钮不在画布内时会触发拖动相机」）：`onDown` 里「画布外按下＝平移视图」
 的 `blankPan && outsideDoc` 先问 `warpHandleAt()` / `xfHitAt()` —— 旋转 / 斜切图标本来就在选区框外 30px，
 选区贴边时必然落在画布外，早先无条件平移等于这些图标按不到；空白处（离所有抓手都远）照旧平移。
+更新日志文案重写（1.1.1.7 之后）：47 个版本 258 条全部改写去 AI 味（星号加粗 / 反引号 / ①②③ / 感叹 /
+破折号长句），**更新日志面板是纯文本渲染，`**` 会连着符号显示给用户**，所以这类标记一律不写；
+258 → 381 条（一条只讲一件事）；新增 `tests/changelog.test.ts` 静态校验（含 `APP_VERSION` 与
+`AndroidManifest.xml` 的 `versionName` 一致），规则写进 §5.3。
+色彩明暗 / 播放速度 / 双击枢轴（1.1.1.8）：`engine/shading.ts` 移植 Aseprite 脚本 Color Shading v5.0
+（六条色阶 + 互补·三角·四角；`ShadingModal` 在调色板面板与主菜单，色块轻点＝前景色 / 长按或右键＝背景色，
+「加入调色板」走 `paletteMerge`）+ `app/playback.ts` 的 `PLAY_SPEEDS` / `scaledDelay`（时间轴速度色片，
+0.25x–2x；**不改帧时长**，导出仍是原时长）+ `View.resetXfPivot()`（双击枢轴复位到内容正中，画面不动；
+只有「按下去没拖动」的那一下才算一次点击）。三项各自的 docs/API.md 小节：§6c / §14 / §10b.3 + §15.4。
 
 ---
 
