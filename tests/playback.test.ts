@@ -1,4 +1,9 @@
-import { nextLoopMode, nextPlayFrame, startPlayDir, startPlayFrame, type LoopMode } from "../src/app/playback";
+import {
+  DEFAULT_PLAY_SPEED, PLAY_SPEEDS, isPlaySpeed, nextLoopMode, nextPlayFrame, nextPlaySpeed,
+  scaledDelay, speedLabel, startPlayDir, startPlayFrame, type LoopMode,
+} from "../src/app/playback";
+import { Session } from "../src/app/session";
+import { stubEnv } from "./session.test";
 import { eq, ok } from "./common";
 
 /** walk the playback a fixed number of steps and return the visited frames */
@@ -54,4 +59,39 @@ export function testPlayback(): void {
   eq("play.mid.pingpong", startPlayFrame("pingpong", 1, 4), 1);
   eq("play.mid.once", startPlayFrame("once", 1, 4), 1);
   eq("play.mid.once-last", startPlayFrame("once", 3, 4), 0);
+
+  // --- playback speed (0.25 / 0.5 / 1 / 1.5 / 2) ---
+  eq("play.speed.list", PLAY_SPEEDS.join(","), "0.25,0.5,1,1.5,2");
+  eq("play.speed.default", DEFAULT_PLAY_SPEED, 1);
+  eq("play.speed.label", speedLabel(1.5), "1.5x");
+  eq("play.speed.label-int", speedLabel(2), "2x");
+  ok("play.speed.accepts", isPlaySpeed(0.25) && isPlaySpeed(2));
+  ok("play.speed.rejects", !isPlaySpeed(0.75) && !isPlaySpeed("1") && !isPlaySpeed(NaN) && !isPlaySpeed(undefined));
+  eq("play.speed.cycle.up", nextPlaySpeed(1), 1.5);
+  eq("play.speed.cycle.top", nextPlaySpeed(2), 0.25);
+  eq("play.speed.cycle.between", nextPlaySpeed(1.5), 2);
+  eq("play.speed.cycle.unknown-falls-back", nextPlaySpeed(3), 1);
+
+  // speed divides the authored duration: 2x = half the wait, 0.25x = four times
+  eq("play.delay.1x", scaledDelay(100, 1), 100);
+  eq("play.delay.2x", scaledDelay(100, 2), 50);
+  eq("play.delay.1.5x", scaledDelay(100, 1.5), 67);
+  eq("play.delay.0.25x", scaledDelay(100, 0.25), 400);
+  // never below one browser frame: a 10ms frame at 2x is still 16ms
+  eq("play.delay.floor", scaledDelay(10, 2), 16);
+  eq("play.delay.floor-half", scaledDelay(20, 2), 16);
+  // junk speed degrades to 1x instead of dividing by zero
+  eq("play.delay.zero-speed", scaledDelay(100, 0), 100);
+  eq("play.delay.nan-speed", scaledDelay(100, NaN), 100);
+  eq("play.delay.rounds", scaledDelay(101, 2), 51);
+
+  // --- Session 侧：存进 prefs、拒绝非法值、快照里带出去（时间轴的色片读它）---
+  stubEnv();
+  const s = new Session();
+  eq("play.speed.session.default", s.playSpeed, 1);
+  eq("play.speed.session.set", s.setPlaySpeed(2), 2);
+  eq("play.speed.session.persisted", s.prefs.playSpeed, 2);
+  eq("play.speed.session.rejects-junk", s.setPlaySpeed(0.75), 2);
+  eq("play.speed.session.cycle", s.cyclePlaySpeed(), 0.25);
+  eq("play.speed.session.snapshot", s.snapshot().playSpeed, 0.25);
 }

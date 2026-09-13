@@ -9,8 +9,10 @@ import { HoldAdjust } from "./hold";
 import { BLEND_MODES } from "../engine/types";
 import { tagLanes, tagRangeLabel } from "../engine/tags";
 import type { LoopMode } from "../app/playback";
+import { PLAY_SPEEDS, speedLabel } from "../app/playback";
 import * as bridge from "../io/bridge";
 import { Dialog, Row } from "./kit";
+import { DropMenu } from "./tabs";
 export function TimelineBar({ t, snap, onFrameDlg, onTagDlg }: { t: ReturnType<typeof makeT>; snap: Snapshot; onFrameDlg: (fi: number | "batch") => void; onTagDlg: (id: string) => void }) {
   const HEAD = 20, ROW = 24, CELL = 30, LEFT = 96;
   /** animation tags add one thin row per lane between the numbers and the layers */
@@ -409,6 +411,15 @@ export function TimelineBar({ t, snap, onFrameDlg, onTagDlg }: { t: ReturnType<t
         <Btn icon={snap.playing ? "i-pause" : "i-play"} onClick={() => SESSION.togglePlay()} title={t(snap.playing ? "pause" : "play")} />
         <Btn icon={LOOP_ICON[snap.loopMode]} onClick={() => { const m = SESSION.cycleLoopMode(); bridge.toast(t("loopModes." + m)); }}
           active={snap.loopMode !== "once"} title={t("loop") + " · " + t("loopModes." + snap.loopMode)} />
+        {/* playback speed: dividers are applied to each frame's authored duration */}
+        <DropMenu
+          label={speedLabel(snap.playSpeed)}
+          title={t("playSpeed")}
+          value={String(snap.playSpeed)}
+          options={PLAY_SPEEDS.map((s) => ({ id: String(s), label: speedLabel(s) }))}
+          onPick={(v) => { const s = SESSION.setPlaySpeed(Number(v)); bridge.toast(t("playSpeed") + " · " + speedLabel(s)); }}
+          guide="btn-speed"
+        />
         <Btn icon="i-next" onClick={() => SESSION.setFrame(snap.frameIdx + 1)} title={t("frameNext")} />
         <Btn icon="i-plus" onClick={() => SESSION.frameAdd()} title={t("frameAdd")} />
         <Btn icon="i-dupe" onClick={() => SESSION.frameDuplicate()} title={t("frameDupe")} />

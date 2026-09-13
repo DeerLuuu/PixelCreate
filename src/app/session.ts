@@ -33,7 +33,7 @@ import {
   analyzeColours, colourStatsCsv, flattenLayers, groupSimilarColours, nearestPalette, replaceColours,
   selectByColour, type ColourAnalysis, type ColourSort, type ReplaceOpts,
 } from "../engine/color-analysis";
-import { type LoopMode, nextLoopMode, nextPlayFrameIn, startPlayDir, startPlayFrameIn, windowOf } from "./playback";
+import { type LoopMode, type PlaySpeed, DEFAULT_PLAY_SPEED, isPlaySpeed, nextLoopMode, nextPlayFrameIn, nextPlaySpeed, scaledDelay, startPlayDir, startPlayFrameIn, windowOf } from "./playback";
 import { SETTINGS_BY_PATH, normalizeSetting, type SettingValue } from "./settings";
 import { snapToTargets, snapCandidates, snapGapRect, stackGap, tightenLegacyStack, type GapRect, type SnapTarget } from "./canvas-snap";
 import { BUILTIN_PATTERNS, PATTERN_MAX, patternBytes, patternFromBytes, type PatternDef } from "../data/patterns";
@@ -200,6 +200,8 @@ export interface Prefs {
   airbrushRate: number;
   /** playback loop mode */
   loopMode: LoopMode;
+  /** playback speed multiplier (0.25 / 0.5 / 1 / 1.5 / 2; 1 = authored durations) */
+  playSpeed: PlaySpeed;
   /** how many recently used colours the palette panel remembers (4..64) */
   recentColorsMax: number;
   /** 图案笔刷：当前选中的图案 id（null = 普通纯色笔刷） */
@@ -248,6 +250,8 @@ export interface Snapshot {
   h: number;
   playing: boolean;
   loopMode: LoopMode;
+  /** playback speed multiplier (see PLAY_SPEEDS) */
+  playSpeed: PlaySpeed;
   /** animation tags of the focused document (copies; safe to render) */
   tags: FrameTag[];
   /** tag holding the current frame, or null when it is outside every tag */
@@ -522,6 +526,8 @@ export class Session {
   private lastColorAt = 0;
   playing = false;
   loopMode: LoopMode = "loop";
+  /** playback speed multiplier; changing it while playing restarts the timer */
+  playSpeed: PlaySpeed = DEFAULT_PLAY_SPEED;
   /** animation tag the running playback is scoped to (null = whole timeline) */
   playTag: FrameTag | null = null;
   private playDir: 1 | -1 = 1;
@@ -588,6 +594,7 @@ export class Session {
     this.applyRememberedState();
     this.color = this.fg;
     this.loopMode = this.prefs.loopMode;
+    this.playSpeed = this.prefs.playSpeed;
     this.recentColors = this.loadRecentColors();
     this.myPalettes = this.loadMyPalettes();
     this.applyHistoryLimit();
@@ -843,6 +850,7 @@ export class Session {
       h: this.doc.h,
       playing: this.playing,
       loopMode: this.loopMode,
+      playSpeed: this.playSpeed,
       tags: this.doc.tags.map((t) => ({ ...t })),
       activeTag: this.tagAt(this.curFrame()),
       playTag: this.playTag ? { ...this.playTag } : null,
@@ -1350,7 +1358,7 @@ export class Session {
       histMode: "steps", histSteps: 120, shadowNewLayer: false, autoPan: true,
       snapOn: true, snapRange: 14, snapGap: 8, snapInColor: "#78ffb4", snapOutColor: "#ff6464",
       bucketGlobal: false, fillSimilar: false, fillTolerance: 32, fillGaps: 0, indexed: false,
-      loopMode: "loop", recentColorsMax: 16, selectionTolerance: 8, selWarpHalfSnap: true,
+      loopMode: "loop", playSpeed: 1, recentColorsMax: 16, selectionTolerance: 8, selWarpHalfSnap: true,
       selXformAspect: false, selXformAngleSnap: false, selXformGridSnap: false, selXformCopy: false,
       bucketGrad: false, bucketGradMode: "rgb",
       airbrushMin: 1, airbrushMax: 3, airbrushRate: 20,
@@ -1477,6 +1485,7 @@ export class Session {
       if (typeof saved.airbrushMax === "number") p.airbrushMax = Math.max(1, Math.min(16, Math.round(saved.airbrushMax)));
       if (typeof saved.airbrushRate === "number") p.airbrushRate = Math.max(5, Math.min(60, Math.round(saved.airbrushRate)));
       if (saved.loopMode === "once" || saved.loopMode === "loop" || saved.loopMode === "pingpong" || saved.loopMode === "reverse") p.loopMode = saved.loopMode;
+      if (isPlaySpeed(saved.playSpeed)) p.playSpeed = saved.playSpeed;
       if (typeof saved.recentColorsMax === "number") p.recentColorsMax = Math.max(4, Math.min(64, Math.round(saved.recentColorsMax)));
       if (typeof saved.selectionTolerance === "number") p.selectionTolerance = Math.max(0, Math.min(64, Math.round(saved.selectionTolerance)));
       if (typeof saved.selWarpHalfSnap === "boolean") p.selWarpHalfSnap = saved.selWarpHalfSnap;
@@ -4177,7 +4186,7 @@ export class Session {
       return;
     }
     const fi = this.curFrame();
-    const dur = Math.max(16, this.doc.frames[fi].durationMs);
+    const dur = scaledDelay(this.doc.frames[fi].durationMs, this.playSpeed);
     this.playTimer = window.setTimeout(() => {
       if (!this.playing) return;
       const step = nextPlayFrameIn(this.loopMode, this.curFrame(), this.playDir, w);
@@ -4198,6 +4207,32 @@ export class Session {
     this.savePrefs();
     this.changed();
     return this.loopMode;
+  }
+
+  /**
+   * 设置播放速度（0.25 / 0.5 / 1 / 1.5 / 2）。
+   *
+   * 播放中改速度要**立刻**生效：定时器里存的是「上一帧的时长 ÷ 当时的速度」，
+   * 不重排就得等这一帧走完。这里直接掐掉定时器重新起一次 —— 位置不变、不额外推进帧，
+   * 只换计时，所以不会出现「改速度跳一帧」。
+   */
+  setPlaySpeed(v: number): PlaySpeed {
+    if (!isPlaySpeed(v)) return this.playSpeed;   // 非法值原样忽略，不要偷偷改成 1x
+    const next: PlaySpeed = v;
+    this.playSpeed = next;
+    this.prefs.playSpeed = next;
+    this.savePrefs();
+    if (this.playing) {
+      if (this.playTimer !== null) { window.clearTimeout(this.playTimer); this.playTimer = null; }
+      this.tickPlay();
+    }
+    this.changed();
+    return this.playSpeed;
+  }
+
+  /** tap the speed chip: 0.25 -> 0.5 -> 1 -> 1.5 -> 2 -> 0.25 */
+  cyclePlaySpeed(): PlaySpeed {
+    return this.setPlaySpeed(nextPlaySpeed(this.playSpeed));
   }
 
   /** composite-sample used by the eyedropper */

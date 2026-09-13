@@ -8,6 +8,42 @@ export const LOOP_MODES: LoopMode[] = ["once", "loop", "pingpong", "reverse"];
 export const nextLoopMode = (m: LoopMode): LoopMode =>
   LOOP_MODES[(LOOP_MODES.indexOf(m) + 1) % LOOP_MODES.length];
 
+// ---------- playback speed ----------
+
+/** The speeds offered by the timeline's speed chip. 1 = the frame durations as authored. */
+export const PLAY_SPEEDS = [0.25, 0.5, 1, 1.5, 2] as const;
+export type PlaySpeed = (typeof PLAY_SPEEDS)[number];
+
+export const DEFAULT_PLAY_SPEED: PlaySpeed = 1;
+
+/** "0.25x" … "2x" — one label for the chip and the option list */
+export function speedLabel(s: number): string {
+  return (Number.isFinite(s) ? s : 1) + "x";
+}
+
+/** true for one of the five offered speeds (used when loading persisted prefs) */
+export function isPlaySpeed(v: unknown): v is PlaySpeed {
+  return typeof v === "number" && (PLAY_SPEEDS as readonly number[]).includes(v);
+}
+
+/** next speed in the cycle (the chip's "tap again" order) */
+export function nextPlaySpeed(s: number): PlaySpeed {
+  const i = (PLAY_SPEEDS as readonly number[]).indexOf(s);
+  return PLAY_SPEEDS[(i < 0 ? PLAY_SPEEDS.indexOf(1) : i + 1) % PLAY_SPEEDS.length];
+}
+
+/**
+ * Frame delay for one step of playback.
+ *
+ * `speed` divides the authored duration (2× plays twice as fast), and the result
+ * never drops below 16ms — a 10ms frame at 2× would otherwise become a 5ms
+ * timeout, which browsers clamp back to ~4ms and which no one can see anyway.
+ */
+export function scaledDelay(ms: number, speed: number): number {
+  const s = Number.isFinite(speed) && speed > 0 ? speed : 1;
+  return Math.max(16, Math.round(ms / s));
+}
+
 export interface PlayStep {
   fi: number;
   dir: 1 | -1;

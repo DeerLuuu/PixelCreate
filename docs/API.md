@@ -1083,7 +1083,24 @@ interface PlayStep { fi: number; dir: 1 | -1; stop: boolean }
 startPlayFrame(mode, fi, n): number;
 startPlayDir(mode): 1 | -1;
 nextPlayFrame(mode, fi, n, dir): PlayStep;
+
+// 播放速度（时间轴上的速度色片）
+const PLAY_SPEEDS = [0.25, 0.5, 1, 1.5, 2] as const;
+type PlaySpeed = (typeof PLAY_SPEEDS)[number];
+const DEFAULT_PLAY_SPEED: PlaySpeed;            // 1
+speedLabel(s): string;                          // "0.25x" … "2x"
+isPlaySpeed(v): v is PlaySpeed;
+nextPlaySpeed(s): PlaySpeed;                    // 循环；未知值从 1x 起算
+scaledDelay(ms, speed): number;                 // 帧时长 ÷ 速度，下限 16ms
 ```
+
+`Session`：`playSpeed`（同时也是快照字段 `Snapshot.playSpeed`，时间轴的色片读它）、
+`setPlaySpeed(v)`（非法值**原样忽略**，不要偷偷改成 1x）、`cyclePlaySpeed()`；存进 `prefs.playSpeed`。
+
+播放速度**不改帧时长**（`doc.frames[].durationMs` 是作品数据，导出 GIF / Aseprite 仍按原时长）：
+`tickPlay()` 用 `scaledDelay(帧时长, playSpeed)` 起定时器。播放中改速度会掐掉当前定时器**重新起一次**——
+位置不变、不额外推进帧，所以不会「改速度跳一帧」。下限 16ms：10ms 的帧在 2× 下也不该排 5ms 的定时器
+（浏览器会钳到 ~4ms，肉眼也看不见）。
 
 ---
 
