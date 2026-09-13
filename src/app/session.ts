@@ -1643,11 +1643,20 @@ export class Session {
   }
   /** store the current document palette as a named preset; returns its name */
   savePalettePreset(name?: string): string {
-    const colors = this.doc.palette.map((c) => "#" + [c[0], c[1], c[2]]
+    return this.savePalettePresetOf(this.doc.palette, name);
+  }
+  /**
+   * 把**任意一组颜色**存成一个命名色板（色彩明暗面板的「存为新色卡」用）。
+   *
+   * 为什么不复用 `savePalettePreset()`：那个存的是当前 `doc.palette`，而「把这一组
+   * 生成色存成新色卡」不该动用户眼下的色板 —— 只往 `myPalettes`（localStorage）里加一条。
+   */
+  savePalettePresetOf(colors: RGBA[], name?: string): string {
+    const hex = colors.slice(0, 512).map((c) => "#" + [c[0], c[1], c[2]]
       .map((v) => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, "0")).join(""));
-    if (!colors.length) return "";
+    if (!hex.length) return "";
     const label = (name ?? "").trim() || (this.prefs.lang === "en" ? "My palette " : "我的色板 ") + (this.myPalettes.length + 1);
-    this.myPalettes = [...this.myPalettes, { id: "my" + uid(), name: label, colors }];
+    this.myPalettes = [...this.myPalettes, { id: "my" + uid(), name: label, colors: hex }];
     this.saveMyPalettes();
     this.changed();
     return label;

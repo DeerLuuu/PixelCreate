@@ -279,8 +279,8 @@ const zh: Dict = {
   sh: {
     title: "色彩明暗",
     open: "色彩明暗",
-    hint: "给一个基色，一次生成整组明暗阶（明暗 / 亮部 / 饱和 / 混色 / 微差 / 色相），也可以要互补 / 三角 / 四角配色；点色块＝设前景色，长按（电脑右键）＝设背景色",
-    base: "基色", baseA: "前景色", baseB: "背景色", get: "取当前", baseHint: "点这两个色块可以换基色，整组配色立刻重算",
+    hint: "给一个基色，一次生成整组明暗阶（明暗 / 亮部 / 饱和 / 混色 / 微差 / 色相），也可以要互补 / 三角 / 四角配色。色块轻点＝设前景色、长按＝加进色卡（电脑右键＝设背景色）；每一行右边的 + 把整行加进当前色卡，磁盘图标把整行存成一张新色卡",
+    base: "基色", baseA: "前景色", baseB: "背景色", get: "取当前", baseHint: "点这两个色块会打开调色板挑颜色（选中的色就是新基色）；「取当前」＝直接读当前前景 / 背景色",
     rows: {
       shade: "明暗", light: "亮部", sat: "饱和", mix: "混色", nuance: "微差", hue: "色相",
       complementary: "互补", triadic: "三角", tetradic: "四角",
@@ -292,7 +292,10 @@ const zh: Dict = {
     swayHint: "温度色掺进明暗行的强度（0–100，0 = 纯明暗不掺色相）", slotsHint: "每条色阶的色块数（3–25，居中那格就是基色本身；填偶数会自动 +1）",
     advanced: "高级参数", options: "和声配色", autoPick: "跟随取色", reset: "恢复默认",
     toPalette: "加入调色板", toPaletteHint: "把六条色阶去重后追加到当前调色板（一条历史，可撤销）",
-    added: "已加入 ", addedNone: "这些颜色已经在调色板里了",
+    rowToPalette: "整行加入当前色卡", rowAsPalette: "整行存为新色卡",
+    swatchHint: "轻点＝前景色，长按＝加进色卡", pickBase: "点一下打开调色板换色",
+    savedAs: "已存为新色卡：",
+    added: "已加入 ", addedNone: "这些颜色已经在色卡里了",
     copied: "已设为前景色", bgSet: "已设为背景色",
   },
   onionBefore: "洋葱皮·前帧数量", onionAfter: "洋葱皮·后帧数量",
@@ -669,8 +672,8 @@ const en: Dict = {
   sh: {
     title: "Colour shading",
     open: "Colour shading",
-    hint: "From one base colour, generate a whole set of ramps at once (shade / light / sat / mix / nuance / hue), plus complementary, triadic and tetradic options. Tap a swatch to set the foreground, hold it (right-click on desktop) for the background",
-    base: "Base", baseA: "Foreground", baseB: "Background", get: "Get", baseHint: "Tap either swatch to make it the base colour — every ramp is recomputed from it",
+    hint: "From one base colour, generate a whole set of ramps at once (shade / light / sat / mix / nuance / hue), plus complementary, triadic and tetradic options. Tap a swatch to set the foreground, hold it to add that colour to the palette (right-click on desktop sets the background); the + at the end of a row adds the whole row to the current palette and the disk icon saves it as a new palette",
+    base: "Base", baseA: "Foreground", baseB: "Background", get: "Get", baseHint: "Tapping either swatch opens the palette so you can pick a colour — that colour becomes the new base; Get reads the current foreground and background straight away",
     rows: {
       shade: "Shade", light: "Light", sat: "Sat.", mix: "Mix", nuance: "Nuance", hue: "Hue",
       complementary: "Compl.", triadic: "Triad", tetradic: "Tetrad",
@@ -682,6 +685,9 @@ const en: Dict = {
     swayHint: "How strongly the temperature colours pull the shade row (0-100; 0 = pure light and dark, no hue shift)", slotsHint: "Swatches per ramp (3-25; the middle one is the base colour itself, an even number is bumped up by one)",
     advanced: "Advanced", options: "Colour options", autoPick: "Auto pick", reset: "Reset",
     toPalette: "Add to palette", toPaletteHint: "Append the six ramps (de-duplicated) to the current palette — one undoable step",
+    rowToPalette: "Add this row to the current palette", rowAsPalette: "Save this row as a new palette",
+    swatchHint: "tap = foreground, hold = add to the palette", pickBase: "tap to pick a colour from the palette",
+    savedAs: "Saved as a new palette: ",
     added: "Added ", addedNone: "Those colours are already in the palette",
     copied: "Set as foreground", bgSet: "Set as background",
   },

@@ -1,6 +1,14 @@
-// Shared tab strip + dropdown, used by the palette panel, the export dialog
-// and the release-notes dialog so all three look and behave the same.
-import { useRef, useState } from "react";
+/** Shared tab strip + dropdown, used by the palette panel, the export dialog
+ *  and the release-notes dialog so all three look and behave the same.
+ *
+ *  The dropdown list is rendered through a **portal** with fixed positioning: a
+ *  plain absolute box would be clipped by any scrolling ancestor, and the
+ *  timeline toolbar (`.ase-tlbar .tlctrl`) is exactly that — `overflow-x:auto`
+ *  clips on BOTH axes, so the playback-speed menu opened, was measured fine, and
+ *  yet never appeared on screen (真机反馈「点了没反应」).
+ */
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 export interface TabItem<T extends string> {
   id: T;
@@ -56,20 +64,43 @@ export function DropMenu<T extends string>({ label, title, value, options, onPic
   guide?: string;
 }) {
   const [open, setOpen] = useState(false);
-  // flip the list upwards when there is not enough room below (it would be
-  // clipped by the dialog body / the bottom of the screen)
+  // the list is portaled, so it needs the anchor box in viewport coordinates
+  const [box, setBox] = useState<{ left: number; right: number; top: number; bottom: number; minWidth: number } | null>(null);
+  // flip the list upwards when there is not enough room below (a bottom toolbar
+  // would otherwise push it off screen)
   const [up, setUp] = useState(false);
   const btnRef = useRef<HTMLButtonElement | null>(null);
+  const measure = () => {
+    const el = btnRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    const below = window.innerHeight - r.bottom;
+    const need = Math.min(240, options.length * 38 + 10);
+    setUp(below < need && r.top > below);
+    setBox({ left: r.left, right: window.innerWidth - r.right, top: r.bottom + 4, bottom: window.innerHeight - r.top + 4, minWidth: Math.max(132, r.width) });
+  };
   const toggle = () => {
     const next = !open;
-    if (next && btnRef.current) {
-      const r = btnRef.current.getBoundingClientRect();
-      const below = window.innerHeight - r.bottom;
-      const need = Math.min(240, options.length * 38 + 10);
-      setUp(below < need && r.top > below);
-    }
+    if (next) measure();
     setOpen(next);
   };
+  // 跟着窗口变化重算（横竖屏切换 / 键盘弹起后按钮会移动）
+  useLayoutEffect(() => {
+    if (!open) return;
+    const onMove = () => measure();
+    window.addEventListener("resize", onMove);
+    window.addEventListener("scroll", onMove, true);
+    return () => {
+      window.removeEventListener("resize", onMove);
+      window.removeEventListener("scroll", onMove, true);
+    };
+  });
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open]);
   return (
     <div className={"dropmenu" + (up ? " up" : "")}>
       <button
@@ -83,10 +114,13 @@ export function DropMenu<T extends string>({ label, title, value, options, onPic
         {label}
         <i className="dropmenu-chev">▾</i>
       </button>
-      {open && (
+      {open && box && createPortal(
         <>
           <div className="dropmenu-back" onClick={() => setOpen(false)} />
-          <div className="dropmenu-list">
+          <div
+            className={"dropmenu-list dropmenu-pop" + (up ? " up" : "")}
+            style={{ left: box.left, right: box.right, minWidth: box.minWidth, top: up ? "auto" : box.top, bottom: up ? box.bottom : "auto" }}
+          >
             {options.map((o) => (
               <button
                 key={o.id}
@@ -98,7 +132,8 @@ export function DropMenu<T extends string>({ label, title, value, options, onPic
               </button>
             ))}
           </div>
-        </>
+        </>,
+        document.body,
       )}
     </div>
   );

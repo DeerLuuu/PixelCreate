@@ -729,7 +729,7 @@ export function App() {
       <Keep on={modal === "actions"} el={modal === "actions" ? <ActionSearchModal t={t} onClose={() => setModal(null)} /> : null} />
       <Keep on={modal === "patterns"} el={modal === "patterns" ? <PatternPanel t={t} onClose={() => setModal(null)} /> : null} />
       <Keep on={modal === "coloranalysis"} el={modal === "coloranalysis" ? <ColorAnalysisModal t={t} onClose={() => setModal(null)} /> : null} />
-      <Keep on={modal === "shading"} el={modal === "shading" ? <ShadingModal t={t} onClose={() => setModal(null)} /> : null} />
+      <Keep on={modal === "shading"} el={modal === "shading" ? <ShadingModal t={t} onClose={() => setModal(null)} onOpenPalette={() => setPanel("palette")} /> : null} />
       <Keep on={modal === "changelog"} el={modal === "changelog" ? <ChangelogModal onClose={() => { setModal(null); setClgBlock(false); }} /> : null} />
       {guide && <GuideOverlay steps={guide} actions={guideActions} onDone={finishGuide} />}
       {textQ && (

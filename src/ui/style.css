@@ -746,6 +746,8 @@ html[data-pc] .set-pane .set-group:first-child .set-grouphead{border-top-left-ra
 .dropmenu-chev{font-style:normal;font-size:10px;opacity:.8}
 .dropmenu-back{position:fixed;inset:0;z-index:60}
 .dropmenu.up .dropmenu-list{top:auto;bottom:calc(100% + 4px)}
+/* portal 版：坐标由 JS 按按钮的视口位置算（见 tabs.tsx），不受祖先滚动容器裁剪 */
+.dropmenu-list.dropmenu-pop{position:fixed;z-index:61;max-height:min(60vh,240px);overflow-y:auto;overscroll-behavior:contain}
 .dropmenu-list{position:absolute;right:0;top:calc(100% + 4px);z-index:61;min-width:132px;padding:4px;
   background:var(--bg2);border:1px solid var(--line);border-radius:10px;box-shadow:var(--sh-2b)}
 .dropmenu-item{display:block;width:100%;text-align:left;padding:7px 10px;border:0;border-radius:7px;background:transparent;
@@ -1345,6 +1347,11 @@ html[data-pc] .dlg-sh{width:min(600px,64vw)}
 .sh-swatch{height:26px;min-width:10px;padding:0;border:1px solid var(--line);border-radius:var(--r-2);cursor:pointer}
 .sh-swatch.big{height:34px;min-width:34px}
 .sh-swatch:active{border-color:var(--accent)}
+/* 基色块：点得动（打开调色板换色），给个虚边看得出可编辑 */
+.sh-swatch.pick{border-style:dashed;border-color:var(--accent-4)}
+/* 每行末尾的两个小动作：整行加入当前色卡 / 存为新色卡 */
+.sh-rowacts{flex:0 0 auto;display:flex;gap:3px}
+.sh-rowbtn{width:24px;height:24px;border-radius:7px}
 .sh-base{flex:1;display:flex;align-items:center;gap:6px;flex-wrap:wrap;min-width:0}
 .sh-base .btn{flex:0 0 auto}
 .sh-temps{display:flex;align-items:center;gap:6px;flex:1}

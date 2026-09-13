@@ -28,7 +28,7 @@ src/tools/     工具注册表、笔迹、选区变换
 src/io/        原生桥接、工程文件（.pxc）、Aseprite 读写（aseread/asewrite/zlib）、自动保存、参考图、安全区、base64
 src/ui/        React 外壳、弹窗、时间线、浮动球、i18n、样式
 android/       MainActivity（Java 层）+ AndroidManifest
-tests/         无 DOM 的引擎/逻辑回归（**3586 条断言**，`node .ts-out/tests/run-tests.js` 末尾会打印条数）
+tests/         无 DOM 的引擎/逻辑回归（**3605 条断言**，`node .ts-out/tests/run-tests.js` 末尾会打印条数）
 docs/          API.md / COMPARISON.md
 ```
 
@@ -327,10 +327,15 @@ Aseprite 兼容：`io/aseread.ts` / `io/asewrite.ts` / `io/zlib.ts`（自写同�
 258 → 381 条（一条只讲一件事）；新增 `tests/changelog.test.ts` 静态校验（含 `APP_VERSION` 与
 `AndroidManifest.xml` 的 `versionName` 一致），规则写进 §5.3。
 色彩明暗 / 播放速度 / 双击枢轴（1.1.1.8）：`engine/shading.ts` 移植 Aseprite 脚本 Color Shading v5.0
-（六条色阶 + 互补·三角·四角；`ShadingModal` 在调色板面板与主菜单，色块轻点＝前景色 / 长按或右键＝背景色，
-「加入调色板」走 `paletteMerge`）+ `app/playback.ts` 的 `PLAY_SPEEDS` / `scaledDelay`（时间轴速度色片，
-0.25x–2x；**不改帧时长**，导出仍是原时长）+ `View.resetXfPivot()`（双击枢轴复位到内容正中，画面不动；
-只有「按下去没拖动」的那一下才算一次点击）。三项各自的 docs/API.md 小节：§6c / §14 / §10b.3 + §15.4。
+（六条色阶 + 互补·三角·四角；`ShadingModal` 在调色板面板与主菜单）+ `app/playback.ts` 的 `PLAY_SPEEDS` /
+`scaledDelay`（时间轴速度色片，0.25x–2x；**不改帧时长**，导出仍是原时长）+ `View.resetXfPivot()`（双击枢轴
+复位到内容正中，画面不动；只有「按下去没拖动」的那一下才算一次点击）。三项各自的 docs/API.md 小节：
+§6c / §14 / §10b.3 + §15.4。
+色彩明暗接色卡 + 下拉裁剪修复（同日追加）：基色块点开调色板挑色（`awaitColorPick` + `onOpenPalette`）、
+生成色块长按＝把这格加进色卡（右键＝背景色）、每行「+」加入当前色卡 /「保存」存成新色卡
+（新增 `Session.savePalettePresetOf()`，只动 `myPalettes`）；`DropMenu` 改成 **portal + `position:fixed`**
+—— 时间轴控制条是 `overflow-x:auto` 的滚动容器，绝对定位的下拉被它整块裁掉，这就是「速度色片点了没反应」，
+`tests/ui-kit.test.tsx` 加了三断言防止改回去。
 
 ---
 

@@ -13,7 +13,7 @@ import { HoldAdjust, HOLD_MS } from "./hold";
 import { hslToRgb } from "../engine/adjust";
 import {
   SHADING_DEFAULTS, SHADING_RANGES, SHADING_ROWS, SHADING_SLOTS_MAX, SHADING_SLOTS_MIN,
-  flatRamps, normalizeParams, normalizeSlots, shadingHarmonics, shadingRamps,
+  dedupeColours, flatRamps, normalizeParams, normalizeSlots, shadingHarmonics, shadingRamps,
   type ShadingParams, type ShadingRow,
 } from "../engine/shading";
 import type { RGBA } from "../engine/types";
@@ -2051,19 +2051,22 @@ export function openShading(): void {
 }
 
 /**
- * 一个色块：轻点 = 前景色，长按（触屏）/ 右键（电脑）= 背景色。
+ * 一个色块：轻点 = 前景色，长按 = 加进色卡，电脑右键 = 背景色。
  *
- * 长按与右键都要能设背景色：触屏没有右键，电脑长按又会先弹系统菜单，
- * 所以两条路都接，并用 `fired` 标记吃掉长按之后那一次 click（否则会连着设成前景色）。
+ * 三个动作各有各的输入路径，和调色板面板同一套思路（那边也是「长按＝改这格、右键＝删这格」）：
+ * 触屏没有右键，所以背景色留给电脑；长按在两种设备上都好按，用来做「快手收藏」。
+ * `fired` 标记吃掉长按之后那一次 click，免得又设成前景色。
+ * `onHold` 不传时退化成**纯色块**（基色那两个走调色板取色，`pick` 只给它一个「点得动」的外观）。
  */
-function ShSwatch({ c, title, onTap, onHold, big, guide }: {
-  c: RGBA; title: string; onTap: () => void; onHold: () => void; big?: boolean; guide?: string;
+function ShSwatch({ c, title, onTap, onHold, onBg, big, guide, pick }: {
+  c: RGBA; title: string; onTap: () => void; onHold?: () => void; onBg?: () => void;
+  big?: boolean; guide?: string; pick?: boolean;
 }) {
   const fired = useRef(false);
   const timer = useRef<number | null>(null);
   const clear = () => { if (timer.current !== null) { window.clearTimeout(timer.current); timer.current = null; } };
   const hold = () => {
-    if (fired.current) return;
+    if (!onHold || fired.current) return;
     fired.current = true;
     clear();
     onHold();
@@ -2071,21 +2074,23 @@ function ShSwatch({ c, title, onTap, onHold, big, guide }: {
   return (
     <button
       type="button"
-      className={"sh-swatch" + (big ? " big" : "")}
+      className={"sh-swatch" + (big ? " big" : "") + (pick ? " pick" : "")}
       style={{ background: chipCss(c) }}
       title={title}
       data-guide={guide}
-      onPointerDown={() => { fired.current = false; clear(); timer.current = window.setTimeout(hold, HOLD_MS); }}
+      onPointerDown={() => { fired.current = false; clear(); if (onHold) timer.current = window.setTimeout(hold, HOLD_MS); }}
       onPointerUp={clear}
       onPointerLeave={clear}
       onPointerCancel={clear}
-      onContextMenu={(e) => { e.preventDefault(); hold(); }}
+      onContextMenu={(e) => { e.preventDefault(); onBg ? onBg() : hold(); }}
       onClick={() => { if (fired.current) { fired.current = false; return; } onTap(); }}
     />
   );
 }
 
-export function ShadingModal({ t, onClose }: { t: ReturnType<typeof makeT>; onClose: () => void }) {
+export function ShadingModal({ t, onClose, onOpenPalette }: {
+  t: ReturnType<typeof makeT>; onClose: () => void; onOpenPalette: () => void;
+}) {
   const snap = useSession();
   const [base, setBase] = useState<RGBA>(() => [SESSION.fg[0], SESSION.fg[1], SESSION.fg[2], SESSION.fg[3]]);
   const [other, setOther] = useState<RGBA>(() => [SESSION.bg[0], SESSION.bg[1], SESSION.bg[2], SESSION.bg[3]]);
@@ -2110,6 +2115,17 @@ export function ShadingModal({ t, onClose }: { t: ReturnType<typeof makeT>; onCl
   const useBg = () => setOther([SESSION.bg[0], SESSION.bg[1], SESSION.bg[2], SESSION.bg[3]]);
   const pick = (c: RGBA) => { SESSION.setFgColor(c); bridge.toast(t("sh.copied") + " " + rgbaToHex(c)); };
   const pickBg = (c: RGBA) => { SESSION.setBgColor(c); bridge.toast(t("sh.bgSet") + " " + rgbaToHex(c)); };
+  /**
+   * 点基色块 = 打开调色板挑一个新基色（和特效参数 / 颜色分析里那种「点色块开调色板」同一条路：
+   * `SESSION.awaitColorPick()` 把下一次取色接到回调上，App 侧在 `pc-color-picked` 时收起调色板）。
+   */
+  const pickBase = (toOther: boolean) => {
+    SESSION.awaitColorPick((c) => {
+      const v: RGBA = [c[0], c[1], c[2], c[3]];
+      if (toOther) setOther(v); else { fgSeen.current = rgbaToHex(SESSION.fg); setBase(v); }
+    });
+    onOpenPalette();
+  };
   const set = (patch: Partial<ShadingParams>) => setParams((p) => normalizeParams({ ...p, ...patch }));
   const tempCss = (deg: number): RGBA => {
     const [r, g, b] = hslToRgb(deg, 1, 0.5);
@@ -2117,13 +2133,41 @@ export function ShadingModal({ t, onClose }: { t: ReturnType<typeof makeT>; onCl
   };
 
   const rows: Array<{ id: ShadingRow; colours: RGBA[] }> = SHADING_ROWS.map((id) => ({ id, colours: ramps[id] }));
-  const strobe = (label: string, colours: RGBA[], guide?: string) => (
-    <div className="sh-row">
+  /** 把一组颜色加进当前色卡（去重，一条可撤销历史），toast 报结果 */
+  const addToPalette = (colours: RGBA[]) => {
+    const n = SESSION.paletteMerge(colours);
+    bridge.toast(n ? t("sh.added") + n : t("sh.addedNone"));
+  };
+  /** 把一组颜色存成一张新色卡（不动用户眼下的色卡），toast 报名字 */
+  const saveAsPalette = (colours: RGBA[], name: string) => {
+    const label = SESSION.savePalettePresetOf(dedupeColours(colours), name);
+    bridge.toast(label ? t("sh.savedAs") + label : t("sh.addedNone"));
+  };
+  /**
+   * 一行色阶：标签 + 色块条 + 两个小动作（整行加入当前色卡 / 整行存为新色卡）。
+   * 色块本身：轻点＝前景色、长按＝**把这一格加进色卡**（真机要的快手收藏）、
+   * 电脑右键＝背景色（对应 Aseprite 的右键行为；触屏上背景色在基色行选）。
+   */
+  const strobe = (label: string, colours: RGBA[], guide?: string, name?: string) => (
+    <div className="sh-row" key={guide || label}>
       <span className="sh-rowlabel">{label}</span>
       <div className="sh-strip" data-guide={guide}>
         {colours.map((c, i) => (
-          <ShSwatch key={i} c={c} title={rgbaToHex(c)} onTap={() => pick(c)} onHold={() => pickBg(c)} />
+          <ShSwatch
+            key={i}
+            c={c}
+            title={rgbaToHex(c) + " · " + t("sh.swatchHint")}
+            onTap={() => pick(c)}
+            onHold={() => addToPalette([c])}
+            onBg={() => pickBg(c)}
+          />
         ))}
+      </div>
+      <div className="sh-rowacts">
+        <button type="button" className="iconbtn sh-rowbtn" title={t("sh.rowToPalette")} data-guide={guide ? guide + "-add" : undefined}
+          onClick={() => addToPalette(colours)}><Icon id="i-plus" size={14} /></button>
+        <button type="button" className="iconbtn sh-rowbtn" title={t("sh.rowAsPalette")} data-guide={guide ? guide + "-save" : undefined}
+          onClick={() => saveAsPalette(colours, name ? t("sh.title") + " · " + name : "")}><Icon id="i-save" size={14} /></button>
       </div>
     </div>
   );
@@ -2139,29 +2183,30 @@ export function ShadingModal({ t, onClose }: { t: ReturnType<typeof makeT>; onCl
       extra={<div className="row-note sh-note">{t("sh.rowNote")}</div>}
       footer={<>
         <Btn icon="i-palette" label={t("sh.toPalette")} title={t("sh.toPaletteHint")} onClick={() => {
-          const n = SESSION.paletteMerge(flatRamps(ramps));
-          bridge.toast(n ? t("sh.added") + n : t("sh.addedNone"));
+          addToPalette(flatRamps(ramps));
         }} guide="sh-to-palette" />
         <Btn icon="i-revert" label={t("sh.reset")} onClick={() => setParams({ ...SHADING_DEFAULTS })} guide="sh-reset" />
         <Btn label={t("close")} className="primary" onClick={onClose} />
       </>}
     >
-      {/* 基色：点哪个哪个当基色；Get 重新读当前前景 / 背景色 */}
+      {/* 基色：点色块打开调色板挑一个新基色；「取当前」＝读当前前景 / 背景色 */}
       <div className="sh-row">
         <span className="sh-rowlabel">{t("sh.base")}</span>
         <div className="sh-base" data-guide="sh-base">
-          <ShSwatch big c={base} title={t("sh.baseA") + " " + rgbaToHex(base)} onTap={useFg} onHold={useBg} guide="sh-base-a" />
-          <ShSwatch big c={other} title={t("sh.baseB") + " " + rgbaToHex(other)} onTap={() => setBase([...other] as RGBA)} onHold={useBg} guide="sh-base-b" />
+          <ShSwatch big pick c={base} title={t("sh.baseA") + " " + rgbaToHex(base) + " · " + t("sh.pickBase")}
+            onTap={() => pickBase(false)} guide="sh-base-a" />
+          <ShSwatch big pick c={other} title={t("sh.baseB") + " " + rgbaToHex(other) + " · " + t("sh.pickBase")}
+            onTap={() => pickBase(true)} guide="sh-base-b" />
           <Btn icon="i-eyedropper" label={t("sh.get")} onClick={() => { useFg(); useBg(); }} guide="sh-get" />
         </div>
       </div>
       <div className="row-note sh-tiny">{t("sh.baseHint")}</div>
 
-      {rows.map((r) => strobe(t("sh.rows." + r.id), r.colours, "sh-row-" + r.id))}
+      {rows.map((r) => strobe(t("sh.rows." + r.id), r.colours, "sh-row-" + r.id, t("sh.rows." + r.id)))}
       {options && <>
-        {strobe(t("sh.rows.complementary"), harmonic.complementary)}
-        {strobe(t("sh.rows.triadic"), harmonic.triadic)}
-        {strobe(t("sh.rows.tetradic"), harmonic.tetradic)}
+        {strobe(t("sh.rows.complementary"), harmonic.complementary, "sh-row-complementary", t("sh.rows.complementary"))}
+        {strobe(t("sh.rows.triadic"), harmonic.triadic, "sh-row-triadic", t("sh.rows.triadic"))}
+        {strobe(t("sh.rows.tetradic"), harmonic.tetradic, "sh-row-tetradic", t("sh.rows.tetradic"))}
       </>}
 
       <RowActions className="sh-opts">
@@ -2173,14 +2218,14 @@ export function ShadingModal({ t, onClose }: { t: ReturnType<typeof makeT>; onCl
       {advanced && <>
         <Row label={t("sh.tempDark")} hint={t("sh.tempHint")}>
           <div className="sh-temps">
-            <ShSwatch c={tempCss(params.lowTemp)} title={rgbaToHex(tempCss(params.lowTemp))} onTap={() => pick(tempCss(params.lowTemp))} onHold={() => pickBg(tempCss(params.lowTemp))} guide="sh-temp-dark" />
+            <ShSwatch c={tempCss(params.lowTemp)} title={rgbaToHex(tempCss(params.lowTemp)) + " · " + t("sh.swatchHint")} onTap={() => pick(tempCss(params.lowTemp))} onHold={() => addToPalette([tempCss(params.lowTemp)])} onBg={() => pickBg(tempCss(params.lowTemp))} guide="sh-temp-dark" />
             <ScrubNum value={Math.round(params.lowTemp)} min={SHADING_RANGES.temp.min} max={SHADING_RANGES.temp.max}
               onChange={(v) => set({ lowTemp: Number(v) || 0 })} />
           </div>
         </Row>
         <Row label={t("sh.tempLight")}>
           <div className="sh-temps">
-            <ShSwatch c={tempCss(params.highTemp)} title={rgbaToHex(tempCss(params.highTemp))} onTap={() => pick(tempCss(params.highTemp))} onHold={() => pickBg(tempCss(params.highTemp))} guide="sh-temp-light" />
+            <ShSwatch c={tempCss(params.highTemp)} title={rgbaToHex(tempCss(params.highTemp)) + " · " + t("sh.swatchHint")} onTap={() => pick(tempCss(params.highTemp))} onHold={() => addToPalette([tempCss(params.highTemp)])} onBg={() => pickBg(tempCss(params.highTemp))} guide="sh-temp-light" />
             <ScrubNum value={Math.round(params.highTemp)} min={SHADING_RANGES.temp.min} max={SHADING_RANGES.temp.max}
               onChange={(v) => set({ highTemp: Number(v) || 0 })} />
           </div>

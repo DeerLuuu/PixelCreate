@@ -4,7 +4,7 @@
 import { rgbToHsl } from "../src/engine/adjust";
 import {
   SHADING_DEFAULTS, SHADING_ROWS, SHADING_SLOTS_MAX, SHADING_SLOTS_MIN,
-  flatRamps, normalizeParams, normalizeSlots, shadingHarmonics, shadingRamps,
+  dedupeColours, flatRamps, normalizeParams, normalizeSlots, shadingHarmonics, shadingRamps,
 } from "../src/engine/shading";
 import type { ShadingParams } from "../src/engine/shading";
 import type { RGBA } from "../src/engine/types";
@@ -146,7 +146,12 @@ export function testShading(): void {
   ok("shading.params.clamped", wild.slots === 25 && wild.intensity === 200 && wild.peak === 1 && wild.sway === 100 && wild.lowTemp === 0,
     JSON.stringify(wild));
 
-  // --- 面板 SSR 冒烟：能渲染出六条色阶 + 基色 + 温度色块 ---
+  // --- 「加入色板 / 存为新色卡」用的去重：保持顺序、不重复 ---
+  eq("shading.dedupe.removes", dedupeColours([ORANGE, BLUE, ORANGE, BLUE, ORANGE]).length, 2);
+  eq("shading.dedupe.order", dedupeColours([BLUE, ORANGE, BLUE])[0], BLUE);
+  eq("shading.dedupe.empty", dedupeColours([]).length, 0);
+
+  // --- 面板 SSR 冒烟：能渲染出六条色阶 + 基色 + 温度色块 + 每行的两个色卡按钮 ---
   stubEnv();
   /* eslint-disable @typescript-eslint/no-var-requires */
   const React = require("react");
@@ -154,7 +159,7 @@ export function testShading(): void {
   const { ShadingModal } = require(SRC + "/ui/modals");
   const { makeT } = require(SRC + "/ui/i18n");
   const html: string = renderToStaticMarkup(
-    React.createElement(ShadingModal, { t: makeT("zh"), onClose: () => { /* noop */ } }),
+    React.createElement(ShadingModal, { t: makeT("zh"), onClose: () => { /* noop */ }, onOpenPalette: () => { /* noop */ } }),
   );
   ok("shading.panel.markup.renders", html.length > 400, "len=" + html.length);
   ok("shading.panel.markup.dialog", html.indexOf('data-guide="dlg-shading"') >= 0);
@@ -164,6 +169,35 @@ export function testShading(): void {
   ok("shading.panel.markup.base", html.indexOf('data-guide="sh-base-a"') >= 0 && html.indexOf('data-guide="sh-base-b"') >= 0);
   ok("shading.panel.markup.temps", html.indexOf('data-guide="sh-temp-dark"') >= 0 && html.indexOf('data-guide="sh-temp-light"') >= 0);
   ok("shading.panel.markup.actions", html.indexOf('data-guide="sh-to-palette"') >= 0 && html.indexOf('data-guide="sh-reset"') >= 0);
+  // 每行两个小动作：整行加入当前色卡 / 整行存为新色卡（六行都要有）
+  ok("shading.panel.markup.row-add", SHADING_ROWS.every((row) => html.indexOf('data-guide="sh-row-' + row + '-add"') >= 0));
+  ok("shading.panel.markup.row-save", SHADING_ROWS.every((row) => html.indexOf('data-guide="sh-row-' + row + '-save"') >= 0));
+  // 基色块可点（打开调色板换色）——虚线边是它的外观标记
+  eq("shading.panel.markup.pick", (html.match(/class="sh-swatch big pick"/g) || []).length, 2);
   // 色块一律走 chipCss（诚实显示不透明度），面板不许自己拼颜色
   ok("shading.panel.markup.no-raw-rgb", html.indexOf("rgb(230,126,34)") < 0);
+  // 面板只通过公开 API 落库：加入色卡 / 存成新色卡 / 取色（读的是**源码**，不是编译产物）
+  const modals = require("fs").readFileSync(nodePath.resolve(__dirname, "../../../src/ui/modals.tsx"), "utf8");
+  for (const api of ["paletteMerge", "savePalettePresetOf", "awaitColorPick"]) {
+    ok("shading.panel.uses." + api, modals.indexOf("SESSION." + api) >= 0, "面板没用 " + api);
+  }
+}
+
+/** 「存为新色卡」只往 myPalettes 里加一条，不动用户眼下的色板 */
+export function testShadingPaletteSave(): void {
+  stubEnv();
+  const { Session } = require(SRC + "/app/session");
+  const s = new Session();
+  const before = s.doc.palette.map((c: RGBA) => c.join(","));
+  const n = s.myPalettes.length;
+  const name = s.savePalettePresetOf([[1, 2, 3, 255], [4, 5, 6, 255]], "明暗测试");
+  eq("shading.save.name", name, "明暗测试");
+  eq("shading.save.added", s.myPalettes.length, n + 1);
+  const saved = s.myPalettes[s.myPalettes.length - 1];
+  eq("shading.save.hex", saved.colors.join(","), "#010203,#040506");
+  eq("shading.save.keeps-doc-palette", s.doc.palette.map((c: RGBA) => c.join(",")).join("|"), before.join("|"));
+  eq("shading.save.empty", s.savePalettePresetOf([]), "");
+  eq("shading.save.empty-not-added", s.myPalettes.length, n + 1);
+  // 存进去的能在面板里删掉（走既有 API）
+  ok("shading.save.deletable", s.deletePalettePreset(saved.id));
 }

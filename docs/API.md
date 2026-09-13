@@ -315,11 +315,20 @@ flatRamps(ramps, rows?, dedupe = true): RGBA[]         // 摊平（「加入调�
    `mix` 行按比例混 alpha，其余各行保留基色 alpha；
 2. `slots` 的「夹范围 + 强制奇数」放进纯函数，而不是只放在界面的 `onchange` 里（测试与调用方都受益）。
 
-面板 `ShadingModal`（`src/ui/modals.tsx`）：基色行（前景 / 背景 + 「取当前」）、六条色阶、可选的三条和声配色、
-高级参数（两个温度色块 + 四个数值）、三个开关（高级参数 / 和声配色 / 跟随取色）。色块交互＝**轻点设前景色、
-长按或右键设背景色**（触屏没有右键，两条路都接，长按之后那一次 click 会被吃掉）；「加入调色板」走
-`SESSION.paletteMerge(flatRamps(ramps))`（去重、一条可撤销历史）。入口：调色板面板的动作行与主菜单
-（`openShading()` 派发 `pc-shading`，App 侧收面板再开弹窗，同 `pc-color-analysis`）。
+面板 `ShadingModal`（`src/ui/modals.tsx`）与调色板的接线：
+
+| 位置 | 手势 / 按钮 | 行为 |
+|---|---|---|
+| 基色两个色块 | 轻点 | `SESSION.awaitColorPick()` + `onOpenPalette()`（App 传 `setPanel("palette")`）→ 打开调色板挑色，选中的色成为新基色 / 新「混色」端色；App 在 `pc-color-picked` 时自动收起调色板 |
+| 基色行 | 「取当前」 | 直接读当前前景 / 背景色当基色 |
+| 生成色块 | 轻点 | 设为前景色 |
+| 生成色块 | 长按 | **把这一格加进当前色卡**（`paletteMerge([c])`，去重、一条可撤销历史） |
+| 生成色块 | 电脑右键 | 设为背景色（对应 Aseprite 的右键；触屏没有右键，背景色走基色行） |
+| 每条色阶行 | 末尾「+」 | 整行加入当前色卡（`paletteMerge`） |
+| 每条色阶行 | 末尾「保存」 | 整行**存成一张新色卡**（`SESSION.savePalettePresetOf()`，只往 `myPalettes` 加一条，不动用户眼下的色板） |
+| 弹窗底部 | 「加入调色板」 | 六条色阶一起 `paletteMerge(flatRamps(ramps))` |
+
+入口：调色板面板的动作行与主菜单（`openShading()` 派发 `pc-shading`，App 侧收面板再开弹窗，同 `pc-color-analysis`）。
 
 ## 7. 撤销栈
 
@@ -812,6 +821,10 @@ paletteAdd(c) / paletteRemove(idx) / recolorPaletteColor(idx, newC)
 paletteDedupe(): number        // 去重，返回删除数量
 paletteMerge(colors): number   // 合并并跳过已有颜色，返回新增数量
 paletteSort("hue" | "light")   // 排序（只改顺序）
+savePalettePreset(name?): string        // 把**当前 doc.palette** 存成一个命名色板（myPalettes）
+savePalettePresetOf(colors, name?): string   // 把**任意一组颜色**存成命名色板（色彩明暗的「存为新色卡」用；
+                                             // 不动 doc.palette，只往 localStorage 的 myPalettes 加一条）
+deletePalettePreset(id): boolean
 ```
 
 ### 11.5b 颜色分析（Session）
@@ -1530,9 +1543,9 @@ nextPlayFrameIn(mode, fi, dir, w): PlayStep                    // 循环/乒乓�
 | `GuideDemo` | `ui/guide-demo.tsx` | 虚拟触点动画 |
 | `View` | `render/view.ts` | 画布视口（非 React 组件） |
 | `HsvWheel` / `HoldAdjust` / `PreviewBox` / `RefImageBox` / `ReplayOverlay` | 各自文件 | 色轮、长按拖动数值、预览浮窗（右上角按钮 = 二级菜单：白底/黑底/格子底 + 灰度预览，灰度只作用于画面本身）、参考图、历史回放 |
-| `TabBar` / `DropMenu` | `ui/tabs.tsx` | 共用选项卡与可展开下拉（色板 / 导出 / 更新日志） |
+| `TabBar` / `DropMenu` | `ui/tabs.tsx` | 共用选项卡与可展开下拉（色板 / 导出 / 更新日志 / 播放速度）。**下拉列表用 `createPortal` 挂到 `document.body` 并 `position:fixed`**（坐标按按钮的视口位置算）：时间轴控制条是 `overflow-x:auto` 的滚动容器，绝对定位的列表会被它整块裁掉——「播放速度色片点了没反应」就是这么来的；任何放在滚动容器里的下拉都靠这条活着 |
 | `ChangelogModal` | `ui/changelog.tsx` | 更新日志：`CHANGELOG`（`ClgVersion[]`，每项 `it(kind, zh, en)`）+ `APP_VERSION` / `BUILD_TAG`；PC 竖排版本列表、触屏横向标签条，分类（add/imp/fix）可折叠。**条目文案是纯文本渲染**（`<li>{x.zh}</li>`，没有 Markdown 解析）——`**加粗**` 与反引号会原样显示，所以文案里不许出现它们，测试 `tests/changelog.test.ts` 会拦（同时校验 `APP_VERSION` 与 `AndroidManifest.xml` 的 `versionName` 一致、条目单行格式、中英一一对应） |
-| `ShadingModal` | `ui/modals.tsx` | 色彩明暗（调色板生成器）：算法在 `engine/shading.ts`，面板只摆控件与色块；色块轻点＝前景色 / 长按或右键＝背景色，「加入调色板」调 `SESSION.paletteMerge`。入口＝调色板面板 + 主菜单（`openShading()` → `pc-shading` → App 里`setModal("shading")`） |
+| `ShadingModal` | `ui/modals.tsx` | 色彩明暗（调色板生成器）：算法在 `engine/shading.ts`，面板只摆控件与色块；基色块打开调色板挑色（`onOpenPalette` + `SESSION.awaitColorPick`），生成色块轻点＝前景色 / 长按＝加进色卡 / 电脑右键＝背景色，每行的「+」加入当前色卡、「保存」存成新色卡（`savePalettePresetOf`）。入口＝调色板面板 + 主菜单（`openShading()` → `pc-shading` → App 里 `setModal("shading")`） |
 | `useBlankTap` | `ui/base.tsx` | 点容器空白处执行动作（调色板面板点击关闭） |
 | 时间线分割线 | `ui/App.tsx`（`.tl-grip`） | 时间线面板顶部的拖动条：上下拖动 = `setTlHeight()`（面板总高度 140–520px，默认 200），拖动时显示 px 浮标，双击复位 200；`prefs.tlH` 是整块面板高度，矩阵 `flex:1` 填充，图层行不足时用 `.ase-fill` 单元格补底 |
 | 安全区 | `io/safearea.ts` | 把原生 insets 写成 CSS 变量 `--sat/--sab/--sal/--sar`，贴边控件统一用它们留白 |

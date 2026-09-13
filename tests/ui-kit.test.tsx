@@ -157,6 +157,15 @@ export function testUiKit(): void {
     const app = fs.readFileSync(path.resolve(__dirname, "../../../src/ui/App.tsx"), "utf8");
     ok("ui.overlay-full-wiring", app.includes("<Overlay full={!land && !pcMode}"));
   }
+  // 下拉列表必须 portal 出去：时间轴控制条是 `overflow-x:auto` 的滚动容器，
+  // 绝对定位的列表会被它整块裁掉 —— 播放速度色片「点了没反应」就是这么来的
+  {
+    const tabs = fs.readFileSync(path.resolve(__dirname, "../../../src/ui/tabs.tsx"), "utf8");
+    ok("ui.dropmenu.portal", tabs.includes("createPortal") && tabs.includes("document.body"));
+    ok("ui.dropmenu.fixed-pos", tabs.includes("dropmenu-pop") && tabs.includes("getBoundingClientRect"));
+    const css = fs.readFileSync(path.resolve(__dirname, "../../../src/ui/style.css"), "utf8");
+    ok("ui.dropmenu.pop-css", /\.dropmenu-list\.dropmenu-pop\{[^}]*position:fixed/.test(css));
+  }
 
   // ------------------------------------------------------------- demo page
   // the demo exercises every component at once; rendering it here also proves

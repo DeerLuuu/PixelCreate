@@ -188,17 +188,22 @@ export function shadingHarmonics(base: RGBA): ShadingHarmonics {
   };
 }
 
+/** 按顺序去重（「存为新色卡」与「加入色板」都用它，避免同一格颜色堆一排） */
+export function dedupeColours(colors: RGBA[]): RGBA[] {
+  const out: RGBA[] = [];
+  const seen = new Set<string>();
+  for (const c of colors) {
+    const key = c.join(",");
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(c);
+  }
+  return out;
+}
+
 /** 按顺序摊平成一条颜色列表（「加入调色板」用），可选去重 */
 export function flatRamps(ramps: ShadingRamps, rows: readonly ShadingRow[] = SHADING_ROWS, dedupe = true): RGBA[] {
   const out: RGBA[] = [];
-  const seen = new Set<string>();
-  for (const row of rows) {
-    for (const c of ramps[row]) {
-      const key = c.join(",");
-      if (dedupe && seen.has(key)) continue;
-      seen.add(key);
-      out.push(c);
-    }
-  }
-  return out;
+  for (const row of rows) out.push(...ramps[row]);
+  return dedupe ? dedupeColours(out) : out;
 }
