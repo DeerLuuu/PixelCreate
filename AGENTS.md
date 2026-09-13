@@ -349,6 +349,7 @@ Aseprite 兼容：`io/aseread.ts` / `io/asewrite.ts` / `io/zlib.ts`（自写同�
 | [`docs/PC.md`](docs/PC.md) | **电脑模式（PC）适配清单与后续建议**：已完成能力表 + 20 条待办建议（含代码位置） |
 | [`docs/COMPARISON.md`](docs/COMPARISON.md) | 与 Aseprite / Resprite 的对比、痛点复盘与优先级（含最新进展表） |
 | [`docs/COMPARISON-pixelover-pixelcomposer.md`](docs/COMPARISON-pixelover-pixelcomposer.md) | 与 PixelOver / Pixel Composer 的三方对比（只比 2D）：速览表 + 能力大对照表 + 差异化优势 + 缺口清单（含来源与待核清单） |
+| [`docs/PLAN-isobuilder.md`](docs/PLAN-isobuilder.md) | **等距构建（三视图 → 等距像素画）的可行性方案**：上游功能拆解、视觉外壳算法、像素几何口径、与现有能力的映射、分期计划与工作量、风险与落地文件清单 |
 | `AGENTS.md`（本文件） | AI 代理约定：环境、命令、架构、工程约定、出包 runbook、已知缺口、交互与派活规则（§10） |
 
 ---
