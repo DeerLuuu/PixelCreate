@@ -499,10 +499,21 @@ const selOps = {
 Aseprite 那套「移动 + 缩放 + 旋转 + 斜切」的**纯函数层**（无 DOM、无 Session，`tests/xform.test.ts` 直接跑）。
 视图层的状态机在 `src/render/view.ts`（见 §15.4），这里只放几何与解算。
 
-**坐标口径（唯一约定）**：内容占下标 `0..w-1` / `0..h-1`（`indexBox(w, h)`），
-「下标 `i` 的像素」在屏幕上占 `[i·zoom + ox, (i+1)·zoom + ox)`（**左上角口径**）。
+**坐标口径（唯一约定，改之前先读）**：本模块的坐标是**外框口径（edge space）** ——
+`w×h` 的内容占 `[0, w] × [0, h]`，像素 `i` 是 `[i, i+1)` 那一格（中心在 `i + 0.5`），
+内容框就是 `contentBox(w, h)`（**不是** `indexBox(w, h)` 的 `0..w-1`）。
+屏幕换算只有一条：**位置 `p` → `p·zoom + ox`**（`screenFrameOf()`）。
+
+为什么是外框：栅格化器 `xformAffineFloating()` 采样的是「目标像素中心 `px + 0.5` 逆映射后 `floor`」，
+也就是同一套外框口径；选中框（蚂蚁线）画的是 `b.x·z + ox .. (b.x+b.w)·z + ox`，
+于是**恒等变换下变换框与选中框逐像素重合**、8 个锚点正落在选中框的角与边中点上。
+
+> `warp.ts`（§18.11）用的是**另一套**：那里控制点代表「某个像素挪到哪」，下标 `i` 就是像素 `i` 的
+> **中心**（画在 `(i+0.5)·z + ox`）。两者不要混：变换框是**区域边界**，网格点是**像素位置**。
+
 `screenFrameOf()` / `View.xfScreenFrame()` / `View.xfPivotScreen()` / `screenAnchors()` / 抓手绘制
-全部走这一条，所以「枢轴预设的左上角」＝「框的左上角」＝「角抓手的位置」，不会有半格偏差。
+全部走这一条，所以「枢轴预设的左上角」＝「框的左上角」＝「角抓手的位置」，
+而且**进入会话的前后框完全不动**（会话内外的口径相同），抓手不会在按下的瞬间跳位。
 
 ### 10b.1 锚点与命中
 
@@ -510,12 +521,14 @@ Aseprite 那套「移动 + 缩放 + 旋转 + 斜切」的**纯函数层**（无 
 type AnchorId = "tl" | "tr" | "br" | "bl" | "t" | "b" | "l" | "r";
 const ANCHORS: AnchorId[];                  // 上面这个顺序（角在前，边中点在后）
 isCorner(id): boolean; axisOf(id): "x" | "y" | "xy";   // 边中点只改一个轴
+indexBox(w, h): XfBox;                     // 像素下标框 `0..w-1`（warp / 测试口径）
+contentBox(w, h): XfBox;                   // **内容外框** `0..w`（本模块的坐标口径，见上）
 anchorPoint(box, id): Pt;                  // 锚点在**框上**的位置
 scaleAnchor(box, id): Pt;                  // 缩放的**不动点**＝对角那个锚点（tl↔br、tr↔bl、t↔b、l↔r）
 screenAnchors(frame): Pt[];                // 8 个锚点的屏幕坐标
 
 interface ScreenFrame { corners: [Pt, Pt, Pt, Pt]; angle: number; spanX: number; spanY: number }
-screenFrameOf(m: Mat3, w, h, zoom, ox, oy): ScreenFrame;   // 变换后的框 → 屏幕四角
+screenFrameOf(m: Mat3, w, h, zoom, ox, oy): ScreenFrame;   // 变换后的**外框**四角 → 屏幕
 
 const PC_HIT = { inner: 22, outer: 34 };   // PC：两层同心圈的命中半径（px，**额外**手段，见下）
 const TOUCH_HIT = { inner: 38, outer: 38 }; // 触屏基础半径（还会被 touchHitRadius 自动收窄）
@@ -568,28 +581,46 @@ edgeNormalOf(frame, id): Pt;                                                   /
 type XfKind = "move" | "scale" | "rotate" | "skew" | "pivot";
 const XF_LABEL: Record<XfKind, string>;    // 「移动 / 缩放 / 旋转 / 斜切 / 枢轴」（历史 label 用）
 
-interface XfParams {  // 一次变换的全部参数（内容局部下标空间）
+interface XfParams {  // 一次变换的全部参数（内容外框坐标）
   pivot: Pt; angle: number; sx: number; sy: number;
   skewX?: number; skewY?: number; shift?: Pt;
-  pivot0?: Pt; pivot0Shift?: Pt; skewPivot?: Pt; skewAnchor?: AnchorId;
+  pivot0?: Pt; pivot0Shift?: Pt;
+  scalePivot?: Pt;       // 缩放的**不动点**（拖哪个抓手＝对面那个锚点，缺省＝枢轴）
+  skewPivot?: Pt;        // 斜切的**基准点**（不动的那条线所在的点，见下）
+  skewAnchor?: Pt;       // `skewPivot` 的旧别名（等价，保留兼容）
 }
-affineFrom(p: XfParams): Mat3;             // S（绕枢轴缩放）→ K（斜切）→ R（旋转），再叠加 shift
+affineFrom(p: XfParams): Mat3;             // S（绕 scalePivot 缩放）→ K（绕 skewPivot 斜切）→ R（绕枢轴旋转），再叠加 shift
 linearOf(p): [number, number, number, number];
-pivotComp(p): Pt;                          // 枢轴挪动时的平移补偿（画面逐字节不动）
+pivotComp(p): Pt;                          // 枢轴挪动时的平移补偿（画面逐字节不动；数值精确，见下）
 
 solveScale(from, to, anchor, axis, keepAspect?, gridSnap?): { sx, sy };
 solveRotate(from, to, snapClean?): { angle };
-solveSkew(id, from, to, fixed): { tan };   // 返回的 tan 直接写进 skewX / skewY
-skewBaseline(id, box, pivot): number;      // 斜切的基准线（枢轴那条线）
-skewPivotOf(id, box, pivot): Pt;
+solveSkew(id, from, to, span, angle?): { tan };   // 返回的 tan 直接写进 skewX / skewY
+skewBaseline(box, id): Pt;                 // 斜切的**不动线**＝拖的那条边的**对面**中点
+skewPivotOf(id, fixed): Pt;                // 不动线 → 剪切原点（水平剪切看 y、竖直剪切看 x）
 
 const SCALE_MIN = 0.02, SCALE_MAX = 40;    // 极限缩放（按绝对值钳，符号保留＝允许翻转）
 const TAN_SKEW_LIMIT = Math.tan((85 * Math.PI) / 180);
 ```
 
-`affineFrom()` 的线性部分 `L = R · K · S`，平移 `t = c - L·c + shift + pivot0Shift`（枢轴不动）。
-斜切的 `dx += dy * tan(skew)` 按 Aseprite：**枢轴所在那条线是不动的基准线**，所以拖边中点时
-被拖的边与对面那条边各反着走一半。
+`affineFrom()` 的线性部分 `L = R · K · S`，平移
+`t = c + R·(sk − c + K·(sa − sk)) − L·sa + shift + pivot0Shift`
+（`c` = 枢轴、`sa` = `scalePivot`、`sk` = `skewPivot`；三者重合时退化成 `t = c − L·c`，与旧行为逐字节相同）。
+注意 `K·(sa − sk)` 里的 `K` 是**斜切本身的**线性部分 `[[1, kx], [ky, 1]]`，不是合成后的 `K·S` ——
+用错这一项，缩放的不动点会被整段吃掉（表现就是「拖一个抓手，对面的抓手也跟着跑」）。
+
+`pivotComp()` 是**数值精确**的补偿：把同一组参数按「枢轴在 `pivot0`」与「枢轴在当前位置」各组装一次矩阵，
+两者只差一个平移（线性部分与枢轴无关），把这个差补回 `pivot0Shift` 即可 —— 不管缩放 / 斜切的不动点
+是不是枢轴都成立。视图侧改枢轴走的是增量版本（`View.pivotKeepPicture()`），可以反复调用。
+
+**缩放的不动点＝被拖抓手对面那个锚点**（`scaleAnchor()`）：拖右下角时左上角钉住不动、
+被拖的那条边跟手（`solveScale` 的 `anchor` 参数与矩阵的 `scalePivot` 必须是同一个点）。
+
+**斜切的基准线＝被拖那条边的对面**（`skewBaseline()`，Aseprite 的行为）：
+拖上边中点时下边一动不动、上边**整条跟着手指 1:1 平移**（`span` 传框的整高 / 整宽）。
+早先的写法把基准线放在枢轴那条线上，被拖的边只走一半、对面那条边反向走一半 ——
+手指走了 40px 边只走 20px，抓手看着「不跟手」，是这个 bug 的直接表现。
+`angle`（可选）＝当前框的旋转角，拖动量按**框自身的轴**量（框转过角度之后也跟手）。
 
 ### 10b.3 枢轴、干净角、像素精确通道
 
@@ -603,13 +634,13 @@ pivotInBox(box, p): boolean;
 const CLEAN_ANGLES_DEG: number[];          // 0 / 26.565 / 45 / 63.435 / 90 / 116.565 / 135 / 161.565 / 180 + 负半轴
 snapCleanAngle(rad): number;               // 吸附到上表（旋转吸附用；不是 15° 的倍数）
 normAngle(rad): number;                    // 归一到 (-π, π]
-isRightAngle(rad): boolean; rightAngleSteps(rad): number;   // 90° 的倍数 → 可走精确通道
+isRightAngle(rad): boolean; rightAngleSteps(rad): number;   // 90° 的倍数
 
 isIntegerShift(dx, dy): boolean;
-isExactTransform(p: XfParams): boolean;    // 整数平移 / 90° 倍数 / ±1 翻转 → 可以逐像素搬运
+isExactTransform(p: XfParams): boolean;    // 整数平移 / 90° 倍数 / ±1 翻转 → **可以**逐像素搬运
 exactMove(content: { w; h; data: Uint8ClampedArray }, steps, flipX?, flipY?): ExactMove;
 rotatedSize(w, h, steps): { w, h };
-transformedBox(m, w, h): XfBox;            // 变换后的包围盒（**目标空间**，与画布下标差一个 st.ox/oy）
+transformedBox(m, w, h): XfBox;            // 变换后**外框**的包围盒（`floor..ceil`，目标空间；离画布下标差一个 st.ox/oy）
 outerKindOf(id): XfKind;                   // 锚点在外圈上的语义：角＝rotate、边中点＝skew（内圈恒为 scale）
 // 抓手布局见 §10b.1（贴着框的固定图标：缩放 6px / 旋转 30px / 斜切 30px，小选区收窄到 20px）
 distToSegment(p, a, b): number;
@@ -620,6 +651,12 @@ insideFrame(frame: ScreenFrame, pt): boolean;
 **为什么角度吸附不用 15°**：像素画只有「直角」和「2:1 / 1:2 斜率」这些角度转完还在格点上
 （`atan(1/2) = 26.565°`、`atan(2) = 63.435°`），15° 的倍数转完必然要重采样、像素就糊了。
 
+**像素精确通道只给纯整数平移用**（`View.xfExactOf()`）：`isExactTransform()` 表示「这个变换本身
+是逐像素搬运」，但 `exactMove()` 是「把 `w×h` 的块整体搬到 `(dx,dy)`」—— 90° 旋转会把宽高换过来、
+块心跟着挪半格，只有枢轴正好在内容中心时才等价于绕枢轴转。早先的判据只看了「无斜切 + 倍率 1」，
+**漏判角度**，于是「原地转 90°」也走进这条路：框转了、里面的像素一格没动（用户报的「变形不正确」）。
+现在转过角度的一律交给最近邻重采样 —— 90° 倍数旋转在格点上是一一对应的，重采样本身就无损。
+
 ### 10b.4 列驱动状态机（view 侧的实现形状）
 
 `View` 里的变换会话**不是**一堆并列的 `if`，而是一张「抓手 → 解算」的表：`xfStart()` 记下
@@ -628,11 +665,27 @@ insideFrame(frame: ScreenFrame, pt): boolean;
 
 - **一次会话一条 undo**：`endXf()` 只在「完成 / 还原 / 切工具 / 切帧 / 换文档」时落历史；
 - **换抓手不重开会话**：`xfStart()` 遇到活着的会话只换 `xfDrag`，枢轴 / 缩放 / 角度都保留；
-- **解算每次从会话起点重算**（不做增量累加），所以来回拖不会漂。
+- **解算每次从会话起点重算**（不做增量累加），所以来回拖不会漂；
+- **累加基准＝按下那一刻**：`xfDrag.tp0` 记下按下时的 `{sx, sy, angle, skewX, skewY}`，
+  三个分支的解算结果都相对它累加 —— 同一次拖拽里每个 `pointermove` 都从 `tp0` 重算
+  （挪几下不会连乘），松手后再拖第二次才继续累加（不会被第二次拖拽覆盖回原样）。
+  早先直接赋值，等于「同一次会话里拖第二次＝把上一次的结果抹掉」。
 
-缩放分支的口径值得单独记一笔：`from` / `to` 都用「指针在**内容局部下标**里的位置」，且
-`to` 是**指针当前位置**而不是「抓手起点 + 位移」——否则斜着拖时某一轴会一直差半格
-（被解成 0 再钳到 `0.02`，表现就是「缩放没反应」）。
+三个分支的参考系必须与**画出来的东西**完全一致（这是最容易错的地方，逐条记下来）：
+
+- **旋转**：`from` / `to` 都相对 `View.xfPivotScreen()` 量 —— 也就是**画出来 / 命中用的那个枢轴屏幕位**。
+  早先这里写的是 `(pivot + 0.5)·z + ox`，漏了 `st.ox·z`：选区不在画布原点时旋转中心整体偏
+  `st.ox·z`（选区在 (100,100)、zoom 8 时偏 800px），拖着抓手转 90° 只转出 37°，
+  框和全部抓手跟着甩到别处 —— 用户报的「锚点乱飞 / 变形不正确」就是这个。
+- **缩放**：`from` / `to` 都用「指针在**内容外框坐标**里的位置」，且 `to` 是**指针当前位置**而不是
+  「抓手起点 + 位移」——否则斜着拖时某一轴会一直差半格（被解成 0 再钳到 `0.02`，表现就是「缩放没反应」）。
+  框转过角度时先把两个位置绕不动点转回框自身的轴上，再交给 `solveScale()`。
+- **斜切**：基准线＝对面那条边（`skewBaseline()`），拖动量按当前框角投影（`solveSkew` 的 `angle`），
+  所以被拖的边**跟着手指 1:1 走**、对面那条边一动不动。
+
+**变形期间不自动平移**（`prefs.autoPan` 对旋转 / 缩放 / 斜切 / 枢轴 / 变形控制点的拖动一律不生效）：
+视口一动，解算用的参考点（枢轴屏幕位、拖动起点）就跟着动，角度会跳、抓手会从手指下面滑走。
+笔迹与普通选区拖动仍然照旧自动平移。
 
 ---
 
@@ -1685,6 +1738,24 @@ PC 专属的 Blender 式饼菜单：浮动球存储区边的**装备槽**里装�
 UI 侧：`View.beginWarp("quad"\|"mesh")` 进入变形（没有浮动选区时自动抓一份），画布上出现
 可拖的控制点（四角 / 3×3 网格），拖动时每帧从手势起点那份原图重算预览（不累积误差）；
 `View.finishWarp(false)` 落下（一条历史，标签 `sel.warp`）、`finishWarp(true)` 还原。
+
+**控制点的抓取与绘制**（这一轮的修正，逐条对应真机反馈）：
+
+- **抓住不跳位**：按下时记下「手指 ↔ 控制点」的偏移（`xf.grab`，下标空间），拖动时用
+  `snapWarpCoord(指针位置 + 偏移)` —— 早先直接把手柄设成**手指位置**，按在命中半径（22px）
+  内任何一处，那个点都会**瞬间跳到手指下**（小选区上 9 个点只隔十几像素，看起来就是
+  「点乱飞、抓错点」）。偏移是连续量，吸附在最后一步做，所以两种吸附粒度都仍然落在
+  整数 / `x.5` 上。
+- **拖动期间不自动平移**（见 §10b.4）：视口一动，手指与被抓点之间就多出一段位移，
+  点会从手指下面滑走。
+- **从变换会话切过来时先烘焙**：已经在「移动 / 缩放 / 旋转 / 斜切」里改了画面时点「网格变形」，
+  先把当前的浮动结果（`buf` + `cells` 的包围盒）**烘焙成新的浮动内容**（`st.content` / `st.ox` /
+  `st.oy` 就地更新，`st.before` 仍是最初那份、撤销照旧），控制点按**当前**位置重新分布 ——
+  否则网格点会落在**变换前**那块内容上，一按就预览回原位（内容「跳回去」）。
+- **画在浮动预览之上**：`drawOverlay()` 里浮动内容（`selDrag` 的移动副本、`xf` 的变换 / 变形预览）
+  先画，**选区框 / 16 个抓手 / 变形控制点与网格线后画**（见 `docs/UI.md` 的覆盖层顺序）——
+  早先控制点画在预览之前，一拖动就被自己变出来的像素盖住，看不见抓手。
+
 入口在**选区球**：手机端分三页 —— 常用（全选 / 反选 / 清空 / 填充 / 复制 / 剪切 / 粘贴 / 粘为新图层 / 粘为新画布）
 → 变形（`sel-more`：斜切 / 透视、网格变形、完成、还原、**半像素吸附开关**、裁切到选区）
 → 工具（`sel-more-tools`：翻转 / 扩展 / 收缩 / 描边 / 删除）；每页最多 8 项
@@ -1702,6 +1773,9 @@ PC 模式一次铺开三页的并集（去掉「返回 / 更多」这两个纯�
   里凡是走 `rotate/scale` 的分支都必须先排除 warp，否则指针一动就会被当成缩放。
 - **进入变形不改图层**：`floatCut` 推迟到第一次真正拖动（`warpMove` → `applyWarp`），
   因此「进去看一眼再退出」不会留下被清空的图层，也不产生历史。
+- **会话可以「升级」成变形**：`beginWarp()` 遇到活着的变换会话（`mode !== "warp"`）会复用同一个
+  `xf`（`li` / `fi` / `st.before` / `st.mask` 都不变，仍然只落一条历史），但会先把当前预览**烘焙**
+  进 `st`（见上「从变换会话切过来时先烘焙」）。
 - 移动过（`xf.moved`）但没有浮动结果（四角被拖成一条线 / 内容全拖出画布）时提交＝把原像素还回去。
 - 宽或高只有 1 像素的选区被 `beginWarp` 拒绝（`View.lastWarpError = "tooThin"`；没有选区是
   `"noSel"`、图层锁定是 `"locked"`），UI 据此给不同提示。
