@@ -26,8 +26,14 @@ import { Dialog, Row, RowActions, NumberField, ColorField, ChipGroup, Segmented,
 import { SHORTCUT_SHEET } from "../app/shortcuts";
 import { REBINDABLE, chordForAction, chordLabel, chordOf, isOverridden, overrides } from "../app/keymap";
 import { CBAR_ACTIONS, LAYOUT_KEYS, ORB_IDS, TOPBAR_ACTIONS, fullOrder } from "../app/uibar";
+import { GROUP_TOLERANCE, type ColourAnalysis, type ColourEntry, type ColourGroup } from "../engine/color-analysis";
 
-export type ModalId = "menu" | "changelog" | "newdoc" | "newproject" | "export" | "adjust" | "settings" | "frame" | "framePrev" | "size" | "sheet" | "history" | "canvasRef" | "shortcuts" | "customise" | "actions" | "patterns" | null;
+/** 打开颜色分析面板：App 侧监听这个事件切到 ColorAnalysisModal，
+ *  同时把调色板面板收起来（面板与弹窗是两套状态，只有 App 能同时改） */
+export function openColorAnalysis(): void {
+  window.dispatchEvent(new Event("pc-color-analysis"));
+}
+export type ModalId = "menu" | "changelog" | "newdoc" | "newproject" | "export" | "adjust" | "settings" | "frame" | "framePrev" | "size" | "sheet" | "history" | "canvasRef" | "shortcuts" | "customise" | "actions" | "patterns" | "coloranalysis" | null;
 export type SizeMode = "canvas" | "sprite";
 export type SheetData = { w: number; h: number; px: Uint8ClampedArray; name: string };
 
@@ -135,6 +141,8 @@ export function PalettePanel({ t, onClose }: { t: ReturnType<typeof makeT>; onCl
           )}
           <Btn icon="i-pal-from-canvas" label={t("palFromCanvas")} title={t("palFromCanvasHint")}
             onClick={() => SESSION.paletteFromCanvas()} guide="pal-from-canvas" />
+          <Btn icon="i-search" label={t("ca.open")} title={t("ca.hint")}
+            onClick={openColorAnalysis} guide="pal-color-analysis" />
         </RowActions>
         <div data-guide="pal-ops">
           <TabBar<"palette" | "doc" | "recent">
@@ -402,6 +410,7 @@ export function MenuModal({ t, snap, onClose, onOpen, onSheet, onRef, onGuide }:
           {go("export")(t("exportCanvas"), "i-export", "menu-export")}
           {act(t("open"), "i-open", () => void openFlow("new"), "menu-open")}
           <Btn label={t("import")} icon="i-import" className="menuitem" guide="menu-import" onClick={() => setSub("import")} />
+          {go("coloranalysis")(t("ca.open"), "i-search", "menu-color-analysis")}
           {go("settings")(t("settings"), "i-gear", "menu-settings")}
           {go("shortcuts")(t("shortcutHelp"), "i-keys", "menu-shortcuts")}
           {go("customise")(t("customise"), "i-grid", "menu-customise")}
@@ -1546,5 +1555,299 @@ export function FramePreviewModal({ t, onClose }: { t: ReturnType<typeof makeT>;
         ))}
       </Dialog>
     </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// 高级颜色分析器：统计表 + 分布直方图 + 近似色合并 + 颜色替换。
+//
+// 逻辑全在 engine/color-analysis.ts 与 Session 的 analyseCanvas / replaceColour /
+// selectColourPixels / mergeColourGroup / exportColourStatsCsv 里，这里只负责
+// 呈现与交互（双端可用：手机竖屏一行四列，直方图竖着放，表格自己滚动）。
+// ---------------------------------------------------------------------------
+
+/** 面板里的统计范围＝Session 的分析范围（replaceColour 同名同义） */
+type CaScope = "canvas" | "layer" | "selection" | "allFrames";
+type CaSort = "count" | "hue" | "light";
+
+const CLR_TOL_MAX = 255;
+
+const sameRgba = (a: [number, number, number, number], b: [number, number, number, number]): boolean =>
+  a[0] === b[0] && a[1] === b[1] && a[2] === b[2] && a[3] === b[3];
+
+/** 一行统计：色块（诚实显示不透明度）+ 十六进制 + 数量/占比 + 调色板关系 + 三个动作 */
+function ColourRow({ e, total, onPick, onReplace, onSelect, t }: {
+  e: ColourEntry;
+  total: number;
+  onPick: () => void;
+  onReplace: () => void;
+  onSelect: () => void;
+  t: ReturnType<typeof makeT>;
+}) {
+  const hex = rgbaToHex(e.rgba);
+  const pct = total ? (e.count / total * 100).toFixed(e.count / total < 0.001 ? 3 : 1) : "0";
+  const pal = e.palette.exact
+    ? t("ca.inPalette")
+    : e.nearPalette && e.palette.nearest
+      ? t("ca.nearPalette") + " " + rgbaToHex(e.palette.nearest).slice(0, 7)
+      : e.palette.nearest
+        ? t("ca.nearestHint") + rgbaToHex(e.palette.nearest).slice(0, 7) + " (" + Math.round(e.palette.distance) + ")"
+        : t("ca.offPalette");
+  return (
+    <div className="ca-row">
+      <button type="button" className="ca-pick" title={t("ca.setColor")} onClick={onPick}>
+        <span className="ca-chip" style={{ background: chipCss(e.rgba) }} />
+        <span className="ca-hex">{hex}</span>
+        <span className="ca-num">{e.count}<i>{pct}%</i></span>
+        <span className={"ca-pal" + (e.palette.exact ? " on" : e.nearPalette ? " near" : "")}>{pal}</span>
+      </button>
+      <button type="button" className="btn small ca-act" title={t("ca.replace")} onClick={onReplace}><Icon id="i-swap" size={15} /></button>
+      <button type="button" className="btn small ca-act" title={t("ca.selPixels")} onClick={onSelect}><Icon id="i-select" size={15} /></button>
+    </div>
+  );
+}
+
+/** 一条分布直方图：标签 + 细条形（主题令牌着色，不硬编码颜色） */
+function HistoRow({ label, counts, max, hint }: { label: string; counts: number[]; max: number; hint?: string }) {
+  return (
+    <div className="ca-hist">
+      <span className="ca-hlabel">{label}</span>
+      <div className="ca-hbars">
+        {counts.map((n, i) => (
+          <span key={i} className="ca-hcell">
+            <i style={{ height: max > 0 ? Math.max(n > 0 ? 2 : 0, Math.round(n / max * 100)) + "%" : "0" }} />
+          </span>
+        ))}
+      </div>
+      {hint ? <span className="ca-hhint">{hint}</span> : null}
+    </div>
+  );
+}
+
+export function ColorAnalysisModal({ t, onClose }: { t: ReturnType<typeof makeT>; onClose: () => void }) {
+  const snap = useSession();                 // 画布/选区/调色板变了要重算
+  const [scope, setScope] = useState<CaScope>("canvas");
+  const [sort, setSort] = useState<CaSort>("count");
+  const [ana, setAna] = useState<ColourAnalysis | null>(null);
+  const [groups, setGroups] = useState<ColourGroup[]>([]);
+  const [groupTol, setGroupTol] = useState(GROUP_TOLERANCE);
+  const [from, setFrom] = useState<[number, number, number, number]>(
+    () => [SESSION.fg[0], SESSION.fg[1], SESSION.fg[2], SESSION.fg[3]]);
+  const [to, setTo] = useState<[number, number, number, number]>(() => [
+    Math.min(255, 255 - SESSION.fg[0]), Math.min(255, 255 - SESSION.fg[1]), Math.min(255, 255 - SESSION.fg[2]), 255,
+  ]);
+  const [tol, setTol] = useState(0);
+  const [opaqueOnly, setOpaqueOnly] = useState(true);
+  const [keepAlpha, setKeepAlpha] = useState(true);
+  const [snapPal, setSnapPal] = useState(true)     // 默认跟随索引色模式：模型里说的"吸附"就是它
+  const [inPal, setInPal] = useState<Uint8ClampedArray | null>(null);
+
+  // 重算统计：读当前范围像素 → 引擎统计 →（可选）近似色分组
+  const run = (sc: CaScope, so: CaSort, gt: number, wantGroups: boolean): void => {
+    const r = SESSION.analyseCanvas(sc, so);
+    setAna(r);
+    setGroups(wantGroups ? SESSION.colourGroups(r, gt) : []);
+    // 调色板"用到了哪些"的小方块用色板自身坐标，避免同一个颜色出现两次
+    const pal = SESSION.doc.palette;
+    if (!pal.length) { setInPal(null); return; }
+    const hit = new Uint8ClampedArray(pal.length);
+    for (const e of r.entries) {
+      for (let i = 0; i < pal.length; i++) {
+        if (pal[i][0] === e.rgba[0] && pal[i][1] === e.rgba[1] && pal[i][2] === e.rgba[2]) hit[i] = 1;
+      }
+    }
+    setInPal(hit);
+  };
+
+  // 打开面板先算一次；换图层/换帧/选区变化/换范围/换排序都会重算
+  useEffect(() => {
+    run(scope, sort, groupTol, true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [snap.layerIdx, snap.frameIdx, snap.selActive, snap.canUndo, snap.canRedo, scope, sort]);
+
+  const runScope = (): CaScope => scope;
+  // 选区本身没有"在选区里再选一次"的说法：按颜色选像素时选区范围＝当前图层
+  const selScope = (): "canvas" | "layer" | "allFrames" => (scope === "selection" ? "layer" : scope);
+
+  const pickRow = (e: ColourEntry): void => {
+    SESSION.setColor([e.rgba[0], e.rgba[1], e.rgba[2], 255]);
+    setFrom([e.rgba[0], e.rgba[1], e.rgba[2], e.rgba[3]]);
+  };
+  const replaceRow = (e: ColourEntry): void => {
+    setFrom([e.rgba[0], e.rgba[1], e.rgba[2], e.rgba[3]]);
+    bridge.toast(t("ca.from") + " " + rgbaToHex(e.rgba));
+  };
+  const selectRow = (e: ColourEntry): void => {
+    const n = SESSION.selectColourPixels(e.rgba, tol, selScope());
+    bridge.toast(n ? t("ca.picked") + n : t("ca.selNone"));
+    if (n) run(scope, sort, groupTol, true);   // 选区变了：统计跟着刷新
+  };
+  const doReplace = (): void => {
+    const n = SESSION.replaceColour(from, to, { scope: runScope(), tolerance: tol, opaqueOnly, keepAlpha });
+    bridge.toast(n ? t("ca.done") + n : t("ca.doneNone"));
+    run(scope, sort, groupTol, true);
+  };
+  const mergeGroup = (g: ColourGroup): void => {
+    const members = g.members.filter((m) => !sameRgba(m.rgba, g.rep)).map((m) => m.rgba);
+    const n = SESSION.mergeColourGroup(g.rep, members, scope);
+    bridge.toast(n ? t("ca.merged") + n : t("ca.mergeNone"));
+    run(scope, sort, groupTol, true);
+  };
+
+  const opa = ana ? ana.opaquePixels + ana.semiPixels : 0;
+  const hud = ana ? [
+    { k: "ca.total", v: ana.totalPixels },
+    { k: "ca.opaque", v: ana.opaquePixels },
+    { k: "ca.semi", v: ana.semiPixels },
+    { k: "ca.clear", v: ana.clearPixels },
+    { k: "ca.colours", v: ana.colourCount },
+  ] : [];
+  const hist = ana ? [
+    { label: t("ca.histHue"), h: ana.histogram.hue },
+    { label: t("ca.histSat"), h: ana.histogram.sat },
+    { label: t("ca.histLight"), h: ana.histogram.light },
+  ] : [];
+
+  return (
+    <Dialog title={t("ca.title")} onClose={onClose} className="dlg-ca" bodyClass="col"
+      guide="dlg-color-analysis"
+      top={<div className="row-note" data-guide="ca-hint">{t("ca.hint")}</div>}
+      extra={<div className="row-note ca-note">{t("ca.scopeNote")}</div>}
+      footer={<>
+        <Btn icon="i-save" label={t("ca.export")} onClick={() => { if (ana) SESSION.exportColourStatsCsv(ana, t("ca." + scope)); }} />
+        <Btn label={t("close")} className="primary" onClick={onClose} />
+      </>}>
+      {/* 1) 范围 + 排序 + 刷新 */}
+      <ChipGroup<CaScope> value={scope} onChange={setScope} className="ca-scope"
+        options={[
+          { id: "canvas", label: t("ca.scopeCanvas"), guide: "ca-scope-canvas" },
+          { id: "layer", label: t("ca.scopeLayer"), guide: "ca-scope-layer" },
+          { id: "selection", label: t("ca.scopeSelection"), guide: "ca-scope-selection" },
+          { id: "allFrames", label: t("ca.scopeAllFrames"), guide: "ca-scope-frames" },
+        ]} />
+      <RowActions data-guide="ca-ops">
+        <Btn icon="i-dedupe" label={t("ca.refresh")} onClick={() => run(scope, sort, groupTol, true)} />
+        <Btn label={t("ca.sort") + " · " + t(sort === "count" ? "ca.sortCount" : sort === "hue" ? "ca.sortHue" : "ca.sortLight")}
+          title={t("ca.sort")} onClick={() => setSort(sort === "count" ? "hue" : sort === "hue" ? "light" : "count")} />
+      </RowActions>
+
+      {/* 2) 汇总 + 统计表 */}
+      {ana && (
+        <div className="ca-hud">
+          {hud.map((x) => (
+            <span key={x.k} className="ca-stat"><b>{x.v}</b><i>{t(x.k)}</i></span>
+          ))}
+        </div>
+      )}
+      {!ana || !ana.entries.length
+        ? <div className="row-note">{ana && scope === "selection" && !SESSION.doc.sel?.hasAny() ? t("ca.emptySel") : t("ca.empty")}</div>
+        : (
+          <div className="ca-table" data-guide="ca-table">
+            {ana.entries.map((e) => (
+              <ColourRow key={rgbaToHex(e.rgba)} e={e} total={ana.totalPixels} t={t}
+                onPick={() => pickRow(e)} onReplace={() => replaceRow(e)} onSelect={() => selectRow(e)} />
+            ))}
+          </div>
+        )}
+
+      {/* 3) 分布直方图 */}
+      {ana && ana.entries.length > 0 && (
+        <>
+          <div className="rowlabel">{t("ca.histTitle")}</div>
+          <div className="ca-hists" data-guide="ca-hist">
+            {hist.map((x) => <HistoRow key={x.label} label={x.label} counts={x.h.counts} max={x.h.max} />)}
+            {ana.hueNeutral > 0 && opa > 0 && (
+              <div className="ca-hist"><span className="ca-hlabel" /><span className="ca-hhint">
+                {t("ca.histNeutral")} {Math.round(ana.hueNeutral / opa * 100)}%
+              </span></div>
+            )}
+          </div>
+        </>
+      )}
+
+      {/* 4) 调色板里没用到的颜色 */}
+      {ana && SESSION.doc.palette.length > 0 && (
+        <Row label={t("ca.unused")}>
+          {ana.unusedPalette.length === 0
+            ? <div className="row-note">{t("ca.unusedNone")}</div>
+            : <div className="ca-swline">{ana.unusedPalette.map((c, i) => (
+              <button key={i} type="button" className="ca-unused" style={{ background: chipCss(c) }} title={rgbaToHex(c)}
+                onClick={() => { SESSION.setColor([c[0], c[1], c[2], 255]); setTo([c[0], c[1], c[2], 255]); }} />
+            ))}</div>}
+          {inPal && (
+            <div className="ca-swline small">{SESSION.doc.palette.map((c, i) => (
+              <span key={i} className="ca-mini" style={{ background: chipCss(c) }} title={rgbaToHex(c) + (inPal[i] ? " · " + t("ca.inPaletteHint") : "")} />
+            ))}</div>
+          )}
+        </Row>
+      )}
+
+      {/* 5) 近似色分组（可能重复的颜色，一键合并） */}
+      <Row label={t("ca.groups")} hint={t("ca.groupTol")}>
+        <div className="ce-row">
+          <ScrubNum value={groupTol} min={0} max={255} step={1} title={t("ca.groupTol")} padTitle={t("calcHint")}
+            onChange={(v) => { const n = Math.max(0, Math.min(255, parseInt(v || "0", 10) || 0)); setGroupTol(n); run(scope, sort, n, true); }} />
+          <span className="grow" />
+          <span className="row-note">{groups.length}</span>
+        </div>
+        {groups.length === 0
+          ? <div className="row-note">{t("ca.groupNone")}</div>
+          : groups.map((g, gi) => (
+            <div className="ca-group" key={"g" + gi}>
+              <button type="button" className="ca-merge" title={t("ca.groupMerge")} onClick={() => mergeGroup(g)}>
+                <span className="ca-chip big" style={{ background: chipCss(g.rep) }} />
+                <span className="ca-gtext">{rgbaToHex(g.rep)} · {g.members.length} {t("ca.groupCount")} · {g.pixels} {t("ca.groupPixels")} · {t("ca.groupLead")} {g.spread.toFixed(1)}</span>
+                <Icon id="i-dedupe" size={16} />
+              </button>
+              <div className="ca-swline">
+                {g.members.map((m, mi) => (
+                  <button key={mi} type="button" className="ca-mini" style={{ background: chipCss(m.rgba) }}
+                    title={rgbaToHex(m.rgba) + " × " + m.count}
+                    onClick={() => { setFrom([m.rgba[0], m.rgba[1], m.rgba[2], m.rgba[3]]); }} />
+                ))}
+              </div>
+            </div>
+          ))}
+      </Row>
+
+      {/* 6) 颜色替换 */}
+      <div className="rowlabel">{t("ca.replace")}</div>
+      <div className="ca-rep" data-guide="ca-replace">
+        <div className="ca-rep-row">
+          <ColorField label={t("ca.from")} value={rgbaToHex(from).slice(0, 7)} onChange={(v) => setFrom(hexToRgba(v))} />
+          <span className="ca-chip" style={{ background: chipCss(from) }} />
+          <button type="button" className="btn small" title={t("ca.toPick")} onClick={() => setFrom([SESSION.color[0], SESSION.color[1], SESSION.color[2], SESSION.color[3]])}>
+            <Icon id="i-picker" size={15} />
+          </button>
+        </div>
+        <div className="ca-rep-row">
+          <ColorField label={t("ca.to")} value={rgbaToHex(to).slice(0, 7)} onChange={(v) => setTo(hexToRgba(v))} />
+          <span className="ca-chip" style={{ background: chipCss(to) }} />
+          <button type="button" className="btn small" title={t("ca.toPick")} onClick={() => setTo([SESSION.color[0], SESSION.color[1], SESSION.color[2], SESSION.color[3]])}>
+            <Icon id="i-picker" size={15} />
+          </button>
+        </div>
+        <div className="ce-row">
+          <span className="ca-flabel">{t("ca.tol")}</span>
+          <ScrubNum value={tol} min={0} max={CLR_TOL_MAX} step={1} title={t("ca.tolHint")} padTitle={t("calcHint")}
+            onChange={(v) => setTol(Math.max(0, Math.min(CLR_TOL_MAX, parseInt(v || "0", 10) || 0)))} />
+          <span className="row-note">{t("ca.tolHint")}</span>
+        </div>
+        <div className="ca-opts">
+          <label className="ca-opt"><Switch checked={opaqueOnly} onChange={setOpaqueOnly} label={t("ca.opaqueOnly")} /><span>{t("ca.opaqueOnly")}</span></label>
+          <label className="ca-opt"><Switch checked={keepAlpha} onChange={setKeepAlpha} label={t("ca.keepAlpha")} /><span>{t("ca.keepAlpha")}</span></label>
+          <label className="ca-opt"><Switch checked={snapPal} onChange={setSnapPal} label={t("ca.snapPalette")} /><span>{t("ca.snapPalette")}</span></label>
+        </div>
+        {!snapPal && SESSION.prefs.indexed && <div className="row-note warn">{t("indexedOn")}</div>}
+        <RowActions>
+          <Btn icon="i-swap" label={t("ca.run")} className="primary" onClick={doReplace} guide="ca-run" />
+          <Btn icon="i-select" label={t("ca.selPixels")} onClick={() => {
+            const n = SESSION.selectColourPixels(from, tol, selScope());
+            bridge.toast(n ? t("ca.picked") + n : t("ca.selNone"));
+            if (n) run(scope, sort, groupTol, true);
+          }} />
+        </RowActions>
+      </div>
+    </Dialog>
   );
 }

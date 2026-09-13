@@ -16,6 +16,7 @@
 6. [结构操作 `engine/ops.ts`](#6-结构操作)
 7. [撤销栈 `engine/history.ts`](#7-撤销栈)
 8. [颜色与调整](#8-颜色与调整)
+8b. [颜色分析 `engine/color-analysis.ts`](#8b-颜色分析)
 9. [工具注册表与笔迹 `tools/`](#9-工具注册表与笔迹)
 10. [选区与变换 `tools/select.ts`](#10-选区与变换)
 11. [应用层 `app/session.ts`](#11-应用层-session)
@@ -289,6 +290,68 @@ rgbToHsl(r, g, b): [number, number, number]
 hslToRgb(h, s, l): [number, number, number]
 adjustPixel(r, g, b, a, adj): [number, number, number]
 ```
+
+---
+
+## 8b. 颜色分析
+
+`src/engine/color-analysis.ts`
+
+高级颜色分析器的全部逻辑（纯函数、无 DOM、可单测）：统计、近似色分组、替换、
+按颜色选像素、多层压平。面板 `ui/modals.tsx` 的 `ColorAnalysisModal` 只做呈现。
+
+**距离口径（全文件唯一一个）**：RGB 空间的等权欧氏距离，比较时用平方值，
+容差按 `d = sqrt(dr²+dg²+db²) ≤ tol` 解释；`rgbDistanceSq` 内部再除以 3，
+所以**单通道差 v 阶 ≈ 距离 v**（与「魔棒容差 0–255」同一口径）。
+选它而不是 ΔE2000 的理由：`Session.paletteSnap` / `remapToPalette` 用的就是同一
+套平方 RGB 距离，分析与索引色吸附必须给出同一个"最近的板色"；像素级遍历
+（百万像素）也要便宜，L\*a\*b\* 换算贵一个数量级。
+
+```ts
+type ColourScope = "all" | "layer" | "selection"
+
+rgbDistanceSq(r0,g0,b0, r1,g1,b1): number     // (dr²+dg²+db²)/3
+withinTolerance(a: RGBA, b: RGBA, tol: number): boolean
+nearestPalette(r, g, b, palette): RGBA | null // 与 paletteSnap 同判据
+colourKey(c: RGBA): number                    // 32 位键（每个通道各 8 位）
+hueOf / saturationOf / lightnessOf(r,g,b): number
+bucketCount(requested?): number               // 12..24 且为 4 的倍数
+
+// 统计：数量降序（或色相/明度升序，平局按 RGBA 升序）
+analyzeColours(data, opts?: {
+  palette?: RGBA[], includeClear?: boolean,
+  sort?: "count" | "hue" | "light", buckets?: number,
+}): ColourAnalysis
+sortColourEntries(entries, sort): ColourEntry[]  // 只重排，不重算
+
+// 近似色分组：代表色 = 组内像素最多的颜色（并列取 RGBA 小的），
+// 只返回成员 ≥ 2 的组；阈值默认 GROUP_TOLERANCE = 12（约每通道 7 阶）
+groupSimilarColours(entries, tol?, maxGroups?): ColourGroup[]
+
+// 替换：容差 / 范围掩码 / 只换不透明像素 / 保留 alpha
+replaceColours(data, w, h, from, to, opts?: {
+  tolerance?: number, scope?: ColourScope,
+  inMask?: (x, y) => boolean, opaqueOnly?: boolean, keepAlpha?: boolean,
+}): { changed: number }
+selectByColour(mask, data, w, h, from, tol?, opaqueOnly?): number
+flattenLayers(w, h, layers: { data, opacity? }[]): Uint8ClampedArray
+colourStatsCsv(a: ColourAnalysis, opts?): string
+```
+
+`ColourAnalysis` 字段：
+
+| 字段 | 含义 |
+|---|---|
+| `entries` | 每种颜色：`rgba / count / ratio / ratioOfOpaque`，以及 `palette.exact`（完全同时含 alpha）、`palette.nearest`、`palette.distance`、`nearPalette`（距离 ≤ 12） |
+| `totalPixels / opaquePixels / semiPixels / clearPixels` | 总像素 / 不透明 / 半透明 / 全透明 |
+| `colourCount / opaqueColours / semiColours` | 用到的颜色数（不透明 + 半透明），全透明不算颜色（`includeClear` 可开） |
+| `unusedPalette / usedPaletteCount` | 调色板里没被用到的颜色（按"最近色归属"判定，所以**板色永远优先于更远的非板色**）|
+| `histogram { hue, sat, light }` | 各 12/16/20/24 桶的像素数 + `max`；色相只统计饱和度 ≥ 6% 的像素，灰阶计入 `hueNeutral` |
+| `entries[].ratio` | 占总像素、`ratioOfOpaque` 占不透明像素 |
+
+**已知边界（刻意不做的）**：`flattenLayers` 只按 source-over + 图层不透明度
+叠加，**不模拟混合模式**（正片叠底那套公式归渲染层 `compositor` 所有，不重写
+以免两处口径分叉）。所以「画布」范围的统计结果与开了混合模式的画面可能有差异。
 
 ---
 
@@ -581,6 +644,41 @@ paletteDedupe(): number        // 去重，返回删除数量
 paletteMerge(colors): number   // 合并并跳过已有颜色，返回新增数量
 paletteSort("hue" | "light")   // 排序（只改顺序）
 ```
+
+### 11.5b 颜色分析（Session）
+
+```ts
+// 口径：canvas = 当前帧所有可见图层；layer = 当前图层当前帧；
+//       selection = 只统计选区内像素（范围仍是整张画布）；allFrames = 所有帧，
+//       同一像素位置只算一次（先出现的帧优先，见下）
+analyseCanvas(scope: "canvas" | "layer" | "selection" | "allFrames", sort?): ColourAnalysis
+analysePixels(data, sort?): ColourAnalysis       // 对任意像素块直接统计
+colourGroups(a, tol): ColourGroup[]              // 近似色分组（只读）
+
+// 颜色替换：一条可撤销历史（pushPixels），返回被改动的像素数。
+// 索引色模式打开时目标色先按 paletteSnap 吸附；「画布」范围作用于当前帧的
+// **所有图层（含隐藏图层）**；「选区」范围没有选区时什么都不做（也不记历史）
+replaceColour(from, to, {
+  scope?: "canvas" | "layer" | "selection" | "allFrames",
+  tolerance?: number, opaqueOnly?: boolean, keepAlpha?: boolean,
+}): number
+
+// 近似色合并：组内成员各一条按键值精确替换（同一条历史）
+mergeColourGroup(rep, members: RGBA[], scope?): number
+
+// 把某颜色的像素写进当前选区（maskOp 一条历史），返回命中像素数；
+// 命中数 == 全文像素时按"全选＝没有选区"处理
+selectColourPixels(from, tol?, scope: "layer" | "canvas" | "allFrames"): number
+
+exportColourStatsCsv(a, scopeLabel): void        // 走 bridge.saveBytes
+nearestPaletteColour(c): RGBA | null
+```
+
+**「所有帧」的口径**：逐帧把可见图层压平，然后**同一像素位置先到先得**
+（第 0 帧先占，后续帧只补它没盖到的位置），不是 source-over 叠加 —— 叠加的话
+后一帧的不透明像素会把前一帧的颜色覆盖出去，统计会凭空少掉一大半。副作用是
+如果第 1 帧的每个像素都被第 0 帧占了，第 1 帧的颜色就不会进统计（面板的范围
+说明里写明了这一点）。
 
 ### 11.6 选区
 

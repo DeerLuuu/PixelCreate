@@ -9,6 +9,10 @@ import {
   sortColourEntries, withinTolerance,
 } from "../src/engine/color-analysis";
 import type { ColourAnalysis } from "../src/engine/color-analysis";
+
+declare const require: (m: string) => any;
+declare const __dirname: string;
+const fs = require("fs");
 import type { RGBA } from "../src/engine/types";
 import { Session } from "../src/app/session";
 import { Sel } from "../src/engine/doc";
@@ -621,4 +625,34 @@ export function testColorAnalysis(): void {
   testSessionAnalysis();
   testSessionReplaceAndSelect();
   testSessionDegenerate();
+  testColorAnalysisPanel();
+}
+
+// ------------------------------------------------------------ 面板接线（静态扫描）
+//
+// 没有 DOM，所以面板本身跑不起来；这里用静态扫描锁住三件容易漏的事：
+//   1. 弹窗真的被 App 渲染了、ModalId 真的加了（否则入口点了没反应）
+//   2. 两个入口（调色板面板的动作行 + 主菜单）都在
+//   3. 面板里的统计表 / 直方图 / 近似色合并 / 替换区都有 data-guide 锚点
+export function testColorAnalysisPanel(): void {
+  const uiDir = __dirname + "/../../../src/ui";
+  const read = (f: string): string => fs.readFileSync(uiDir + "/" + f, "utf8");
+  const app = read("App.tsx");
+  const modals = read("modals.tsx");
+
+  ok("ca.panel.modal-id", /"coloranalysis"/.test(modals), "ModalId 里没有 coloranalysis");
+  ok("ca.panel.keep-rendered", /modal === "coloranalysis"/.test(app), "App 没有渲染 ColorAnalysisModal");
+  ok("ca.panel.imported", /ColorAnalysisModal/.test(app));
+  ok("ca.panel.open-event-listener", /pc-color-analysis/.test(app), "App 没有监听打开事件");
+  ok("ca.panel.palette-entry", /guide="pal-color-analysis"/.test(modals), "调色板面板没有入口");
+  ok("ca.panel.menu-entry", /go\("coloranalysis"\)/.test(modals), "主菜单没有入口");
+  for (const a of ["ca-hint", "ca-scope-canvas", "ca-scope-layer", "ca-scope-selection", "ca-scope-frames", "ca-ops", "ca-table", "ca-hist", "ca-replace", "ca-run", "dlg-color-analysis"]) {
+    ok("ca.panel.anchor." + a, modals.indexOf(a) >= 0, "缺少锚点 " + a);
+  }
+  // 面板必须走 Session 的接口，不能自己重写一遍统计/替换
+  for (const api of ["analyseCanvas", "replaceColour", "selectColourPixels", "colourGroups", "mergeColourGroup", "exportColourStatsCsv"]) {
+    ok("ca.panel.uses." + api, modals.indexOf("SESSION." + api) >= 0, "面板没用 " + api);
+  }
+  // 面板不许自己写死颜色：色块一律走 chipCss（诚实显示不透明度）
+  ok("ca.panel.chipCss", modals.indexOf("chipCss(e.rgba)") >= 0 && modals.indexOf("chipCss(from)") >= 0);
 }

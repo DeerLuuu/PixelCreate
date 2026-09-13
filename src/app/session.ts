@@ -1,4 +1,4 @@
-import { Doc, type FrameTag } from "../engine/doc";
+import { Doc, Sel, type FrameTag } from "../engine/doc";
 import { Cel } from "../engine/cel";
 import { History, type HistoryDump, type HistoryDumpEntry } from "../engine/history";
 import { uid } from "../engine/types";
@@ -28,6 +28,10 @@ import {
 } from "./uibar";
 import { mirrorMaskInPlace } from "../engine/symmetry";
 import { adjustPixel, type HslAdj } from "../engine/adjust";
+import {
+  analyzeColours, colourStatsCsv, flattenLayers, groupSimilarColours, nearestPalette, replaceColours,
+  selectByColour, type ColourAnalysis, type ColourSort, type ReplaceOpts,
+} from "../engine/color-analysis";
 import { type LoopMode, nextLoopMode, nextPlayFrameIn, startPlayDir, startPlayFrameIn, windowOf } from "./playback";
 import { SETTINGS_BY_PATH, normalizeSetting, type SettingValue } from "./settings";
 import { snapToTargets, snapCandidates, snapGapRect, stackGap, tightenLegacyStack, type GapRect, type SnapTarget } from "./canvas-snap";
@@ -1933,6 +1937,189 @@ export class Session {
     if (this.palOrbMode === "doc") return this.docColors();
     if (this.palOrbMode === "recent") return this.recentColors;
     return this.doc.palette;
+  }
+
+  // ---------- 高级颜色分析（统计 / 近似色分组 / 颜色替换） ----------
+  /** 颜色分析口径（面板的「范围」选项都走这里）：
+   *   - `canvas`     当前帧的**所有可见图层**（不含背景色）—— 就是画布上看得见的颜色
+   *   - `layer`      当前图层 · 当前帧（一个 cel 的原始像素，含半透明）
+   *   - `selection`  当前图层 · 当前帧，只统计选区内的像素（没有选区 = 空）
+   *   - `allFrames`  所有帧的可见图层（动画每一帧都算；背景色只算一次，不计入）
+   *  混合模式不在统计口径里：分析按正常模式叠加（见 engine/color-analysis.ts）。
+   */
+  private analysisPixels(scope: "canvas" | "layer" | "selection" | "allFrames"): { data: Uint8ClampedArray; w: number; h: number } {
+    const doc = this.doc;
+    const w = doc.w, h = doc.h;
+    if (scope === "layer" || scope === "selection") {
+      const cel = doc.celAt(this.curLayer(), this.curFrame());
+      const data = cel ? new Uint8ClampedArray(cel.data) : new Uint8ClampedArray(w * h * 4);
+      if (scope === "selection") {
+        const sel = doc.sel;
+        if (sel) {
+          for (let p = 0; p < w * h && p < sel.mask.length; p++) {
+            if (sel.mask[p]) continue;
+            const i = p * 4;
+            data[i] = 0; data[i + 1] = 0; data[i + 2] = 0; data[i + 3] = 0;
+          }
+        } else data.fill(0); // 没有选区 = 空范围（面板会提示"先建选区"）
+      }
+      return { data, w, h };
+    }
+    const frames = scope === "allFrames" ? doc.frames.map((_, i) => i) : [this.curFrame()];
+    // 「所有帧」要把每一帧的像素**都算进来**，所以帧之间用"先到先得"覆盖，不能
+    // 用 source-over：直接 source-over 的话，后一帧的不透明像素会把前一帧覆盖出
+    // 去（统计结果凭空少一大半，而且看上去还很合理，极难发现）。
+    // 口径：同一像素被多帧用到时，取**最先出现**的那一帧的颜色；像素自身的半透明
+    // 通道照常保留（半透明像素算它的半透明色）。
+    const out = new Uint8ClampedArray(w * h * 4);
+    const filled = new Uint8Array(w * h);
+    for (const fi of frames) {
+      const layers = [];
+      for (let li = 0; li < doc.layers.length; li++) {
+        const L = doc.layers[li];
+        if (!L.visible) continue;
+        const cel = doc.celAt(li, fi);
+        if (!cel) continue;
+        layers.push({ data: cel.data, opacity: L.opacity });
+      }
+      const px = flattenLayers(w, h, layers);
+      for (let p = 0; p < filled.length; p++) {
+        if (filled[p]) continue;
+        const i = p * 4;
+        if (px[i + 3] <= 0) continue;
+        out[i] = px[i]; out[i + 1] = px[i + 1]; out[i + 2] = px[i + 2]; out[i + 3] = px[i + 3];
+        filled[p] = 1;
+      }
+    }
+    return { data: out, w, h };
+  }
+
+  /** 分析一块像素：颜色统计 + 调色板命中 + 直方图（纯引擎调用，无副作用） */
+  analysePixels(data: Uint8ClampedArray, sort: ColourSort = "count"): ColourAnalysis {
+    return analyzeColours(data, { palette: this.doc.palette, sort });
+  }
+
+  /** 按范围统计颜色（面板的「刷新」与所有操作后重算都走这里） */
+  analyseCanvas(scope: "canvas" | "layer" | "selection" | "allFrames" = "canvas", sort: ColourSort = "count"): ColourAnalysis {
+    return this.analysePixels(this.analysisPixels(scope).data, sort);
+  }
+
+  /** 近似色分组：用引擎的默认阈值把"肉眼难分"的颜色聚成组（只读） */
+  colourGroups(a: ColourAnalysis, tol: number): ReturnType<typeof groupSimilarColours> {
+    return groupSimilarColours(a.entries, tol);
+  }
+
+  /**
+   * 颜色替换：一条**可撤销**历史步（pushPixels 像素差分 + repaintAll）。
+   * 返回被改动的像素数。范围 / 容差 / alpha 规则见 engine/color-analysis.ts；
+   * 索引色模式打开时目标色按现有吸附逻辑（`paletteSnap`）先吸到调色板。
+   */
+  replaceColour(
+    from: RGBA,
+    to: RGBA,
+    opts: {
+      scope?: "canvas" | "layer" | "selection" | "allFrames";
+      tolerance?: number;
+      opaqueOnly?: boolean;
+      keepAlpha?: boolean;
+    } = {},
+  ): number {
+    const doc = this.doc;
+    const scope = opts.scope ?? "canvas";
+    const target = this.prefs.indexed ? this.paletteSnap(to) : to;
+    const tol = Math.max(0, Math.min(255, Math.round(opts.tolerance ?? 0)));
+    const ropts: ReplaceOpts = {
+      tolerance: tol,
+      scope: scope === "selection" ? "selection" : "all",
+      inMask: undefined,
+      opaqueOnly: opts.opaqueOnly !== false,
+      keepAlpha: opts.keepAlpha !== false,
+    };
+    const sel = doc.sel;
+    if (scope === "selection") {
+      if (!sel || !sel.hasAny()) return 0;
+      ropts.inMask = (x, y) => (sel.w === doc.w && sel.h === doc.h ? (sel.mask[y * doc.w + x] ? true : false) : sel.get(x, y) === 1);
+    }
+    const li = this.curLayer();
+    const fis = scope === "allFrames" ? doc.frames.map((_, i) => i) : [this.curFrame()];
+    // 替换会真的改像素，所以「画布」范围 = 当前帧的**所有图层**（含隐藏图层），
+    // 免得用户以为换完了、切一下可见性又冒出旧色；分析与选区则按**可见图层**
+    // 走（那才是画布上看得见的颜色）。两个口径都写在面板的范围说明里。
+    const lis = scope === "layer" || scope === "selection" ? [li] : doc.layers.map((_, i) => i);
+    const changes: Array<{ li: number; fi: number; before: Uint8ClampedArray; after: Uint8ClampedArray }> = [];
+    let changed = 0;
+    for (const fi of fis) {
+      for (const l of lis) {
+        const cel = doc.celAt(l, fi);
+        if (!cel) continue;
+        const before = new Uint8ClampedArray(cel.data);
+        const r = replaceColours(cel.data, doc.w, doc.h, from, target, ropts);
+        if (!r.changed) continue;
+        changed += r.changed;
+        changes.push({ li: l, fi, before, after: new Uint8ClampedArray(cel.data) });
+      }
+    }
+    if (changed) {
+      this.history.pushPixels("colour-replace", doc, changes);
+      this.repaintAll();
+      this.changed();
+    }
+    return changed;
+  }
+
+  /** 把某颜色的所有像素变成当前选区（一条可撤销历史；空命中不动任何东西） */
+  selectColourPixels(from: RGBA, tol = 0, scope: "layer" | "canvas" | "allFrames" = "layer"): number {
+    const t = Math.max(0, Math.min(255, Math.round(tol)));
+    let hit = 0;
+    this.maskOp("colour-select", () => {
+      const d = this.doc;
+      const sel = d.sel && d.sel.w === d.w && d.sel.h === d.h ? d.sel : new Sel(d.w, d.h);
+      sel.mask.fill(0);
+      if (scope === "layer") {
+        const cel = d.celAt(this.curLayer(), this.curFrame());
+        if (cel) hit += selectByColour(sel.mask, cel.data, d.w, d.h, from, t, false);
+      } else {
+        const fis = scope === "allFrames" ? d.frames.map((_, i) => i) : [this.curFrame()];
+        for (const fi of fis) {
+          for (let li = 0; li < d.layers.length; li++) {
+            const L = d.layers[li];
+            if (!L.visible) continue;
+            const cel = d.celAt(li, fi);
+            if (!cel) continue;
+            hit += selectByColour(sel.mask, cel.data, d.w, d.h, from, t, false);
+          }
+        }
+      }
+      // 全选 = 等于没有选区（省一次 tint 重算）
+      if (hit && hit === d.w * d.h) sel.clear();
+      d.sel = sel;
+      sel.bump();
+    });
+    return hit;
+  }
+
+  /** 把统计导出成 CSV（走现有 bridge.saveBytes 通道，不新造文件通道） */
+  exportColourStatsCsv(a: ColourAnalysis, scopeLabel: string): void {
+    const txt = colourStatsCsv(a, { scopeLabel, paletteSize: this.doc.palette.length });
+    const bytes = new TextEncoder().encode(txt);
+    bridge.saveBytes((this.doc.name || "colours") + "-colours.csv", "text/csv", bytes,
+      (ok) => toastFn(ok ? (this.prefs.lang === "en" ? "Colour stats exported" : "颜色统计已导出") : (this.prefs.lang === "en" ? "Save cancelled" : "已取消保存")));
+  }
+
+  /** 把一组近似色合并成代表色（组里除代表色外的每个颜色各一条按键值精确替换；
+   *  全部改动进**同一条**历史）。返回被改动的像素数。 */
+  mergeColourGroup(rep: RGBA, members: RGBA[], scope: "canvas" | "layer" | "selection" | "allFrames" = "canvas"): number {
+    let total = 0;
+    for (const m of members) {
+      if (m[0] === rep[0] && m[1] === rep[1] && m[2] === rep[2] && m[3] === rep[3]) continue;
+      total += this.replaceColour(m, rep, { scope, tolerance: 0, opaqueOnly: false, keepAlpha: true });
+    }
+    return total;
+  }
+
+  /** 面板用：某个颜色在调色板里的最近色（索引色关闭时也给提示，纯查询） */
+  nearestPaletteColour(c: RGBA): RGBA | null {
+    return nearestPalette(c[0], c[1], c[2], this.doc.palette);
   }
 
   // ---------- HSL adjustment (live preview, one history step on commit) ----------

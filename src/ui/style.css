@@ -1256,3 +1256,51 @@ html[data-pc] .cu-dlg{width:min(92vw,800px)}
 .cu-tile-extra{font-size:9px;color:var(--dim-2)}
 .cu-tile-eye{position:absolute;top:3px;right:3px;color:var(--dim-2);display:flex}
 .cu-tile.off .cu-tile-eye{color:var(--accent)}
+/* ---------- 高级颜色分析器（ColorAnalysisModal） ---------- */
+.dlg-ca{width:min(94vw,620px);max-height:min(92vh,calc(100dvh - var(--sat) - var(--sab) - 16px))}
+html[data-pc] .dlg-ca{width:min(680px,70vw)}
+.dlg-ca .dlg-body{display:flex;flex-direction:column;gap:6px;padding-top:8px}
+.ca-note{font-size:10px;line-height:1.45}
+.ca-scope{gap:5px}
+.ca-hud{display:flex;flex-wrap:wrap;gap:6px;margin:2px 0}
+.ca-stat{display:flex;flex-direction:column;align-items:center;gap:1px;min-width:52px;padding:3px 7px;border-radius:var(--r-2);
+  background:var(--surface-card);border:1px solid var(--line)}
+.ca-stat b{font-size:13px;color:var(--text);line-height:1.15}
+.ca-table{display:flex;flex-direction:column;gap:3px;max-height:40vh;min-height:64px;overflow-y:auto;
+  overscroll-behavior:contain;padding:2px;border-radius:var(--r-2);background:var(--bg2)}
+.ca-row{display:flex;align-items:center;gap:4px}
+.ca-pick{flex:1 1 auto;min-width:0;display:flex;align-items:center;gap:6px;padding:3px 6px;border-radius:var(--r-2);
+  background:var(--surface-item);border:1px solid var(--line);color:var(--text);text-align:left;cursor:pointer}
+.ca-pick:hover{background:var(--surface-item-active);border-color:var(--accent)}
+.ca-chip{flex:0 0 auto;width:20px;height:20px;border-radius:5px;border:1px solid var(--surface-item)}
+.ca-chip.big{width:24px;height:24px}
+.ca-hex{font-size:11px;font-weight:600;font-variant-numeric:tabular-nums;color:var(--text)}
+.ca-num{margin-left:auto;font-size:11px;font-variant-numeric:tabular-nums;color:var(--text-2);white-space:nowrap}
+.ca-num i{margin-left:4px;font-style:normal;color:var(--dim-2)}
+.ca-pal{font-size:10px;color:var(--dim-2);white-space:nowrap;max-width:38%;overflow:hidden;text-overflow:ellipsis}
+.ca-pal.on{color:var(--accent-2)}
+.ca-pal.near{color:var(--accent-3)}
+.ca-act{flex:0 0 auto;padding:2px 5px}
+.ca-hists{display:flex;flex-direction:column;gap:3px}
+.ca-hist{display:flex;align-items:center;gap:6px}
+.ca-hlabel{flex:0 0 44px;font-size:10px;color:var(--dim)}
+.ca-hbars{flex:1 1 auto;display:flex;align-items:flex-end;gap:1px;height:20px;padding:0 2px;border-radius:4px;background:var(--track-bg)}
+.ca-hcell{flex:1 1 0;display:flex;align-items:flex-end;height:100%}
+.ca-hcell i{display:block;width:100%;background:var(--accent);border-radius:2px 2px 0 0}
+.ca-hhint{font-size:10px;color:var(--dim-2);white-space:nowrap}
+.ca-swline{display:flex;flex-wrap:wrap;gap:4px;margin-top:3px}
+.ca-swline.small{gap:3px;opacity:.85}
+.ca-mini,.ca-unused{width:18px;height:18px;border-radius:4px;border:1px solid var(--surface-item);padding:0;cursor:pointer}
+.ca-unused{border-color:var(--accent-3)}
+.ca-mini:hover,.ca-unused:hover{border-color:var(--accent)}
+.ca-group{display:flex;flex-direction:column;gap:2px;padding:5px;border-radius:var(--r-2);background:var(--bg2);margin-top:3px}
+.ca-merge{display:flex;align-items:center;gap:6px;padding:3px 6px;border-radius:var(--r-2);background:var(--surface-item);
+  border:1px solid var(--line);color:var(--text);cursor:pointer;text-align:left}
+.ca-merge:hover{background:var(--surface-item-active);border-color:var(--accent)}
+.ca-gtext{flex:1 1 auto;min-width:0;font-size:10px;color:var(--text-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ca-rep{display:flex;flex-direction:column;gap:5px}
+.ca-rep-row{display:flex;align-items:center;gap:6px}
+.ca-rep-row>.rowlabel{flex:0 0 62px;margin:0}
+.ca-flabel{font-size:11px;color:var(--dim);flex:0 0 34px}
+.ca-opts{display:flex;flex-direction:column;gap:3px}
+.ca-opt{display:flex;align-items:center;gap:7px;font-size:11px;color:var(--text-2);cursor:pointer}

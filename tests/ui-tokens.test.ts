@@ -54,6 +54,8 @@ const SHELL = [
   ".clg-", ".empty-canvas", ".ec-", ".prev-menu", ".guide-bubble", ".guide-meta", ".guide-title",
   ".guide-body", ".guide-foot", ".cfm-msg", ".fsel-", ".holdbtn", ".hb-text", ".swatch",
   ".repl-line", ".replay-", ".rh-", "input",
+  // 高级颜色分析器：统计表/直方图/近似色/替换区的每一块都不许写死颜色
+  ".ca-",
 ];
 
 const BANNER = "   2/5  base";
