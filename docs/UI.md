@@ -192,6 +192,10 @@ const hover = useHoverTip({ title: t("brushSize"), desc: bd(snap.lang, "brush"),
 | `ScrubNum` | `input` + `.calcpad` | 拖动 / 算式 |
 | `TabBar` / `DropMenu` | `.tabbar*` / `.dropmenu*` | 见 `tabs.tsx` |
 
+**色阶条（色彩明暗面板）**：一行 = `.sh-row`（`.sh-rowlabel` 定宽标签 + `.sh-strip` 等宽网格），
+每个色块是 `.sh-swatch`（`.big` 用于基色与温度色），背景一律走 `chipCss()` 内联样式（诚实显示不透明度），
+组件侧 `.sh-` 已进 `tests/ui-tokens.test.ts` 的 `SHELL` 名单——新面板照这个模式加类前缀，别在 CSS 里写死颜色。
+
 ### 2.7b 面板类别导航（左侧「哪里」）
 
 设置面板、快捷键一览、界面定制三个面板的类别导航**只准有一套外观**：
