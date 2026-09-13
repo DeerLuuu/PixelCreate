@@ -779,6 +779,9 @@ scaleAdvanced(o: { w, h, algo?, scope?, cleanTransparent? }): boolean
   // 目标尺寸＝源尺寸（选区＝选区尺寸）时直接当没操作，返回 false 且不压历史。
   // 一次操作只落一条历史（结构快照），且只在真的改了像素时才压栈；
   // 返回 true 表示「这次缩放执行并改动过像素」。
+  // UI：ScaleModal 只放参数，**原图↔缩放后的对比图在单独的「对比预览」面板里**
+  //（弹窗底部 i-compare 按钮 → portal 出去的 .dlg-scale-compare，预览块 128px），
+  // 组件仍是 ScalePreview（size 可调，默认 44px 的小图）。
 cropToSelection(): boolean              // 画布裁切到选区外接矩形（一条结构历史）
 resizeModeOn / setResizeMode(on) / toggleResizeMode()   // 拖画布四边改尺寸的模式
 sampleComposite(x, y): RGBA | null        // 取合成后的颜色
@@ -1816,8 +1819,9 @@ interface DialogProps {
 ### 20.3 `ui/kit/primitives.tsx` / `ui/kit/scrub.tsx`
 
 `Icon`、`Btn`、`Keep`、`Overlay`、`TipHost`、`useBlankTap`、`useLandscape`、`ScrubNum`（同既有签名；
-`ScrubNum` 新增可选 `padTitle`，由 `ui/base.tsx` 注入译文）。`ui/base.tsx` 继续导出全部这些名字，
-并额外提供 `useSession()` 与带译文的 `ScrubNum` 包装。
+`ScrubNum` 新增可选 `padTitle`，由 `ui/base.tsx` 注入译文；**`Overlay` 新增可选 `full`**：为真时面板加
+`.panel-full` 铺满整屏，`App.tsx` 传 `full={!land && !pcMode}`——手机竖屏整屏、横屏与电脑模式仍是右侧抽屉）。
+`ui/base.tsx` 继续导出全部这些名字，并额外提供 `useSession()` 与带译文的 `ScrubNum` 包装。
 
 ### 20.4 设计令牌与主题
 

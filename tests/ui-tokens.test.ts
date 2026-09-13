@@ -121,6 +121,18 @@ export function testUiTokens(): void {
   const all = rules(body);
   ok("uitoken.rules", all.length > 300, "rules=" + all.length);
 
+  // 手机竖屏的面板整屏：默认 .panel 仍是右侧抽屉，.panel-full 才铺满（不给左边留缝）
+  {
+    // 规则的选择器可能带着上一行的注释，先剥掉注释再比对
+    const selOf = (r: { sel: string }): string => r.sel.replace(/\/\*[\s\S]*?\*\//g, "").trim();
+    const drawer = all.filter((r) => selOf(r) === ".panel");
+    const full = all.filter((r) => selOf(r) === ".panel.panel-full");
+    ok("uitoken.panel-drawer", drawer.some((r) => r.decls.includes("width:min(88vw,360px)")));
+    ok("uitoken.panel-full", full.length === 1
+      && full[0].decls.includes("left:0") && full[0].decls.includes("width:auto")
+      && full[0].decls.includes("border-left:0"), (full[0] || { decls: "(missing)" }).decls);
+  }
+
   // 3) no raw colour in app-shell rules
   const raw: string[] = [];
   for (const r of all) {

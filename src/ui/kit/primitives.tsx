@@ -99,8 +99,16 @@ export function TipHost() {
   );
 }
 
-export function Overlay({ children, onClose }: { children: React.ReactNode; onClose: () => void }) {
-  return (<><div className="panel-mask" onClick={onClose} /><section className="panel">{children}</section></>);
+/** Right-hand sheet with a mask. `full` makes it cover the whole screen —
+ *  phones use that (a 88vw drawer with a sliver of canvas showing on the left
+ *  just wastes room); landscape and PC mode keep the drawer. */
+export function Overlay({ children, onClose, full = false }: { children: React.ReactNode; onClose: () => void; full?: boolean }) {
+  return (
+    <>
+      <div className="panel-mask" onClick={onClose} />
+      <section className={"panel" + (full ? " panel-full" : "")}>{children}</section>
+    </>
+  );
 }
 
 /**

@@ -197,6 +197,9 @@ input[type=range]{width:64px;height:22px;accent-color:var(--accent)}
 .panel-mask{z-index:60}
 .panel{position:fixed;top:0;right:0;bottom:0;width:min(88vw,360px);z-index:61;background:var(--bg2);
   border-left:1px solid var(--line);display:flex;flex-direction:column;box-shadow:var(--sh-panel)}
+/* 手机竖屏（非横屏、非电脑模式）：面板直接占满整屏，不给左边留缝 */
+.panel.panel-full{left:0;width:auto;border-left:0;box-shadow:none;
+  padding:var(--sat) var(--sar) var(--sab) var(--sal)}
 .panel-head{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--line);
   font-weight:700}
 .panel-body{flex:1;overflow-y:auto;padding:10px;min-height:0}
@@ -533,6 +536,10 @@ html[data-pc] .orb-item{width:48px;height:48px}
   image-rendering: pixelated; }
 .scale-cap { font-size: var(--fs-1); color: var(--dim); }
 .scale-arrow { font-size: var(--fs-2); color: var(--dim-2); font-weight: 700; white-space: nowrap; }
+/* 对比预览单独一屏：图更大、按屏幕宽度自适应 */
+.dlg-scale-compare { width: min(94vw, 560px); }
+.dlg-scale-compare .scale-frames { justify-content: center; gap: var(--sp-4); margin: var(--sp-4) 0; }
+.dlg-scale-compare .scale-cv { max-width: 100%; height: auto; }
 
 /* second-level floating ball + radial layers */
 .orb.sub { border-color: var(--accent-2); box-shadow: 0 0 0 2px var(--accent-2-glow); }

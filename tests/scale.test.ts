@@ -572,6 +572,15 @@ export function testScale(): void {
     ok("ui.size-modal-jump", modals.includes("onAdvanced") && app.includes('onAdvanced={() => setModal("scaleadv")}'));
     ok("ui.icon-not-hardcoded", !/#[0-9a-fA-F]{3,6}/.test(modals.slice(modals.indexOf("function ScaleModal"), modals.indexOf("function SizeModal"))));
     ok("ui.css-classes", css.includes(".scale-frames") && css.includes(".scale-cv") && css.includes(".scale-quote") === false);
+    // 对比预览是单独一屏：弹窗里只留按钮，预览面板走 portal（.dlg 自带 transform，
+    // fixed 子元素會被它当包含块）、图更大、有自己的 i18n 文案
+    ok("ui.scale-compare-button", modals.includes('t("scaleCompare")') && modals.includes('icon="i-compare"'));
+    ok("ui.scale-compare-portal", modals.includes("createPortal") && /cmpOpen && createPortal/.test(modals));
+    ok("ui.scale-compare-css", css.includes(".dlg-scale-compare"));
+    ok("ui.scale-compare-size", /size = 44/.test(modals) && modals.includes("const SW = size") && modals.includes("size={128}"));
+    // 预览不再长在参数表单里：全文只有一处 <ScalePreview>，且在对比面板内部
+    ok("ui.scale-modal-no-inline-preview", (modals.match(/<ScalePreview/g) || []).length === 1
+      && modals.indexOf("<ScalePreview") > modals.indexOf("cmpOpen && createPortal"));
     // index.html 与源码不在同一层（仓库根 / app2/www），构建目录里也没有这份副本，
     // 所以向上逐层找一次，找不到就跳过（和 tests/icons.test.ts 同一套兜底）
     let html = "";
@@ -583,7 +592,8 @@ export function testScale(): void {
     // i18n：算法名的 nameKey / descKey 必须都在字典里（中英各一条，i18n.test 也会校验）
     for (const key of ["scaleAlgoNearest", "scaleAlgoBilinear", "scaleAlgoBicubic", "scaleAlgoArea", "scaleAlgo2x", "scaleAlgo3x",
       "scaleNearestDesc", "scaleBilinearDesc", "scaleBicubicDesc", "scaleAreaDesc", "scale2xDesc", "scale3xDesc",
-      "scaleAdv", "scaleOpts", "scaleQuick", "scaleScope", "scaleScopeSel", "scaleClean", "scalePreview", "scaleUnsupported", "scaleSelEmpty", "scaleSameSize"]) {
+      "scaleAdv", "scaleOpts", "scaleQuick", "scaleScope", "scaleScopeSel", "scaleClean", "scalePreview", "scaleCompare",
+      "scaleCompareHint", "scaleUnsupported", "scaleSelEmpty", "scaleSameSize"]) {
       const hits = i18n.split("  " + key + ":").length - 1;
       eq("ui.i18n." + key, hits, 2);
     }

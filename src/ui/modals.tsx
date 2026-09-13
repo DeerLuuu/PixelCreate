@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { SESSION } from "./singleton";
 import { makeT } from "./i18n";
 import { SETTING_GROUPS, settingsOfGroup, isDefault, resetSetting, exportSettings, importSettings, type SettingDef } from "../app/settings";
@@ -485,11 +486,17 @@ export function ScaleModal({ t, onClose }: { t: ReturnType<typeof makeT>; onClos
     SESSION.scaleAdvanced({ w: cw, h: ch, algo, scope, cleanTransparent: clean });
     onClose();
   };
+  const [cmpOpen, setCmpOpen] = useState(false);
+  const algoName = t(SCALE_ALGOS.find((a) => a.id === algo)!.nameKey);
   return (
     <>
       <Dialog title={t("scaleAdv")} onClose={onClose} className="scale-dlg" guide="dlg-scale"
         top={<div className="row-note">{t("scaleAdvDesc")}</div>}
-        footer={<><Btn label={t("cancel")} onClick={onClose} /><Btn label={t("ok")} className="primary" onClick={apply} /></>}>
+        footer={<>
+          <Btn icon="i-compare" label={t("scaleCompare")} title={t("scaleCompareHint")} onClick={() => setCmpOpen(true)} guide="scale-compare" />
+          <div className="grow" />
+          <Btn label={t("cancel")} onClick={onClose} /><Btn label={t("ok")} className="primary" onClick={apply} />
+        </>}>
         <Row label={t("scaleOpts")}>
           <ChipGroup value={algo} onChange={(v) => setAlgo(v)} options={SCALE_ALGOS.map((a) => ({ id: a.id, label: t(a.nameKey) }))} />
           <div className="row-note">{t(SCALE_ALGOS.find((a) => a.id === algo)!.descKey)}</div>
@@ -527,21 +534,29 @@ export function ScaleModal({ t, onClose }: { t: ReturnType<typeof makeT>; onClos
         {!blocked && !selSupported
           ? <div className="row-note scale-warn">{t("scaleUnsupported") + "\uff08" + t(SCALE_ALGOS.find((a) => a.id === selFallback)!.nameKey) + "\uff09"}</div>
           : null}
-        <ScalePreview t={t} algo={algo} scope={scope} cw={cw} ch={ch} clean={clean} box={selBox} />
         <div className="row-note">{t("scaleWill") + " " + cw + "\u00d7" + ch + (scope === "selection" && selBox ? "\uff08" + t("scaleScopeSel") + " " + selBox.w + "\u00d7" + selBox.h + "\uff09" : "")}</div>
       </Dialog>
+      {/* 对比预览单独一屏：参数改完点按钮再看，弹窗本身不再被两张小图撑高。
+          走 portal 是因为 .dlg 自己带 transform，fixed 子元素会被它当包含块 */}
+      {cmpOpen && createPortal(
+        <Dialog title={t("scaleCompare")} onClose={() => setCmpOpen(false)} className="dlg-scale-compare"
+          top={<div className="row-note">{algoName + " \u00b7 " + t("scalePreviewNote")}</div>}
+          footer={<Btn label={t("close")} className="primary" onClick={() => setCmpOpen(false)} />}>
+          <ScalePreview t={t} algo={algo} scope={scope} cw={cw} ch={ch} clean={clean} box={selBox} size={128} />
+          <div className="row-note">{t("scaleWill") + " " + cw + "\u00d7" + ch}</div>
+        </Dialog>, document.body)}
     </>
   );
 }
 
 /** 预览：当前图层（或选区）中心区域，「原图」与「按当前设置缩放后」并排 */
-function ScalePreview({ t, algo, scope, cw, ch, clean, box }:
-{ t: ReturnType<typeof makeT>; algo: ResampleAlgo; scope: ScaleScope; cw: number; ch: number; clean: boolean; box: { x: number; y: number; w: number; h: number } | null }) {
+function ScalePreview({ t, algo, scope, cw, ch, clean, box, size = 44 }:
+{ t: ReturnType<typeof makeT>; algo: ResampleAlgo; scope: ScaleScope; cw: number; ch: number; clean: boolean; box: { x: number; y: number; w: number; h: number } | null; size?: number }) {
   const doc = SESSION.doc;
   const refA = useRef<HTMLCanvasElement | null>(null);
   const refB = useRef<HTMLCanvasElement | null>(null);
   const region = scope === "selection" && box ? box : { x: 0, y: 0, w: doc.w, h: doc.h };
-  const SW = 44;   // 预览画布边长（css px）
+  const SW = size;   // 预览画布边长（css px）
   useEffect(() => {
     const cel = doc.celAt(SESSION.curLayer(), SESSION.curFrame());
     const cvs = [refA.current, refB.current];

@@ -80,6 +80,8 @@ export function App() {
   const [modal, setModal] = useState<ModalId>(null);
   /** PC 模式（跟随 kit 的标记）：快捷键、手势拦截、桌面布局都看它 */
   const pcMode = useKitPcMode();
+  /** 横屏：面板走右侧抽屉；手机竖屏则整屏铺开（见 Overlay 的 full） */
+  const land = useLandscape();
   // frame duration dialog: a frame index, or "batch" for the picked frames
   const [frameDlgIdx, setFrameDlgIdx] = useState<number | "batch" | null>(null);
   // animation tag editor: the id of the tag being edited
@@ -690,7 +692,7 @@ export function App() {
         onPatterns={() => setModal("patterns")} />}
       {replayOn && <ReplayOverlay t={t} snap={snap} nameFn={(lb) => histName(lb, t, snap.lang)} onClose={() => { setModal(null); setReplayOn(false); }} />}
       <Keep on={panel === "palette"} el={panel === "palette" ? (
-        <Overlay onClose={() => setPanel(null)}>
+        <Overlay full={!land && !pcMode} onClose={() => setPanel(null)}>
           <PalettePanel t={t} onClose={() => setPanel(null)} />
         </Overlay>
       ) : null} />

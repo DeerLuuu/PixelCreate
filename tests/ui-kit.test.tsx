@@ -150,6 +150,13 @@ export function testUiKit(): void {
     ok("ui.htip.btn-wired", prim.indexOf("useHoverTip") >= 0 && prim.indexOf("hover.node") >= 0);
     ok("ui.htip.mouse-not-longpress", prim.indexOf('e.pointerType === "mouse"') >= 0);
   }
+  // 手机竖屏的面板整屏铺开（由 App 决定 full，kit 只负责加类名）
+  {
+    const prim = fs.readFileSync(path.resolve(__dirname, "../../../src/ui/kit/primitives.tsx"), "utf8");
+    ok("ui.overlay-full", /full = false/.test(prim) && prim.includes('full ? " panel-full" : ""'));
+    const app = fs.readFileSync(path.resolve(__dirname, "../../../src/ui/App.tsx"), "utf8");
+    ok("ui.overlay-full-wiring", app.includes("<Overlay full={!land && !pcMode}"));
+  }
 
   // ------------------------------------------------------------- demo page
   // the demo exercises every component at once; rendering it here also proves

@@ -187,7 +187,7 @@ const hover = useHoverTip({ title: t("brushSize"), desc: bd(snap.lang, "brush"),
 | `Icon` | `<svg><use href="#i-…">` | `size` |
 | `Btn` | `.btn` | `active` / `danger` / `primary` / `off` / `rail` / `small` / `mini` |
 | `Keep` | `.keep[.out]` | 延迟卸载 |
-| `Overlay` | `.panel-mask` + `.panel` | 右侧面板 |
+| `Overlay` | `.panel-mask` + `.panel`（`full` → `.panel.panel-full`） | 右侧抽屉；**手机竖屏整屏铺开**（横屏 / 电脑模式才用抽屉） |
 | `TipHost` | `.tip-host` | 全局长按提示 |
 | `ScrubNum` | `input` + `.calcpad` | 拖动 / 算式 |
 | `TabBar` / `DropMenu` | `.tabbar*` / `.dropmenu*` | 见 `tabs.tsx` |

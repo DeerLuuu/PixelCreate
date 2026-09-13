@@ -273,8 +273,11 @@ Aseprite 兼容：`io/aseread.ts` / `io/asewrite.ts` / `io/zlib.ts`（自写同�
 `SCALE_ALGOS` + `algoSupported` / `effectiveAlgo` 让 UI 不硬编码算法分支；**scale2x 用 Mazzoleni 的四条件式
 （先判两个邻居相等才改那一格）、scale3x 直译 `scale3x.c` 的 guard + `E!=对角` 形式**，画布外邻居按边缘钳制，
 不满足整数倍时降级最近邻）+ `ScaleModal`（算法 chips + 说明、宽高/锁比例/2×·3×·4×·÷2、作用范围、清透明、
-原图↔缩放后并排 canvas 预览）+ `Session.scaleAdvanced`（三个范围口径一致：**只有「整个图像」会改画布尺寸**，
+原图↔缩放后的对比图**单独一屏**：弹窗底部 `i-compare` 按钮 → portal 出的 `.dlg-scale-compare`，128px 并排）
++ `Session.scaleAdvanced`（三个范围口径一致：**只有「整个图像」会改画布尺寸**，
 图层与选区都在画布内按左上角贴回、选区缩放后选区掩膜跟着变成新的大小；一次操作一条历史，且只在真改像素时压栈）。
+面板整屏（同日）：`Overlay` 新增 `full`（`.panel.panel-full` = 铺满 + 安全区内边距），`App.tsx` 传 `full={!land && !pcMode}`
+——**手机竖屏面板整屏，横屏与电脑模式才用右侧抽屉（88vw）**。
 `engine/color-analysis.ts` + `ColorAnalysisModal`（颜色统计 / 近似色分组与一键合并 / 颜色替换 / 按颜色建选区 / CSV 导出，
 范围＝画布·图层·选区·所有帧，面板首屏即有内容）。变形抓手手感修正（`tools/xform.ts`）：抓手贴着选区框
 （缩放 6px / 旋转 30px / 斜切 30px，小选区收到 20px）并改成固定语义图标（方块＝缩放、圆箭头＝旋转、双斜线＝斜切）。
