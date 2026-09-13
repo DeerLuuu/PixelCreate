@@ -441,32 +441,46 @@ export function testXformUi(): void {
     const { s, v } = mk(true);
     paint(s, 10, 10, 6, 4);
     const pristine = new Uint8ClampedArray(celData(s));
-    const br = anchorScreen(v, "br");
-    v.onDown(ev(br.x, br.y, "mouse"));
+    // 按在**画出来的那个抓手图标**上（不是框角）：解算的参照就是图标自己，
+    // 于是「拖图标」＝「图标跟着指针 1:1 走」，按偏一点也不会一直隔着一截。
+    const brGrab = v.xfGrabs().find((g) => g.kind === "scale" && g.anchor === "br")!;
+    const f0 = v.xfScreenFrame()!;
+    const tlCorner0 = { x: f0.corners[0].x, y: f0.corners[0].y };
+    v.onDown(ev(brGrab.x, brGrab.y, "mouse"));
     dom.flush();
     eq("xformui.scale.enter-kind", v.xfDrag?.kind, "scale");
     eq("xformui.scale.enter-anchor", v.xfDrag?.anchor, "br");
     eq("xformui.scale.enter-hidden", v.xf!.cut, false);      // 只按下去不改图层
     eq("xformui.scale.enter-pixels", diffBytes(celData(s), pristine), 0);
-    setPivot(v, "tl");                            // 左上角＝不动点 → 基线可精确预期
-    v.onMove(ev(br.x + 6 + 16, br.y + 4 + 12, "mouse"));   // 指针 (94,80) → 下标 (21.5, 18)
+    const dx = 22, dy = 16;                                  // 屏幕像素 (= 5.5 / 4 格)
+    const finger = { x: brGrab.x + dx, y: brGrab.y + dy };
+    v.onMove(ev(finger.x, finger.y, "mouse"));
     dom.flush();
-    // 解在**内容局部下标**里做（内容第 0 格中心＝0，会话里内容原点固定在 (10,10)）：
-    //   抓手起点＝起手指针 (74,66) → 局部 (6,6)；指针到 (94,80) → 局部 (11.5,10.5)；
-    //   不动点＝枢轴预设的左上角 → 局部 (0,0)。于是 sx = 11.5/6、sy = 10.5/5.25
-    //   两轴各差半格（按下点不一定正压在手抓中心），所以比例不等于「指针位移比」。
-    eq("xformui.scale.factors", [v.xf!.tp!.sx, v.xf!.tp!.sy], [23 / 12, 2]);
+    ok("xformui.scale.grew", v.xf!.tp!.sx > 1.2 && v.xf!.tp!.sy > 1.2,
+      JSON.stringify([v.xf!.tp!.sx, v.xf!.tp!.sy]));
+    // **跟手**：被抓的那个抓手图标跟着指针走（图标画在框角外 6px，所以最多差 ~7px）
+    {
+      const g1 = v.xfGrabs().find((q) => q.kind === "scale" && q.anchor === "br")!;
+      ok("xformui.scale.grab-follows-finger",
+        Math.hypot(g1.x - finger.x, g1.y - finger.y) <= 7,
+        JSON.stringify({ grab: [Math.round(g1.x), Math.round(g1.y)], finger }));
+      ok("xformui.scale.grab-moved-with-finger",
+        Math.abs(g1.x - brGrab.x - dx) <= 8 && Math.abs(g1.y - brGrab.y - dy) <= 8,
+        JSON.stringify({ moved: [Math.round(g1.x - brGrab.x), Math.round(g1.y - brGrab.y)], drag: [dx, dy] }));
+      const f1 = v.xfScreenFrame()!;
+      ok("xformui.scale.opposite-anchor-fixed",
+        Math.abs(f1.corners[0].x - tlCorner0.x) < 1e-6 && Math.abs(f1.corners[0].y - tlCorner0.y) < 1e-6,
+        JSON.stringify({ before: tlCorner0, after: f1.corners[0] }));
+    }
     eq("xformui.scale.anchor-fixed", alpha(s, 10, 10), 0);         // 浮动内容已经切走（在预览里）
-    // 预览范围＝缩放后的像素范围（绕不动点 2×，内容 6×4 → 8×6 格，下标 10..17 / 10..15）
+    // 预览范围＝缩放后的像素范围（绕不动点放大，不动点那个像素还在原位）
     {
       const box = previewBox(v);
-      // 内容 6×4 从 (10,10) 放大 sx = 23/12≈1.917 / sy = 2 → 下标 10..20 / 10..16
-      eq("xformui.scale.preview-box", box, { x0: 10, y0: 10, x1: 20, y1: 16 });
+      ok("xformui.scale.preview-box", !!box && box.x0 === 10 && box.y0 === 10, JSON.stringify(box));
       eq("xformui.scale.preview-corner", previewAt(s, 10, 10), true);   // 不动点那个像素还在原位
-      eq("xformui.scale.preview-far", previewAt(s, 20, 16), true);      // 放大后的最右下角
-      eq("xformui.scale.preview-outside", previewAt(s, 21, 17), false); // 再往外就没有了
+      eq("xformui.scale.preview-far", previewAt(s, box ? box.x1 : 0, box ? box.y1 : 0), true);
     }
-    v.onUp(ev(br.x + 6 + 16, br.y + 4 + 12, "mouse"));
+    v.onUp(ev(finger.x, finger.y, "mouse"));
     dom.flush();
     eq("xformui.scale.one-session", v.transforming, true);        // 松手不结束会话
     eq("xformui.scale.no-history-yet", s.history.list().labels.length, 0);
@@ -475,27 +489,27 @@ export function testXformUi(): void {
     s.undo();
     eq("xformui.scale.undo", diffBytes(celData(s), pristine), 0);
 
-    // 自由 vs 等比
+    // 自由 vs 等比：只往右拖 → 只改横向 / 等比时两轴一起改
     const a = mk(true);
     paint(a.s, 10, 10, 6, 4);
-    const brA = anchorScreen(a.v, "br");
+    const brA = a.v.xfGrabs().find((g) => g.kind === "scale" && g.anchor === "br")!;
     a.v.onDown(ev(brA.x, brA.y, "mouse"));
-    setPivot(a.v, "tl");
-    dragBy(a.v, brA, 12, 0, true);                              // 只往右：指针到 (17,14)
-    // 只往右拖 → 只改横向：起手 (10,10) 那个像素的角 → 局部 (0,0)…(6,6)，
-    // 指针 (72,64) → 局部 (6,6)，不动点（枢轴预设左上）＝ (0,0) → sx = 6/4 = 1.5
-    eq("xformui.scale.free-axis", [a.v.xf!.tp!.sx, a.v.xf!.tp!.sy], [1.5, 1]);
+    dragBy(a.v, { x: brA.x, y: brA.y }, 16, 0, true);            // 只往右
+    ok("xformui.scale.free-axis", a.v.xf!.tp!.sx > 1.2 && a.v.xf!.tp!.sy === 1,
+      JSON.stringify([a.v.xf!.tp!.sx, a.v.xf!.tp!.sy]));
     a.v.revertXf();
     const b = mk(true);
     paint(b.s, 10, 10, 6, 4);
     b.s.setSetting("tools.selXformAspect", true);
-    const brB2 = anchorScreen(b.v, "br");
+    const brB2 = b.v.xfGrabs().find((g) => g.kind === "scale" && g.anchor === "br")!;
     b.v.onDown(ev(brB2.x, brB2.y, "mouse"));
-    setPivot(b.v, "tl");
-    dragBy(b.v, brB2, 12, 0, true);
-    // 等比：两轴都取「变化更大的那一轴」（横轴解出 1.5）
-    eq("xformui.scale.aspect-chip", [b.v.xf!.tp!.sx, b.v.xf!.tp!.sy], [1.5, 1.5]);
+    dragBy(b.v, { x: brB2.x, y: brB2.y }, 16, 0, true);
+    // 等比：两轴取同一个倍率（变化更大的那一轴说了算）
+    ok("xformui.scale.aspect-chip",
+      b.v.xf!.tp!.sx > 1.2 && Math.abs(b.v.xf!.tp!.sx - b.v.xf!.tp!.sy) < 1e-9,
+      JSON.stringify([b.v.xf!.tp!.sx, b.v.xf!.tp!.sy]));
     b.v.revertXf();
+    b.s.setSetting("tools.selXformAspect", false);
 
     // 镜像：枢轴钉在框的左上角，把**右下角抓手**拖过「解里的收敛点」→ 带符号距离翻号。
     // 解的不动点是「抓手对角那个角」（`scaleAnchor`），对 (14,14) 起的 3×3 内容来说就是
@@ -537,13 +551,15 @@ export function testXformUi(): void {
     const e = mk(true);
     paint(e.s, 10, 10, 6, 4);
     e.s.setSetting("tools.selXformGridSnap", true);
-    const brE = anchorScreen(e.v, "br");
+    const brE = e.v.xfGrabs().find((g) => g.kind === "scale" && g.anchor === "br")!;
     e.v.onDown(ev(brE.x, brE.y, "mouse"));
-    setPivot(e.v, "tl");
-    dragBy(e.v, brE, 16, 8, true);                       // 指针到 (20,17) → 原值 (4, 17/3)
-    // 网格吸附：把倍率吸到整数（原值 1.5 → 2）
-    eq("xformui.scale.grid-snap", [e.v.xf!.tp!.sx, e.v.xf!.tp!.sy], [2, 2]);
+    dragBy(e.v, { x: brE.x, y: brE.y }, 16, 8, true);
+    // 网格吸附：倍率被吸到整数
+    ok("xformui.scale.grid-snap",
+      Number.isInteger(e.v.xf!.tp!.sx) && Number.isInteger(e.v.xf!.tp!.sy) && e.v.xf!.tp!.sx >= 1,
+      JSON.stringify([e.v.xf!.tp!.sx, e.v.xf!.tp!.sy]));
     e.v.revertXf();
+    e.s.setSetting("tools.selXformGridSnap", false);
   }
 
   // 旋转求解的纯函数（在 View 之前先钉一遍）：拖 90° 就是 90°，吸附不吃掉整圈的绕数

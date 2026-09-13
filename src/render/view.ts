@@ -445,6 +445,14 @@ export class View {
   private xfDrag: {
     kind: XfKind; anchor?: AnchorId; start: PxPoint; pivot0?: Pt;
     /**
+     * 按下那一刻**被抓的那个图标自己**的屏幕位置（缩放 / 旋转 / 枢轴用；`move` 时等于 `start`）。
+     *
+     * 解算以它为参照，而不是手指按下的那一点：命中半径有 38px（触屏），按偏的时候
+     * 「手指 ↔ 图标」那一截会被冻结在整个拖动里 —— 图标只是平行跟着手指走，永远隔着那 40px
+     * （用户报的「离鼠标位置估计有 40px」）。以图标为参照＝图标先贴到指针上、再 1:1 跟手。
+     */
+    h0?: PxPoint;
+    /**
      * 按下那一刻的变换参数快照（`sx` / `sy` / `angle` / `skewX` / `skewY`）。
      *
      * 拖动中的解算量都是**这一次拖拽**的增量（缩放是相对倍率、旋转是增量角、斜切是增量 tan），
@@ -3102,6 +3110,17 @@ export class View {
     return hit;
   }
 
+  /**
+   * 按下那一刻「被抓的那个图标」自己的屏幕位置（见 `xfDrag.h0`）。
+   * 缩放 / 旋转取画出来的那个固定图标；枢轴取标记本身；移动 / 没找到时退回指针位置。
+   */
+  private grabIconAt(kind: XfKind, anchor: AnchorId | undefined, pt: PxPoint): PxPoint {
+    if (kind === "pivot") return this.xfPivotScreen() ?? pt;
+    if (kind === "move" || !anchor) return pt;
+    const g = this.xfGrabs().find((q) => q.kind === kind && q.anchor === anchor);
+    return g ? { x: g.x, y: g.y } : pt;
+  }
+
   /** 最近一次命中的语义描述（测试与状态栏共用） */
   xfHint: string | null = null;
 
@@ -3130,7 +3149,7 @@ export class View {
     // 更不该把已经调好的枢轴 / 缩放 / 角度丢掉。
     const live = this.xf;
     if (live && live.mode !== "warp" && live.tp) {
-      this.xfDrag = { kind, anchor, start: pt, pivot0: { ...live.tp.pivot }, tp0: tp0Of(live.tp) };
+      this.xfDrag = { kind, anchor, start: pt, pivot0: { ...live.tp.pivot }, tp0: tp0Of(live.tp), h0: this.grabIconAt(kind, anchor, pt) };
       s.hapticTick("变换", 0.4);
       this.drawOverlay();
       return true;
@@ -3162,7 +3181,7 @@ export class View {
       pivotTouched: false,
       kinds: { move: false, scale: false, rotate: false, skew: false },
     };
-    this.xfDrag = { kind, anchor, start: pt, pivot0: { x: center.x, y: center.y }, tp0: tp0Of(this.xf.tp) };
+    this.xfDrag = { kind, anchor, start: pt, pivot0: { x: center.x, y: center.y }, tp0: tp0Of(this.xf.tp), h0: this.grabIconAt(kind, anchor, pt) };
     s.hapticTick("变换", 0.5);
     this.drawOverlay();
     return true;
@@ -3185,25 +3204,30 @@ export class View {
     const tp = g.tp;
     // 屏幕像素 → 外框坐标；再投影到框自身的轴上（框转过角度时拖动方向要跟着转）
     const local = toFrameLocal((pt.x - d.start.x) / z, (pt.y - d.start.y) / z, g.screen0.angle);
+    // **抓手自己的参照**：按下时那个图标的屏幕位（`d.h0`）。缩放 / 旋转 / 斜切 / 枢轴都用它，
+    // 而不是手指按下的那一点 —— 见 `xfDrag.h0` 的说明（按偏时图标会先贴到指针上）。
+    const ref0 = d.h0 ?? d.start;
+    const localRef = { x: (pt.x - ref0.x) / z, y: (pt.y - ref0.y) / z };
     // 当前框的旋转角（拖动中框一直在变，用**当前**的：抓手就在眼前那个框上）
     const frameAng = this.xfScreenFrame()?.angle ?? g.screen0.angle;
     const prefs = this.session.prefs;
     if (d.kind === "pivot") {
-      // 枢轴：跟手落到指针处（钳在框附近 2 格，免得拖丢了找不回来）。
-      // 指针位移要换算回**枢轴自己的参数空间**：标记画在 `M(pivot)` 上，所以屏幕位移
-      // 得先过一次矩阵线性部分的逆 —— 否则框缩放 / 旋转过之后，枢轴会走得比手指快（或偏方向），
-      // 表现就是「拖不动它 / 移不准」。
+      // 枢轴：**贴到指针上**再跟着走（参照是按下时枢轴标记自己的位置 `d.h0`，不是手指按下的
+      // 那一点）—— 命中半径内按偏一点也不会一直隔着一截。位移换算回枢轴的**参数空间**：
+      // 标记画在 `M(pivot)` 上，所以屏幕位移得先过一次矩阵线性部分的逆。
       const b = g.box0;
+      const from0 = d.h0 ?? d.start;
       const lin = linearOf(tp);
       const det = lin[0] * lin[3] - lin[1] * lin[2];
-      const bx = Math.abs(det) > 1e-12 ? (lin[3] * local.x - lin[1] * local.y) / det : local.x;
-      const by = Math.abs(det) > 1e-12 ? (lin[0] * local.y - lin[2] * local.x) / det : local.y;
+      const dx = (pt.x - from0.x) / z, dy = (pt.y - from0.y) / z;
+      const bx = Math.abs(det) > 1e-12 ? (lin[3] * dx - lin[1] * dy) / det : dx;
+      const by = Math.abs(det) > 1e-12 ? (lin[0] * dy - lin[2] * dx) / det : dy;
+      const base = d.pivot0 ?? tp.pivot;
       const p = {
-        x: clamp(tp.pivot.x + bx, b.x0 - 2, b.x1 + 2),
-        y: clamp(tp.pivot.y + by, b.y0 - 2, b.y1 + 2),
+        x: clamp(base.x + bx, b.x0 - 2, b.x1 + 2),
+        y: clamp(base.y + by, b.y0 - 2, b.y1 + 2),
       };
       // 枢轴一挪画面必须**逐像素不动**：把矩阵平移分量的差补回去（见 `pivotKeepPicture()`）。
-      // 用增量式补偿而不是「按会话起点重算」：缩放跟随枢轴时也写过同一份补偿，两者要能叠加。
       this.pivotKeepPicture(g, p);
       g.pivotTouched = true;
       g.moved = true;
@@ -3223,12 +3247,16 @@ export class View {
       // 缩放的**不动点**＝对角那个锚点：拖哪个抓手，对面那个就钉住不动、被拖的边跟手
       // （见 `xform.ts` 的 `affineFrom()` / `scaleAnchor()`），而不是绕枢轴两边一起长。
       const a = scaleAnchor(b, anchorId);
+      // 参照＝**抓手图标自己**按下时的位置（`d.h0`），不是手指按下的那一点：
+      //   命中半径有 38px（触屏），按偏一点时「手指↔图标」那一段会在整个拖动过程里一直保留
+      //   —— 用户看到的就是「图标离开我的鼠标 40px、怎么都拖不准」。以图标为参照，
+      //   图标会先贴到指针上、再 1:1 跟着走。
       // 「抓手现在在哪」＝**指针现在落在哪**（外框坐标），而不是「抓手起点 + 位移」：
-      //   抓手起点是像素中心，手指未必正压在上面，用位移累计会让某一轴一直差半格
-      //   （斜着拖时那一轴被解成 0 再被钳到 0.02，看起来就是「缩放没反应」）。
-      // 起点与终点都用同一条屏幕→外框换算（和 `xfStart` 一致），
-      // 于是「按住不动」解出来正好是 1×，不会自己长出去。
-      const from = { x: (d.start.x - this.ox) / z, y: (d.start.y - this.oy) / z };
+      //   用位移累计会让某一轴一直差半格（斜着拖时那一轴被解成 0 再被钳到 0.02，
+      //   看起来就是「缩放没反应」）。起点与终点都用同一条屏幕→外框换算，
+      //   于是「按住不动」解出来正好是 1×，不会自己长出去。
+      const ref0 = d.h0 ?? d.start;
+      const from = { x: (ref0.x - this.ox) / z, y: (ref0.y - this.oy) / z };
       const to = { x: (pt.x - this.ox) / z, y: (pt.y - this.oy) / z };
       // 解与不动点必须在**同一个坐标系**里：`box0`（以及 `scaleAnchor`）是内容外框
       // （内容左上角＝`st.ox`），上面两行却是画布坐标。会话里内容原点固定在
@@ -3277,8 +3305,11 @@ export class View {
       // 拖着抓手转 90° 只出 37°，框与全部抓手跟着甩走 —— 用户报的「锚点乱飞」就是它。
       const pv = this.xfPivotScreen();
       if (!pv) return;
+      // 参照同样用**图标按下时的位置**（`d.h0`）：图标先转到手指所在的那条射线上，再跟着走
+      // —— 按偏（命中半径内）时不会留下一个固定的角度差，抓手看着才「抓得住」。
+      const ref0 = d.h0 ?? d.start;
       const delta = solveRotate(
-        { x: d.start.x - pv.x, y: d.start.y - pv.y },
+        { x: ref0.x - pv.x, y: ref0.y - pv.y },
         { x: pt.x - pv.x, y: pt.y - pv.y },
         false,                                            // 吸附在下面按**总角度**做
       ).angle;
@@ -3298,7 +3329,10 @@ export class View {
       const fixed = skewBaseline(b, anchorId);
       const span = horiz ? Math.abs(b.y1 - b.y0) : Math.abs(b.x1 - b.x0);
       const p0 = anchorPoint(b, anchorId);
-      const add = solveSkew(anchorId, p0, { x: p0.x + local.x, y: p0.y + local.y }, span, frameAng).tan;
+      // 参照＝图标按下时的位置（同缩放 / 旋转）：被拖的那条边跟着**图标**走，
+      // 按偏时不会一直隔着一截（图标的 30px 法线外移是布局决定的，去不掉；
+      // 沿边方向那一份偏移以图标为准，所以它能贴到手指所在的那条线上）。
+      const add = solveSkew(anchorId, p0, { x: p0.x + localRef.x, y: p0.y + localRef.y }, span, frameAng).tan;
       // 斜切同样以「按下那一刻」为基准累加（`solveSkew` 返回的是这次拖动量折算的 tan 增量）
       const base = d.tp0 ?? tp0Of(tp);
       if (horiz) tp.skewX = clampTan(base.skewX + add);
