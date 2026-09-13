@@ -4,10 +4,17 @@
 //   · `warp.ts`    = 四点 / 网格（透视、自由变形），是额外能力，口径不变；
 //   · 本文件        = Aseprite 的常规变换：8 个物理锚点 + 枢轴 + 干净角吸附 + 斜切。
 //
-// 坐标口径（与 `warp.ts` 一致）：**像素下标空间**，像素 `i` 的中心在整数 `i` 上。
-// 一块 w×h 的内容占下标 `0..w-1` / `0..h-1`（**不是** `w` / `h`），
-// 所以「内容框」`indexBox(w, h)` 的两端就是 `0` 与 `w-1`，枢轴默认在其中心。
-// 屏幕上画出来时下标再加 0.5（像素中心），与 `view.ts` 的 `warpHandles()` 同一口径。
+// 坐标口径（**内容外框 / edge space**，与 `warp.ts` 的「像素下标 / 像素中心」是两套，
+// 改这里之前先读本段）：`w×h` 的内容占 `[0, w] × [0, h]`，像素 `i` 是 `[i, i+1)` 那一格、
+// 中心在 `i + 0.5`，内容框就是 `contentBox(w, h)`（**不是** `indexBox(w, h)` 的 `0..w-1`）。
+// 屏幕换算只有一条：位置 `p` → `p · zoom + ox`（见 `screenFrameOf()`）。
+//
+// 为什么必须是外框：栅格化器 `select.ts` 的 `xformAffineFloating()` 采样的是
+// 「目标像素中心 `px + 0.5` 逆映射后 `floor`」，本来就是外框口径；选中框（蚂蚁线）画的也是
+// `b.x·z + ox .. (b.x + b.w)·z + ox`。用外框，**恒等变换下变换框与选中框逐像素重合**，
+// 8 个锚点正落在选中框的角 / 边中点上，而且**进入会话的前后框完全不动**（抓手不会在按下的
+// 瞬间跳位）。早先用 `indexBox`（`0..w-1` + 屏幕 `i·z + o`）时框比内容小一格、中心偏半格，
+// 会话内外的画法还不一致 —— 用户报的「锚点乱飞」有一半来自这里。
 //
 // 本文件全是纯函数（无 DOM、无 Session），交互状态机在 `view.ts`，这里只负责
 // 「几何 + 命中判定 + 拖拽解算」，因此可以单独单测。
@@ -41,10 +48,18 @@ export function axisOf(id: AnchorId): XfAxis {
 
 export interface Pt { x: number; y: number }
 
-/** 内容框（下标空间，两端都是下标、含端点） */
+/** 内容框（**外框口径**，见文件头：像素 `i` 占 `[i, i+1)`，两端是边界不是下标） */
 export interface XfBox { x0: number; y0: number; x1: number; y1: number }
 
-/** 一块 w×h 内容在**下标空间**里的框：`0..w-1` / `0..h-1`（退化也允许） */
+/**
+ * 一块 `w×h` 内容在本模块坐标里的框：`[0, w] × [0, h]`（**外框**）。
+ * 框的两端就是选中框的边界，所以恒等变换下与蚂蚁线逐像素重合、锚点落在角与边中点上。
+ */
+export function contentBox(w: number, h: number): XfBox {
+  return { x0: 0, y0: 0, x1: Math.max(0, w), y1: Math.max(0, h) };
+}
+
+/** 像素**下标**框 `0..w-1` / `0..h-1`（`warp.ts` 那套口径；本模块内部换算不要用它） */
 export function indexBox(w: number, h: number): XfBox {
   return { x0: 0, y0: 0, x1: Math.max(0, w - 1), y1: Math.max(0, h - 1) };
 }
@@ -223,7 +238,7 @@ export function invertAffine(m: Mat3): Mat3 | null {
 }
 
 export interface XfParams {
-  /** 枢轴（下标空间）＝整个变换的不动点 */
+  /** 枢轴（外框坐标）＝缩放 / 旋转的不动点 */
   pivot: Pt;
   /** 会话**起点**的枢轴：枢轴被拖动后，用它算「画面不动」的补偿位移 */
   pivot0?: Pt;
@@ -236,33 +251,38 @@ export interface XfParams {
   skewX?: number;
   skewY?: number;
   /**
-   * 斜切的基准点：**被拖的那条边**（默认＝枢轴）。
-   * 斜切的基准线是「过基准点的那条水平 / 垂直线」，被拖的边整条沿边方向平移、
-   * 对面那条边一动不动（Aseprite 的行为，见 `solveSkew()`）。
+   * 缩放的**不动点**：拖哪个抓手，对面那个锚点就钉在这里（`scaleAnchor()`，见 §10b.2）。
+   * 缺省＝枢轴（此时缩放绕枢轴，两边一起长）。视图侧每次缩放拖动都会设成对面的锚点。
+   */
+  scalePivot?: Pt;
+  /**
+   * 斜切的**基准点**：不动的那条线所在的点 —— 拖上边中点时它是**下边**上的点
+   * （见 `skewBaseline()` / `skewPivotOf()`）。缺省＝枢轴（此时 `affineFrom()` 的补偿项为 0）。
    */
   skewPivot?: Pt;
-  /** 纯平移位移（下标空间，累计；「移动」语义与旋转时的落点都看它） */
-  shift?: Pt;
-  /** 斜切基准点（`skewPivot` 的别名，视图侧把它挂在变换参数上，见 `View.xfParams()`） */
+  /** `skewPivot` 的等价别名（视图层历史上叫这个名字，两个都给时以 `skewPivot` 为准） */
   skewAnchor?: Pt;
+  /** 纯平移位移（外框坐标，累计；「移动」语义与旋转时的落点都看它） */
+  shift?: Pt;
 
   /** 枢轴拖动产生的补偿位移（`pivotComp()` 算出，同样折进矩阵的平移分量） */
   pivot0Shift?: Pt;
 }
 
-/** 把「枢轴被拖走」这件事折成矩阵上的补偿位移：拖动前后画面必须逐像素不动。
+/**
+ * 把「枢轴被拖走」这件事折成矩阵上的补偿位移：拖动前后画面必须逐像素不动。
  *
- *  设变换为 `p' = R·K·S·(p - pivot) + pivot + shift`（见 `affineFrom()`）：
- *  把枢轴从 `pivot0` 挪到 `pivot1` 时要保持 `p'` 不变，需要
- *      `shift1 = shift0 + (pivot0 - pivot1) - L·(pivot1 - pivot0)`，`L = R·K·S`
- *  —— 即「枢轴自己挪了多少」抵消掉「枢轴挪动引起的整体位移」。
+ * 做法是**数值精确**的：同一个参数分别按「枢轴在 `pivot0`」与「枢轴在当前位置」组装矩阵，
+ * 两者只差一个平移（线性部分与枢轴无关），把这个差补回去即可 —— 于是不管缩放 / 斜切的
+ * 不动点是不是枢轴，补偿都是精确的（早先的解析式 `d − L·d` 只在三者重合时成立）。
+ * 调用方按约定先把自己那份 `pivot0Shift` 清零再调用（见 `view.ts`）。
  */
 export function pivotComp(p: XfParams): Pt {
   if (!p.pivot0) return { x: 0, y: 0 };
-  const d = { x: p.pivot0.x - p.pivot.x, y: p.pivot0.y - p.pivot.y };
-  const l = linearOf(p);
-  const ld = { x: l[0] * d.x + l[1] * d.y, y: l[2] * d.x + l[3] * d.y };
-  return { x: d.x - ld.x, y: d.y - ld.y };
+  const zero = { x: 0, y: 0 };
+  const t0 = affineFrom({ ...p, pivot: p.pivot0, pivot0Shift: zero });
+  const t1 = affineFrom({ ...p, pivot0Shift: zero });
+  return { x: t0[2] - t1[2], y: t0[5] - t1[5] };
 }
 
 /** 线性部分 `L = R · K · S`（不含平移） */
@@ -275,17 +295,25 @@ export function linearOf(p: XfParams): [number, number, number, number] {
 }
 
 /**
- * 组装变换矩阵：**先缩放 → 再斜切 → 最后旋转**，全部绕枢轴，再叠加平移。
- * 斜切按 Aseprite 的 `dx += dy * tan(skew)`（枢轴所在的那条线是不动的基准线）：
- * 于是「拖上边中点」＝整条上边沿边方向平移，对面那条边一动不动。
+ * 组装变换矩阵：**先缩放 → 再斜切 → 最后旋转**，再叠加平移。
  *
- * 平移项 `shift`（纯移动 / 枢轴补偿）在**旋转之后**叠加：像素画里「移动」永远是
- * 屏幕方向的整格位移，不该被旋转角带着拐弯。
+ * - 缩放绕**不动点** `scalePivot`（缺省＝枢轴，视图侧传 `scaleAnchor()`）：拖着某个抓手时
+ *   对面那个锚点钉住不动、被拖的那条边跟手，而不是两边一起长 —— 早先矩阵绕枢轴缩放、
+ *   倍率却按对角锚点算，等于「拖一个抓手，另一侧的抓手也跟着跑」（真机上的「锚点乱飞」）。
+ * - 斜切绕**基准点** `skewPivot`（缺省＝枢轴）：基准点所在的那条线一动不动 ——
+ *   拖上边中点时它是**下边**（`skewBaseline()`），于是被拖的边**整条跟着手指 1:1 平移**、
+ *   对面那条边纹丝不动（Aseprite 的行为）。基准线放在枢轴那条线上时两边各走一半，
+ *   手指走 40px 边只走 20px —— 抓手看着「不跟手」就是这个。
+ * - 旋转绕**枢轴** `pivot`；平移项 `shift`（纯移动 / 枢轴补偿）在**旋转之后**叠加：
+ *   像素画里「移动」永远是屏幕方向的整格位移，不该被旋转角带着拐弯。
+ *
+ * 复合写成 `T(p) = R( K( S(p) ) ) + shift`，其中 `S(p) = sa + s·(p − sa)`、
+ * `K(q) = sk + K·(q − sk)`、`R(r) = c + R·(r − c)`（`sa` = `scalePivot`、`sk` = `skewPivot`、
+ * `c` = `pivot`）。展开得线性部分 `L = R · K · S`（`S` 取对角缩放矩阵），平移
+ * `t = c + R·(sk − c + K·(sa − sk)) − L·sa + shift + pivot0Shift`。
+ * 三个基准点两两重合时退化成 `t = c − L·c`，也就是旧实现（逐字节相同）。
  */
 export function affineFrom(p: XfParams): Mat3 {
-  // 复合 = `S`（绕枢轴缩放）→ `K`（以 `skewPivot` 为原点斜切）→ `R`（绕枢轴旋转）。
-  // 线性部分 `L = R · K · S`，平移分量在「**枢轴不动**」下反解：`t = c - L·c`。
-  // 斜切的固定线由 `skewPivot` 决定（视图层把它设成枢轴那条线，见 `skewPivotOf()`）。
   const kx = p.skewX ?? 0, ky = p.skewY ?? 0;
   const co = Math.cos(p.angle), si = Math.sin(p.angle);
   const k00 = p.sx, k01 = kx * p.sy;
@@ -295,9 +323,20 @@ export function affineFrom(p: XfParams): Mat3 {
   const px = p.pivot.x, py = p.pivot.y;
   const sh = p.shift ?? { x: 0, y: 0 };
   const cmp = p.pivot0Shift ?? { x: 0, y: 0 };
+  // 缩放的**不动点**与斜切的**基准点**：缺省都是枢轴（这时下面几项都退化为 0）
+  const sa = p.scalePivot ?? p.pivot;
+  const sk = p.skewPivot ?? p.skewAnchor ?? p.pivot;
+  // 注意 `k00..k11` 是**斜切与缩放的合成** `K · S`（先缩放再斜切），而复合式里的
+  // `K · (sa − sk)` 只用斜切本身的线性部分 `K = [[1, kx], [ky, 1]]` —— 用错了这一项，
+  // 「缩放的不动点」会被整段吃掉（表现就是拖一个抓手、对面的抓手也跟着跑）。
+  const dx = sa.x - sk.x, dy = sa.y - sk.y;
+  const kxd = dx + kx * dy, kyd = ky * dx + dy;                        // K · (sa − sk)
+  const ex = sk.x - px + kxd, ey = sk.y - py + kyd;                    // sk − c + K·(sa − sk)
+  const rx = co * ex - si * ey, ry = si * ex + co * ey;                 // R · …
+  const lx = m00 * sa.x + m01 * sa.y, ly = m10 * sa.x + m11 * sa.y;     // L · sa
   return [
-    m00, m01, px - m00 * px - m01 * py + sh.x + cmp.x,
-    m10, m11, py - m10 * px - m11 * py + sh.y + cmp.y,
+    m00, m01, px + rx - lx + sh.x + cmp.x,
+    m10, m11, py + ry - ly + sh.y + cmp.y,
     0, 0, 1,
   ];
 }
@@ -331,9 +370,9 @@ export function affineSkew(kx: number, ky: number, c: Pt): Mat3 {
   return [1, kx, -kx * c.y, ky, 1, -ky * c.x, 0, 0, 1];
 }
 
-/** 变换后内容（w×h 的框）在目标空间的包围盒：`floor..ceil`，含端点（栅格化范围与它一致） */
+/** 变换后**内容外框**在目标空间的包围盒：`floor..ceil`，含端点（栅格化范围与它一致） */
 export function transformedBox(m: Mat3, w: number, h: number): XfBox {
-  const cs = boxCorners(indexBox(w, h)).map((p) => applyAffine(m, p));
+  const cs = boxCorners(contentBox(w, h)).map((p) => applyAffine(m, p));
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
   for (const p of cs) {
     if (p.x < x0) x0 = p.x; if (p.x > x1) x1 = p.x;
@@ -412,27 +451,33 @@ export function solveRotate(from: Pt, to: Pt, snap: boolean): RotateSolution {
 /**
  * 斜切：把握手在**框内**的位移换算成 `tan(skew)`。
  *
- * 矩阵是 `x' = x + kx·(y - 基准线)`（上下边）与 `y' = y + ky·(x - 基准线)`（左右边），
- * 基准线就是**枢轴所在的那条线**（Aseprite 的 `dx += dy·tan(skew)` 同款）。
- * 于是被拖的边整条平移 `t·h/2`、对面那条边反向平移同样的量 —— 选中框围绕枢轴保持形状，
- * 拖出来的格数一眼能算（`Δ` 是屏幕上换算到下标空间的拖动量，`h` 是框在被拖方向上的跨度）。
+ * 矩阵是 `x' = x + kx·(y − 基准线)`（上下边）与 `y' = y + ky·(x − 基准线)`（左右边），
+ * 基准线是**被拖那条边的对面**（见 `skewBaseline()`）。于是被拖的边整条**跟着手指 1:1 平移**、
+ * 对面那条边一动不动；`span` 传框在拖动方向上的**整跨度**（外框口径：`h` 或 `w`），
+ * 它正好是「对面那条边到被拖那条边」的力臂。
+ *
+ * `angle`（可选）＝当前框的旋转角：拖动量按**框自身的轴**量（框转过角度之后也跟手）。
+ * 早先基准线放在枢轴那条线上、力臂按整跨度算，等于让两边各走一半 —— 抓手不跟手。
  */
-export function solveSkew(id: AnchorId, from: Pt, to: Pt, span: number): SkewSolution {
+export function solveSkew(id: AnchorId, from: Pt, to: Pt, span: number, angle = 0): SkewSolution {
   if (isCorner(id)) return { tan: 0 };
   const horiz = id === "t" || id === "b";
-  const local = toFrameLocal(to.x - from.x, to.y - from.y, 0);
+  const local = toFrameLocal(to.x - from.x, to.y - from.y, angle);
   const delta = horiz ? local.x : local.y;
   if (!(span > 1e-6)) return { tan: 0 };
   const SIGN: Record<"t" | "b" | "l" | "r", number> = { t: -1, b: 1, l: -1, r: 1 };
   return { tan: clampTan((delta * SIGN[id]) / span) };
 }
 
-/** 斜切的**固定直线**（＝被拖那条边的对面中点）：那条边一动不动，被拖的边整条平移 */
+/**
+ * 斜切的**不动线**＝被拖那条边的**对面**中点：拖上边中点时下边一动不动、上边整条跟着走。
+ * （`scaleAnchor()` 就是「对角 / 对边中点」，语义正好一样，直接复用它。）
+ */
 export function skewBaseline(b: XfBox, id: AnchorId): Pt {
   return scaleAnchor(b, id);
 }
 
-/** 把固定线转成「剪切原点」：水平剪切看 `y`、竖直剪切看 `x`（另一个坐标清零） */
+/** 把不动线转成「剪切原点」：水平剪切看 `y`、竖直剪切看 `x`（另一个坐标清零） */
 export function skewPivotOf(id: AnchorId, fixed: Pt): Pt {
   return id === "t" || id === "b" ? { x: 0, y: fixed.y } : { x: fixed.x, y: 0 };
 }
@@ -526,12 +571,13 @@ export interface ScreenFrame {
   spanY: number;
 }
 
-/** 由「下标空间的框 + 变换矩阵 + 视口」算出屏幕上的框（画与命中通用） */
+/** 由「**内容外框** + 变换矩阵 + 视口」算出屏幕上的框（画与命中通用） */
 export function screenFrameOf(m: Mat3, w: number, h: number, zoom: number, ox: number, oy: number): ScreenFrame {
-  const cs = boxCorners(indexBox(w, h))
+  const cs = boxCorners(contentBox(w, h))
     .map((p) => applyAffine(m, p))
-    // 下标 → 屏幕：**像素下标 `i` 占屏幕 `[i·z + o, (i+1)·z + o)`**（左上角），
-    // 于是内容框 `0..w-1` 正好落在屏幕 `[0, w·z + o]`，与选区框 / 抓手的口径完全一致
+    // 外框坐标 → 屏幕：**位置 `p` 画在 `p·z + o`**。恒等变换下框就是
+    // `[0, w] × [0, h]` → 屏幕 `[ox, ox + w·z]`，与选中框（蚂蚁线）**逐像素重合**；
+    // 会话内外用的是同一个函数，所以按下抓手的那一刻框不会跳。
     .map((p) => ({ x: p.x * zoom + ox, y: p.y * zoom + oy }));
   const spanX = Math.hypot(cs[1].x - cs[0].x, cs[1].y - cs[0].y);
   const spanY = Math.hypot(cs[3].x - cs[0].x, cs[3].y - cs[0].y);

@@ -61,6 +61,30 @@ export function snapWarpCoord(v: number, half: boolean): number {
 }
 
 /**
+ * 屏幕坐标 → 控制点下标的**连续**反解：`warpHandles()` 的绘制公式 `(q + 0.5) * zoom + ox`
+ * 的逆运算，**不做任何吸附**。
+ *
+ * 拖动时要用它算「手指 ↔ 控制点」的偏移（见 `snapWarpIndex()` 与 `view.ts` 的 `xf.grab`）：
+ * 先反解出连续量、加上偏移、最后才吸附，于是按在命中半径内任何一处都不会让控制点跳位，
+ * 而两种吸附粒度（整数 / 半像素）的落点依然干净。
+ */
+export function warpPointRaw(sx: number, sy: number, zoom: number, ox: number, oy: number): Pt {
+  const z = zoom || 1;
+  return { x: (sx - ox) / z - 0.5, y: (sy - oy) / z - 0.5 };
+}
+
+/**
+ * 连续下标 → 落点（吸附）：
+ *  - 半像素模式：`Math.round(v * 2) / 2`（整数或 `x.5`）——`snapWarpCoord(v, true)`；
+ *  - 整像素模式：**就近取整** `Math.round(v)`，不是 `Math.floor` —— 反解出来的是「像素中心」
+ *    坐标，用 `floor` 会让负下标方向整体错半格、抓住控制点不动也会跳位；`Math.round`
+ *    既幂等（`q → q`）又与绘制公式严格互逆，代价只是吸附的判定相位平移到半格处。
+ */
+export function snapWarpIndex(v: number, half: boolean): number {
+  return half ? snapWarpCoord(v, true) : Math.round(v);
+}
+
+/**
  * 屏幕坐标 → 控制点下标：`warpHandles()` 的绘制公式 `(q + 0.5) * zoom + ox` 的逆运算。
  *
  * 先反解出**连续**下标（不做 `floor`，否则半个像素的位移会被吃掉），再按模式吸附：
@@ -75,9 +99,8 @@ export function snapWarpCoord(v: number, half: boolean): number {
 export function warpPointFromScreen(
   sx: number, sy: number, zoom: number, ox: number, oy: number, half: boolean,
 ): Pt {
-  const z = zoom || 1;
-  const one = (v: number): number => (half ? snapWarpCoord(v, true) : Math.round(v));
-  return { x: one((sx - ox) / z - 0.5), y: one((sy - oy) / z - 0.5) };
+  const raw = warpPointRaw(sx, sy, zoom, ox, oy);
+  return { x: snapWarpIndex(raw.x, half), y: snapWarpIndex(raw.y, half) };
 }
 
 /**

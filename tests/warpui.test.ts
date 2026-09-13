@@ -20,13 +20,20 @@ interface VX {
   ox: number; oy: number; zoom: number;
   xf: null | {
     mode: string; moved: boolean; cut?: boolean; cells?: number[]; buf?: Uint8ClampedArray; pts?: Pt[];
-    warpKind?: string; drag?: number; st: MoveState; li: number; fi: number;
+    warpKind?: string; drag?: number; grab?: Pt; st: MoveState; li: number; fi: number;
   };
   lastWarpError: "noSel" | "tooThin" | "locked" | null;
   onDown(e: PointerEvent): void; onMove(e: PointerEvent): void; onUp(e: PointerEvent): void;
   warpHandles(): Array<{ x: number; y: number }>;
+  xfScreenFrame(): { corners: Array<{ x: number; y: number }> } | null;
+  beginXfMoveAt(sx: number, sy: number): boolean;
 }
 interface Pt { x: number; y: number }
+
+declare const require: (m: string) => any;
+declare const __dirname: string;
+const fs = require("fs");
+const path = require("path");
 
 /** 两个字节数组差了几个字节（失败信息里只打印数字，不打印整幅画布） */
 function diffBytes(a: Uint8ClampedArray | Uint8Array, b: Uint8ClampedArray | Uint8Array): number {
@@ -522,5 +529,75 @@ export function testWarpUi(): void {
     v.onUp(ev(dest.x, dest.y));
     dom.flush();
     finish(v, true);
+  }
+
+  // ---- 抓取不跳位：按在命中半径内任何一处，控制点都只跟着手指**平移** ----
+  {
+    const { s, v } = mk();
+    paint(s, 10, 10, 8, 6);
+    ok("warpui.grab.mesh-enter", warp(v, "mesh"));
+    const h = v.warpHandles()[4];
+    const p0 = { x: v.xf!.pts![4].x, y: v.xf!.pts![4].y };
+    const others = JSON.stringify(v.xf!.pts!.filter((_, i) => i !== 4).map((p) => [p.x, p.y]));
+    // 按在离手柄中心 (3, -2)px 处（命中半径 22px 内）：**不许跳到手指下**
+    const off = { x: 3, y: -2 };
+    v.onDown(ev(h.x + off.x, h.y + off.y));
+    dom.flush();
+    eq("warpui.grab.point-still", [v.xf!.pts![4].x, v.xf!.pts![4].y], [p0.x, p0.y]);
+    ok("warpui.grab.offset-recorded", !!v.xf!.grab && Math.abs(v.xf!.grab.x) > 1e-9, JSON.stringify(v.xf!.grab));
+    // 拖 2 格（＝2·zoom 屏幕像素）：落点＝原坐标 + 2，且别的点一动不动
+    const step = 2 * v.zoom;
+    const from = { x: h.x + off.x, y: h.y + off.y };
+    v.onMove(ev(from.x + step, from.y));
+    v.onUp(ev(from.x + step, from.y));
+    dom.flush();
+    eq("warpui.grab.drag-lands", [v.xf!.pts![4].x, v.xf!.pts![4].y], [p0.x + 2, p0.y]);
+    eq("warpui.grab.others-untouched",
+      JSON.stringify(v.xf!.pts!.filter((_, i) => i !== 4).map((p) => [p.x, p.y])), others);
+    // 手柄跟着手指平移（相对偏移不变），不是「滑走」
+    const h2 = v.warpHandles()[4];
+    eq("warpui.grab.follows", [h2.x - (from.x + step), h2.y - from.y], [h.x - from.x, h.y - from.y]);
+    finish(v, true);
+  }
+
+  // ---- 变换会话中途切网格变形：先把当前预览烘焙进浮动内容，控制点落在**现在**这块上 ----
+  {
+    const { s, v } = mk();
+    paint(s, 10, 10, 8, 6);
+    const f0 = v.xfScreenFrame()!;
+    const c = { x: (f0.corners[0].x + f0.corners[2].x) / 2, y: (f0.corners[0].y + f0.corners[2].y) / 2 };
+    ok("warpui.bake.move-session", v.beginXfMoveAt(c.x, c.y), "会话");
+    const step = 4 * v.zoom;                      // 右移 4 格
+    v.onMove(ev(c.x + step, c.y));
+    v.onUp(ev(c.x + step, c.y));
+    dom.flush();
+    const moved = (v.xf as unknown as { cells?: number[] }).cells ?? [];
+    ok("warpui.bake.moved-preview", moved.length > 0, String(moved.length));
+    ok("warpui.bake.enter", warp(v, "mesh"));
+    // 控制点应当落在**移动后**的位置（内容 10..17 → 14..21）
+    eq("warpui.bake.points-follow", v.xf!.pts![0].x, 14);
+    eq("warpui.bake.layer-origin", v.xf!.st.ox, 14);
+    // 预览没有跳回原位：画布上亮的像素仍在右移后的那一块
+    const seen = new Set<number>();
+    for (const di of (v.xf!.cells ?? [])) seen.add(di % s.doc.w);
+    const xs = [...seen].sort((a, b) => a - b);
+    eq("warpui.bake.preview-not-reset", [xs[0], xs[xs.length - 1]], [14, 21]);
+    // 撤销仍然回到会话开始那一刻（烘焙只改浮动内容，`st.before` 不动）
+    finish(v, false);
+    eq("warpui.bake.one-history", s.history.list().labels, ["sel.warp"]);
+    s.undo();
+    eq("warpui.bake.undo-restores", alpha(s, 10, 10), 255);
+  }
+
+  // ---- 覆盖层顺序：选区框 / 抓手 / 变形控制点必须画在浮动内容**之后**（＝图像之上） ----
+  {
+    const src = fs.readFileSync(path.resolve(__dirname, "../../../src/render/view.ts"), "utf8");
+    const i = src.indexOf("private drawOverlay(");
+    ok("warpui.order.has-draw-overlay", i > 0, "drawOverlay()");
+    const body = src.slice(i, src.indexOf("\n  }", i));
+    const floatAt = body.indexOf("if (xfg && xfg.cut && xfg.buf && xfg.cells");
+    const frameAt = body.indexOf("this.drawSelTransform();");
+    ok("warpui.order.float-before-frame", floatAt > 0 && frameAt > floatAt,
+      JSON.stringify({ floatAt, frameAt }));
   }
 }

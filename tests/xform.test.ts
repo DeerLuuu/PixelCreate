@@ -215,10 +215,12 @@ export function testXform(): void {
       const span = horiz ? Math.abs(b.y1 - b.y0) : Math.abs(b.x1 - b.x0);
       const p = anchorPoint(b, id);
       const tan = solveSkew(id, p, { x: p.x + dx, y: p.y + dy }, span).tan;
+      // 不动线＝**被拖那条边的对面**（`skewBaseline()`），与 `view.ts` 的调用一字不差
+      const fixed = skewBaseline(b, id);
       const m = affineFrom({
         pivot: piv, angle: 0, sx: 1, sy: 1,
         skewX: horiz ? tan : 0, skewY: horiz ? 0 : tan,
-        skewPivot: skewPivotOf(id, piv),
+        skewPivot: skewPivotOf(id, fixed),
       });
       const a = applyAffine(m, p);
       const o = anchorPoint(b, OPP[id] as AnchorId);
@@ -228,13 +230,13 @@ export function testXform(): void {
         : { tan, dragged: a.y - p.y, opposite: q.y - o.y };
     };
 
-    // 四条边各拖 1 格：被拖的边整条平移 `Δ/2`、对面那条边反向平移 `Δ/2`
-    // （基准线在枢轴那条线上，所以是「围绕枢轴反着走」，选中框因此保持形状 —— 与 Aseprite 一致）
+    // 四条边各拖 1 格：被拖的边整条**跟着走 1 格**、对面那条边**一动不动**
+    // （基准线在被拖边的对面，力臂＝框的整跨度 —— Aseprite 的行为）
     for (const id of ["t", "b", "l", "r"] as AnchorId[]) {
       const horiz = id === "t" || id === "b";
       const row = skewDrag(id, horiz ? 1 : 0, horiz ? 0 : 1);
-      ok("xform.skew." + id + ".dragged", near(row.dragged, 0.5), String(row.dragged));
-      ok("xform.skew." + id + ".opposite", near(row.opposite, -0.5), String(row.opposite));
+      ok("xform.skew." + id + ".dragged", near(row.dragged, 1), String(row.dragged));
+      ok("xform.skew." + id + ".opposite", near(row.opposite, 0), String(row.opposite));
       ok("xform.skew." + id + ".tan-nonzero", row.tan !== 0, String(row.tan));
     }
     // 拖反方向：位移跟着翻符号
@@ -258,7 +260,7 @@ export function testXform(): void {
     eq("xform.skew.pivot-of-l", skewPivotOf("l", { x: 9, y: 3 }), { x: 9, y: 0 });
     eq("xform.skew.baseline", skewBaseline(b, "t"), { x: 2.5, y: 3 });
 
-    // 线性部分与 `R · K · S` 逐项一致（平移分量由「枢轴不动」定，见下一条）
+    // 线性部分与 `R · K · S` 逐项一致（平移分量由「基准线不动」定，见下一条）
     {
       const pp: P = { x: 2.5, y: 1.5 }, sp: P = { x: 0, y: 1.5 };
       const base = affineFrom({ pivot: pp, angle: 0.7, sx: 1.2, sy: 0.8, skewX: 0.3, skewY: 0.4, skewPivot: sp });
@@ -268,13 +270,19 @@ export function testXform(): void {
       );
       let worst = 0;
       for (let i = 0; i < 5; i++) {
-        if (i === 2) continue;                        // 平移分量不比（由「枢轴不动」单独钉）
+        if (i === 2) continue;                        // 平移分量不比（由「基准线不动」单独钉）
         worst = Math.max(worst, Math.abs(base[i] - hand[i]));
       }
       ok("xform.skew.linear-matches-primitives", worst < 1e-9, String(worst));
-      // 平移分量：**枢轴必须是不动点**（`p' = p`）
-      ok("xform.skew.pivot-fixed", nearPt(applyAffine(base, pp), pp, 1e-9), JSON.stringify(applyAffine(base, pp)));
-      // 固定线上的点只沿着边方向动（水平剪切：y 不变）
+      // 平移分量：**过基准点的那条线**在纯斜切下整体不动（`t = sk − K·sk`，见 `affineFrom()`）；
+      // 枢轴不在这条线上时会被剪切带走（枢轴只管缩放 / 旋转，拖边走的是对面那条边）
+      const sk2: P = { x: 0, y: 3.5 }, pv2: P = { x: 2.5, y: 1.5 };
+      const pure = affineFrom({ pivot: pv2, angle: 0, sx: 1, sy: 1, skewX: 0.3, skewY: 0, skewPivot: sk2 });
+      const onLine = { x: -4, y: sk2.y };
+      ok("xform.skew.baseline-fixed", nearPt(applyAffine(pure, onLine), onLine, 1e-9),
+        JSON.stringify(applyAffine(pure, onLine)));
+      ok("xform.skew.pivot-not-fixed",
+        Math.abs(applyAffine(pure, pv2).x - pv2.x) > 1e-9, JSON.stringify(applyAffine(pure, pv2)));
 
     }
   }
@@ -307,7 +315,8 @@ export function testXform(): void {
     const base = { angle: (40 * Math.PI) / 180, sx: 1.8, sy: 0.7, skewX: 0.2, skewPivot: p0 };
     const mOld = affineFrom({ pivot: p0, ...base });
     const shifted = pivotComp({ pivot: p1, pivot0: p0, ...base });
-    const mNew = affineFrom({ pivot: p1, pivot0: p0, pivot0Shift: shifted, ...base, skewPivot: p1 });
+    // 除枢轴外**其余参数原样**（基准线 `skewPivot` 是显式给的，不跟着枢轴走）
+    const mNew = affineFrom({ pivot: p1, pivot0: p0, pivot0Shift: shifted, ...base });
     let worst = 0;
     for (const q of [{ x: 0, y: 0 }, { x: 5, y: 3 }, { x: 2.5, y: 0 }, { x: -3, y: 7 }]) {
       const a = applyAffine(mOld, q), c = applyAffine(mNew, q);
@@ -318,15 +327,16 @@ export function testXform(): void {
 
   // ---------------------------------------------------------------- 屏幕框 / 命中
   {
-    // 无旋转、zoom=1、ox=oy=0：内容 8×6 → 下标 0..7 / 0..5
-    // 口径：**下标 `i` → 屏幕 `i`**（内容 8×6 占下标 `0..7 / 0..5`，两端都是下标），
-    // 与 `indexBox()` / 矩阵 / 光栅化器完全一致（见 `screenFrameOf()`）。
-    const f = screenFrameOf(affineFrom({ pivot: { x: 3.5, y: 2.5 }, angle: 0, sx: 1, sy: 1 }), 8, 6, 1, 0, 0);
+    // 无旋转、zoom=1、ox=oy=0：内容 8×6 → **外框** `0..8 / 0..6`
+    // 口径：位置 `p` → 屏幕 `p`（内容 8×6 占 `[0, 8] × [0, 6]`，两端都是边界），
+    // 与 `contentBox()` / 矩阵 / 光栅化器 / 选中框（蚂蚁线）完全一致（见 `screenFrameOf()`）。
+    // 于是恒等变换下变换框与选中框**逐像素重合**，8 个锚点正落在角与边中点上。
+    const f = screenFrameOf(affineFrom({ pivot: { x: 4, y: 3 }, angle: 0, sx: 1, sy: 1 }), 8, 6, 1, 0, 0);
     eq("xform.screen.corners", f.corners.map((p) => [p.x, p.y]),
-      [[0, 0], [7, 0], [7, 5], [0, 5]]);
-    eq("xform.screen.span", [f.spanX, f.spanY], [7, 5]);
+      [[0, 0], [8, 0], [8, 6], [0, 6]]);
+    eq("xform.screen.span", [f.spanX, f.spanY], [8, 6]);
     eq("xform.screen.anchors", screenAnchors(f).map((p) => [p.x, p.y]),
-      [[0, 0], [3.5, 0], [7, 0], [7, 2.5], [7, 5], [3.5, 5], [0, 5], [0, 2.5]]);
+      [[0, 0], [4, 0], [8, 0], [8, 3], [8, 6], [4, 6], [0, 6], [0, 3]]);
     ok("xform.screen.inside", insideFrame(f, { x: 3, y: 2 }));
     ok("xform.screen.outside", !insideFrame(f, { x: 9, y: 2 }) && !insideFrame(f, { x: 3, y: 7 }));
     eq("xform.screen.dist-to-frame", distToFrame(f, { x: 3, y: 0 }), 0);

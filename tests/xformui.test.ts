@@ -523,10 +523,10 @@ export function testXformUi(): void {
         JSON.stringify({ before, after: got }));
     }
     {
-      // 翻负后内容整块落到收敛点 (14,14) 的**另一侧**（下标更小的一侧），
-      // 原来 3×3 占 14..16，镜像后占 28..30 之外不可能有像素落在 14..16 右侧
+      // 翻负后内容整块落到**不动点（对角那个锚点）的另一侧**：内容 3×3 占 14..16，
+      // 不动点是左上角那个锚点（外框 (0,0) ＝画布 14,14），所以镜像后占 12..14 一侧
       const bx = previewBox(c.v);
-      ok("xformui.scale.mirror-lands", !!bx && bx.x0 >= 28 && bx.x1 <= 30 && bx.y0 >= 28 && bx.y1 <= 30,
+      ok("xformui.scale.mirror-lands", !!bx && bx.x0 >= 11 && bx.x1 <= 14 && bx.y0 >= 11 && bx.y1 <= 14,
         bx ? JSON.stringify(bx) : "no-preview");
     }
     c.v.commitXf();
@@ -607,10 +607,11 @@ export function testXformUi(): void {
     dom.flush();
     eq("xformui.skew.kind", v.xfDrag?.kind, "skew");
     eq("xformui.skew.anchor", v.xfDrag?.anchor, "t");
-    // 往右拖 8 格：基准线在**枢轴那条线**（内容中心 y），被拖边与对面边各反着走 4 格
+    // 往右拖 8 格：基准线在**对面那条边**（下边 y=9），所以被拖的上边整条跟着走 8 格、
+    // 下边一动不动 —— `tan = −Δ / 跨度 = −8 / 9`
     v.onMove(ev(top.x + 32, top.y - 30, "mouse"));
     dom.flush();
-    eq("xformui.skew.tan", v.xf!.tp!.skewX, -1);
+    ok("xformui.skew.tan", Math.abs(v.xf!.tp!.skewX! + 8 / 9) < 1e-9, String(v.xf!.tp!.skewX));
     ok("xformui.skew.preview-alive", (v.xf!.cells || []).length > 0, String((v.xf!.cells || []).length));
     v.onUp(ev(top.x + 32, top.y - 30, "mouse"));
     v.commitXf();
@@ -633,11 +634,13 @@ export function testXformUi(): void {
       b.v.xf ? String(b.v.xf.tp!.skewX) : "no-session");
     b.v.revertXf();
 
-    // 左右边中点的外圈走纵轴（skewY）
+    // 左右边中点的外圈走纵轴（skewY）：不动线＝对面那条边（右/左侧），力臂＝整宽 9
     const c = mk(true);
     paint(c.s, 10, 10, 9, 9);
     dragBy(c.v, { x: anchorScreen(c.v, "l").x - 30, y: anchorScreen(c.v, "l").y }, 0, 32, true);
-    eq("xformui.skew.y-axis", [c.v.xf ? c.v.xf.tp!.skewY : null, c.v.xf ? c.v.xf.tp!.skewX : null], [-1, 0]);
+    ok("xformui.skew.y-axis",
+      !!c.v.xf && Math.abs(c.v.xf.tp!.skewY! + 8 / 9) < 1e-9 && c.v.xf.tp!.skewX === 0,
+      c.v.xf ? JSON.stringify([c.v.xf.tp!.skewY, c.v.xf.tp!.skewX]) : "no-session");
     c.v.revertXf();
   }
 
@@ -651,17 +654,17 @@ export function testXformUi(): void {
       { x: (f0.corners[0].x + f0.corners[2].x) / 2, y: (f0.corners[0].y + f0.corners[2].y) / 2 }, true);
     const pv = v.xfPivotScreen()!;
     eq("xformui.pivot.default-centre", v.pivotPreset(), "cc");
-    // 枢轴是**内容下标**（相对内容原点），9×9 的内容中心＝下标 (4,4)
-    eq("xformui.pivot.default-at", [v.xf!.tp!.pivot.x, v.xf!.tp!.pivot.y], [4, 4]);
+    // 枢轴是**内容外框坐标**（内容左上角＝`st.ox`）：9×9 的内容外框是 `0..9`，
+    // 所以中心＝ (4.5, 4.5)（＝屏幕上的内容正中，也就是「外框中心」预设）
+    eq("xformui.pivot.default-at", [v.xf!.tp!.pivot.x, v.xf!.tp!.pivot.y], [4.5, 4.5]);
     const before = new Uint8ClampedArray(celData(s));
     v.onDown(ev(pv.x, pv.y, "mouse"));
     dom.flush();
     eq("xformui.pivot.kind", v.xfDrag?.kind, "pivot");
     v.onMove(ev(sc(0, 0).x, sc(0, 0).y, "mouse"));
     dom.flush();
-    // 指针拖到屏幕 (8,8)＝下标 (0,0)：枢轴由指针位移累计得到 (4,4)+(0-8)/4 → (2,2)？不是 ——
-    // 实际落点是 (4,4) + (8-8)/4 - (8-8)/4 … 这里直接用观测值：枢轴从 (4,4) 移到 (-2,-2)
-    // （钳制范围是框外 2 格，不会被拖丢）
+    // 指针拖到屏幕 (8,8)：枢轴按指针位移累计移动，被钳在框外 2 格（不会被拖丢），
+    // 所以观测落点是 (-2,-2)；屏幕坐标与枢轴坐标的换算是 `(p + st.ox)·zoom + ox`
     eq("xformui.pivot.moved-to", [v.xf!.tp!.pivot.x, v.xf!.tp!.pivot.y], [-2, -2]);
     eq("xformui.pivot.picture-still", diffBytes(celData(s), before), 0);
     eq("xformui.pivot.touched", v.xf!.pivotTouched, true);
@@ -669,32 +672,35 @@ export function testXformUi(): void {
     dom.flush();
     eq("xformui.pivot.preset-tl", v.pivotPreset(), "tl");
 
-    // 缩放之后按归一化比例跟位
+    // 缩放之后按归一化比例跟位（**实时**：枢轴跟着内容长，画面不动，见 `pivotKeepPicture()`）
     {
       // 左上角枢轴：缩放后仍然压在左上角（归一化比例不变）
       const a = mk(true);
       paint(a.s, 10, 10, 9, 9);
       const brA = anchorScreen(a.v, "br");
       a.v.onDown(ev(brA.x, brA.y, "mouse"));
+      a.v.onUp(ev(brA.x, brA.y, "mouse"));          // 先起会话（真机上就是「点一下进变换」）
       a.v.setPivotPreset("tl");
       dragBy(a.v, { x: brA.x, y: brA.y }, 32, 32, true);            // 2×
       eq("xformui.pivot.scale-follow-tl", [a.v.xf!.tp!.pivot.x, a.v.xf!.tp!.pivot.y], [0, 0]);
-      // 中心枢轴：缩放后仍然在中心（边长 8 → 16，中心 4 → 8）
+      // 中心枢轴：缩放后仍然在中心（外框 0..9 → 0..18，中心 4.5 → 9）
       const b = mk(true);
       paint(b.s, 10, 10, 9, 9);
       const brB = anchorScreen(b.v, "br");
       b.v.onDown(ev(brB.x, brB.y, "mouse"));
+      b.v.onUp(ev(brB.x, brB.y, "mouse"));
       dragBy(b.v, { x: brB.x, y: brB.y }, 32, 32, true);
-      eq("xformui.pivot.scale-follow-centre", [b.v.xf!.tp!.pivot.x, b.v.xf!.tp!.pivot.y], [8, 8]);
+      eq("xformui.pivot.scale-follow-centre", [b.v.xf!.tp!.pivot.x, b.v.xf!.tp!.pivot.y], [9, 9]);
       // 上中枢轴：缩放后仍然在上边中点
       const c = mk(true);
       paint(c.s, 10, 10, 9, 9);
       const brC = anchorScreen(c.v, "br");
       c.v.onDown(ev(brC.x, brC.y, "mouse"));
+      c.v.onUp(ev(brC.x, brC.y, "mouse"));
       c.v.setPivotPreset("tc");
       dragBy(c.v, { x: brC.x, y: brC.y }, 32, 32, true);
-      // 上中枢轴：缩放后仍然在上边中点（内容 9×9 → 18×18，上边中点由 (4,0) 跟到 (8,0)）
-      eq("xformui.pivot.scale-follow-tc", [c.v.xf!.tp!.pivot.x, c.v.xf!.tp!.pivot.y], [8, 0]);
+      // 上中枢轴：缩放后仍然在上边中点（外框 0..9 → 0..18，上边中点由 (4.5,0) 跟到 (9,0)）
+      eq("xformui.pivot.scale-follow-tc", [c.v.xf!.tp!.pivot.x, c.v.xf!.tp!.pivot.y], [9, 0]);
     }
     // 旋转之后枢轴**不动**：先把枢轴拖到框中心偏一点，再旋转，枢轴坐标必须一模一样
     {
@@ -717,11 +723,8 @@ export function testXformUi(): void {
       const a0 = Math.atan2(grab.y - pv.y, grab.x - pv.x);
       const r = Math.hypot(grab.x - pv.x, grab.y - pv.y) || 1;
       const to = { x: pv.x + Math.cos(a0 + 0.6) * r, y: pv.y + Math.sin(a0 + 0.6) * r };
-      console.log("DUMP before-rot", JSON.stringify([a.v.xf.tp.pivot.x, a.v.xf.tp.pivot.y]), "drag", a.v.xfDrag ? a.v.xfDrag.kind : "none");
       a.v.onMove(ev(to.x, to.y, "mouse"));
-      console.log("DUMP after-move", JSON.stringify([a.v.xf.tp.pivot.x, a.v.xf.tp.pivot.y]), "drag", a.v.xfDrag ? a.v.xfDrag.kind : "none");
       a.v.onUp(ev(to.x, to.y, "mouse"));
-      console.log("DUMP after-up", JSON.stringify([a.v.xf.tp.pivot.x, a.v.xf.tp.pivot.y]));
       dom.flush();
       ok("xformui.pivot.rotate-keeps",
         !!a.v.xf && a.v.xf.tp!.pivot.x === keep[0] && a.v.xf.tp!.pivot.y === keep[1],
@@ -738,7 +741,8 @@ export function testXformUi(): void {
       eq("xformui.pivot.cycle-1", b.v.cyclePivot(), "cr");
       eq("xformui.pivot.cycle-2", b.v.cyclePivot(), "bl");
       ok("xformui.pivot.cycle-sets", b.v.setPivotPreset("br"));
-      eq("xformui.pivot.cycle-br", [b.v.xf!.tp!.pivot.x, b.v.xf!.tp!.pivot.y], [8, 8]);
+      // 外框口径：9×9 的内容外框是 `0..9`，右下角＝ (9,9)
+      eq("xformui.pivot.cycle-br", [b.v.xf!.tp!.pivot.x, b.v.xf!.tp!.pivot.y], [9, 9]);
       const c = mk(true);
       eq("xformui.pivot.no-session", c.v.pivotPreset(), null);
       eq("xformui.pivot.no-session-set", c.v.setPivotPreset("tl"), false);
@@ -984,5 +988,109 @@ export function testXformUi(): void {
     ok("xformui.locked.error", v.lastWarpError === "locked" || v.lastWarpError === null,
       String(v.lastWarpError));
     s.doc.layers[s.curLayer()].locked = false;
+  }
+
+  // ================================================================ 参考系：框 / 抓手 / 解算必须同源
+  // （真机反馈「锚点乱飞 / 变形不正确」的那一批）
+  const grabsOf = (v: VX): string => JSON.stringify(
+    v.xfGrabs().map((g) => [g.kind, g.anchor, Math.round(g.x * 1e3) / 1e3, Math.round(g.y * 1e3) / 1e3]));
+
+  // 恒等变换下变换框与选中框（蚂蚁线）逐像素重合；按下的瞬间 16 个抓手一动不动
+  {
+    const { s, v } = mk(true);
+    paint(s, 10, 10, 20, 14);
+    const box = selBox(s, v)!;
+    const f = v.xfScreenFrame()!;
+    eq("xformui.frame.matches-ants",
+      [f.corners[0].x, f.corners[0].y, f.corners[2].x, f.corners[2].y],
+      [box.x0, box.y0, box.x1, box.y1]);
+    const before = grabsOf(v);
+    const tl = v.xfGrabs().find((g) => g.kind === "scale" && g.anchor === "tl")!;
+    v.onDown(ev(tl.x, tl.y, "mouse"));
+    dom.flush();
+    ok("xformui.frame.session-alive", !!v.xf, "会话");
+    eq("xformui.frame.no-handle-jump", grabsOf(v), before);
+    v.revertXf();
+  }
+
+  // 旋转：解算中心＝**画出来的那个枢轴**（选区不在画布原点时也要转 90° 就是 90°）
+  {
+    const { s, v } = mk(true);
+    s.setSetting("tools.selXformAngleSnap", false);
+    paint(s, 10, 10, 8, 6);
+    const grab = v.xfGrabs().find((g) => g.kind === "rotate" && g.anchor === "br")!;
+    v.onDown(ev(grab.x, grab.y, "mouse"));
+    const pv = v.xfPivotScreen()!;
+    const dx = grab.x - pv.x, dy = grab.y - pv.y;
+    const to = { x: pv.x - dy, y: pv.y + dx };                 // 绕枢轴顺时针 90°
+    v.onMove(ev(to.x, to.y, "mouse"));
+    v.onUp(ev(to.x, to.y, "mouse"));
+    dom.flush();
+    eq("xformui.rotate.quarter-turn", Math.round(((v.xf!.tp!.angle || 0) * 180) / Math.PI), 90);
+    // 像素跟着框走：浮动预览的屏幕包围盒应当与旋转后的框重合（早先这里一格都没转）
+    const f = v.xfScreenFrame()!;
+    const bx = previewBox(v)!;
+    const z = v.zoom;
+    eq("xformui.rotate.pixels-follow-frame",
+      [Math.round(bx.x0 * z + v.ox), Math.round(bx.y0 * z + v.oy),
+        Math.round((bx.x1 + 1) * z + v.ox), Math.round((bx.y1 + 1) * z + v.oy)],
+      [Math.round(Math.min(...f.corners.map((p) => p.x))), Math.round(Math.min(...f.corners.map((p) => p.y))),
+        Math.round(Math.max(...f.corners.map((p) => p.x))), Math.round(Math.max(...f.corners.map((p) => p.y)))]);
+    v.revertXf();
+  }
+
+  // 缩放：不动点＝对角那个锚点（拖 br，tl 必须钉住不动）
+  {
+    const { s, v } = mk(true);
+    s.setSetting("tools.selXformGridSnap", false);
+    paint(s, 10, 10, 8, 6);
+    const br = v.xfGrabs().find((g) => g.kind === "scale" && g.anchor === "br")!;
+    v.onDown(ev(br.x, br.y, "mouse"));
+    const a0 = v.xfScreenFrame()!;
+    const tl0 = { x: a0.corners[0].x, y: a0.corners[0].y };
+    v.onMove(ev(br.x + 40, br.y + 24, "mouse"));
+    dom.flush();
+    const a1 = v.xfScreenFrame()!;
+    ok("xformui.scale.opposite-anchor-fixed",
+      near(a1.corners[0].x, tl0.x) && near(a1.corners[0].y, tl0.y),
+      JSON.stringify([a1.corners[0], tl0]));
+    ok("xformui.scale.dragged-edge-moved", a1.corners[2].x > tl0.x + 40,
+      String(a1.corners[2].x - tl0.x));
+    v.revertXf();
+  }
+
+  // 同一次会话里拖第二次：倍率 / 角度继续累加（不是被第二次拖拽覆盖回原样）
+  {
+    const { s, v } = mk(true);
+    // 吸附开关是**跨 Session 持久化**的（前面的用例开过），这里显式关掉
+    s.setSetting("tools.selXformGridSnap", false);
+    s.setSetting("tools.selXformAngleSnap", false);
+    s.setSetting("tools.selXformAspect", false);
+    paint(s, 10, 10, 8, 8);
+    const b1 = v.xfGrabs().find((g) => g.kind === "scale" && g.anchor === "br")!;
+    dragBy(v, { x: b1.x, y: b1.y }, 16, 16, true);
+    const sx1 = v.xf!.tp!.sx;
+    ok("xformui.scale.first-drag-grew", sx1 > 1.2, String(sx1));
+    const b2 = v.xfGrabs().find((g) => g.kind === "scale" && g.anchor === "br")!;
+    dragBy(v, { x: b2.x, y: b2.y }, 16, 16, true);
+    ok("xformui.scale.repeat-grows", v.xf!.tp!.sx > sx1 + 0.05,
+      JSON.stringify([sx1, v.xf!.tp!.sx]));
+
+    const deg = (rad: number): number => (rad * 180) / Math.PI;
+    const rotOnce = (): void => {
+      const g = v.xfGrabs().find((q) => q.kind === "rotate" && q.anchor === "tr")!;
+      const pv = v.xfPivotScreen()!;
+      const a0 = Math.atan2(g.y - pv.y, g.x - pv.x);
+      const r = Math.hypot(g.x - pv.x, g.y - pv.y) || 1;
+      const to = { x: pv.x + Math.cos(a0 + Math.PI / 4) * r, y: pv.y + Math.sin(a0 + Math.PI / 4) * r };
+      drag(v, { x: g.x, y: g.y }, to, true);
+    };
+    const a0 = deg(v.xf!.tp!.angle || 0);
+    rotOnce();
+    const a1 = deg(v.xf!.tp!.angle || 0);
+    rotOnce();
+    const a2 = deg(v.xf!.tp!.angle || 0);
+    ok("xformui.rotate.repeat-adds", a1 - a0 > 40 && a2 - a1 > 40, JSON.stringify([a0, a1, a2]));
+    v.revertXf();
   }
 }

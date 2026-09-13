@@ -3,6 +3,7 @@ import type { Doc } from "../engine/doc";
 import type { RGBA, Rect} from "../engine/types";
 import { clampRect, screenRectOf, unionRect, tileOffsets, tileRect, type TileMode } from "./rect";
 import { Sel } from "../engine/doc";
+import { Cel } from "../engine/cel";
 import * as comp from "./compositor";
 import { Stroke } from "../tools/stroke";
 import { isSymTool, SYM_ANGLES, type ToolId } from "../tools/registry";
@@ -10,10 +11,10 @@ import type { SymAxis } from "../engine/symmetry";
 import { lineCells, brushStamp, fillPolygon } from "../engine/paint";
 import { selOps, lassoFill, beginMove, xformAffineFloating, xformAffineDestBox, warpFloating, floatQuad, floatGrid, floatDropInto, type MoveState } from "../tools/select";
 import {
-  affineFrom, adjustPivot, axisOf, boxCenter, distToFrame, exactMove, grabAt, indexBox,
-  insideFrame, isExactTransform, isIntegerShift, pivotComp, pivotPresetAt, pivotPresetPoint,
-  scaleAnchor, screenAnchors, screenFrameOf, solveRotate, solveScale, solveSkew,
-  skewPivotOf, toFrameLocal, anchorPoint, ringHitAt, transformGrabs, grabOffsets, touchHitRadius,
+  affineFrom, adjustPivot, axisOf, boxCenter, clampScale, clampTan, contentBox, distToFrame, exactMove, grabAt,
+  insideFrame, isExactTransform, isIntegerShift, normAngle, pivotPresetAt, pivotPresetPoint,
+  scaleAnchor, screenAnchors, screenFrameOf, snapCleanAngle, solveRotate, solveScale, solveSkew,
+  skewBaseline, skewPivotOf, toFrameLocal, anchorPoint, rightAngleSteps, ringHitAt, transformGrabs, grabOffsets, touchHitRadius,
   edgeNormalOf, XF_LABEL, XF_LABEL_ORDER, PIVOT_PRESETS, ANCHORS,
   PC_HIT, TOUCH_HIT, type AnchorId, type ScreenFrame, type XfBox,
   type XfKind, type XfParams, type PivotPreset, type Grab, type GrabOffsets, type HitRadii,
@@ -22,7 +23,7 @@ import type { Mat3 } from "../tools/warp";
 import type { Session } from "../app/session";
 import type { GestureActionId } from "../app/gesture-ids";
 import type { Pt } from "../tools/warp";
-import { warpCoordLabel, warpPointFromScreen } from "../tools/warp";
+import { warpCoordLabel, warpPointRaw, snapWarpIndex } from "../tools/warp";
 import { clamp } from "../engine/types";
 import { LEGACY_TITLE_EXTRA, TITLE_EXTRA, snapGapRect, type GapRect } from "../app/canvas-snap";
 import { canvasAtScreen as spaceCanvasAt, screenToCanvas } from "../app/canvas-space";
@@ -71,14 +72,32 @@ function blendInto(dst: Uint8ClampedArray, o: number, src: Uint8ClampedArray, so
 export const PIVOT_ORDER = ["tl", "tc", "tr", "cl", "cc", "cr", "bl", "bc", "br"] as const;
 
 /**
- * 会话里「枢轴的 9 档预设」用的框。
+ * 会话里「枢轴的 9 档预设」用的框 ＝ **内容外框**（`contentBox()`）。
  *
- * 坐标口径与「内容框」一致（`indexBox()`）：局部 `(0, 0)` 是左上那个像素的中心、
- * `(cw-1, ch-1)` 是右下那个像素的中心，屏幕上分别是 `(st.ox + 0.5)·z + ox` 与
- * `(st.ox + cw - 0.5)·z + ox` —— 也就是选中框的**角抓手**所在的位置。
+ * 外框口径（见 `xform.ts` 文件头）：`0..cw` / `0..ch`，屏幕上 `0` 就是选中框的左上角、
+ * `cw` 是右下角 —— 于是「枢轴预设的左上」＝「框的左上」＝「角抓手的位置」，
+ * 与命中判定 / 抓手绘制用的是同一套坐标（不会有半格偏差）。
  */
 function pivotBoxOf(g: NonNullable<View["xf"]>): XfBox {
-  return indexBox(g.st.content.w, g.st.content.h);
+  return contentBox(g.st.content.w, g.st.content.h);
+}
+
+/**
+ * 把框 `b` 绕 `a` 缩放 `sx` / `sy` 之后的框（负倍率＝翻转，两端重新排序）。
+ * 与 `scaleAnchor()` 用的是同一套**外框**算法，视图侧「缩放后枢轴跟位」靠它。
+ */
+function scaledBox(b: XfBox, a: Pt, sx: number, sy: number): XfBox {
+  const x0 = a.x + (b.x0 - a.x) * sx, x1 = a.x + (b.x1 - a.x) * sx;
+  const y0 = a.y + (b.y0 - a.y) * sy, y1 = a.y + (b.y1 - a.y) * sy;
+  return { x0: Math.min(x0, x1), y0: Math.min(y0, y1), x1: Math.max(x0, x1), y1: Math.max(y0, y1) };
+}
+
+/** 按下那一刻的变换参数快照（拖动解算的**累加基准**，见 `View.xfDrag.tp0`） */
+function tp0Of(tp: XfParams | undefined): { sx: number; sy: number; angle: number; skewX: number; skewY: number } {
+  return {
+    sx: tp?.sx ?? 1, sy: tp?.sy ?? 1, angle: tp?.angle ?? 0,
+    skewX: tp?.skewX ?? 0, skewY: tp?.skewY ?? 0,
+  };
 }
 
 // 选区变换框上「固定图标抓手」的配色：与同文件选区框 / 手柄的现有画法同一套
@@ -420,7 +439,17 @@ export class View {
   private tapT = 0;
   private tapPt: PxPoint | null = null;
   /** 旋转 / 缩放 / 斜切 / 移动 / 枢轴拖动（`xf` 槽里的交互，自由变换见 xf.mode === "warp"） */
-  private xfDrag: { kind: XfKind; anchor?: AnchorId; start: PxPoint } | null = null;
+  private xfDrag: {
+    kind: XfKind; anchor?: AnchorId; start: PxPoint; pivot0?: Pt;
+    /**
+     * 按下那一刻的变换参数快照（`sx` / `sy` / `angle` / `skewX` / `skewY`）。
+     *
+     * 拖动中的解算量都是**这一次拖拽**的增量（缩放是相对倍率、旋转是增量角、斜切是增量 tan），
+     * 累加必须以此为基准 —— 每次 `pointermove` 都从它重算，于是「同一次拖拽里挪几下」
+     * 不会把倍率连乘（那会让内容越拖越小 / 越拖越扁），而「松手后再拖一次」才继续累加。
+     */
+    tp0?: { sx: number; sy: number; angle: number; skewX: number; skewY: number };
+  } | null = null;
   /**
    * 选区自由变换（Aseprite 那套：移动 + 缩放 + 旋转 + 斜切 / 四点斜切透视 + 网格）
    * 的会话状态。**一次会话 = 一条 undo**：松手只结束这次拖拽，事务一直开着，
@@ -429,16 +458,22 @@ export class View {
   private xf: { mode: "rot" | "scale" | "warp"; axis: "xy" | "x" | "y"; li: number; fi: number; st: MoveState; cx: number; cy: number; ax: number; ay: number; p0x: number; p0y: number; ang0: number; moved: boolean; cut?: boolean; buf?: Uint8ClampedArray; cells?: number[];
     /** 自由变换（斜切/透视/网格）用的控制点（画布坐标）与正在拖的那一个 */
     warpKind?: "quad" | "mesh"; pts?: Pt[]; drag?: number;
+    /**
+     * 抓住控制点那一刻「手指 ↔ 控制点」的偏移（**下标空间**）。
+     * 有它，按在命中半径内任何一处都不会让控制点**跳到手指下**（小选区上 9 个点只隔十几像素，
+     * 跳位看起来就是「点乱飞、抓错点」）；吸附在落点那一步做，见 `warpMove()`。
+     */
+    grab?: Pt;
     /** ---- 下面这些是「移动 + 缩放 + 旋转 + 斜切」模式（Aseprite 那套）独有的 ---- */
     /** 变换参数（枢轴 / 角度 / 缩放 / 斜切），**绕枢轴**组成矩阵（见 xform.ts） */
     tp?: XfParams;
-    /** 会话开始时的内容框 / 枢轴（下标空间）；`box0` 是拖动解算的固定参照 */
+    /** 会话开始时的内容框（**外框口径**）/ 枢轴；`box0` 是拖动解算的固定参照 */
     box0?: XfBox; pivot0?: Pt;
     /** 会话开始时的屏幕框（拖动解算的固定参照：拖动过程中框会转，参照不能跟着动） */
     screen0?: ScreenFrame;
     /** 枢轴 / 锚点是不是被用户拖过（「缩放后跟位、旋转后不动」只跟用户拖过的枢轴有关） */
     pivotTouched?: boolean;
-    /** 斜切的基准点（＝被拖的那条边上的那个锚点，`skewPivot` 用） */
+    /** 斜切的**基准点**（不动的那条线，＝被拖那条边的对面中点；`affineFrom` 的 `skewPivot`） */
     skewAnchor?: Pt;
     /** 这次会话里各语义各出现过没有（history 标签与「有没有真改过」用） */
     kinds?: { move: boolean; scale: boolean; rotate: boolean; skew: boolean };
@@ -1198,7 +1233,6 @@ export class View {
       ctx.fillText(label, lx2 + 7, ly2 + 16);
       ctx.restore();
     }
-    this.drawSelTransform();
     this.drawFlash(ctx);
     this.drawOutlinePreview(ctx);
     this.drawGradPreview(ctx);
@@ -1299,6 +1333,10 @@ export class View {
       }
       ctx.restore();
     }
+    // 选区框 / 16 个抓手 / 变形控制点与网格线：**必须画在浮动内容之后**（＝图像之上）。
+    // 早先它们排在浮动内容之前，一拖动就被自己变出来的像素盖住 —— 用户报的
+    // 「工具点、框框应该渲染在图像画面之上」就是这个（顺序也记在 `docs/UI.md` §3.8）。
+    this.drawSelTransform();
     this.drawSymGuides(ctx);
     // footprint marker: pencil/eraser show the exact Aseprite circle-brush
     // outline (transparent centre); other drawing tools keep the square bounds
@@ -2237,10 +2275,20 @@ export class View {
       }, this.session.prefs.longPressMs);
     }
     // 自由变换（四点 / 网格）：控制点命中即开始拖；命中时顺手取消待触发的长按取色，
-    // 免得慢速的精细拖动被长按抢走
+    // 免得慢速的精细拖动被长按抢走。
+    // **记下「手指 ↔ 控制点」的偏移**（下标空间）：按在 22px 命中半径内任何一处都算抓住，
+    // 但如果直接把控制点设成手指位置，它就会瞬间跳到手指下（小选区上 9 个网格点只隔
+    // 十几像素，看起来就是「点乱飞、抓错点」）。有了偏移，控制点只会跟着手指**平移**。
     if (this.xf && this.xf.mode === "warp") {
       const h = this.warpHandleAt(pt);
-      if (h >= 0) { this.cancelPickTimer(); this.xf.drag = h; return; }
+      if (h >= 0) {
+        const q = this.xf.pts?.[h];
+        const raw = warpPointRaw(pt.x, pt.y, this.zoom, this.ox, this.oy);
+        this.cancelPickTimer();
+        this.xf.drag = h;
+        this.xf.grab = q ? { x: q.x - raw.x, y: q.y - raw.y } : { x: 0, y: 0 };
+        return;
+      }
     }
     // 自由变换（四点 / 网格）是常驻模式：画布上除了控制点没有别的手势
     if (this.xf && this.xf.mode === "warp") {
@@ -2369,7 +2417,12 @@ export class View {
     // auto-pan the viewport while a draw/transform/selection drag nears the edge.
     // Speed scales with how deep into the edge zone the pointer is, but is capped
     // per event so the scroll stays slow, smooth and controllable.
-    if (this.session.prefs.autoPan && wasDown && this.pointers.size === 1 && (this.stroke || this.xf || this.selDrag)) {
+    //
+    // **精调拖动期间不自动平移**（旋转 / 缩放 / 斜切 / 枢轴 / 变形控制点）：视口一动，
+    // 解算用的参考点（枢轴屏幕位、按下时的起点）就跟着动 —— 角度会跳、抓手会从手指下面
+    // 滑走，用户看到的就是「锚点乱飞」。笔迹与普通选区/内容拖动照旧。
+    if (this.session.prefs.autoPan && wasDown && this.pointers.size === 1 && !this.preciseDrag() &&
+      (this.stroke || this.xf || this.selDrag)) {
       const M = this.session.prefs.autoPanMargin, w = this.vpW(), h = this.vpH();
       const MAX = this.session.prefs.autoPanSpeed; // px per event, 1..6
       const SPEED = 0.28 * (MAX / 3);
@@ -2608,7 +2661,7 @@ export class View {
       // 旋转 / 缩放 / 斜切 / 移动：松手只结束这次拖拽，会话继续开着
       // （一次会话一条 undo，靠「完成 / 还原 / 切工具」结束）。
       // 自由变换（四点 / 网格）是常驻模式：松手同样只结束这一次拖拽。
-      if (this.xf && this.xf.mode === "warp") { this.xf.drag = undefined; this.warpDragOn = false; }
+      if (this.xf && this.xf.mode === "warp") { this.xf.drag = undefined; this.xf.grab = undefined; this.warpDragOn = false; }
       else if (this.inXform()) this.xfEndDrag();
       else if (this.xf) this.endXf();
       const pt = this.evPt(e);
@@ -2898,6 +2951,23 @@ export class View {
     return !!this.xf && this.xf.mode !== "warp";
   }
 
+  /**
+   * 现在是不是一次**精调拖动**（旋转 / 缩放 / 斜切 / 枢轴 / 变形控制点）？
+   *
+   * 这类拖动的解算全部相对「枢轴屏幕位」「按下时的起点」这些**屏幕参照**，视口一平移，
+   * 参照就跟着动：旋转角会跳、抓手会从手指下面滑走。所以自动平移对它们一律不生效
+   * （`prefs.autoPan` 只作用于笔迹与普通选区 / 内容拖动）。
+   *
+   * 「移动内容」不算精调：它本来就是「把内容拖到别处」，边缘自动平移正是要的能力。
+   */
+  private preciseDrag(): boolean {
+    const g = this.xf;
+    if (!g) return false;
+    if (g.mode === "warp") return g.drag !== undefined;
+    if (!this.xfDrag) return false;
+    return this.xfDrag.kind !== "move";
+  }
+
   /** 变换矩阵（枢轴拖动 / 斜切基准线的补偿都折在 `affineFrom()` 里） */
   private xfMat(g: NonNullable<View["xf"]>): Mat3 {
     return affineFrom(this.xfParams(g));
@@ -2913,6 +2983,8 @@ export class View {
       sy: tp.sy,
       skewX: tp.skewX ?? 0,
       skewY: tp.skewY ?? 0,
+      // 缩放的不动点（拖哪个抓手就钉住对面那个锚点）与斜切的基准线（对面那条边）
+      scalePivot: tp.scalePivot,
       skewPivot: tp.skewAnchor,
       shift: tp.shift,
       pivot0Shift: tp.pivot0Shift,
@@ -3044,7 +3116,7 @@ export class View {
     // 更不该把已经调好的枢轴 / 缩放 / 角度丢掉。
     const live = this.xf;
     if (live && live.mode !== "warp" && live.tp) {
-      this.xfDrag = { kind, anchor, start: pt };
+      this.xfDrag = { kind, anchor, start: pt, pivot0: { ...live.tp.pivot }, tp0: tp0Of(live.tp) };
       s.hapticTick("变换", 0.4);
       this.drawOverlay();
       return true;
@@ -3060,7 +3132,8 @@ export class View {
     // 复制开关（选区球的 sticky chip，PC 上等价 Ctrl+拖动）：
     // 内容不从图层挖走，松手时把副本贴上去
     st.copy = kind === "move" && (this.session.prefs.selXformCopy || this.ctrlDown);
-    const box = indexBox(st.content.w, st.content.h);
+    // 会话框＝**内容外框**（`contentBox()`：`0..w` / `0..h`），与栅格化器、选中框、抓手同一套口径
+    const box = contentBox(st.content.w, st.content.h);
     const center = boxCenter(box);
     const screenBox = screenFrameOf(affineFrom({ pivot: center, angle: 0, sx: 1, sy: 1 }), st.content.w, st.content.h, this.zoom, this.ox, this.oy);
     const px = (pt.x - this.ox) / this.zoom - 0.5, py = (pt.y - this.oy) / this.zoom - 0.5;
@@ -3075,7 +3148,7 @@ export class View {
       pivotTouched: false,
       kinds: { move: false, scale: false, rotate: false, skew: false },
     };
-    this.xfDrag = { kind, anchor, start: pt };
+    this.xfDrag = { kind, anchor, start: pt, pivot0: { x: center.x, y: center.y }, tp0: tp0Of(this.xf.tp) };
     s.hapticTick("变换", 0.5);
     this.drawOverlay();
     return true;
@@ -3085,6 +3158,10 @@ export class View {
    * 拖动中：把指针位置解算成变换参数并刷新预览。
    * 拖动量统一在**框自身的坐标系**里量（框可能已经转过角度），且每次都从
    * 「会话起点的参照框 + 手势起点」重算总计，不做增量累加（不会漂）。
+   *
+   * 三个分支的参考点必须与**画出来的东西**一致，否则抓手会从手指下面滑走：
+   *  · 旋转用 `xfPivotScreen()`（画出来 / 命中用的那个枢轴屏幕位，含 `st.ox`）；
+   *  · 缩放 / 斜切用**当前框的旋转角**把拖动量投影到框自身的轴上（框转过也跟手）。
    */
   private xfMove(pt: PxPoint): void {
     const g = this.xf;
@@ -3092,8 +3169,10 @@ export class View {
     if (!g || g.mode === "warp" || !d || !g.tp || !g.screen0 || !g.box0) return;
     const z = this.zoom || 1;
     const tp = g.tp;
-    // 屏幕像素 → 下标；再投影到框自身的轴上（框转过角度时拖动方向要跟着转）
+    // 屏幕像素 → 外框坐标；再投影到框自身的轴上（框转过角度时拖动方向要跟着转）
     const local = toFrameLocal((pt.x - d.start.x) / z, (pt.y - d.start.y) / z, g.screen0.angle);
+    // 当前框的旋转角（拖动中框一直在变，用**当前**的：抓手就在眼前那个框上）
+    const frameAng = this.xfScreenFrame()?.angle ?? g.screen0.angle;
     const prefs = this.session.prefs;
     if (d.kind === "pivot") {
       // 枢轴：跟手落到指针处（钳在框附近 2 格，免得拖丢了找不回来）
@@ -3102,10 +3181,9 @@ export class View {
         x: clamp(tp.pivot.x + local.x, b.x0 - 2, b.x1 + 2),
         y: clamp(tp.pivot.y + local.y, b.y0 - 2, b.y1 + 2),
       };
-      tp.pivot0Shift = { x: 0, y: 0 };
-      tp.pivot = p;
-      // 枢轴一挪画面必须不动：把差别折成平移补偿（见 xform.ts 的 pivotComp）
-      tp.pivot0Shift = pivotComp(tp);
+      // 枢轴一挪画面必须**逐像素不动**：把矩阵平移分量的差补回去（见 `pivotKeepPicture()`）。
+      // 用增量式补偿而不是「按会话起点重算」：缩放跟随枢轴时也写过同一份补偿，两者要能叠加。
+      this.pivotKeepPicture(g, p);
       g.pivotTouched = true;
       g.moved = true;
       this.xfApply();
@@ -3121,45 +3199,72 @@ export class View {
     const anchorId = d.anchor ?? "br";
     if (d.kind === "scale") {
       const b = g.box0;
+      // 缩放的**不动点**＝对角那个锚点：拖哪个抓手，对面那个就钉住不动、被拖的边跟手
+      // （见 `xform.ts` 的 `affineFrom()` / `scaleAnchor()`），而不是绕枢轴两边一起长。
       const a = scaleAnchor(b, anchorId);
-      // 「抓手现在在哪」＝**指针现在落在哪**（下标空间），而不是「抓手起点 + 位移」：
+      // 「抓手现在在哪」＝**指针现在落在哪**（外框坐标），而不是「抓手起点 + 位移」：
       //   抓手起点是像素中心，手指未必正压在上面，用位移累计会让某一轴一直差半格
       //   （斜着拖时那一轴被解成 0 再被钳到 0.02，看起来就是「缩放没反应」）。
-      // 起点与终点都用同一条屏幕→下标换算（和 `xfStart` 的 `p0` 一致），
+      // 起点与终点都用同一条屏幕→外框换算（和 `xfStart` 一致），
       // 于是「按住不动」解出来正好是 1×，不会自己长出去。
       const from = { x: (d.start.x - this.ox) / z, y: (d.start.y - this.oy) / z };
       const to = { x: (pt.x - this.ox) / z, y: (pt.y - this.oy) / z };
-      // 解与不动点必须在**同一个坐标系**里：`box0`（以及 `scaleAnchor`）是内容局部下标
-      // （内容第 0 格中心＝0），上面两行却是画布下标。会话里内容原点固定在
-      // `(st.ox, st.oy)`（`beginMove` 之后不再变），减掉它就是内容局部坐标 ——
+      // 解与不动点必须在**同一个坐标系**里：`box0`（以及 `scaleAnchor`）是内容外框
+      // （内容左上角＝`st.ox`），上面两行却是画布坐标。会话里内容原点固定在
+      // `(st.ox, st.oy)`（`beginMove` 之后不再变），减掉它就是内容外框坐标 ——
       // 少了这一步收敛点整体偏移 `st.ox`，拖到「枢轴那一侧」时倍率翻不了号
       // （镜像拖不出来），抓手跟手也会在某一轴上差一截，都是实现 bug。
       from.x -= g.st.ox; from.y -= g.st.oy;
       to.x -= g.st.ox; to.y -= g.st.oy;
+      // 框转过角度时：把握手位置绕不动点转回框自身的轴上再解（否则拖对角会被当成斜着缩）
+      if (frameAng) {
+        const f0 = toFrameLocal(from.x - a.x, from.y - a.y, frameAng);
+        const f1 = toFrameLocal(to.x - a.x, to.y - a.y, frameAng);
+        from.x = a.x + f0.x; from.y = a.y + f0.y;
+        to.x = a.x + f1.x; to.y = a.y + f1.y;
+      }
+      const ratio = solveScale(
+        from, to, a, axisOf(anchorId),
+        prefs.selXformAspect || this.shiftDown,      // 「等比」chip（PC 上等价 Shift）
+        false,                                       // 吸附在下面按**总倍率**做
+      );
+      // **倍率以「按下那一刻」为基准累加**：一次会话里可以反复拖同一个抓手，第二次拖是
+      // 「在上一次的结果上再放大」；但同一次拖拽里的每个 `pointermove` 都从 `d.tp0` 重算，
+      // 所以挪几下也不会连乘（那会让内容越拖越小 —— 用户报的「变形不正确」）。
+      const base = d.tp0 ?? tp0Of(tp);
+      let nx = base.sx * ratio.sx, ny = base.sy * ratio.sy;
       // 「网格吸附」chip：PC 上 Alt 取反。**必须用 `!!` 归一化**：`altDown` 在没按过
       // Alt 键时是 `undefined`，`false !== undefined` 会把吸附**意外打开**，
       // 于是缩放被吸到整数倍（拖 400px 也只放大 3 倍）—— 看起来就是「缩放坏了」。
-      const gridSnap = !!prefs.selXformGridSnap !== !!this.altDown;
-      const sol = solveScale(
-        from, to, a, axisOf(anchorId),
-        prefs.selXformAspect || this.shiftDown,      // 「等比」chip（PC 上等价 Shift）
-        gridSnap,                                    // 「网格吸附」chip（PC 上 Alt 取反）
-      );
-      tp.sx = sol.sx; tp.sy = sol.sy;
+      if (!!prefs.selXformGridSnap !== !!this.altDown) {
+        nx = Math.round(nx) || (nx < 0 ? -1 : 1);
+        ny = Math.round(ny) || (ny < 0 ? -1 : 1);
+      }
+      tp.sx = clampScale(nx); tp.sy = clampScale(ny);
+      tp.scalePivot = a;
+      // 枢轴跟着**内容**走（Aseprite 的 adjustPivot）：每次都从本次拖拽起点的枢轴算，
+      // 幂等；改完用平移补偿保持画面逐像素不动（所以枢轴只是标记在动，图不动）。
+      if (d.pivot0) this.pivotKeepPicture(g, adjustPivot(b, scaledBox(b, a, tp.sx, tp.sy), d.pivot0));
       g.kinds!.scale = true;
       g.moved = true;
       this.xfApply();
       return;
     }
     if (d.kind === "rotate") {
-      // 量的是「从起点指向当前点」的方向，所以两个向量都从**枢轴**出发（枢轴可能被拖过）
-      const pv = { x: (tp.pivot.x + 0.5) * z + this.ox, y: (tp.pivot.y + 0.5) * z + this.oy };
-      const sol = solveRotate(
+      // 量的是「从起点指向当前点」的方向，两个向量都从**枢轴**出发 ——
+      // 而且必须是**画出来 / 命中用的那个枢轴屏幕位**（`xfPivotScreen()` 含 `st.ox`）。
+      // 早先写成 `(pivot + 0.5)·z + ox`（漏了 `st.ox·z`）：选区不在画布原点时旋转中心整体偏移，
+      // 拖着抓手转 90° 只出 37°，框与全部抓手跟着甩走 —— 用户报的「锚点乱飞」就是它。
+      const pv = this.xfPivotScreen();
+      if (!pv) return;
+      const delta = solveRotate(
         { x: d.start.x - pv.x, y: d.start.y - pv.y },
         { x: pt.x - pv.x, y: pt.y - pv.y },
-        prefs.selXformAngleSnap || this.shiftDown,       // 「角度吸附」chip：吸到像素干净角
-      );
-      tp.angle = sol.angle;
+        false,                                            // 吸附在下面按**总角度**做
+      ).angle;
+      // 角度同样以「按下那一刻」为基准累加（每次拖拽量的是这次拖出来的增量）
+      const total = normAngle(((d.tp0 ?? tp0Of(tp)).angle) + delta);
+      tp.angle = prefs.selXformAngleSnap || this.shiftDown ? snapCleanAngle(total) : total;
       g.kinds!.rotate = true;
       g.moved = true;
       this.xfApply();
@@ -3167,21 +3272,40 @@ export class View {
     }
     if (d.kind === "skew") {
       const b = g.box0;
-      // 基准线＝**枢轴所在的那条线**（Aseprite 的 `dx += dy·tan` 就是这条基准），
-      // 于是被拖的边整条平移、对面那条边反向平移同样的量（选中框围绕枢轴保持形状）
+      // 不动线＝**被拖那条边的对面**（`skewBaseline()`），于是被拖的边整条跟着手指 1:1 平移、
+      // 对面那条边一动不动（Aseprite 的行为）。力臂就是框在拖动方向上的整跨度。
+      const horiz = anchorId === "t" || anchorId === "b";
+      const fixed = skewBaseline(b, anchorId);
+      const span = horiz ? Math.abs(b.y1 - b.y0) : Math.abs(b.x1 - b.x0);
       const p0 = anchorPoint(b, anchorId);
-      const span = anchorId === "t" || anchorId === "b" ? Math.abs(b.y1 - b.y0) : Math.abs(b.x1 - b.x0);
-      const sol = solveSkew(anchorId, p0, { x: p0.x + local.x, y: p0.y + local.y }, span);
-      if (anchorId === "t" || anchorId === "b") tp.skewX = sol.tan;
-      else tp.skewY = sol.tan;
-      // 斜切的固定线＝枢轴那条线；枢轴本身挪到固定线上（否则枢轴会跟着斜切一起动）
-      tp.skewAnchor = skewPivotOf(anchorId, tp.pivot);
-      tp.pivot = { x: tp.skewAnchor.x || tp.pivot.x, y: tp.skewAnchor.y || tp.pivot.y };
+      const add = solveSkew(anchorId, p0, { x: p0.x + local.x, y: p0.y + local.y }, span, frameAng).tan;
+      // 斜切同样以「按下那一刻」为基准累加（`solveSkew` 返回的是这次拖动量折算的 tan 增量）
+      const base = d.tp0 ?? tp0Of(tp);
+      if (horiz) tp.skewX = clampTan(base.skewX + add);
+      else tp.skewY = clampTan(base.skewY + add);
+      // 基准点交给矩阵（`affineFrom()` 认 `skewPivot`）：枢轴本身**不动**，
+      // 早先那句「把枢轴挪到不动线上」是个 no-op（`0 || x` 把 0 吃掉了），别再写回去。
+      tp.skewAnchor = skewPivotOf(anchorId, fixed);
       tp.pivot0Shift = { x: 0, y: 0 };
       g.kinds!.skew = true;
       g.moved = true;
       this.xfApply();
     }
+  }
+
+  /**
+   * 把框 `b` 绕 `a` 缩放 `sx` / `sy` 之后的框（负倍率＝翻转，两端重新排序）。
+   * 与 `scaleAnchor()` 用的是同一套**外框**算法（视图侧枢轴跟位用）。
+   */
+  private pivotKeepPicture(g: NonNullable<View["xf"]>, next: Pt): void {
+    const tp = g.tp;
+    if (!tp) return;
+    if (tp.pivot.x === next.x && tp.pivot.y === next.y) return;
+    const before = affineFrom(this.xfParams(g));
+    tp.pivot = next;
+    tp.pivot0Shift = { x: 0, y: 0 };
+    const after = affineFrom(this.xfParams(g));
+    tp.pivot0Shift = { x: before[2] - after[2], y: before[5] - after[5] };
   }
 
   /**
@@ -3209,24 +3333,25 @@ export class View {
 
   /**
    * 这次变换能不能走**像素精确通道**（逐像素整数搬运，不重采样）？
-   *  - 纯整数平移：任何平移都算（拖动本身就是整数格）；
-   *  - 90° / 180° / 270° 旋转：位移必须是 0（Aseprite 只在「原地转」时走这条路，
-   *    带平移的 90° 旋转要先把内容搬回原位再转，收益不大、容易与锚点语义打架）；
-   *  - 一个像素的 1/-1 翻转（`sx`/`sy` 为负）同样精确，但翻转 + 平移的组合留着重采样，
-   *    免得「拖过对面那一边」时出现跳格。
+   *
+   * 只有**纯整数平移**走这条路（`isExactTransform()` ＋ 角度是 0 的整数倍 ＋ 位移是整数格）。
+   * 这是最高频的操作，一定要逐字节精确。
+   *
+   * 旋转 / 翻转**不走**：`exactMove()` 是「把 w×h 的块整体搬到 (dx,dy)」，而 90° 旋转会把宽高
+   * 换过来 —— 块的中心会跟着挪半格，只有「枢轴正好在内容中心」时才等价于绕枢轴转，
+   * 而且枢轴一旦被拖过就完全不成立。早先这里只判了「无斜切 + 倍率 1」，**漏判角度**，
+   * 于是「原地转 90°」也走进这条路：框转了 90°、里面的像素却一格没动（用户报的
+   * 「变形不正确」）。现在一律交给最近邻重采样 —— 90° 倍数旋转在格点上是一一对应的，
+   * 重采样本身就是无损的（`tests/xformui.test.ts` 有断言钉住）。
    */
   private xfExactOf(g: NonNullable<View["xf"]>): { dx: number; dy: number; steps: number } | undefined {
     const tp = g.tp!;
     const params = this.xfParams(g);
     if (!isExactTransform(params)) return undefined;
+    if (rightAngleSteps(params.angle) !== 0) return undefined;      // 转过角度：走重采样
     const dx = tp.shift?.x ?? 0, dy = tp.shift?.y ?? 0;
-    const pureMove = (tp.skewX ?? 0) === 0 && (tp.skewY ?? 0) === 0 && tp.sx === 1 && tp.sy === 1;
-    if (pureMove) {
-      // 纯移动：位移必须是整数格（这是最高频的操作，一定要精确）
-      if (!isIntegerShift(dx) || !isIntegerShift(dy)) return undefined;
-      return { dx: Math.round(dx), dy: Math.round(dy), steps: 0 };
-    }
-    return undefined;
+    if (!isIntegerShift(dx) || !isIntegerShift(dy)) return undefined;
+    return { dx: Math.round(dx), dy: Math.round(dy), steps: 0 };
   }
 
   /**
@@ -3322,8 +3447,13 @@ export class View {
     }
     g.mode = "warp";
     g.warpKind = kind;
+    // 已经在「移动 / 缩放 / 旋转 / 斜切」里改过画面：先把当前结果**烘焙**成新的浮动内容，
+    // 控制点才会落在**现在**这块内容上（不烘焙的话网格点停在变换前的位置，一按预览就
+    // 跳回原处 —— 用户报的「网格点乱飘 / 变形不正确」）。
+    this.bakeXfIntoContent(g);
     g.pts = kind === "mesh" ? floatGrid(g.st, 2) : floatQuad(g.st);
     g.drag = undefined;
+    g.grab = undefined;
     // 已经在变形中（图层切过了）就重算预览；否则只把控制点画出来
     if (g.cut) this.applyWarp();
     else s.repaint();
@@ -3331,16 +3461,66 @@ export class View {
     return true;
   }
 
+  /**
+   * 把当前变换预览（`buf` + `cells`）**烘焙**成新的浮动内容：`st.content` / `st.ox` / `st.oy`
+   * 就地更新成「现在画在画布上的那一块」，并把变换参数清零（矩阵回到单位阵）。
+   *
+   * 用途：从「移动 / 缩放 / 旋转 / 斜切」会话中途切进四点 / 网格变形。`st.before`
+   * （会话起点的图层字节）与 `st.mask` 都**不动**，所以撤销与「还原」照旧回到会话开始那一刻。
+   * 没有浮动结果（没真拖过）时什么都不做。
+   */
+  private bakeXfIntoContent(g: NonNullable<View["xf"]>): void {
+    const doc = this.session.doc;
+    const buf = g.buf, cells = g.cells;
+    if (!g.cut || !buf || !cells || !cells.length) return;
+    let x0 = Infinity, y0 = Infinity, x1 = -1, y1 = -1;
+    for (const di of cells) {
+      const x = di % doc.w, y = (di / doc.w) | 0;
+      if (x < x0) x0 = x;
+      if (x > x1) x1 = x;
+      if (y < y0) y0 = y;
+      if (y > y1) y1 = y;
+    }
+    if (x1 < 0) return;
+    const w = x1 - x0 + 1, h = y1 - y0 + 1;
+    const content = new Cel(w, h);
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const si = ((y0 + y) * doc.w + (x0 + x)) * 4, di = (y * w + x) * 4;
+        content.data[di] = buf[si];
+        content.data[di + 1] = buf[si + 1];
+        content.data[di + 2] = buf[si + 2];
+        content.data[di + 3] = buf[si + 3];
+      }
+    }
+    g.st.content = content;
+    g.st.ox = x0;
+    g.st.oy = y0;
+    // 变换参数清零：矩阵回到单位阵，新的几何完全由控制点决定
+    const box = contentBox(w, h);
+    const c = boxCenter(box);
+    g.box0 = box;
+    g.pivot0 = { x: c.x, y: c.y };
+    g.tp = { pivot: { x: c.x, y: c.y }, angle: 0, sx: 1, sy: 1, skewX: 0, skewY: 0 };
+    g.screen0 = screenFrameOf(affineFrom({ pivot: c, angle: 0, sx: 1, sy: 1 }), w, h, this.zoom, this.ox, this.oy);
+    g.exact = undefined;
+    g.moved = true;          // 画面确实与 st.before 不同了，提交时要落历史
+  }
+
   /** 拖控制点中：把逻辑坐标写回控制点并重算预览。
-   *  坐标取自屏幕位置的**连续**反解（`warpPointFromScreen()`，不是 `screenToPixel()` 的
-   *  `floor`——那样半个像素的位移会被吃掉），再按设置项的吸附粒度落点：
-   *  半像素模式（默认）可以落在 `x.5`，整像素模式落在整数（原来的行为）。
-   *  手指不动时（含刚抓住控制点的那一下）反解回来正好是当前下标，吸附幂等，不会跳位。 */
+   *
+   *  坐标取自屏幕位置的**连续**反解（`warpPointRaw()`，不是 `screenToPixel()` 的 `floor`
+   *  —— 那样半个像素的位移会被吃掉），**先加上按下时记下的手指↔控制点偏移**，最后才按设置项的
+   *  吸附粒度落点：半像素模式（默认）可以落在 `x.5`，整像素模式落在整数。
+   *  偏移是连续量、吸附在最后一步做，所以「按在旁边抓起来」不会让控制点跳到手指下
+   *  （用户报的「锚点乱飞」），而落点依然精确；手指不动时反解回来正好是当前位置，不会漂。 */
   private warpMove(pt: PxPoint): void {
     const g = this.xf;
     if (!g || g.mode !== "warp" || !g.pts || g.drag === undefined) return;
     const half = this.session.selWarpHalfSnap;
-    const p = warpPointFromScreen(pt.x, pt.y, this.zoom, this.ox, this.oy, half);
+    const raw = warpPointRaw(pt.x, pt.y, this.zoom, this.ox, this.oy);
+    const off = g.grab ?? { x: 0, y: 0 };
+    const p = { x: snapWarpIndex(raw.x + off.x, half), y: snapWarpIndex(raw.y + off.y, half) };
     const q = g.pts[g.drag];
     this.warpDragOn = true;        // 拖动中：浮标显示当前坐标（见 drawWarpHandles）
     if (q.x === p.x && q.y === p.y) return;
@@ -3389,9 +3569,7 @@ export class View {
     const g = this.xf;
     if (!g || g.mode === "warp" || !g.tp) return false;
     if (g.tp.pivot.x === lx && g.tp.pivot.y === ly) return false;
-    g.tp.pivot0Shift = { x: 0, y: 0 };
-    g.tp.pivot = { x: lx, y: ly };
-    g.tp.pivot0Shift = pivotComp(g.tp);
+    this.pivotKeepPicture(g, { x: lx, y: ly });
     g.pivotTouched = true;
     g.moved = true;
     this.xfApply();
@@ -3436,9 +3614,7 @@ export class View {
     if (!g || g.mode === "warp" || !g.tp) return false;
     const b = pivotBoxOf(g);
     const p = pivotPresetPoint(b, k);
-    g.tp.pivot0Shift = { x: 0, y: 0 };
-    g.tp.pivot = { x: p.x, y: p.y };
-    g.tp.pivot0Shift = pivotComp(g.tp);
+    this.pivotKeepPicture(g, p);
     g.pivotTouched = true;
     g.moved = true;
     this.xfApply();
@@ -3506,32 +3682,9 @@ export class View {
     const d = this.xfDrag;
     this.xfDrag = null;
     if (!g || g.mode === "warp" || !d || !g.tp) return;
-    // 缩放之后枢轴按**归一化比例**跟位（旋转之后不动）：见 xform.ts 的 adjustPivot()
-    //
-    // 跟位用「缩放后的框」算：宽度按 ratio 从**不动点那侧**长出去，所以新框是
-    // `[pivot-side, pivot-side + oldSpan * ratio]`。等比（`keepAspect`）与
-    // 单轴缩放都适用；抓手压在框的哪一侧决定 span 往哪个方向量。
-    if (d.kind === "scale" && g.moved && g.tp.sx > 0 && g.tp.sy > 0) {
-      const cw = g.st.content.w, ch = g.st.content.h;
-      const ob = indexBox(cw, ch);
-      const a = scaleAnchor(ob, d.anchor ?? "br");
-      const ratioX = g.tp.sx, ratioY = g.tp.sy;
-      // 新框＝不动点 + 原偏移 × ratio（不动点在缩放里是不动的）
-      const nb = {
-        x0: a.x + (ob.x0 - a.x) * ratioX,
-        y0: a.y + (ob.y0 - a.y) * ratioY,
-        x1: a.x + (ob.x1 - a.x) * ratioX,
-        y1: a.y + (ob.y1 - a.y) * ratioY,
-      };
-      const clean = { x0: Math.min(nb.x0, nb.x1), y0: Math.min(nb.y0, nb.y1), x1: Math.max(nb.x0, nb.x1), y1: Math.max(nb.y0, nb.y1) };
-      const np = adjustPivot(ob, clean, g.tp.pivot);
-      if (np.x !== g.tp.pivot.x || np.y !== g.tp.pivot.y) {
-        g.tp.pivot0Shift = { x: 0, y: 0 };
-        g.tp.pivot = np;
-        if (g.pivotTouched) g.tp.pivot0Shift = pivotComp(g.tp);
-        else g.tp.pivot0Shift = undefined;
-      }
-    }
+    // 枢轴的跟位（缩放后按归一化比例跟位、旋转后不动）已经**在拖动过程中实时做了**，
+    // 见 `xfMove()` 的 scale 分支 + `pivotKeepPicture()`：实时做才不会在松手的一瞬间
+    // 让枢轴标记跳一下（这里再算一次会变成「跟位两次」，是错的）。
     this.drawOverlay();
   }
 
