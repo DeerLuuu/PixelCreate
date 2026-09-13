@@ -42,6 +42,7 @@ import { testColorAnalysis } from "./color-analysis.test";
 import { testScale } from "./scale.test";
 import { testChangelog } from "./changelog.test";
 import { testShading, testShadingPaletteSave } from "./shading.test";
+import { testIso } from "./iso.test";
 
 async function main(): Promise<void> {
   console.log("--- history ---");
@@ -132,6 +133,8 @@ async function main(): Promise<void> {
   console.log("--- colour shading ---");
   testShading();
   testShadingPaletteSave();
+  console.log("--- isometric shapes ---");
+  testIso();
   finish();
 }
 

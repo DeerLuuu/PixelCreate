@@ -59,6 +59,7 @@
     "../tests/xform.test.ts",
     "../tests/xformui.test.ts",
     "../tests/changelog.test.ts",
-    "../tests/shading.test.ts"
+    "../tests/shading.test.ts",
+    "../tests/iso.test.ts"
   ]
 }
