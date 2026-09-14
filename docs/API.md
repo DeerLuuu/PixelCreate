@@ -25,6 +25,7 @@
 13. [引导注册表 `app/guide.ts`](#13-引导注册表)
 14. [播放模式 `app/playback.ts`](#14-播放模式)
 15. [渲染 `render/`](#15-渲染)
+15b. [服务层 `servers/`（RenderServer / ViewportServer）](#15b-服务层-serversrenderserver--viewportserver)
 16. [IO `io/`](#16-io)
 17. [UI 层与事件契约 `ui/`](#17-ui-层与事件契约)
 18. [多画布空间 / 新工具与特效（1.0.7.11 追加）](#18-多画布空间--新工具与特效)
@@ -1315,6 +1316,104 @@ class View {
 
 ---
 
+## 15b. 服务层 `src/servers/`（RenderServer / ViewportServer）
+
+按 `docs/ARCHITECTURE.md` §3.3 把「职责所有权」从 `render/view.ts` 里切出来的第一批：
+**合成与缓存归 RenderServer，视图数学归 ViewportServer**。视图层只保留 blit 与覆盖层。
+
+为什么要单独一层：这两块是纯数据变换，切出来之后可以**脱离 DOM 单测**（`tests/render-server.test.ts` /
+`tests/viewport.test.ts`）——在这之前它们只能靠"DOM 桩 + 手势"间接覆盖。
+
+### 15b.1 合成与缓存 `src/servers/render.ts`
+
+```ts
+/** 画布工厂：真机走 DOM，测试注假实现 */
+interface CanvasFactory { create(w: number, h: number): HTMLCanvasElement }
+const domCanvasFactory: CanvasFactory;
+
+/** 合成内核：默认是真 compositor，测试可注入假实现来数调用形状 */
+interface CompositorApi {
+  composeFrame(doc, fi): HTMLCanvasElement;
+  composeFrameWithOnion(doc, fi, onion, cache?): HTMLCanvasElement;
+  composeRectInto(doc, fi, onion, rect, target, cache?): void;
+  newComposeCache(): ComposeCache;
+}
+const realCompositor: CompositorApi;         // **晚绑定**包装，见下面「不要改回去」
+
+compositeIsStale(hasComposite, keySame, compRect): boolean
+onionSpecOf(prefs) / onionKeyOf(prefs)                      // 洋葱皮参数与键片段（纯）
+compositeKey(doc, fi, onionKey): string                      // 尺寸/帧/图层配置/洋葱皮
+otherCompositeKey(doc, fi): string                           // 额外带 pixelRev
+
+class RenderServer {
+  constructor(opts?: { factory?; compositor? });
+  get canvas(): HTMLCanvasElement | null;      // 只读用途：取色 / 放大镜
+  get needsCompose(): boolean;                 // 视图层据此决定要不要重绘
+  get dirtyRect(): Rect | null;                // 调试 / 测试
+  get compositeKeyNow(): string;               // 调试 / 测试
+  invalidate(rect?: Rect | null): void;        // 不传 = 整幅失效；传则不传 rect 的并集
+  compose(doc, fi, onion, onionKey, force): { rebuilt: boolean; consumed: Rect | null };
+  composeOther(index, doc, fi): HTMLCanvasElement;   // 多画布合成（带缓存）
+  checkerPattern(ctx): CanvasPattern | null;         // 2×2 透明棋盘格（只创建一次）
+  resetDoc(): void; resetFrame(): void;
+}
+```
+
+要点（每一条都对应过一次真 bug 或一次踩坑）：
+
+- **`compositeIsStale` 里 `compRect === null` 表示"整幅都脏了，必须重建"**，不是"没有脏区域"。
+  早先按"没有脏区域"处理，于是沿用旧画布 → FX / 选区编辑看起来延迟一拍才显示，
+  而预览框（总是从文档合成）是对的 —— 这类"一处对一处错"的现象最容易误导排查方向。
+- **部分合成只在三条同时成立时可用**：已有合成画布、合成键没变、脏区域已知；否则整幅重建。
+  `force` 直接跳过部分路径。
+- **`compose()` 返回消费掉的脏矩形**，调用方（`View.refresh`）据此算重绘区域（含平铺的 8 个邻居副本）；
+  无效状态在返回前已清干净。
+- **多画布合成键含 `pixelRev`**：别的画布可能被画到了（引用图层）而它自己的图层配置没变，
+  只看配置键会漏刷新。
+- **`resetDoc()` / `resetFrame()` 会顺手置脏**：合成画布既然已经丢掉就必须重新合成；
+  依赖调用方记得再 `invalidate()` 是潜在的空画面 bug（所有调用点后面都跟着 `repaintAll()`，
+  置脏只是把这件事写死）。**不要改回去**。
+- **`realCompositor` 是晚绑定的箭头函数包装**，不是直接引用函数对象：`tests/view.test.ts` /
+  `tests/session.test.ts` 会在运行时替换 `compositor.composeFrame*` 来数调用次数，
+  提前绑定会把补丁挡在外面、那些计数断言静默失效。
+- `View` 侧只剩 11 处委托 + `markDirty()` 里"整幅失效 → `blitFull`"这一条视图层判断
+  （视图变换 / 视口尺寸变化才会强制全量 blit，与合成是否失效是两件事）。
+
+### 15b.2 视图数学 `src/servers/viewport.ts`
+
+```ts
+type Rotation = 0 | 90 | 180 | 270;
+interface Viewport { zoom: number; ox: number; oy: number }
+interface SpaceEntry { x: number; y: number; w: number; h: number }   // 无限空间里的画布
+
+SPACE_MARGIN = 60;
+
+fitTarget(docW, docH, vpW, vpH, zoomMin, zoomMax): Viewport      // 适配 + 整数倍吸附
+clampSingle(v, docW, docH, vpW, vpH): Viewport                   // 单画布夹取
+clampSpace(v, focus, list, vpW, vpH): Viewport                   // 无限空间夹取（保留 60px 可见）
+zoomAtPoint(v, z, cx, cy, zoomMin, zoomMax): Viewport            // 以锚点为不动点
+panBy(v, dx, dy): Viewport
+screenToPixel(v, sx, sy): { x; y }
+rotationMatrix(rot, dpr, w, h): [a, b, c, d, e, f]               // 直接喂 ctx.setTransform
+toLogical(rot, w, h, x, y) / toSurface(rot, w, h, x, y)          // 表面 ↔ 逻辑
+surfaceDelta(rot, zoom, dx, dy): { x; y }                        // 表面拖拽增量 → 空间增量
+```
+
+口径（四条，各对应过一次真机问题）：
+
+1. **屏幕坐标 = 逻辑坐标**：旋转不参与逻辑坐标，而是在画布 transform 里施加（`rotationMatrix`），
+   指针坐标用 `toLogical` 转回来。
+2. **以锚点为中心缩放**：`ox' = cx − (cx − ox)·k`，k = 新缩放 / 旧缩放 —— 拖拽缩放时光标下的像素不动。
+3. **夹取**：单画布夹到边（画布比视口大时边缘不许进视口）；无限空间以聚焦画布为原点算外接框，
+   只要还有 `SPACE_MARGIN` 可见就允许 —— 既不会把画布拖丢，也不会锁死整片空间。
+4. **`screenToPixel` 用 `floor` 而不是截断**：负坐标上 `| 0` 会得到隔壁像素。
+5. 适配缩放只在离整数倍 0.18 以内才吸附（否则像素画在半格相位下抖动）。
+
+**状态暂时仍由 `View` 持有**（`zoom/ox/oy/rot` 是公开字段，`ui/canvas.tsx` 直接读 `view.zoom`），
+所以这一版只搬了算术、没搬状态 —— 等 UI 改成订阅信号（§3.6）后再把字段收进 server。
+
+---
+
 ## 16. IO
 
 ### 16.1 原生桥接 `src/io/bridge.ts`
@@ -2085,7 +2184,7 @@ Stroke 侧：`BrushState.pattern` 一填，落笔统一走 `paintOne()`——图
 ### 测试
 
 ```bash
-npm test        # 3847 条断言：引擎 / 选区 / 历史 / 播放 / 设置 / 引导 / 渲染 / 导出 / Aseprite 读写 / 返回手势 / UI 控件与令牌（末尾打印 assertions: N）
+npm test        # 3936 条断言：引擎 / 选区 / 历史 / 播放 / 设置 / 引导 / 渲染 / 导出 / Aseprite 读写 / 返回手势 / UI 控件与令牌（末尾打印 assertions: N）
 ```
 
 新增纯逻辑（算法、布局、解析、决策）时，优先抽成无 DOM 依赖的函数再补一条 `tests/*.test.ts` 断言——这是本项目保持可回归的主要手段。

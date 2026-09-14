@@ -24,11 +24,11 @@
 src/app/       Session、设置注册表、引导注册表、手势映射、历史编解码
 src/engine/    文档模型、历史栈、像素操作、调色/对称/导出编码、重采样（resample）、颜色分析（color-analysis）
 src/render/    视口、合成器、脏矩形、洋葱皮
-src/tools/     工具注册表、笔迹、选区变换
+src/servers/   服务层：RenderServer（合成与缓存）、ViewportServer（视图数学）—— 见 docs/ARCHITECTURE.md
 src/io/        原生桥接、工程文件（.pxc）、Aseprite 读写（aseread/asewrite/zlib）、自动保存、参考图、安全区、base64
 src/ui/        React 外壳、弹窗、时间线、浮动球、i18n、样式
 android/       MainActivity（Java 层）+ AndroidManifest
-tests/         无 DOM 的引擎/逻辑回归（**3847 条断言**，`node .ts-out/tests/run-tests.js` 末尾会打印条数）
+tests/         无 DOM 的引擎/逻辑回归（**3936 条断言**，`node .ts-out/tests/run-tests.js` 末尾会打印条数）
 docs/          API.md / COMPARISON.md
 ```
 
@@ -85,6 +85,9 @@ java -jar /root/pk/apksigner.jar verify --print-certs /sdcard/Download/PixelCraf
 - `Session` 单例（`src/app/session.ts`）：持有 doc / history / prefs / 工具状态，`changed()` 驱动 React（`useSyncExternalStore`）；UI 状态改动都走它。
 - `History`（`src/engine/history.ts`）：`record`（廉价逆向）/ `pushPixels`（像素差分）/ `pushStruct`（全档快照，复杂操作）；`undo/redo/jumpTo`；`histMode` = `steps`（默认 **120** 条，`prefs.histSteps`；`History.cap` 初值 60 会在 session 初始化时被 `setCap(histSteps)` 覆盖）/ `full`（完整回放）。工程文件可内嵌历史（`src/io/historyfile.ts` + `src/app/history-io.ts`）。
 - 渲染增量：`Stroke.takeDirty()` → `composeRectInto` → 视口脏矩形 blit；`Session.repaint()` 由 rAF 合并，`repaintRect(rect)` 只更新局部；洋葱皮 / 选区着色都有缓存版本号。
+- **合成所有权在 `servers/render.ts` 的 `RenderServer`**（合成缓冲、合成键、失效区域、多画布缓存、棋盘格），
+  视图数学在 `servers/viewport.ts`（缩放/平移/坐标/旋转矩阵，纯函数）。`render/view.ts` 只做 blit 与覆盖层，
+  别把这两件事搬回去 —— 细节与"不要改回去"清单见 `docs/API.md` §15b。
 
 **工具与手势**
 - `View`（`src/render/view.ts`）接管画布手势：画布边距双击 = undo、双指双击 = redo、三击 = 2× 放大；手势 → 动作映射在 `src/app/gestures.ts`，设置里可改。

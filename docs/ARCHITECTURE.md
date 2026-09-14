@@ -48,6 +48,7 @@
 | 应用 | `src/app/` | 12 | 6,836 | `Session` 单例、设置注册表（74 条 / 9 组）、引导（54 步）、手势映射、播放、UI 布局、快捷键、画布空间 |
 | 交互/工具 | `src/tools/` | 5 | 2,754 | 笔迹引擎、选区操作、自由变换（`xform`）、变形（`warp`）、工具注册表 |
 | 渲染 | `src/render/` | 6 | 5,223 | `view.ts` 视口与手势、合成器、脏矩形、洋葱皮、光标、滚轮（后三个是纯函数） |
+| **服务** | `src/servers/` | 2 | 394 | **RenderServer**（合成缓冲 / 合成键 / 失效区域 / 多画布缓存 / 棋盘格）、**ViewportServer**（缩放平移与坐标数学，纯函数）—— §3.3 的第 3、4 项，Server 化的第一批落地 |
 | 引擎 | `src/engine/` | 19 | 4,094 | 文档模型、历史栈、结构操作、绘制算法、形状、特效、对称、标签、重采样、等距、色彩明暗、颜色分析 |
 | IO | `src/io/` | 15 | 2,701 | `.pxc` 工程、Aseprite 读写、zlib、自动保存、剪贴板、导出、原生桥、参考图、安全区 |
 | 数据 | `src/data/` | 2 | 203 | 调色板包与图案库（**唯一数据源**） |
@@ -131,6 +132,10 @@
 | 2 | **业务规则漏进视图层** | `session.ts:1273` `quickFill()` 直接转发给 `view_.quickFill()`；`view_` 在 Session 中被调 10 处（`invalidate`/`markDirty`/`refresh`…） | "填充落在哪"住在 View 里 → 无 DOM 测不到 |
 | 3 | **引擎唯一的反向依赖** | `engine/history.ts:3` `import type { ScalarData } from "../app/history-io"` | 破坏了"引擎零上层依赖"这条纪律（纯类型，好修） |
 
+**已经解决一部分**：合成状态（合成缓冲 / 合成键 / 失效区域 / 多画布缓存 / 透明棋盘格）已从 `View` 移到 `RenderServer`，
+视图数学移到 `ViewportServer` —— `view.ts` 4820 → 4687 行，而且这两块从「只能靠 DOM 桩间接覆盖」变成**可单测**（+89 条断言）。
+但第 1 条（`Session` ↔ `View` 互相 import）仍在，要等 P5 / P6 才能断。
+
 ### 2.8 规模与瓶颈
 
 - 四个大文件占全仓 44%（§2.1）；`Session` 有 **287 个公开方法**，职责覆盖文档/工具/调色板/图层/帧/画布/IO/UI 偏好。
@@ -170,8 +175,8 @@ Godot 4 的 server（`RenderingServer` / `DisplayServer` / `PhysicsServer2D` / `
 |---|---|---|---|---|---|
 | 1 | **DocumentServer** | 文档结构唯一所有权：画布尺寸、图层、帧、标签、cel 缓冲 | `Doc` | `engine/doc·ops·tags` | 不改历史、不渲染 |
 | 2 | **HistoryServer** | 撤销栈与"回合"合并 | `History` 栈、cap、模式 | DocumentServer（回滚时） | 不知道谁调它 |
-| 3 | **RenderServer** | 合成与缓存：图层合成、脏矩形、洋葱皮、导出位图 | 离屏 canvas 池、缓存版本 | `engine/compositor·rect·onion` | 不下发输入、不管视图变换 |
-| 4 | **ViewportServer** | 视图数学：scale/offset、适配、聚焦、屏幕↔文档坐标 | 视口参数 | — | 不画东西 |
+| 3 | **RenderServer** ✅ 已抽出 `src/servers/render.ts` | 合成与缓存：图层合成、脏矩形、洋葱皮、导出位图 | 离屏 canvas 池、缓存版本 | `engine/compositor·rect·onion` | 不下发输入、不管视图变换 |
+| 4 | **ViewportServer** ✅ 已抽出 `src/servers/viewport.ts`（算术已搬，状态暂留 `View`） | 视图数学：scale/offset、适配、聚焦、屏幕↔文档坐标 | 视口参数 | — | 不画东西 |
 | 5 | **InputServer** | 手势状态机：指针生命周期、双指、长按、PC 修饰键 | 当前手势会话 | Tool/Selection/Viewport、`app/gestures` | 不碰像素 |
 | 6 | **ToolServer** | 工具与笔刷参数；"落点序列 → 像素命令"的纯计算 | 当前工具/笔刷/对称/图案 | `tools/stroke`、`engine/symmetry`、`data/patterns` | 不写 doc（产出命令） |
 | 7 | **SelectionServer** | 掩膜 + 浮动选区 + 变换/变形/缩放 | `Sel`、浮动会话 | `tools/select·xform·warp`、`engine/resample` | 不画抓手（View 的事） |
@@ -493,6 +498,7 @@ modules.config.json ──> scripts/modules.mjs ──> src/modules/_generated.t
 | **P2** | `AnimationServer` | 播放与标签已是纯逻辑 | 播放范围、循环模式、速度用例全绿 |
 | **P3** | `SelectionServer` | 收拢 `xform/warp/resample`，**切断 View 里的选区业务分支** | `tests/xformui.test.ts` 那套行为断言全绿 |
 | **P4** | `RenderServer` + `ViewportServer` | 拆 `view.ts`（4,820） | 同一文档合成结果**逐字节一致**；脏矩形面积不退化 |
+| ↳ | **状态：🟡 部分完成**（2026-09-14）：`RenderServer` / `ViewportServer` 已落地（`src/servers/`），`View` 只剩 11 处委托；继续拆的是手势状态机（P5）与 `View` 持有的视口字段 | — | 全量测试 3936 条 ALL PASS；`check-bundle` 通过 |
 | **P5** | `InputServer` | 手势状态机真正搬出 View | 手势 / PC 模式 / 多球互斥用例全绿 |
 | **P6** | `DocumentServer` | **最后动**（所有人依赖它） | "cel 与画布等大"等不变量由类型与断言守住 |
 | **P7** | `SignalHub` | 分域订阅替换全量 `changed()` | React 重渲染次数下降；UI 无视觉回归 |
@@ -589,6 +595,7 @@ Server 化： P0 ─ P1 ─ P2 ─ P3 ─ P4 ─ P5 ─ P6 ─ P7 ────�
 | 现状盘点 + 目标架构（本文） | ✅ 2026-09-14 |
 | 修 `engine/history.ts` 的类型反向依赖 | ⬜ |
 | P0 HistoryServer | ⬜ |
+| P4 RenderServer + ViewportServer | 🟡 部分完成（`src/servers/`：合成状态与视图数学已抽出，+89 条断言） |
 | P1 PaletteServer | ⬜ |
 | P2 AnimationServer | ⬜ |
 | P3 SelectionServer | ⬜ |

@@ -6,7 +6,7 @@ import type { BrushState, SymMode } from "../src/tools/registry";
 import { clampRect, coversAll, screenRectOf, unionRect, tileRect, tileOffsets } from "../src/render/rect";
 import { growSelection, selOps, shrinkSelection } from "../src/tools/select";
 import { onionGhosts } from "../src/render/onion";
-import { compositeIsStale } from "../src/render/view";
+import { compositeIsStale } from "../src/servers/render";
 import { brushStamp } from "../src/engine/paint";
 import { splinePoints } from "../src/engine/shape";
 import { History } from "../src/engine/history";

@@ -32,14 +32,9 @@ import { wheelIntent } from "./wheel";
 import { takeNotches, wheelNotches } from "../engine/scrub";
 import { cursorAttr, cursorFor } from "./cursor";
 import { isPc } from "../io/pcmode";
+import * as Vp from "../servers/viewport";
+import { RenderServer, onionKeyOf, onionSpecOf } from "../servers/render";
 import { hexToRgba } from "../engine/color";
-
-/** Is the composite canvas stale? `compRect === null` means "the whole canvas
- *  changed" (FX ops, selection edits, paste …) — the caller MUST rebuild it
- *  instead of blitting the old one. */
-export function compositeIsStale(hasComposite: boolean, keySame: boolean, compRect: Rect | null): boolean {
-  return !hasComposite || !keySame || !compRect;
-}
 
 interface PxPoint {
   x: number;
@@ -250,35 +245,20 @@ export class View {
   }
   /** canvas transform: logical viewport rect -> the real (surface) canvas */
   private applyTransform(ctx: CanvasRenderingContext2D): void {
-    const d = this.dpr, w = this.host.clientWidth, h = this.host.clientHeight;
-    if (this.rot === 90) ctx.setTransform(0, d, -d, 0, w * d, 0);
-    else if (this.rot === 180) ctx.setTransform(-d, 0, 0, -d, w * d, h * d);
-    else if (this.rot === 270) ctx.setTransform(0, -d, d, 0, 0, h * d);
-    else ctx.setTransform(d, 0, 0, d, 0, 0);
+    const m = Vp.rotationMatrix(this.rot, this.dpr, this.host.clientWidth, this.host.clientHeight);
+    ctx.setTransform(m[0], m[1], m[2], m[3], m[4], m[5]);
   }
   /** surface (pointer / DOM) point -> logical point */
   toLogical(x: number, y: number): { x: number; y: number } {
-    const w = this.host.clientWidth, h = this.host.clientHeight;
-    if (this.rot === 90) return { x: y, y: w - x };
-    if (this.rot === 180) return { x: w - x, y: h - y };
-    if (this.rot === 270) return { x: h - y, y: x };
-    return { x, y };
+    return Vp.toLogical(this.rot, this.host.clientWidth, this.host.clientHeight, x, y);
   }
   /** logical point -> surface point (DOM overlays sit in surface space) */
   toSurface(x: number, y: number): { x: number; y: number } {
-    const w = this.host.clientWidth, h = this.host.clientHeight;
-    if (this.rot === 90) return { x: w - y, y: x };
-    if (this.rot === 180) return { x: w - x, y: h - y };
-    if (this.rot === 270) return { x: y, y: h - x };
-    return { x, y };
+    return Vp.toSurface(this.rot, this.host.clientWidth, this.host.clientHeight, x, y);
   }
   /** a surface drag delta expressed in space units (rotation aware) */
   surfaceDelta(dx: number, dy: number): { x: number; y: number } {
-    const z = this.zoom;
-    if (this.rot === 90) return { x: dy / z, y: -dx / z };
-    if (this.rot === 180) return { x: -dx / z, y: -dy / z };
-    if (this.rot === 270) return { x: -dy / z, y: dx / z };
-    return { x: dx / z, y: dy / z };
+    return Vp.surfaceDelta(this.rot, this.zoom, dx, dy);
   }
   /** rotate the view by `deg` (any multiple of 90) and redraw everything */
   setRotation(deg: number): void {
@@ -292,18 +272,13 @@ export class View {
     this.drawOverlay(true);
   }
 
-  private composite: HTMLCanvasElement | null = null;
-  private compKey = "";
-  private compDirty = true;
-  /** when compDirty: the stale region in doc space (null = the whole frame) */
-  private compRect: Rect | null = null;
+  /** 合成缓冲、合成键、失效区域、多画布缓存、棋盘格 —— 全部所有权在 RenderServer
+   *  （见 docs/ARCHITECTURE.md §3.3）；视图层只负责 blit 与覆盖层绘制 */
+  private render = new RenderServer();
   /** the whole pix canvas has to be redrawn (view transform / viewport change) */
   private blitFull = true;
   /** pending animation frame of a coalesced repaint */
   private raf = 0;
-  private composeCache = comp.newComposeCache();
-  /** cached composites of the OTHER canvases in the space (index -> canvas) */
-  private otherComps = new Map<number, { key: string; doc: Doc; cv: HTMLCanvasElement }>();
   /** identity + version of the selection the cached tint image belongs to */
   private selTintSel: unknown = null;
   private selTintVer = -1;
@@ -337,11 +312,9 @@ export class View {
   /** tints of the SELECTIONS of referenced canvases, keyed by layer id */
   private refSelTint = new Map<string, { sel: unknown; ver: number; cv: HTMLCanvasElement }>();
   private selTintBounds: { x: number; y: number; w: number; h: number } | null = null;
-  /** reuses the module-level checker pattern instead of making a new 2x2 canvas */
-  private static checker: HTMLCanvasElement | null = null;
   /** read one composited pixel cheaply from the cached composite (no recompose) */
   samplePixel(x: number, y: number): [number, number, number, number] | null {
-    const c = this.composite;
+    const c = this.render.canvas;
     if (!c) return null;
     if (x < 0 || y < 0 || x >= c.width || y >= c.height) return null;
     try {
@@ -580,8 +553,9 @@ export class View {
 
   /** 平移视图（滚轮 / 画布外拖动 / 方向键共用） */
   panBy(dx: number, dy: number): void {
-    this.ox += dx;
-    this.oy += dy;
+    const v = Vp.panBy({ zoom: this.zoom, ox: this.ox, oy: this.oy }, dx, dy);
+    this.ox = v.ox;
+    this.oy = v.oy;
     this.clampView();
     this.refresh(false);
   }
@@ -655,16 +629,11 @@ export class View {
 
   setDoc(doc: Doc): void {
     void doc;
-    this.composite = null;
-    this.compKey = "";
-    this.composeCache.ghosts.clear();
-    this.otherComps.clear();
+    this.render.resetDoc();
   }
   setFrame(fi: number): void {
     void fi;
-    this.composite = null;
-    this.compKey = "";
-    this.composeCache.ghosts.clear();
+    this.render.resetFrame();
   }
 
   /** animate the view to a new transform (fit / double-tap a canvas title) */
@@ -688,18 +657,8 @@ export class View {
 
   /** the transform that fits the focused canvas into the viewport */
   fitTarget(): { zoom: number; ox: number; oy: number } {
-    const doc = this.session.doc;
-    const aw = Math.max(24, this.vpW() - 20);
-    const ah = Math.max(24, this.vpH() - 20);
-    let z = Math.min(aw / doc.w, ah / doc.h);
-    const zi = Math.floor(z);
-    if (zi >= 1 && Math.abs(z - zi) < 0.18) z = zi;
-    z = clamp(z, this.session.prefs.zoomMin, this.session.prefs.zoomMax);
-    return {
-      zoom: z,
-      ox: (this.vpW() - doc.w * z) / 2,
-      oy: (this.vpH() - doc.h * z) / 2,
-    };
+    const s = this.session;
+    return Vp.fitTarget(s.doc.w, s.doc.h, this.vpW(), this.vpH(), s.prefs.zoomMin, s.prefs.zoomMax);
   }
 
   /** smooth zoom-to-fit of the focused canvas (double-tap a title) */
@@ -718,15 +677,10 @@ export class View {
   }
 
   fit(): void {
-    const doc = this.session.doc;
-    const aw = Math.max(24, this.vpW() - 20);
-    const ah = Math.max(24, this.vpH() - 20);
-    let z = Math.min(aw / doc.w, ah / doc.h);
-    const zi = Math.floor(z);
-    if (zi >= 1 && Math.abs(z - zi) < 0.18) z = zi;
-    this.zoom = clamp(z, this.session.prefs.zoomMin, this.session.prefs.zoomMax);
-    this.ox = (this.vpW() - doc.w * this.zoom) / 2;
-    this.oy = (this.vpH() - doc.h * this.zoom) / 2;
+    const t = this.fitTarget();
+    this.zoom = t.zoom;
+    this.ox = t.ox;
+    this.oy = t.oy;
   }
 
   /** Keep the canvas in view: stop panning when a canvas edge reaches the
@@ -734,42 +688,38 @@ export class View {
   private clampView(): void {
     const s = this.session;
     const w = this.vpW(), h = this.vpH();
+    const v = { zoom: this.zoom, ox: this.ox, oy: this.oy };
     if (s.docs.length > 1) {
       // infinite space: keep a slice of the canvas bounding box on screen so
       // the artwork can never be panned away forever
       const focus = s.docs[s.docIdx];
-      let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
-      for (const e of s.docs) {
-        const rx = (e.x - focus.x) * this.zoom, ry = (e.y - focus.y) * this.zoom;
-        x0 = Math.min(x0, rx); y0 = Math.min(y0, ry);
-        x1 = Math.max(x1, rx + e.doc.w * this.zoom); y1 = Math.max(y1, ry + e.doc.h * this.zoom);
-      }
-      const M = 60;
-      this.ox = clamp(this.ox, M - x1, w - M - x0);
-      this.oy = clamp(this.oy, M - y1, h - M - y0);
+      const box = { x: focus.x, y: focus.y, w: focus.doc.w, h: focus.doc.h };
+      const list = s.docs.map((e) => ({ x: e.x, y: e.y, w: e.doc.w, h: e.doc.h }));
+      const c = Vp.clampSpace(v, box, list, w, h);
+      this.ox = c.ox;
+      this.oy = c.oy;
       return;
     }
-    const doc = s.doc;
-    const dw = doc.w * this.zoom, dh = doc.h * this.zoom;
-    this.ox = dw >= w ? clamp(this.ox, w - dw, 0) : clamp(this.ox, 0, Math.max(0, w - dw));
-    this.oy = dh >= h ? clamp(this.oy, h - dh, 0) : clamp(this.oy, 0, Math.max(0, h - dh));
+    const c = Vp.clampSingle(v, s.doc.w, s.doc.h, w, h);
+    this.ox = c.ox;
+    this.oy = c.oy;
   }
 
   zoomAt(z: number, cx?: number, cy?: number): void {
+    const s = this.session;
     const vpW = this.vpW(), vpH = this.vpH();
     const mx = cx === undefined ? vpW / 2 : cx;
     const my = cy === undefined ? vpH / 2 : cy;
-    z = clamp(z, this.session.prefs.zoomMin, this.session.prefs.zoomMax);
-    const k = z / this.zoom;
-    this.ox = mx - (mx - this.ox) * k;
-    this.oy = my - (my - this.oy) * k;
-    this.zoom = z;
+    const v = Vp.zoomAtPoint({ zoom: this.zoom, ox: this.ox, oy: this.oy }, z, mx, my, s.prefs.zoomMin, s.prefs.zoomMax);
+    this.zoom = v.zoom;
+    this.ox = v.ox;
+    this.oy = v.oy;
     this.clampView();
     this.refresh(false);
   }
 
   screenToPixel(sx: number, sy: number): { x: number; y: number } {
-    return { x: Math.floor((sx - this.ox) / this.zoom), y: Math.floor((sy - this.oy) / this.zoom) };
+    return Vp.screenToPixel({ zoom: this.zoom, ox: this.ox, oy: this.oy }, sx, sy);
   }
 
   /** the canvases as plain rects (pure hit testing lives in app/canvas-space) */
@@ -883,18 +833,9 @@ export class View {
   /** Mark the composite stale. `rect` (doc space) limits the work to the region
    *  a live stroke touched; omit it for a full rebuild + full redraw. */
   markDirty(rect?: Rect | null): void {
-    if (!rect) {
-      this.compDirty = true;
-      this.compRect = null;
-      this.blitFull = true;
-      return;
-    }
-    if (!this.compDirty) {
-      this.compDirty = true;
-      this.compRect = rect;
-      return;
-    }
-    if (this.compRect) this.compRect = unionRect(this.compRect, rect);
+    // 整幅失效同时意味着"整个 pix 画布要重画"（视图变换 / 尺寸变化由调用方另置）
+    if (!rect) this.blitFull = true;
+    this.render.invalidate(rect);
   }
 
   /** Coalesce paints into one per animation frame: a stroke fires dozens of
@@ -949,7 +890,7 @@ export class View {
     const lv = this.lastView;
     if (lv.ox !== this.ox || lv.oy !== this.oy || lv.zoom !== this.zoom || lv.w !== vw || lv.h !== vh) this.blitFull = true;
     this.lastView = { ox: this.ox, oy: this.oy, zoom: this.zoom, w: vw, h: vh };
-    const need = force || this.compDirty;
+    const need = force || this.render.needsCompose;
     if (!need && !this.blitFull) {
       // nothing changed on the pixel canvas (e.g. only the overlay moved)
       this.drawOverlay(false);
@@ -959,21 +900,21 @@ export class View {
     const tile = tileMode !== "off";
     let region: Rect | null = null;
     if (need) {
-      const full = this.buildComposite(force);
-      if (!full && !this.blitFull && this.compRect) {
-        let u = screenRectOf(this.compRect, this.ox, this.oy, this.zoom);
+      const p = s.prefs;
+      const res = this.render.compose(doc, s.curFrame(), onionSpecOf(p), onionKeyOf(p), force);
+      const dirty = res.consumed;
+      if (!res.rebuilt && !this.blitFull && dirty) {
+        let u = screenRectOf(dirty, this.ox, this.oy, this.zoom);
         if (tile) {
           // the same pixels show up in the 8 neighbour copies: their screen
           // rects have to be repainted as well
           for (const [dx, dy] of tileOffsets(tileMode)) {
             if (dx === 0 && dy === 0) continue;
-            u = unionRect(u, screenRectOf(tileRect(this.compRect, doc.w, doc.h, dx, dy), this.ox, this.oy, this.zoom))!;
+            u = unionRect(u, screenRectOf(tileRect(dirty, doc.w, doc.h, dx, dy), this.ox, this.oy, this.zoom))!;
           }
         }
         region = clampRect(u, vw, vh);
       }
-      this.compDirty = false;
-      this.compRect = null;
     }
     const ctx = this.pix.getContext("2d")!;
     const dpr = this.dpr;
@@ -989,21 +930,7 @@ export class View {
     }
     ctx.imageSmoothingEnabled = false;
     const z = this.zoom;
-    let chkPat: CanvasPattern | null = null;
-    if (!doc.bg) {
-      let chk = View.checker;
-      if (!chk) {
-        chk = document.createElement("canvas");
-        chk.width = 2; chk.height = 2;
-        const cc = chk.getContext("2d")!;
-        cc.fillStyle = "#9aa0b0"; cc.fillRect(0, 0, 1, 1);
-        cc.fillStyle = "#b9bec9"; cc.fillRect(1, 0, 1, 1);
-        cc.fillStyle = "#b9bec9"; cc.fillRect(0, 1, 1, 1);
-        cc.fillStyle = "#9aa0b0"; cc.fillRect(1, 1, 1, 1);
-        View.checker = chk;
-      }
-      chkPat = ctx.createPattern(chk, "repeat");
-    }
+    const chkPat: CanvasPattern | null = doc.bg ? null : this.render.checkerPattern(ctx);
     // every other canvas of the space first, so the focused one stays on top
     this.drawOtherCanvases(ctx, z, vw, vh);
     const wpx = doc.w * z, hpx = doc.h * z;
@@ -1020,13 +947,11 @@ export class View {
         ctx.fillRect(0, 0, doc.w, doc.h);
         ctx.restore();
       }
-      if (!this.composite) return;
-      if (dx === 0 && dy === 0) {
-        ctx.drawImage(this.composite, tx, ty, wpx, hpx);
-        return;
-      }
-      // neighbour copy: a plain translation (no mirroring)
-      ctx.drawImage(this.composite, tx, ty, wpx, hpx);
+      const cv = this.render.canvas;
+      if (!cv) return;
+      // the centre tile is the editable canvas, the neighbours are read-only
+      // preview copies — a plain translation (no mirroring) in both cases
+      ctx.drawImage(cv, tx, ty, wpx, hpx);
     };
     if (tile) {
       for (const [dx, dy] of tileOffsets(tileMode)) drawTile(dx, dy);
@@ -1072,7 +997,7 @@ export class View {
       const w = e.doc.w * z, h = e.doc.h * z;
       if (sx > vw || sy > vh || sx + w < 0 || sy + h < 0) continue; // off screen
       if (!e.doc.bg) {
-        const chk = this.checkerPattern(ctx);
+        const chk = this.render.checkerPattern(ctx);
         if (chk) {
           ctx.save();
           ctx.fillStyle = chk;
@@ -1082,7 +1007,7 @@ export class View {
           ctx.restore();
         }
       }
-      const cv = this.otherComposite(i, e.doc, e.fi);
+      const cv = this.render.composeOther(i, e.doc, e.fi);
       if (cv) ctx.drawImage(cv, sx, sy, w, h);
       ctx.save();
       ctx.lineWidth = 1;
@@ -1091,64 +1016,6 @@ export class View {
       ctx.restore();
     }
   }
-  /** composite of a non-focused canvas, cached until its config changes */
-  private otherComposite(i: number, doc: Doc, fi: number): HTMLCanvasElement | null {
-    // pixelRev is part of the key: another canvas may have changed without its
-    // own layer configuration changing (a reference layer being painted, etc.)
-    const key = doc.w + "x" + doc.h + "|" + fi + "|" + doc.pixelRev + "|" + doc.layers.map((l) => (l.visible ? 1 : 0) + ":" + l.opacity + ":" + l.blend + ":" + (l.ref ?? "") + (doc.bg ? "B" : "T")).join();
-    const got = this.otherComps.get(i);
-    if (got && got.key === key && got.doc === doc) return got.cv;
-    const cv = comp.composeFrame(doc, fi);
-    this.otherComps.set(i, { key, doc, cv });
-    return cv;
-  }
-  /** the 2x2 transparency checker, reused as a canvas pattern */
-  private checkerPattern(ctx: CanvasRenderingContext2D): CanvasPattern | null {
-    let chk = View.checker;
-    if (!chk) {
-      chk = document.createElement("canvas");
-      chk.width = 2; chk.height = 2;
-      const cc = chk.getContext("2d")!;
-      cc.fillStyle = "#9aa0b0"; cc.fillRect(0, 0, 1, 1);
-      cc.fillStyle = "#b9bec9"; cc.fillRect(1, 0, 1, 1);
-      cc.fillStyle = "#b9bec9"; cc.fillRect(0, 1, 1, 1);
-      cc.fillStyle = "#9aa0b0"; cc.fillRect(1, 1, 1, 1);
-      View.checker = chk;
-    }
-    return ctx.createPattern(chk, "repeat");
-  }
-
-  /** returns true when the whole composite had to be rebuilt */
-  private buildComposite(force: boolean): boolean {
-    const s = this.session;
-    const doc = s.doc;
-    const fi = s.curFrame();
-    const p = s.prefs;
-    const onionKey = p.onionOn ? "1:" + p.onionBefore + ":" + p.onionAfter + ":" + p.onionAlpha + ":" + (p.onionTint ? 1 : 0) + ":" + (p.onionWrap ? 1 : 0) : "0";
-    const key = doc.w + "x" + doc.h + "|" + fi + "|" + doc.layers.map((l) => (l.visible ? 1 : 0) + ":" + l.opacity + ":" + l.blend + ":" + (l.ref ?? "") + (doc.bg ? "B" : "T")).join() + "|on" + onionKey;
-    const onion = {
-      before: p.onionOn ? p.onionBefore : 0,
-      after: p.onionOn ? p.onionAfter : 0,
-      alpha: p.onionAlpha / 100,
-      tint: p.onionTint,
-      wrap: p.onionWrap,
-    };
-    // A partial update is only valid when the composite exists, the frame /
-    // layer config is unchanged AND the dirty region is known (compRect).
-    // Anything else — including a full dirty (compRect === null) — must really
-    // rebuild: returning "full" while keeping the old canvas made the view blit
-    // stale pixels (FX / selection edits looked delayed, the preview box was
-    // correct because it always composites from the doc).
-    if (!force && !compositeIsStale(!!this.composite, this.compKey === key, this.compRect)) {
-      comp.composeRectInto(doc, fi, onion, this.compRect!, this.composite!, this.composeCache);
-      return false;
-    }
-    this.compKey = key;
-    this.composeCache.ghosts.clear(); // frame or layer config changed
-    this.composite = comp.composeFrameWithOnion(doc, fi, onion, this.composeCache);
-    return true;
-  }
-
   private drawOverlay(rebuildTint = false): void {
     const ctx = this.ov.getContext("2d")!;
     this.applyTransform(ctx);
@@ -1415,7 +1282,7 @@ export class View {
     ctx.fillRect(x - 2, y - 2, L + 4, L + 4);
     ctx.fillStyle = "#2a2f3d";
     ctx.fillRect(x, y, L, L);
-    const comp = this.composite;
+    const comp = this.render.canvas;
     const sX = Math.max(0, sx0), sY = Math.max(0, sy0);
     const eX = Math.min(doc.w, sx0 + half * 2), eY = Math.min(doc.h, sy0 + half * 2);
     if (comp && eX > sX && eY > sY) {

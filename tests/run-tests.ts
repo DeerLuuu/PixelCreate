@@ -44,6 +44,8 @@ import { testChangelog } from "./changelog.test";
 import { testShading, testShadingPaletteSave } from "./shading.test";
 import { testIso } from "./iso.test";
 import { testIsoUi } from "./isoui.test";
+import { testViewport } from "./viewport.test";
+import { testRenderServer } from "./render-server.test";
 
 async function main(): Promise<void> {
   console.log("--- history ---");
@@ -72,6 +74,10 @@ async function main(): Promise<void> {
   testGuideAnchors();
   console.log("--- render ---");
   testRender();
+  console.log("--- viewport server ---");
+  testViewport();
+  console.log("--- render server ---");
+  testRenderServer();
   console.log("--- export ---");
   testExport();
   console.log("--- back ---");

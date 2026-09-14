@@ -73,6 +73,7 @@ src/
 ├─ tools/       工具层：registry（工具表与笔刷状态）、stroke（笔迹引擎）、select（选区与变换）、xform（自由变换的纯几何：锚点 / 命中圈 / 枢轴 / 干净角 / 解算）
 ├─ app/         应用层：session（状态中枢）、settings（设置注册表）、guide（引导注册表）、playback（循环模式）、gestures（手势映射）、history-io（标量历史载荷）
 ├─ render/      view（视口 / 手势 / 渲染）、compositor（合成）、rect（脏矩形工具）、onion（洋葱皮布局）
+├─ servers/     服务层：render（RenderServer：合成缓冲 / 合成键 / 失效区域 / 多画布缓存）、viewport（缩放平移与坐标数学，纯函数）
 ├─ io/          bridge（原生桥接）、exporters、gifread、project（.pxc）、aseread/asewrite（Aseprite .ase/.aseprite）、zlib（自写 inflate + CompressionStream 压缩）、autosave、clipboard
 └─ ui/          React 界面：App、timeline、modals、changelog、guide(+demo/layout)、hold、preview、i18n、style.css
    └─ ui/kit/    UI 控件库：Dialog、Form（Row/ChipGroup/Segmented/Switch/NumberField/ColorField）、primitives、scrub、令牌与演示页
@@ -84,7 +85,8 @@ toolchain/       开发辅助脚本（devserver 静态服务、make-icon 图标�
 
 ### 架构要点
 
-- **引擎层零 DOM**：`engine/`、`app/`、`tools/` 全部可在 Node 下测试（3847 条断言跑在纯数据上，含 UI 控件与令牌契约；`npm test` 末尾会打印条数）。
+- **引擎层零 DOM**：`engine/`、`app/`、`tools/`、`servers/` 全部可在 Node 下测试（3936 条断言跑在纯数据上，含 UI 控件与令牌契约；`npm test` 末尾会打印条数）。
+- **服务层**：合成与缓存归 `RenderServer`、视图数学归 `ViewportServer`（`docs/API.md` §15b），`render/view.ts` 只做 blit 与覆盖层 —— 这是 `docs/ARCHITECTURE.md` 里 Server 化的第一批落地。
 - **声明式注册表**：设置项写在 `src/app/settings.ts`，引导步骤写在 `src/app/guide.ts`；新增功能 = 一条声明 + i18n 文案，界面自动生成。
 - **增量渲染**：笔迹只重合成/重绘改动区域（`Rect` + `composeRectInto` + `celToCanvasRect`），一帧一次绘制（rAF 合并）。
 - **撤销栈**：`history.pushPixels`（像素）/ `pushStruct`（结构快照）/ `record`（标量前后值）三类，所有破坏性操作都可单步撤销。
