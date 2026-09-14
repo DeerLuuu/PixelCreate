@@ -28,7 +28,7 @@ src/servers/   服务层：RenderServer（合成与缓存）、ViewportServer（
 src/io/        原生桥接、工程文件（.pxc）、Aseprite 读写（aseread/asewrite/zlib）、自动保存、参考图、安全区、base64
 src/ui/        React 外壳、弹窗、时间线、浮动球、i18n、样式
 android/       MainActivity（Java 层）+ AndroidManifest
-tests/         无 DOM 的引擎/逻辑回归（**3972 条断言**，`node .ts-out/tests/run-tests.js` 末尾会打印条数）
+tests/         无 DOM 的引擎/逻辑回归（**4019 条断言**，`node .ts-out/tests/run-tests.js` 末尾会打印条数）
 docs/          API.md / COMPARISON.md
 ```
 
@@ -93,6 +93,9 @@ java -jar /root/pk/apksigner.jar verify --print-certs /sdcard/Download/PixelCraf
   别把这两件事搬回去 —— 细节与"不要改回去"清单见 `docs/API.md` §15b。
 
 **工具与手势**
+- **手势策略与算术在 `servers/input.ts`**（`InputServer` 的第一片）：鼠标按键意图、方向盘的 pinch
+  解算（中点不动点）、四指划动判定、长按策略、点击容差；`render/view.ts` 只留会话状态与动作体。
+  口径与"还没搬的部分"见 `docs/API.md` §15c。
 - `View`（`src/render/view.ts`）接管画布手势：画布边距双击 = undo、双指双击 = redo、三击 = 2× 放大；手势 → 动作映射在 `src/app/gestures.ts`，设置里可改。
 - 震动统一走 `Session.hapticTick(tag, scale)`（受 `gesture.haptic` 开关与 `prefs.hapticLen` 控制）。
 - 形状：统一栅格 inside+border（实心/空心），Zingl 椭圆，笔刷 `brushStamp` 镜像对称（Aseprite 移植）。

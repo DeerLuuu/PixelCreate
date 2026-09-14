@@ -1475,6 +1475,51 @@ RenderServer.noteFrame({ composed, rebuilt, reason, fi, docRect, screen, fullBli
 - **关掉时零开销**：`note()` 立即返回，视图层也先问 `debugEnabled` 才取时间戳；组件不挂载。
 - 组件 `src/ui/renderdebug.tsx`（`.rdbg*` 类，`pointer-events:none`，不挡手势）。
 
+## 15c. 输入服务 `src/servers/input.ts`（手势策略与算术）
+
+`render/view.ts` 的手势状态机很大（`onDown/onMove/onUp/onCancel` 约 840 行），按
+`docs/ARCHITECTURE.md` §3.3 第 5 项分片搬出。**这一片只搬"策略判定与算术"**（纯函数、
+无 DOM、无 Session，可在 Node 里测）：
+
+```ts
+interface GestureMods { shift; ctrl; alt; space }
+modsOf(e, space): GestureMods
+mouseButtonIntent(button, space): "focus-fit" | "secondary" | "primary"
+  // PC 鼠标：中键＝聚焦并适配当前画布；右键 / 空格+左键＝用另一个色槽（背景色）绘制
+
+outsideDoc(p, docW, docH): boolean
+longPressNeedsDoc(action): boolean              // 取色 / 放大 / 缩小必须落在画布内
+longPressAllowed({ isPc, action, pickAllowed, insideDoc }): boolean
+
+FOUR_MOVE_PX_DEFAULT = 15                        // 四指划动阈值（逻辑屏幕像素；设置可覆盖）
+fourFingerArmed(pointers, starts, threshold): boolean
+
+TAP_SLOP_PX = 24; withinTapSlop(a, b, slop?): boolean
+
+pinchNow(a, b): { mx; my; dist }                 // dist 下限 1，避免除零
+pinchBaseOf(a, b, view): PinchBase               // 起始时冻结的 { 中点, 距离, 缩放, ox, oy }
+PINCH_EPS = 0.001
+pinchAround(base, now, zoomMin, zoomMax): { zoom; ox; oy; zoomed }
+```
+
+口径（都是搬家前逐字保留的行为，`tests/input.test.ts` 钉住）：
+
+- **双指缩放以两指中点为不动点**：`ox' = mx − (mx₀ − ox₀)·k`，k = 新缩放 / 起始缩放；
+  缩放先夹到 `zoomMin..zoomMax` 再算平移（夹住了锚点也不会算飞）。中点整体移动＝同时平移视图。
+- **四指手势要"至少两根手指各自离开自己的落点"**才置位（阈值严格大于），方向不限；
+  按每根手指**自己的落点**算，所以晚落 / 早抬的手指不会削弱判定。
+- **`zoomed` 用的是绝对值阈值**（`|Δzoom| > 0.001`）：`zoom = 8` 时两指距离抖 0.01px 就会置位。
+  「双指双击＝重做」依赖这个标志，**真机上如果觉得重做难触发，要改的是这里的阈值口径**，
+  不要在别处兜底。
+- 长按策略：PC 不开长按；`pickColor / zoomIn / zoomOut` 必须落在画布内且允许取色
+  （有选区、或当前是选区类工具时不允许）；其它长按动作只要落在画布内即可。
+
+**还没搬的（P5 后两片）**：手势**会话状态**（`pointers` / `pinchBase` / `twoTap` / `fourSeen` /
+`fourArmed` / `panLast` / `gestureMoved` …）与 `onDown/onMove/onUp` 里各分支的**动作体**
+（要碰 `stroke` / `xf` / 选区 / 会话，得连着真机回归一起做）。
+
+---
+
 ## 16. IO
 
 ### 16.1 原生桥接 `src/io/bridge.ts`

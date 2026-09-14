@@ -46,6 +46,7 @@ import { testIso } from "./iso.test";
 import { testIsoUi } from "./isoui.test";
 import { testViewport } from "./viewport.test";
 import { testRenderServer } from "./render-server.test";
+import { testInput } from "./input.test";
 
 async function main(): Promise<void> {
   console.log("--- history ---");
@@ -78,6 +79,8 @@ async function main(): Promise<void> {
   testViewport();
   console.log("--- render server ---");
   testRenderServer();
+  console.log("--- input server ---");
+  testInput();
   console.log("--- export ---");
   testExport();
   console.log("--- back ---");

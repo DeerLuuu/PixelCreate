@@ -34,6 +34,10 @@ import { cursorAttr, cursorFor } from "./cursor";
 import { isPc } from "../io/pcmode";
 import * as Vp from "../servers/viewport";
 import { RenderServer, onionKeyOf, onionSpecOf, type RenderReason } from "../servers/render";
+import {
+  FOUR_MOVE_PX_DEFAULT, fourFingerArmed, longPressAllowed, mouseButtonIntent, outsideDoc,
+  pinchAround, pinchBaseOf, pinchNow,
+} from "../servers/input";
 import { hexToRgba } from "../engine/color";
 
 interface PxPoint {
@@ -207,7 +211,7 @@ const UNLOCK_D = "M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6h2c0-1.66 1.34-3 3-3s3 
  *  down = the all-frames preview gesture. Big enough to ignore the jitter of
  *  four fingers settling, small enough that any deliberate slide arms it. */
 /** fallback when a caller has no session yet (never used in the app) */
-const FOUR_MOVE_PX_DEFAULT = 15;
+// 四指划动阈值默认值搬到了 servers/input.ts（FOUR_MOVE_PX_DEFAULT），这里只 import
 /** layer-switch flash duration in ms */
 const FLASH_MS = 420;
 /** 临时工具笔画用的合成 pointerId（与真实手指的 id 区分开） */
@@ -2214,8 +2218,9 @@ export class View {
     // ---- PC 鼠标：中键＝聚焦适配，右键 / 空格+左键＝用另一个色槽绘制
     this.altPaint = false;
     if (e.pointerType === "mouse") {
+      const intent = mouseButtonIntent(e.button, this.spaceDown);
       // 中键：等价于触屏的双击画布（聚焦并适配），不再用于平移
-      if (e.button === 1) {
+      if (intent === "focus-fit") {
         const hitIdx = this.canvasAtScreen(pt.x, pt.y);
         if (hitIdx >= 0) {
           if (hitIdx !== this.session.docIdx) this.session.focusCanvas(hitIdx);
@@ -2226,8 +2231,8 @@ export class View {
       }
       this.mousePan = false;
       // 右键，或按住空格＋左键：用另一个色槽（默认背景色）绘制
-      this.altPaint = e.button === 2 || (e.button === 0 && this.spaceDown);
-      if (e.button === 2 || this.altPaint) this.pointers.set(e.pointerId, pt);
+      this.altPaint = intent === "secondary";
+      if (intent === "secondary") this.pointers.set(e.pointerId, pt);
     }
     this.pointers.set(e.pointerId, pt);
     // remember each finger's touchdown point — a finger counts as "sliding"
@@ -2312,11 +2317,7 @@ export class View {
       else if (this.inXform()) this.xfBreakDrag();
       else if (this.xf) this.endXf();
       const [a, b] = [...this.pointers.values()];
-      this.pinchBase = {
-        mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2,
-        dist: Math.max(1, Math.hypot(b.x - a.x, b.y - a.y)),
-        ox: this.ox, oy: this.oy, zoom: this.zoom,
-      };
+      this.pinchBase = pinchBaseOf(a, b, { zoom: this.zoom, ox: this.ox, oy: this.oy });
       this.gestureHadTwo = true;
       this.pinchZoomed = false;
       this.twoTapMid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
@@ -2394,11 +2395,11 @@ export class View {
     //    **但抓手优先**：旋转 / 斜切的图标画在选区框**外** 30px（缩放 6px），选区贴着画布边时
     //    它们必然落在画布外 —— 早先这里无条件平移，等于这些图标一跑到画布外就按不到
     //    （用户报的「按钮不在画布内时触发拖动相机」）。变形模式的控制点同理。
-    const outsideDoc = pp.x < 0 || pp.y < 0 || pp.x >= doc.w || pp.y >= doc.h;
+    const outside = outsideDoc(pp, doc.w, doc.h);
     const blankPan = isPc() && e.pointerType === "mouse" &&
       (tool === "select" || tool === "lasso" || tool === "wand" || tool === "outline");
-    const onGrab = blankPan && outsideDoc && (this.warpHandleAt(pt) >= 0 || !!this.xfHitAt(pt));
-    if (blankPan && outsideDoc && !onGrab) {
+    const onGrab = blankPan && outside && (this.warpHandleAt(pt) >= 0 || !!this.xfHitAt(pt));
+    if (blankPan && outside && !onGrab) {
       this.panLast = pt;
       this.gestureMoved = false;
       this.syncCursor();
@@ -2413,8 +2414,8 @@ export class View {
     // tool is active (holds there mean marquee/transform, not colour picking)
     const pickAllowed = !selOn && tool !== "select" && tool !== "lasso" && tool !== "wand";
     const longAction = this.session.prefs.gLongPress;
-    const longWantsDoc = longAction === "pickColor" || longAction === "zoomIn" || longAction === "zoomOut";
-    if (!isPc() && (!longWantsDoc || pickAllowed) && pp.x >= 0 && pp.y >= 0 && pp.x < doc.w && pp.y < doc.h) {
+    const insideDoc = !outsideDoc;
+    if (longPressAllowed({ isPc: isPc(), action: longAction, pickAllowed, insideDoc })) {
       this.pickAnchor = [pp.x, pp.y];
       this.longT = window.setTimeout(() => {
         this.longT = null;
@@ -2440,7 +2441,7 @@ export class View {
       // 没抓到控制点、但按在内容上＝**拖动整块内容**：所有控制点一起平移，
       // 于是锚点跟着内容走；按在内容之外才是平移视图。
       if (this.warpStartMove(pt)) { this.cancelPickTimer(); return; }
-      if (outsideDoc) this.panLast = pt;
+      if (outside) this.panLast = pt;
       this.cancelPickTimer();   // 这次按下属于变形，别让它顺带起一次长按取色
       return;
     }
@@ -2453,7 +2454,7 @@ export class View {
       // 只有「命中不了任何抓手、但落在框内」才算移动内容
       this.xfHover = null;
       if (this.tryStartXf(pt)) { this.cancelPickTimer(); return; }
-      if (outsideDoc) this.panLast = pt;
+      if (outside) this.panLast = pt;
       this.cancelPickTimer();
       return;
     }
@@ -2609,28 +2610,21 @@ export class View {
     // last lift. Per-finger travel means fingers that land late or lift early
     // never weaken the detection.
     if (this.fourSeen && this.pointers.size >= 2) {
-      let moving = 0;
-      for (const [pid, p] of this.pointers) {
-        const s = this.fourStart.get(pid);
-        if (s && Math.hypot(p.x - s.x, p.y - s.y) > (this.session.prefs.fourFingerPx || FOUR_MOVE_PX_DEFAULT)) moving++;
+      if (fourFingerArmed(this.pointers, this.fourStart, this.session.prefs.fourFingerPx || FOUR_MOVE_PX_DEFAULT)) {
+        this.fourArmed = true;
       }
-      if (moving >= 2) this.fourArmed = true;
       return;
     }
     // pinch
     if (this.pointers.size >= 2 && this.pinchBase) {
       const [a, b] = [...this.pointers.values()];
-      const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
-      const dist = Math.max(1, Math.hypot(b.x - a.x, b.y - a.y));
       // (a pending multi-finger long press was already cancelled in onMove)
-
-      const k = dist / this.pinchBase.dist;
-      const z = clamp(this.pinchBase.zoom * k, this.session.prefs.zoomMin, this.session.prefs.zoomMax);
-      const sc = z / this.pinchBase.zoom;
-      this.ox = mx - (this.pinchBase.mx - this.pinchBase.ox) * sc;
-      this.oy = my - (this.pinchBase.my - this.pinchBase.oy) * sc;
-      this.zoom = z;
-      if (Math.abs(z - this.pinchBase.zoom) > 0.001) this.pinchZoomed = true;
+      // 解算口径（中点是不动点、缩放夹取）都在 InputServer 里，见 servers/input.ts
+      const r = pinchAround(this.pinchBase, pinchNow(a, b), this.session.prefs.zoomMin, this.session.prefs.zoomMax);
+      this.ox = r.ox;
+      this.oy = r.oy;
+      this.zoom = r.zoom;
+      if (r.zoomed) this.pinchZoomed = true;
       this.refresh(false);
       return;
     }

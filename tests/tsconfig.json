@@ -63,6 +63,7 @@
     "../tests/iso.test.ts",
     "../tests/isoui.test.ts",
     "../tests/viewport.test.ts",
-    "../tests/render-server.test.ts"
+    "../tests/render-server.test.ts",
+    "../tests/input.test.ts"
   ]
 }
