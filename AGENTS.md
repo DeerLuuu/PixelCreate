@@ -50,6 +50,12 @@ docs/          API.md / COMPARISON.md
 ```sh
 # 同步源码（增量覆盖，不要 rm -rf；见 §5.4）
 cp -r src/. /root/pcbuild/app/src/ && cp -r tests/. /root/pcbuild/app/tests/
+# 测试还要读仓库根的这几个目录：tests/changelog.test.ts 读 android/AndroidManifest.xml、
+# tests/icons.test.ts 读 app2/www/index.html，缺了会直接 FATAL（不是「跳过」）
+cp -r android/. /root/pcbuild/app/android/ && cp -r app2/. /root/pcbuild/app/app2/ && cp -r web/. /root/pcbuild/app/web/
+
+# 对齐 Web 产物：不自己构建，取部署分支 main 上那一份（见 §5.1b）
+sh scripts/sync-web.sh            # 加 --check 只比较不写入（不一致退出码 1）
 
 # 类型检查（noUnusedLocals 已开）
 cd /root/pcbuild && ./node_modules/.bin/tsc -p tsconfig.json --noEmit
@@ -107,6 +113,14 @@ java -jar /root/pk/apksigner.jar verify --print-certs /sdcard/Download/PixelCraf
 - 远程：`origin = git@github.com:DeerLuuu/PixelCreate.git`（SSH，容器内密钥在 `~/.ssh/id_ed25519`）。
 - 更新线上站点：`sh scripts/publish-web.sh --push`；Pages 的 Source 必须是 “GitHub Actions”。
 - 部署文件（workflow / 部署分支 README / `.nojekyll`）的唯一来源是 `master` 的 `web/`。
+- **构建产物也在版本管理里，只是放在 `main`**：`app2/www/js/app.js`、`app2/www/css/style.css` 在 `master`
+  被 `.gitignore` 忽略，`main` 上每次部署一个提交，提交信息形如
+  `chore(web): 同步 Web 构建产物（源提交 bd613a7）`（记着这份产物是从哪个源码提交构建的）。
+  所以 `git pull` 之后本地产物可能落后于源码 —— 用 **`sh scripts/sync-web.sh`** 从 `origin/main` 取回
+  （`--check` 只比较不写入，不一致退出码 1）；想看某一版的产物就 `git show origin/main:js/app.js`。
+  **不要为了「pull 一次就拿到产物」把它们提交进 `master`**：1.1MB 压成一整行的文件放进源码分支，
+  diff 看不了、冲突没法解，而且每次改源码都要记得重建再提交，否则仓库里的包会静默落后于源码。
+  存储不是理由：`main` 上 53 个版本的 `app.js` 加起来，整个仓库的 pack 也只有约 4 MiB。
 
 ### 5.2 声明式优先
 - 设置项写进 `src/app/settings.ts`（一条声明 + i18n 文案），设置界面自动生成；
@@ -185,6 +199,9 @@ java -jar /root/pk/apksigner.jar verify --print-certs /sdcard/Download/PixelCraf
 ```sh
 cp -r src/. /root/pcbuild/app/src/
 cp -r tests/. /root/pcbuild/app/tests/
+# 测试要读的仓库根目录（§3 已解释原因），缺了 §6.3 的测试会 FATAL
+cp -r android/. /root/pcbuild/app/android/
+cp -r app2/. /root/pcbuild/app/app2/
 ```
 
 ### 6.3 类型检查 + 测试（必须全绿）
