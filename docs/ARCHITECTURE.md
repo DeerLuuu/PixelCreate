@@ -1,6 +1,7 @@
 # PixelCraft 架构：现状、目标与 Server 化改造
 
-> 状态：**现状盘点 + 目标架构设计**（2026-09-14）。改造**尚未开工**，分期计划见 §4，红线见 §5。
+> 状态：**现状盘点 + 目标架构（Server 化 + 模块化）设计**（2026-09-14）。改造**尚未开工**：
+> 分期计划见 §5，模块化（可裁剪的交付单位）见 §4，红线见 §6。
 > 相关：[`docs/API.md`](API.md)（现有接口）、[`docs/PLAN-ai.md`](PLAN-ai.md)（AI 接入，依赖本文的 C 阶段地基）、
 > [`AGENTS.md`](../AGENTS.md)（工程约定）、[`docs/UI.md`](UI.md)（界面规范）。
 > 文中所有数字都是**在源码上实测**的（`master`，版本 `1.1.1.8` / versionCode 65）。
@@ -16,6 +17,9 @@
 - **目标**：按 Godot 的 server 思路把业务层按**职责所有权**切开——每个 server 只管一件事
   （文档 / 历史 / 渲染 / 视口 / 输入 / 工具 / 选区 / 调色板 / 动画 / 画布空间 / IO / 设置 / UI 布局 /
   信号总线），前端只做"翻译输入 + 呈现状态"，算法抽成纯类。
+- **模块化**：在 Server 之上再加一层「模块」——像 Godot 那样**把不要的模块直接不编进去**
+  （`modules.config.json` 选模块 → 生成静态 import → esbuild 天然剔除；见 §4）。两件事的关系：
+  **Server 是运行时的职责边界，Module 是交付时的裁剪单位**；模块化**必须排在 Server 化之后**。
 - **关键结论**：**不是重写，是切边界**。`engine`（19 模块）、`tools`（5）、`io`（15）已经基本符合目标形态，
   要动的主要是 `Session` / `View` / `App` 这三个大文件里的内容。
 
@@ -184,6 +188,10 @@ Godot 4 的 server（`RenderingServer` / `DisplayServer` / `PhysicsServer2D` / `
 `canvas-space`、`io/*`、`settings`、`uibar/keymap`）；真正要新切的是 **3、4、5、6、7、1**，也就是
 `Session` 与 `View` 里那 9,300 行的内容。
 
+> **与模块化的关系**：server 是运行时的职责边界，**module 是交付时的裁剪单位**（§4.1）。
+> 其中 `SelectionServer`（§3.3 第 7 项）、`AnimationServer`（第 9 项）、`CanvasSpaceServer`（第 10 项）、
+> `AiServer`（第 15 项）分别属于可裁剪模块 `selection` / `animation` / `multicanvas` / `ai`。
+
 ### 3.4 算法类（抽成纯类，但不做 server）
 
 规则：**只 import `core`/`engine` 类型，绝不 import 任何 server**，可 100% 在 Node 里测。
@@ -272,15 +280,211 @@ React 侧用一个极小的适配层订阅需要的频道（保留 `useSyncExter
 
 ---
 
-## 4. 迁移计划（绞杀者模式）
+---
 
-### 4.1 总策略
+## 4. 模块化：可裁剪的交付单位
+
+> 目标：像 Godot 那样「**不要的模块直接不编进去**」——产出更小的包、更少的界面噪音、更清晰的所有权，
+> 同时**绝不破坏"打开旧工程不丢数据"**。
+> 一句话分工：**Server 回答"运行时谁负责什么"，Module 回答"这一版要不要这个功能"**。
+
+### 4.1 Server 与 Module 是两个正交维度
+
+| 维度 | 回答的问题 | 单位 | 例子 |
+|---|---|---|---|
+| **Server**（§3） | 运行时的**职责与所有权**：谁持有状态、谁能改它 | 常驻单例 | DocumentServer、RenderServer |
+| **Module**（本节） | 交付时的**打包与裁剪**：这个功能编不编进这一版 | 可裁剪包 | `iso`、`aseprite-io`、`guide` |
+
+关系：**一个模块 = 若干 server 的能力 + 贡献点（工具 / 设置 / 引导 / 图标 / 文案 / 导出器）+ 自己的测试**；
+server 是模块的运行时骨架，模块是 server 的可选装配。core 永远包含最小 server 集。
+
+| 模块 | 提供的 server / 能力 |
+|---|---|
+| `core`（不可裁剪） | DocumentServer、HistoryServer、RenderServer、ViewportServer、InputServer（基础）、ToolServer（基础）、PaletteServer（基础）、SettingsServer、UiLayoutServer、IosServer（PNG + `.pxc`）、SignalHub |
+| `selection` | SelectionServer（掩膜 + 浮动模型） |
+| `animation` / `tags` | AnimationServer（播放 / 洋葱皮 / 标签） |
+| `multicanvas` | CanvasSpaceServer |
+| `color-analysis` / `shading` | PaletteServer 的进阶能力（统计 / 替换 / 色阶生成） |
+| `ai` | AiServer（见 `docs/PLAN-ai.md`） |
+
+### 4.2 模块清单
+
+**core（不可裁剪）**：文档与历史、合成与视口、基础输入、基础绘制工具（铅笔/橡皮/油漆桶/直线/矩形/椭圆/吸管）、
+基础调色板与取色、PNG 导出与 `.pxc` 工程、设置与 i18n 核心、主题与安全区、原生桥。
+
+**可选模块**（可关；行数是本文实测的源码行数）：
+
+| 模块 | 提供 | 依赖 | 现状落点（行） |
+|---|---|---|---|
+| `selection` | 框选/魔棒/套索、掩膜运算、浮动选区 | core | `tools/select.ts` 739 |
+| `xform` | Aseprite 式自由变换（8 锚点 + 枢轴 + 干净角 + 斜切） | selection | `tools/xform.ts` 925 |
+| `warp` | 四角透视与网格变形 | selection | `tools/warp.ts` 359 |
+| `resample` | 高级缩放六算法 + 对比预览 | core | `engine/resample.ts` 514 + `ui/scale-preview.ts` 126 |
+| `effects` | 描边/内描边/圆角/模糊/投影/外发光/反色/灰度/居中/裁剪 | core | `engine/effects.ts` 439 |
+| `color-analysis` | 颜色统计、近似色分组、替换、按色建选区、CSV | palette | `engine/color-analysis.ts` 519 |
+| `shading` | 色彩明暗（六条色阶 + 互补·三角·四角） | palette | `engine/shading.ts` 209 |
+| `animation` | 帧、时长、播放循环与速度、洋葱皮 | core | `app/playback.ts` 127 + `ui/timeline.tsx` 609 |
+| `tags` | 动画标签与播放范围 | animation | `engine/tags.ts` 105 |
+| `iso` | 2:1 等距图形生成器与参数条 | core+input | `engine/iso.ts` 529 + `ui/iso.tsx` 171 |
+| `aseprite-io` | `.ase` / `.aseprite` 读写 | core.io | `io/aseread.ts` 523 + `asewrite.ts` 357 + `zlib.ts` 262 |
+| `gif` | GIF 导出（+ 读帧导入） | resample? | `io/exporters.ts` 的 `encodeGIF` + `io/gifread.ts` 43 + omggif |
+| `spritesheet` | 精灵表导出与按格切帧导入 | core.io | `ui/modals.tsx` 的 Sheet 部分（需拆分） |
+| `patterns` | 图案库与图案笔刷 | core.tools | `data/patterns.ts` 139 |
+| `multicanvas` | 无限画布空间、引用画布、画布锁、吸附 | core | `app/canvas-space.ts` 67 + `canvas-snap.ts` 290 + `ui/canvas.tsx` 193 |
+| `pc-mode` | 电脑模式：键鼠输入、快捷键、饼菜单、拖放 | core.input | `io/pcmode.ts` 143 + `app/keymap.ts` 141 + `shortcuts.ts` 236 |
+| `guide` | 54 步引导（真操作演示） | core.ui | `app/guide.ts` 408 + `ui/guide*.tsx` 386 |
+| `changelog` | 更新日志面板 | core.ui | `ui/changelog.tsx` 796 |
+| `refimage` | 参考图浮窗 | core | `io/refstore.ts` 91 + `ui/refimg.tsx` 152 |
+| `history-replay` | 历史面板与回放 | core.history | `ui/replay.tsx` 160 + `modals.tsx` 的 History 部分 |
+| `frame-preview` | 帧预览浮窗 | animation | `ui/preview.tsx` 168 |
+| `ai`（未实现） | 应用内助手 / 本机工具服务 | 按 `PLAN-ai.md` | — |
+
+### 4.3 模块契约（manifest）
+
+```ts
+export interface ModuleManifest {
+  id: string;                  // "iso"
+  titleKey: string;            // i18n 键（模块名）
+  deps?: string[];             // 依赖的模块 id：未启用则构建**报错**（不是静默降级）
+  provides: {                  // 只允许"贡献"，不允许改核心逻辑
+    servers?: string[]; tools?: ToolId[]; settings?: string[]; orbItems?: string[];
+    actions?: string[]; modals?: string[]; guideSteps?: string[]; gestures?: string[];
+    icons?: string[]; exporters?: string[]; shortcuts?: string[];
+  };
+  register(ctx: ModuleCtx): void;   // 唯一入口：把上面的东西"投递"进注册表
+  onDocOpen?(doc: Doc): void;       // 可选：打开工程时的兼容处理
+  i18n: { zh: Dict; en: Dict };     // 模块自带的文案片段（zh/en 成对）
+}
+
+// ctx 由核心提供，是模块能碰到的**全部**东西
+interface ModuleCtx {
+  addSetting(def: SettingDef): void;   addOrbItem(ball: BallId, item: Item): void;
+  addTool(t: ToolDef): void;           addAction(id: string, a: Action): void;
+  addModal(id: ModalId, c: ComponentType): void;   addGuideStep(step: GuideStep): void;
+  addGesture(id: string): void;        addExporter(fmt: ExporterDef): void;
+  addShortcut(k: KeyBinding): void;    use<T>(server: ServerName): T;   // 取依赖模块暴露的 API
+}
+```
+
+**五条模块红线**（违反即 CI 失败，脚本 + 测试双重拦截）：
+
+1. **模块只能贡献，不能分支**：核心代码里不许出现 `if (moduleId === "iso")` 这种判断；
+   只有 §4.5 那 5 个能力位例外（新增能力位要过评审）。
+2. **id 全局唯一**：设置 `path`、球条目 id、动作 id、工具 id、图标 id、手势 id、弹窗 id、引导步骤 id 都不许撞车。
+3. **模块之间不得 import 实现文件**：只允许 `import type`（类型）与 `ctx.use()`（依赖模块暴露的 API）。
+4. **模块不得直接改 `Doc`**：一律经 DocumentServer（§6 红线 2）。
+5. **模块自带测试**：`tests/modules/<id>.test.ts`；模块未启用时它的测试**一起跳过**（不报"缺失"）。
+
+### 4.4 构建机制（Godot 的对应物）
+
+| Godot | 本项目 |
+|---|---|
+| `modules/*/config.py` 的 `can_build()` / `is_enabled()` | `src/modules/*/module.ts` 的 manifest + `scripts/modules.mjs` 校验 |
+| scons 参数 `module_x_enabled=no` / `disable_3d=yes` | 仓库根 `modules.config.json`（`preset` + `enable` / `disable`） |
+| 生成的 `modules_enabled.gen.h`（`MODULE_X_ENABLED` 宏） | 生成的 `src/modules/_generated.ts`（**只静态 import 启用的模块** + `ENABLED` 常量表） |
+| `#ifdef MODULE_X_ENABLED` 守卫 | `ENABLED.x` 常量分支（核心刻意少用，见红线 1） |
+| 不编的模块根本不进二进制 | esbuild 静态可达性：没被 import 的模块**根本不在依赖图里**，天然被剔除 |
+| `Engine.has_singleton()` / 编辑器隐藏入口 | 注册表查询：没注册的入口**不存在**（不是灰掉） |
+| GDExtension（运行期动态加载） | **不做**：APK/PWA 离线、无插件市场，动态加载只会带来异步与失败路径 |
+
+**为什么必须是"生成的静态 import"**：只有静态可达才能让 esbuild 丢掉整棵子树；
+`import()` 在"单文件 IIFE + `file://` 离线"的形态里做不到真剔除。构建流程：
+
+```
+modules.config.json ──> scripts/modules.mjs ──> src/modules/_generated.ts ──> esbuild ──> app.js
+   （选模块）          （校验依赖/环/唯一性）      （只有启用的模块被 import）      （剔除未引用的模块）
+```
+
+### 4.5 缺省时的优雅降级（能力位）
+
+绝大多数情况核心**不需要知道**模块是否存在（入口/设置/工具都来自注册表）。只有少数"核心必须适配"的地方
+用 `_generated.ts` 里的编译期常量：
+
+| 能力位 | 谁需要 | 关掉时的行为 |
+|---|---|---|
+| `ENABLED.animation` | 底栏 / 时间轴 | 不渲染时间轴，帧相关快捷键不注册 |
+| `ENABLED.tags` | 时间轴标签条 | 标签条消失；工程里已有的标签**原样保留** |
+| `ENABLED.selection` | 底栏 / 选择球 | 选择球不存在，"全选/反选"等动作不注册 |
+| `ENABLED.multicanvas` | 画布球 / 标题栏 | 退回单画布形态 |
+| `ENABLED.pcMode` | 输入层 | 只走触摸分支，`(pointer:fine)` 相关代码不编译 |
+
+**数据格式永远是超集**（最重要的一条不变量）：`.pxc` / `.aseprite` 的读写**不随裁剪变化**——
+关掉 `tags` 也要能读写标签字段、关掉 `animation` 也要能保存多帧、关掉 `refimage` 也不能丢参考图记录。
+**裁剪只影响"能不能编辑/显示"，绝不影响"打开 → 保存"的数据完整性**，并且要有测试兜住。
+
+### 4.6 i18n / 设置 / 引导 / 图标 / 测试 的模块化
+
+| 项 | 现在 | 模块化后 |
+|---|---|---|
+| i18n | 一个 833 行的巨型字典（中英各一份） | 每模块自带 `i18n.ts` 片段，构建时合并；`tests/i18n.test.ts` **按启用模块**校验，关掉模块不报"键缺失" |
+| 设置 | 74 条集中在 `app/settings.ts` | 模块走 `ctx.addSetting()`；关掉模块设置项自然消失 |
+| 引导 | 54 步全量注册 | 模块贡献自己的步骤；`guide-anchors.test.ts` 只校验启用模块的锚点 |
+| 图标 | `feature-icons.ts` 全量、同屏唯一 | 分组按**启用模块**计算（现在是一次性全量） |
+| 测试 | 45 个文件全量跑 | 每模块 `tests/modules/<id>.test.ts`；未启用即跳过；清单由 `tests/modules.test.ts` 校验 |
+| 静态扫描测试 | 扫 `src/ui` 全部 | 扫「core + 启用模块」，并新增断言：**核心不得出现可选模块的字面量**（如关掉 iso 后 `App.tsx` 里不得有 `i-iso`） |
+
+### 4.7 变体与预设
+
+| 预设 | 含模块 | 用途 | 产物 |
+|---|---|---|---|
+| `pixel-core` | 只有 core | 极致精简（绘制 + PNG + `.pxc`） | 最小 APK / Web |
+| `lite` | core + selection + effects + resample + palette 增强 | 手机日常 | 中等 |
+| `full`（默认） | 全部可选模块 | 与今天一致 | 现在这个包 |
+| `studio` | full + `ai` | 未来带 AI | — |
+
+产线：`MODULES=full sh /root/pk/make-apk.sh <版本> <code>`（APK 文件名带变体后缀）、
+`MODULES=lite sh scripts/build-web.sh`（Web 产物带变体名）；**每个预设都要跑 tsc + 测试 + `check-bundle`**。
+
+### 4.8 体积收益（诚实估算）
+
+方法：线上实测 bundle = **1,130,178 字节**（minified，含 React）；`src` 总量 32,916 行，
+§4.2 列出的可选模块合计约 **9,900 行**（本文逐文件实测，占 `src` 的 30%）。
+按"每行 ≈ 34 字节（含共享 React 摊销）"粗估：
+
+- **全开 → core-only：bundle 约省 25–35%（300–400 KB，gzip 后约 90–120 KB）**；
+- APK 从约 **575 KB** 降到约 **520 KB** 量级。
+
+**但请把预期放在别处**：真正的收益是 ①**一个仓库出多种产品形态** ②交付与界面的复杂度上限
+③新人 / AI 只需读懂启用模块 ④"这个功能是不是漏进核心了"有了可执行的判据。
+**不要为了省 50 KB 做这件事。**
+
+### 4.9 前置条件与分期
+
+**硬前置**：模块的贡献点（浮动球条目、弹窗、动作）今天**硬编码在 `App.tsx`（2,898 行）与 `modals.tsx`（2,246 行）里**，
+所以模块化**必须排在 Server 化之后**（至少完成 P3 收拢 Selection、P4 拆 `view.ts`、P7 注册表与信号）。
+否则"搬模块"就得改那两个大文件，等于没模块化。
+
+| 期 | 内容 | 前置 | 验收 |
+|---|---|---|---|
+| **M0** | `scripts/modules.mjs` + `_generated.ts` + `tests/modules.test.ts`（此刻只有 core，**行为零变化**） | 无（可与 P0–P2 并行） | 构建与测试全绿；清单校验能拦住"依赖缺失 / 成环 / id 重复" |
+| **M1** | 搬最独立的三个：`aseprite-io`、`iso`、`color-analysis`+`shading` | P3 / P4 | 全开时 bundle 与行为不变；关掉后**无悬空入口**，tsc / 测试 / `check-bundle` 全绿 |
+| **M2** | `animation`+`tags`、`effects`、`resample`、`patterns`、`frame-preview` | M1 | 同上 + `.pxc` **数据完整性测试**通过 |
+| **M3** | `multicanvas`、`pc-mode`、`guide`、`changelog`、`refimage`、`gif`、`spritesheet`、`history-replay` | P5–P7 | 三个预设各自全绿 |
+| **M4** | `ai`（新功能**直接按模块写**）+ APK / Web 两条产线 + CI 三预设矩阵 | M3 | `pixel-core` 与 `studio` 都能出包 |
+
+### 4.10 风险与代价
+
+| 风险 | 说明 | 对策 |
+|---|---|---|
+| **ifdef 地狱** | 模块一旦开始"让核心适配"，`ENABLED.x` 会到处蔓延，可读性反而下降 | 红线 1：只能贡献；能力位限定在 §4.5 的 5 个，新增要过评审 |
+| **组合爆炸** | N 个模块 → 2^N 种配置无法全测 | 只保证三个预设（`pixel-core` / `full` / `studio`）进 CI 全测；单模块关闭由"关掉后 tsc + 冒烟"覆盖 |
+| **体积收益有限** | 见 §4.8 | 目标定在交付变体与复杂度，不是 KB |
+| **裁剪导致丢数据** | 关掉模块后保存旧工程丢字段 | §4.5"格式永远是超集" + 完整性测试 |
+| **测试工具要改** | i18n / 图标 / 引导锚点测试现在全量扫描 | M0 一并改成"按启用模块扫描" |
+| **UI 悬空入口** | 关掉模块后菜单留下死入口 | 入口一律来自注册表 + 新增静态断言（核心不得出现可选模块字面量） |
+| **文档与文案分叉** | 每模块各写一份 README？ | 对外仍只有一份 `README.md`（功能表标注模块），`docs/API.md` 按模块加小节标题 |
+
+---
+
+## 5. 迁移计划（绞杀者模式）
+
+### 5.1 总策略
 
 1. **`Session` 保留为门面 + 兼容层**：方法体逐步改成一行转发（`this.history.undo()`），**UI 一行不改**。
 2. 每期只搬一个域，搬完立刻跑全量回归；**任何一期都可以停下**，停在中间也是可用状态。
 3. 先修三处硬伤中的第 3 条（`engine/history.ts` 的类型泄漏），它是零风险的顺手活。
 
-### 4.2 分期
+### 5.2 分期
 
 | 期 | 拆什么 | 为什么这个顺序 | 验收 |
 |---|---|---|---|
@@ -294,23 +498,33 @@ React 侧用一个极小的适配层订阅需要的频道（保留 `useSyncExter
 | **P7** | `SignalHub` | 分域订阅替换全量 `changed()` | React 重渲染次数下降；UI 无视觉回归 |
 | **P8** | `AiServer` | 纯增量，前七期完成后自然长出 | 按 `docs/PLAN-ai.md` 的 C1 验收 |
 
-### 4.3 每期统一验收口径
+**模块期（M0–M4）**：见 §4.9。两条线的关系是**交错**的——M0（模块工具链与清单校验）可以与 P0–P2 并行，
+M1–M2 必须在 P3/P4（收拢 Selection、拆 `view.ts`）之后，M3–M4 在 P5–P7（输入、文档、注册表与信号）之后。
+简图：
+
+```
+Server 化： P0 ─ P1 ─ P2 ─ P3 ─ P4 ─ P5 ─ P6 ─ P7 ────────── P8(AiServer)
+模块化：    M0 ────────────────┴──── M1 ─ M2 ────────┴── M3 ─ M4
+            （工具链，可并行）         （最独立的模块）      （UI 类模块与变体）
+```
+
+### 5.3 每期统一验收口径
 
 - `tsc --noEmit` 0 错误；全量测试 **ASSERTIONS 只增不减**、末尾 `ALL PASS`；
 - **行为回归**：同一串操作前后，文档像素与等效输出逐字节一致（关键路径可以留"黄金 md5"测试）；
 - UI 零改动（除信号订阅那一期）；
 - 按 `AGENTS.md` §5.3 同步 `docs/API.md` 对应小节；一次提交一个域。
 
-### 4.4 风险与回滚
+### 5.4 风险与回滚
 
 | 风险 | 对策 |
 |---|---|
 | 拆一半卡住 | 绞杀者模式：旧路径始终可用，`Session` 门面同时支持新旧实现 |
 | 顺手把行为改了 | 每期先补"行为断言"再搬代码（测试先行） |
-| 造出新的上帝（如 locator 单例表） | 见 §5 红线 |
+| 造出新的上帝（如 locator 单例表） | 见 §6 红线 |
 | 收益看不见 | 每期记录：文件行数、断言数、React 重渲染次数（用一个计数器统计） |
 
-### 4.5 量化目标
+### 5.5 量化目标
 
 | 指标 | 现在 | 目标 |
 |---|---|---|
@@ -319,10 +533,12 @@ React 侧用一个极小的适配层订阅需要的频道（保留 `useSyncExter
 | `App.tsx` | 2,898 行 | ≤ 1,800 行（分域订阅后拆出面板） |
 | 四个最大文件占比 | 44% | ≤ 25% |
 | 可测面 | 引擎 / 纯函数 | 引擎 + servers + 交互状态机 |
+| 可裁剪模块 | 0（全部编进同一个包） | 21 个可选模块（另有未实现的 `ai`），3–4 个预设（§4.7） |
+| core-only bundle | 1,130,178 字节（全开） | 约 750–830 KB（§4.8 估算） |
 
 ---
 
-## 5. 红线（防止造出新的上帝）
+## 6. 红线（防止造出新的上帝）
 
 1. **Server 之间只走方法/信号**：禁止 `locator.get("doc").cels.set(...)` 式的穿透。
 2. **`DocumentServer` 是唯一能改 `Doc` 的地方**——今天"谁都能改 cel"正是纠缠的根因。
@@ -330,10 +546,13 @@ React 侧用一个极小的适配层订阅需要的频道（保留 `useSyncExter
 4. **不做 RID / 句柄 / 命令队列**：除非真要换渲染后端或上多线程，那是过度设计。
 5. **不为分层而分层**：纯算法不进 server；`ui/kit` 这类呈现组件不进 server；设置注册表这类声明式数据表保持现状。
 6. **不动已经干净的三层**（`engine`/`tools`/`io` 的内部结构），只在必要时把它们包进 server。
+7. **模块只能贡献，不能分支**：核心代码里不得出现 `if (模块 id)`；能力位只限 §4.5 那 5 个（§4.3 红线 1）。
+8. **模块之间不得 import 实现文件**：只允许 `import type` 与 `ctx.use()`（§4.3 红线 3）。
+9. **数据格式永远是超集**：裁剪不得影响 `.pxc` / `.aseprite` 的读写完整性（§4.5）。
 
 ---
 
-## 6. 不变量与工程约定
+## 7. 不变量与工程约定
 
 改代码前必须知道（全文见 `AGENTS.md`）：
 
@@ -343,19 +562,27 @@ React 侧用一个极小的适配层订阅需要的频道（保留 `useSyncExter
 4. **`Session` 是 UI 的唯一入口**（改造后是 `AppFacade`），UI 不得直接写 `Doc`/`Cel`。
 5. **加功能＝加声明**（settings / guide / gestures / feature-icons）+ **同步 `docs/API.md`**。
 6. **版本号三处一致**（`AndroidManifest.xml` / `APP_VERSION` / 更新日志），已有测试拦截。
+7. **文档格式是超集**：`.pxc` / `.aseprite` 的字段读写不随模块裁剪变化；关掉一个模块不能导致保存时丢字段。
 
 ---
 
-## 7. 决策点
+## 8. 决策点
 
 1. 是否按本文的**目标分层**推进（绞杀者模式），还是只做"算法类提取"这类低风险局部改造？
 2. 分期顺序是否调整（比如把 P4「拆 view.ts」提前，因为它是最痛的点，但改动面也最大）？
 3. `SignalHub` 的粒度：先做 5–6 个频道，还是一次性把所有域都信号化？
 4. 是否引入**依赖方向检查**（一个脚本扫描 import，违反 §3.8 即失败）来守住新架构？（推荐做，成本低）
+5. **模块粒度的取舍**：`selection` / `xform` / `warp` 要不要拆成三个模块，还是合成一个 `transform` 模块？
+   （拆得细 = 裁剪更灵活，但依赖图与界面分组的维护成本更高）
+6. **要不要运行期开关**（除了编译期裁剪）：比如"模块已编进来但用户在设置里关掉"——
+   好处是同一个包能试不同组合，坏处是与编译期能力位形成两套机制，容易混乱。建议：**只做编译期裁剪**。
+7. **预设的取舍**：只维护 `full` + `pixel-core` 两个，还是四个预设都要（§4.7）？
+8. **Android 侧裁剪**：Java 桥（`PixelBridge` 8 个方法）是否也按模块裁剪？建议**不裁**——
+   Java 层保持"最小且通用"，模块不放 Java 代码，避免 dex 与 Web 资源两套裁剪逻辑打架。
 
 ---
 
-## 8. 进度
+## 9. 进度
 
 | 期 | 状态 |
 |---|---|
@@ -370,3 +597,8 @@ React 侧用一个极小的适配层订阅需要的频道（保留 `useSyncExter
 | P6 DocumentServer | ⬜ |
 | P7 SignalHub | ⬜ |
 | P8 AiServer | ⬜ |
+| M0 模块工具链（`scripts/modules.mjs` + `_generated.ts` + 清单测试） | ⬜ |
+| M1 搬 `aseprite-io` / `iso` / `color-analysis`+`shading` | ⬜ |
+| M2 搬 `animation`+`tags` / `effects` / `resample` / `patterns` | ⬜ |
+| M3 搬 `multicanvas` / `pc-mode` / `guide` / `changelog` / `refimage` / `gif` / `spritesheet` | ⬜ |
+| M4 `ai` 模块 + 两条产线 + CI 三预设矩阵 | ⬜ |
