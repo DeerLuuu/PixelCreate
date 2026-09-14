@@ -528,6 +528,19 @@ html[data-pc] .orb-item{width:48px;height:48px}
 .a-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--anchor-dot); }
 .a-dot.on { background: var(--accent-4); }
 .size-note { font-size: 11px; color: var(--dim-2); margin: 6px 0 2px; }
+
+/* 渲染调试 HUD（设置 → 显示 → 渲染调试）：只在打开时挂载，不吃指针事件 */
+.rdbg { position: fixed; top: calc(var(--sat) + 6px); left: 6px; z-index: 60; max-width: min(92vw, 560px);
+  padding: var(--sp-2) var(--sp-3); border: 1px solid var(--line); border-radius: var(--r-1);
+  background: var(--hud-deep); opacity: .92; pointer-events: none;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--fs-1); color: var(--dim);
+  display: flex; flex-direction: column; gap: 2px; }
+.rdbg-head { display: flex; flex-direction: column; gap: 2px; }
+.rdbg-title { color: var(--accent-4); font-weight: 700; }
+.rdbg-stat { color: var(--dim-2); }
+.rdbg-list { display: flex; flex-direction: column; gap: 1px; max-height: 30vh; overflow: hidden; }
+.rdbg-row { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rdbg-dim { color: var(--dim-2); }
 .size-note-adv { color: var(--accent); }
 
 /* 高级缩放对话框：算法说明 / 倍率快捷 / 原图-缩放后对比预览 */
@@ -1292,6 +1305,9 @@ html[data-pc] .cu-dlg{width:min(92vw,800px)}
 .dlg-ca{width:min(94vw,620px);max-height:min(92vh,calc(100dvh - var(--sat) - var(--sab) - 16px))}
 html[data-pc] .dlg-ca{width:min(680px,70vw)}
 .dlg-ca .dlg-body{display:flex;flex-direction:column;gap:6px;padding-top:8px}
+/* 「颜色高级模式」= 颜色分析 + 色彩明暗两页：用 hidden 属性切换，两页各自保留状态 */
+.cadv-pane{display:flex;flex-direction:column;gap:6px}
+.cadv-pane[hidden]{display:none}
 .ca-note{font-size:10px;line-height:1.45}
 .ca-scope{gap:5px}
 .ca-hud{display:flex;flex-wrap:wrap;gap:6px;margin:2px 0}
