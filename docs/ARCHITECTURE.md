@@ -4,7 +4,7 @@
 > 分期计划见 §5，模块化（可裁剪的交付单位）见 §4，红线见 §6。
 > 相关：[`docs/API.md`](API.md)（现有接口）、[`docs/PLAN-ai.md`](PLAN-ai.md)（AI 接入，依赖本文的 C 阶段地基）、
 > [`AGENTS.md`](../AGENTS.md)（工程约定）、[`docs/UI.md`](UI.md)（界面规范）。
-> 文中所有数字都是**在源码上实测**的（`master`，版本 `1.1.1.8` / versionCode 65）。
+> 文中所有数字都是**在源码上实测**的（`master`，版本 `1.1.1.9` / versionCode 66）。
 
 ---
 
@@ -498,7 +498,7 @@ modules.config.json ──> scripts/modules.mjs ──> src/modules/_generated.t
 | **P2** | `AnimationServer` | 播放与标签已是纯逻辑 | 播放范围、循环模式、速度用例全绿 |
 | **P3** | `SelectionServer` | 收拢 `xform/warp/resample`，**切断 View 里的选区业务分支** | `tests/xformui.test.ts` 那套行为断言全绿 |
 | **P4** | `RenderServer` + `ViewportServer` | 拆 `view.ts`（4,820） | 同一文档合成结果**逐字节一致**；脏矩形面积不退化 |
-| ↳ | **状态：🟡 部分完成**（2026-09-14）：`RenderServer`（含**平铺重绘区域**与**渲染调试记录**）/ `ViewportServer` 已落地（`src/servers/`）；继续拆的是手势状态机（P5）与 `View` 持有的视口字段 | — | 全量测试 3962 条 ALL PASS；`check-bundle` 通过 |
+| ↳ | **状态：🟡 部分完成**（2026-09-14）：`RenderServer`（含**平铺重绘区域**与**渲染调试记录**）/ `ViewportServer` 已落地（`src/servers/`）；继续拆的是手势状态机（P5）与 `View` 持有的视口字段 | — | 全量测试 3972 条 ALL PASS；`check-bundle` 通过 |
 | **P5** | `InputServer` | 手势状态机真正搬出 View | 手势 / PC 模式 / 多球互斥用例全绿 |
 | **P6** | `DocumentServer` | **最后动**（所有人依赖它） | "cel 与画布等大"等不变量由类型与断言守住 |
 | **P7** | `SignalHub` | 分域订阅替换全量 `changed()` | React 重渲染次数下降；UI 无视觉回归 |

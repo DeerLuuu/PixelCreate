@@ -15,7 +15,7 @@
 | 源码 | `src/`（入口 `src/main.tsx`），测试 `tests/` |
 | Web 产物 | `app2/www/js/app.js` + `app2/www/css/style.css`（esbuild IIFE） |
 | APK 产物 | `/sdcard/Download/PixelCraft-<版本号>.apk` 与 `build/PixelCraft.apk` |
-| 当前版本 | `1.1.1.8`（以 `src/ui/changelog.tsx` 的 `APP_VERSION` 为准） |
+| 当前版本 | `1.1.1.9`（以 `src/ui/changelog.tsx` 的 `APP_VERSION` 为准） |
 | 仓库根 | `/sdcard/Download/ds文件夹/pixelcraft`（= `/storage/emulated/0/Download/ds文件夹/pixelcraft`） |
 
 目录：
@@ -28,7 +28,7 @@ src/servers/   服务层：RenderServer（合成与缓存）、ViewportServer（
 src/io/        原生桥接、工程文件（.pxc）、Aseprite 读写（aseread/asewrite/zlib）、自动保存、参考图、安全区、base64
 src/ui/        React 外壳、弹窗、时间线、浮动球、i18n、样式
 android/       MainActivity（Java 层）+ AndroidManifest
-tests/         无 DOM 的引擎/逻辑回归（**3962 条断言**，`node .ts-out/tests/run-tests.js` 末尾会打印条数）
+tests/         无 DOM 的引擎/逻辑回归（**3972 条断言**，`node .ts-out/tests/run-tests.js` 末尾会打印条数）
 docs/          API.md / COMPARISON.md
 ```
 

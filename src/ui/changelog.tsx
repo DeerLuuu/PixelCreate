@@ -9,10 +9,10 @@ import { useKitPcMode } from "./kit";
 import { Dialog } from "./kit";
 
 /** keep in sync with android/AndroidManifest.xml versionName on every release */
-export const APP_VERSION = "1.1.1.8";
+export const APP_VERSION = "1.1.1.9";
 /** build stamp shown next to the version (support/debug: identifies the exact
  *  package a user is running when the version number itself does not change) */
-export const BUILD_TAG = "f2feadf";
+export const BUILD_TAG = "31ec1dd";
 
 export type ClgKind = "add" | "imp" | "fix";
 export interface ClgItem { kind: ClgKind; zh: string; en: string }
@@ -21,6 +21,17 @@ export interface ClgVersion { v: string; date: string; items: ClgItem[] }
 const it = (kind: ClgKind, zh: string, en: string): ClgItem => ({ kind, zh, en });
 
 export const CHANGELOG: ClgVersion[] = [
+  {
+    v: "1.1.1.9",
+    date: "2026-09-14",
+    items: [
+      it("add", "渲染调试（设置 → 显示 → 渲染调试）：打开后左上角显示每一次重绘做了什么 —— 整幅还是局部、为什么要整幅重建（首次绘制 / 整幅失效 / 换了图层或洋葱皮 / 强制重建）、脏矩形与屏幕上真正重绘的区域、合成耗时，另有累计次数与峰值耗时。画面卡顿或者「点了不更新」时先看它。", "Render debug (Settings → Display → Render debug): with it on, the top-left corner shows what every repaint did — full or partial, why it had to rebuild (first paint, full dirty, layer or onion-skin change, forced), the dirty rect, the screen region actually repainted and how long composition took, plus running counts and the worst time. It is the first place to look when the canvas stutters or stops updating."),
+      it("imp", "颜色分析与色彩明暗合并成「颜色高级模式」：调色板面板那一排动作里并排的两个按钮变成一个（主菜单同样只剩一条），进去用顶部的两个页签切换分析页与明暗页，两页的内容与参数都没变。从明暗入口进去会直接落在明暗页；切页回来统计结果还在，不会重新扫一遍画布。", "Colour analysis and colour shading are now one panel, Advanced colour. The two buttons that sat side by side in the palette actions are a single entry (the main menu likewise), and inside a two-tab strip switches between Analysis and Shading with both pages unchanged. The shading entry opens straight on the shading tab, and switching back keeps the statistics instead of rescanning the canvas."),
+      it("fix", "画笔选方笔尖时，白色落点轮廓还是圆的，与画出来的方块对不上。现在预览与落笔用的是同一份笔尖形状：圆笔尖画圆、方笔尖画方块。", "With the square tip selected the white footprint outline stayed round and no longer matched the block that got painted. The preview and the stroke now use the same tip, so a round tip previews as a disc and a square one as a block."),
+      it("fix", "偶数笔刷尺寸（2、4、6、8…）的方笔尖整块偏一个像素，方块中心落在手指右下，圆笔尖却是正中对齐。现在两种笔尖在任何尺寸下都对齐指针。", "A square tip at an even brush size (2, 4, 6, 8 …) sat one pixel off, with the block's centre down and right of the finger, while a round tip was centred. Both tips now line up with the pointer at every size."),
+      it("fix", "开着平铺预览时涂画，四周的八个邻居副本要慢一拍才更新，因为只重绘了中心那一块。现在一块脏区域会连同它的所有平铺副本一起重绘。", "Painting with tiled preview on left the eight neighbour copies a beat behind, because only the centre tile was repainted. A dirty region now repaints every tiled copy of it at once."),
+    ],
+  },
   {
     v: "1.1.1.8",
     date: "2026-09-13",
