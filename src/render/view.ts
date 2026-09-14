@@ -1253,13 +1253,17 @@ export class View {
     // 「工具点、框框应该渲染在图像画面之上」就是这个（顺序也记在 `docs/UI.md` §3.8）。
     this.drawSelTransform();
     this.drawSymGuides(ctx);
-    // footprint marker: pencil/eraser show the exact Aseprite circle-brush
-    // outline (transparent centre); other drawing tools keep the square bounds
+    // footprint marker: pencil/eraser show the exact outline of the brush that
+    // will actually paint; other drawing tools keep the square bounds.
+    //
+    // **必须带上当前笔尖形状**：落笔走的是 `brushStamp(size, brushShape)`（见 tools/stroke.ts），
+    // 预览早先写死默认的圆笔尖 —— 换成方笔尖后，白色轮廓还是圆的，跟画出来的方块对不上，
+    // 而且偶数尺寸下两种笔尖的偏移范围差一格，看起来就是"预览位置跑偏"（真机反馈）。
     const cu = this.cursor;
     if (cu) {
       const tool = this.session.tool;
       if (tool === "pencil" || tool === "eraser") {
-        const st = brushStamp(cu.size);
+        const st = brushStamp(cu.size, this.session.brushShape);
         const cw = Math.max(1, z);
         ctx.fillStyle = "rgba(255,255,255,0.9)";
         for (const [cx, cy] of st.outline) {

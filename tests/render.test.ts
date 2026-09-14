@@ -13,6 +13,10 @@ import { History } from "../src/engine/history";
 import { mirrorCells, mirrorMaskInPlace } from "../src/engine/symmetry";
 import { eq, ok } from "./common";
 
+// 下面两条静态断言要读源码文件（没有 @types/node，按仓库里其它测试的写法自己声明）
+declare const require: (m: string) => any;
+declare const __dirname: string;
+
 const brush = (size = 1, color: [number, number, number, number] = [255, 0, 0, 255]): BrushState => ({
   color, size, alpha: 255, pressure: 1,
 } as BrushState);
@@ -192,6 +196,47 @@ export function testRender(): void {
     ok("brush.shapes.differ", JSON.stringify(round.cells) !== JSON.stringify(square.cells));
     const one = brushStamp(1, "square");
     eq("brush.square.one", one.cells, [[0, 0]]);
+  }
+
+  // --------------------------- 笔尖锚点：两种形状必须同心（真机反馈过"预览跑偏"）
+  {
+    const span = (n: number, shape: "circle" | "square"): [number, number] => {
+      const xs = brushStamp(n, shape).cells.map(([x]) => x);
+      return [Math.min(...xs), Math.max(...xs)];
+    };
+    let mismatched = 0;
+    let offCentre = 0;
+    for (let n = 1; n <= 8; n++) {
+      const c = span(n, "circle"), q = span(n, "square");
+      if (c[0] !== q[0] || c[1] !== q[1]) mismatched++;
+      // 口径：奇数尺寸以指针那一个像素为中心（±k）；偶数尺寸以指针所在的
+      // "四像素交点"为中心（[-n/2, n/2-1]）。两种形状都得守这一条。
+      const lo = n % 2 ? -(n - 1) / 2 : -n / 2;
+      if (c[0] !== lo || c[1] !== lo + n - 1 || q[0] !== lo || q[1] !== lo + n - 1) offCentre++;
+    }
+    eq("brush.anchor.shapes-agree", mismatched, 0);   // 早先偶数尺寸下方笔尖偏 1px
+    eq("brush.anchor.centred", offCentre, 0);
+    // 竖直方向同理（两种形状的 y 范围也要一致）
+    const ys = (n: number, shape: "circle" | "square"): number[] => {
+      const v = brushStamp(n, shape).cells.map(([, y]) => y);
+      return [Math.min(...v), Math.max(...v)];
+    };
+    let yBad = 0;
+    for (let n = 1; n <= 8; n++) if (ys(n, "circle").join() !== ys(n, "square").join()) yBad++;
+    eq("brush.anchor.y-agree", yBad, 0);
+  }
+
+  // --------------------------- 落点预览必须用**当前笔尖形状**（不然白色轮廓与笔迹不符）
+  {
+    const nodePath = require("path");
+    const viewSrc = require("fs").readFileSync(nodePath.resolve(__dirname, "../../../src/render/view.ts"), "utf8");
+    ok("brush.preview.uses-shape",
+      /brushStamp\(cu\.size,\s*this\.session\.brushShape\)/.test(viewSrc),
+      "落点预览里的 brushStamp 必须带笔尖形状（写死默认值＝永远是圆笔尖）");
+    // 落笔那侧同样必须带形状（这是笔迹的唯一来源）
+    const strokeSrc = require("fs").readFileSync(nodePath.resolve(__dirname, "../../../src/tools/stroke.ts"), "utf8");
+    const calls = strokeSrc.match(/brushStamp\([^)]*\)/g) || [];
+    ok("brush.stroke.uses-shape", calls.length > 0 && calls.every((c) => c.indexOf("this.brushShape") >= 0), calls.join(" | "));
   }
 
   // ------------------------------------------------- shapes from the centre

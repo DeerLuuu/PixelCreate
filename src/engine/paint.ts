@@ -372,7 +372,11 @@ export function brushStamp(size: number, shape: BrushShape = "circle"): BrushSta
     // full n×n block; the outline is its border ring
     const cells: [number, number][] = [];
     const outline: [number, number][] = [];
-    const o = -Math.floor((n - 1) / 2);
+    // 锚点必须与圆笔尖一致：`-floor(n/2)`（偶数尺寸时笔尖中心落在四个像素之间的
+    // 角上，与圆笔尖同一套"像素网格居中"口径）。早先写的是 `-floor((n-1)/2)`，
+    // 奇数尺寸看不出来，**偶数尺寸整块偏 1 个像素**（方块的中心跑到指针右下），
+    // 与圆笔尖不一致，也跟落点预览对不上。tests/render.test.ts 的 brush.anchor.* 钉住了这条。
+    const o = -Math.floor(n / 2);
     for (let y = 0; y < n; y++) {
       for (let x = 0; x < n; x++) {
         cells.push([o + x, o + y]);

@@ -145,6 +145,10 @@ rotateDocContent(doc, dir?)                           // 旋转整幅画布 90°
 
 interface BrushStamp { size: number; cells: [number,number][]; outline: [number,number][] }
 brushStamp(size: number, shape?: BrushShape): BrushStamp;  // 圆笔尖/方笔尖（带缓存）
+// 锚点口径（两种形状**必须同心**，`tests/render.test.ts` 的 brush.anchor.* 钉住）：
+//   奇数尺寸 = 以指针那一个像素为中心（偏移 ±(n-1)/2）
+//   偶数尺寸 = 以指针所在的"四像素交点"为中心（偏移 [-n/2, n/2-1]）
+// 早先方笔尖用的是 -floor((n-1)/2)，奇数尺寸看不出来、**偶数尺寸整块偏 1 像素**。
 ```
 
 ---
@@ -1261,6 +1265,12 @@ PC（鼠标）输入层在 `View` 内新增：
 必要时先 `focusCanvas()`，然后用与真实点击完全相同的工具装配（引用层重定向、选区遮罩、相似色容差、填充缝隙、
 索引色吸附、平铺环绕）执行一次「按下 + 提交」，因此只产生一条历史记录；返回被填充的画布下标，未落在画布上返回 `-1`。
 `Session.quickFill(x, y, color)` 是同一件事的会话层包装。
+
+```ts
+**落点预览（白色笔尖轮廓）**：铅笔 / 橡皮的预览必须用**当前笔尖形状**的 `brushStamp(size, brushShape)`，
+和真正落笔（`tools/stroke.ts` 的 `paintDot/eraseDot`）同源 —— 早先预览写死了默认的圆笔尖，切到方笔尖后
+白色轮廓还是圆的、跟画出来的方块对不上，偶数尺寸下还差一格（真机反馈「预览与笔迹不符且位置偏移」）。
+其它绘图工具（直线/矩形/椭圆…）的预览仍是几何包围盒，不是笔尖轮廓。
 
 ```ts
 class View {
