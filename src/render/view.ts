@@ -38,6 +38,7 @@ import {
   FOUR_MOVE_PX_DEFAULT, fourFingerArmed, longPressAllowed, mouseButtonIntent, outsideDoc,
   pinchAround, pinchBaseOf, pinchNow,
 } from "../servers/input";
+import { TapMachine } from "../servers/gesture";
 import { hexToRgba } from "../engine/color";
 
 interface PxPoint {
@@ -385,8 +386,6 @@ export class View {
   /** has the current stroke left its starting cell? (false = pure tap) */
   private gestureMoved = false;
   private gestureStartPx: PxPoint | null = null;
-  /** the previous finished gesture was a no-move draw tap (dot) */
-  private lastTapWasDraw = false;
   /** 等距图形模式：正在拖的抓手 / 整块（含按下那一刻的形状尺寸与原点） */
   private isoDrag: {
     kind: "move" | "top" | "right" | "bottom" | "left" | "height";
@@ -400,10 +399,6 @@ export class View {
   /** 上一次「按在枢轴上」的时间与位置：双击枢轴＝把它复位到内容正中 */
   private pivotTapT = 0;
   private pivotTapPt: PxPoint | null = null;
-  /** and that tap actually recorded a history step (so it can be rolled back) */
-  private lastTapChanged = false;
-  /** the gesture involved 2+ fingers (two-finger double-tap -> redo) */
-  private gestureHadTwo = false;
   /** four-finger gesture tracking (opens the all-frames preview) */
   private fourSeen = false;
   /** each finger's screen position at its own touchdown. Whether a finger is
@@ -424,14 +419,11 @@ export class View {
   onViewChanged: (() => void) | null = null;
   /** the pinch actually zoomed (else it was a two-finger tap) */
   private pinchZoomed = false;
-  /** midpoint of a two-finger tap, for double-tap detection */
-  private twoTapMid: PxPoint | null = null;
-  private twoTap = 0;
-  private twoTapPt: PxPoint | null = null;
-  /** single-finger tap sequence counter (triple-tap on the doc = zoom) */
-  private tapN = 0;
-  private tapT = 0;
-  private tapPt: PxPoint | null = null;
+  /**
+   * 轻点序列状态机（单击 / 双击 / 三击 / 双指双击）—— 口径与容差都在
+   * `servers/gesture.ts` 的 `TapMachine` 里，这里只按它给出的结果执行副作用。
+   */
+  private tap = new TapMachine();
   /** 旋转 / 缩放 / 斜切 / 移动 / 枢轴拖动（`xf` 槽里的交互，自由变换见 xf.mode === "warp"） */
   private xfDrag: {
     kind: XfKind; anchor?: AnchorId; start: PxPoint; pivot0?: Pt;
@@ -2251,10 +2243,7 @@ export class View {
       this.cancelHold();
       this.pinchBase = null;
       this.pinchZoomed = false;
-      this.gestureHadTwo = false;
-      this.twoTap = 0;
-      this.twoTapPt = null;
-      this.twoTapMid = null;
+      this.tap.clearTwoTapSeq();
       this.panLast = null;
       if (this.outline) this.endOutline(false);
       this.stopSpray();
@@ -2292,10 +2281,7 @@ export class View {
       this.cancelHold();
       this.pinchBase = null;
       this.pinchZoomed = false;
-      this.gestureHadTwo = false;
-      this.twoTap = 0;
-      this.twoTapPt = null;
-      this.twoTapMid = null;
+      this.tap.clearTwoTapSeq();
       // three fingers held still = three-finger long press (no system conflict)
       this.armHold(3, this.session.prefs.gThreeFingerLongPress, "三指长按");
       return;
@@ -2318,9 +2304,8 @@ export class View {
       else if (this.xf) this.endXf();
       const [a, b] = [...this.pointers.values()];
       this.pinchBase = pinchBaseOf(a, b, { zoom: this.zoom, ox: this.ox, oy: this.oy });
-      this.gestureHadTwo = true;
       this.pinchZoomed = false;
-      this.twoTapMid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+      this.tap.noteSecondFinger(a, b);
       // two fingers held still = two-finger long press (some phones map this
       // to the system screen-recognition gesture — 三指长按 is the alternative)
       this.armHold(2, this.session.prefs.gTwoFingerLongPress, "双指长按");
@@ -2821,10 +2806,10 @@ export class View {
       else if (this.xf) this.endXf();
       const pt = this.evPt(e);
       const now = Date.now();
-      // two-finger tap (no zoom): a double two-finger tap = redo
-      const hadTwo = this.gestureHadTwo, pinchZoomed = this.pinchZoomed;
+      // 抬手时先取走「这次手势的两指状态」与「双指长按是否已经触发过」：下面两个拦截分支
+      // 都要据此吞掉这次抬手，而它们在结束前就会把状态清零。
       const firedTwoLong = this.holdFired;
-      this.gestureHadTwo = false;
+      const pinchZoomed = this.pinchZoomed;
       this.pinchZoomed = false;
       this.holdFired = false;
       if (this.fourSeen) {
@@ -2834,8 +2819,7 @@ export class View {
         // never redo/tap/paint.
         this.fourSeen = false;
         this.pinchBase = null;
-        this.twoTap = 0;
-        this.twoTapPt = null;
+        this.tap.clearTwoTapSeq();   // 四指手势绝不是双指轻点序列
         const armed = this.fourArmed;
         this.fourArmed = false;
         this.fourStart.clear();
@@ -2859,112 +2843,97 @@ export class View {
       if (firedTwoLong) {
         // the two-finger long press already ran its action while the fingers
         // were down: swallow the lifts so they can never count as a tap / redo
-        this.twoTap = 0;
-        this.twoTapPt = null;
-        this.twoTapMid = null;
+        this.tap.clearTwoTapSeq();
         this.panLast = null;
         this.gestureMoved = false;
         this.cancelHold();
         return;
       }
-      if (hadTwo && !pinchZoomed && !this.stroke && !this.selDrag && !this.xf && this.twoTapMid) {
-        const mid = this.twoTapMid;
-        this.twoTapMid = null;
-        // the redo shortcut only fires outside the canvas: two-finger double
-        // taps over the artwork must never redo (too easy to hit while drawing)
-        const mpp = this.screenToPixel(mid.x, mid.y);
-        const midOverDoc = mpp.x >= 0 && mpp.y >= 0 && mpp.x < this.session.doc.w && mpp.y < this.session.doc.h;
-        this.gestureMoved = false;
-        this.panLast = null;
-        if (midOverDoc) { this.twoTap = 0; this.twoTapPt = null; return; }
-        if (this.twoTapPt && now - this.twoTap < this.session.prefs.doubleTapMs && Math.hypot(mid.x - this.twoTapPt.x, mid.y - this.twoTapPt.y) < 80) {
-          this.twoTap = 0;
-          this.twoTapPt = null;
-          this.session.runGestureAction(this.session.prefs.gTwoFingerDoubleTap, { x: mid.x, y: mid.y });
+      // 这一次抬手算什么：**轻点序列状态机在 servers/gesture.ts**（单指连点的 480ms / 64px、
+      // 双指双击的 80px、以及「双击边距 / 双击画布 / 三击」的优先级都在那儿，
+      // 单测见 tests/gesture.test.ts）。这里只按它给出的结果执行副作用。
+      const docW = this.session.doc.w, docH = this.session.doc.h;
+      const inDoc = (p: PxPoint) => !outsideDoc(p, docW, docH);
+      const ppc = this.screenToPixel(pt.x, pt.y);
+      const mid = this.tap.twoMidPoint();
+      const mpp = mid ? this.screenToPixel(mid.x, mid.y) : null;
+      const out = this.tap.up({
+        now, pt,
+        overDoc: inDoc(ppc),
+        canvasIndex: this.canvasAtScreen(pt.x, pt.y),
+        docIndex: this.session.docIdx,
+        moved: this.stroke ? this.gestureMoved : false,   // 拖动过就断掉连点串
+        hasStroke: !!this.stroke, hasSelDrag: !!this.selDrag, hasXf: !!this.xf,
+        pinchZoomed, isPc: isPc(),
+        doubleTapMs: this.session.prefs.doubleTapMs,
+        canvasDoubleMapped: this.session.prefs.gDoubleTapCanvas !== "none",
+        midOverDoc: !!mpp && inDoc(mpp),
+      });
+      // 被手势吃掉的那一下：笔迹作废（绝不提交，免得留下一个孤点）
+      const dropStroke = () => { if (this.stroke) { this.stroke.cancel(); this.stroke = null; } };
+      switch (out.kind) {
+        case "two-finger-redo":
+          // the redo shortcut only fires outside the canvas: two-finger double
+          // taps over the artwork must never redo (too easy to hit while drawing)
+          this.gestureMoved = false;
+          this.panLast = null;
+          this.session.runGestureAction(this.session.prefs.gTwoFingerDoubleTap, { x: out.mid.x, y: out.mid.y });
           this.session.repaint();
-        } else {
-          this.twoTap = now;
-          this.twoTapPt = mid;
-        }
-        return;
-      }
-      const secondTapMoved = this.stroke ? this.gestureMoved : false;
-      if (secondTapMoved) {
-        this.tapN = 0; // a drag breaks the tap sequence
-      } else {
-        // single-finger tap sequence: double-tap on the margin = undo,
-        // triple-tap on the doc = zoom (double-tap on the doc does nothing)
-        // PC：双击/三击这类触控快捷手势全部关闭（滚轮与快捷键替代它们）
-        const contSeq = !isPc() && this.tapN > 0 && now - this.tapT < 480 && this.tapPt &&
-          Math.hypot(pt.x - this.tapPt.x, pt.y - this.tapPt.y) < 64;
-        this.tapN = contSeq ? this.tapN + 1 : 1;
-        this.tapT = now;
-        this.tapPt = pt;
-        const ppc = this.screenToPixel(pt.x, pt.y);
-        const overDoc = ppc.x >= 0 && ppc.y >= 0 && ppc.x < this.session.doc.w && ppc.y < this.session.doc.h;
-        // double-tap ON a canvas: focus it (when it is not the focused one) and
-        // smoothly zoom it to fit. On the focused canvas this only fits, and
-        // only while the canvas double-tap is unmapped, so a user mapping of
-        // "double tap on canvas" keeps working.
-        const hitCanvas = this.canvasAtScreen(pt.x, pt.y);
-        const focusTap = this.tapN === 2 && hitCanvas >= 0 &&
-          (hitCanvas !== this.session.docIdx || this.session.prefs.gDoubleTapCanvas === "none");
-        if (focusTap) {
-          this.tapN = 0;
-          if (this.stroke) { this.stroke.cancel(); this.stroke = null; }
+          return;
+        case "two-finger-skip":
+        case "two-finger-first":
+          this.gestureMoved = false;
+          this.panLast = null;
+          return;
+        case "focus-canvas":
+          // double-tap ON a canvas: focus it (when it is not the focused one) and
+          // smoothly zoom it to fit
+          dropStroke();
           if (this.selDrag) this.endSelDrag();
           this.panLast = null; this.gestureMoved = false;
           this.session.hapticTick("双击画布", 0.8);
-          if (hitCanvas !== this.session.docIdx) this.session.focusCanvas(hitCanvas);
+          if (out.index !== this.session.docIdx) this.session.focusCanvas(out.index);
           this.session.fitCanvas();
           return;
-        }
-        if (this.tapN === 2 && !overDoc) {
+        case "margin-double":
           // double-tap on the canvas margin -> whatever the user mapped
-          this.tapN = 0;
-          if (this.stroke) { this.stroke.cancel(); this.stroke = null; }
+          dropStroke();
           if (this.selDrag) this.endSelDrag();
           this.panLast = null; this.gestureMoved = false;
           this.session.runGestureAction(this.session.prefs.gDoubleTapMargin, { x: pt.x, y: pt.y });
           this.session.repaint();
           return;
-        }
-        if (this.tapN === 2 && overDoc && this.session.prefs.gDoubleTapCanvas !== "none") {
-          // double-tap on the canvas itself (only when it is mapped to something;
-          // otherwise the second tap is swallowed so a triple tap can follow)
-          this.tapN = 0;
-          if (this.stroke) { this.stroke.cancel(); this.stroke = null; }
+        case "canvas-double":
+          // double-tap on the canvas itself（状态机只在「映射了动作」时报这个，
+          // 没映射时第二下被吞掉，留给三击）
+          dropStroke();
           this.panLast = null; this.gestureMoved = false;
           this.session.runGestureAction(this.session.prefs.gDoubleTapCanvas, { x: pt.x, y: pt.y });
           this.session.repaint();
           return;
-        }
-        if (this.tapN === 3) {
+        case "triple":
           // triple-tap on the doc -> zoom. Roll back the single swallowed tap
           // dot (if there was one) so zooming leaves no stray pixel — but never
           // undo anything the user painted before this gesture.
-          this.tapN = 0;
-          if (this.stroke) { this.stroke.cancel(); this.stroke = null; }
+          dropStroke();
           if (this.selDrag) this.endSelDrag();
           this.panLast = null; this.gestureMoved = false;
-          if (overDoc) {
-            if (this.lastTapWasDraw && this.lastTapChanged && this.session.history.canUndo()) this.session.undo();
-            this.lastTapWasDraw = false;
-            this.lastTapChanged = false;
+          if (out.overDoc) {
+            if (out.undoSingleDot && this.session.history.canUndo()) this.session.undo();
             this.session.repaint();
             this.session.runGestureAction(this.session.prefs.gTripleTap, { x: pt.x, y: pt.y });
           } else this.session.repaint();
           return;
-        }
-        if (this.tapN === 2 && overDoc) {
+        case "skip":
           // second tap over the doc: swallow it and wait for a possible third
           // tap (zoom). No undo here — undo belongs to the canvas margin only.
-          if (this.stroke) { this.stroke.cancel(); this.stroke = null; }
+          dropStroke();
           this.gestureMoved = false; this.panLast = null;
           this.session.repaint();
           return;
-        }
-        // single / otherwise-unhandled tap: fall through to commit the dot normally
+        case "plain":
+          // 没被手势接管：落到下面照常提交这一笔（单点）
+          break;
       }
       if (this.stroke) {
         const doneStroke = this.stroke;
@@ -2980,11 +2949,11 @@ export class View {
           this.selectStrokePixels(doneStroke);
           this.session.setTool("select");
         }
-        this.lastTapWasDraw = !this.gestureMoved;
-        this.lastTapChanged = !!rec;
+        // 记下这一下单击「是不是没动过就落了一个点、且真的进了历史」——
+        // 三击放大时要把那个孤点撤销掉（判定在 TapMachine 里）
+        this.tap.noteSingleTap(!this.gestureMoved, !!rec);
       } else {
-        this.lastTapWasDraw = false;
-        this.lastTapChanged = false;
+        this.tap.noteSingleTap(false, false);
       }
       this.gestureMoved = false;
       this.panLast = null;
@@ -3045,11 +3014,9 @@ export class View {
     this.cancelHold();
     this.stopSpray();
     this.holdFired = false;
-    this.gestureHadTwo = false;
     this.pinchZoomed = false;
-    this.twoTapMid = null;
-    this.twoTap = 0;
-    this.twoTapPt = null;
+    // 双指轻点序列作废（单指连点计数不动，与多指落下时同一口径）
+    this.tap.clearTwoTapSeq();
     this.fourSeen = false;
     this.fourArmed = false;
     this.fourView0 = null;

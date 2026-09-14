@@ -26,6 +26,8 @@
 14. [播放模式 `app/playback.ts`](#14-播放模式)
 15. [渲染 `render/`](#15-渲染)
 15b. [服务层 `servers/`（RenderServer / ViewportServer）](#15b-服务层-serversrenderserver--viewportserver)
+15c. [输入服务 `servers/input.ts`（手势策略与算术）](#15c-输入服务-srcserversinputts手势策略与算术)
+15c2. [手势状态机 `servers/gesture.ts`（轻点序列）](#15c2-手势状态机-srcserversgesturets轻点序列)
 16. [IO `io/`](#16-io)
 17. [UI 层与事件契约 `ui/`](#17-ui-层与事件契约)
 18. [多画布空间 / 新工具与特效（1.0.7.11 追加）](#18-多画布空间--新工具与特效)
@@ -1514,8 +1516,61 @@ pinchAround(base, now, zoomMin, zoomMax): { zoom; ox; oy; zoomed }
 - 长按策略：PC 不开长按；`pickColor / zoomIn / zoomOut` 必须落在画布内且允许取色
   （有选区、或当前是选区类工具时不允许）；其它长按动作只要落在画布内即可。
 
-**还没搬的（P5 后两片）**：手势**会话状态**（`pointers` / `pinchBase` / `twoTap` / `fourSeen` /
-`fourArmed` / `panLast` / `gestureMoved` …）与 `onDown/onMove/onUp` 里各分支的**动作体**
+## 15c2. 手势状态机 `src/servers/gesture.ts`（轻点序列）
+
+P5 第二片：把 `view.ts` 的 `onUp` 里那段 150 行的 if 阶梯（单击 / 双击 / 三击 / 双指双击）
+收进一个有状态、但**无 DOM、无 Session** 的小机器。它有副作用只有一处：
+`up()` 返回一个 `TapOutcome`，动作体（取消笔迹、发手势动作、撤销）仍由 `View` 执行。
+
+```ts
+TAP_SEQ_MS = 480          // 单指连点时限
+TAP_SEQ_PX = 64           // 单指连点落点容差
+TWO_TAP_PX = 80           // 双指双击落点容差（中点抖动更大，所以更宽）
+
+interface TapUpInput {
+  now; pt; overDoc; canvasIndex; docIndex;
+  moved;                  // 手势期间画过且离开过起点 ⇒ 断掉连点串
+  hasStroke; hasSelDrag; hasXf; pinchZoomed;
+  isPc; doubleTapMs; canvasDoubleMapped; midOverDoc;
+}
+
+type TapOutcome =
+  | "plain"                 // 没被手势接管：照常落笔 / 提交
+  | "skip"                  // 第二下落在画布内但取不到画布矩形：吞掉、**保留计数**（留给三击）
+  | "two-finger-skip"       // 双指中点落在画布内：整串作废
+  | "two-finger-first"      // 记下第一下双指轻点
+  | { kind:"two-finger-redo", mid }
+  | { kind:"focus-canvas", index } | "margin-double" | "canvas-double"
+  | { kind:"triple", overDoc, undoSingleDot };
+
+class TapMachine {
+  noteSecondFinger(a, b)          // 第二根手指落下：记中点 + 标记「这次手势带双指」
+  twoMidPoint(): Pt | null
+  clearTwoTapSeq()                // 多指介入 / 四指 / 双指长按已触发 / pointercancel
+  noteSingleTap(painted, changed) // 给三击用：上一笔是不是「没动过就落的一个点」且进了历史
+  up(input: TapUpInput): TapOutcome
+}
+```
+
+口径（逐字对齐搬家前的行为，`tests/gesture.test.ts` 44 条断言钉住）：
+
+- **优先级**：双指序列（只要这次手势出现过两根手指、没缩放 / 没在画 / 没在选 / 没在变换）
+  → 单指连点 → 双击**换画布**（哪怕「双击画布」映射了动作也照样聚焦适配）
+  → 双击**画布外**（边距）→ 双击**当前画布**（仅当映射了动作）→ 三击 → 第二下吞掉。
+- **PC 不做单指连击**（滚轮与快捷键替代），所以 `isPc` 下永远只出 `plain`。
+- **双指轻点的中点落在画布内不算**（画画时太容易碰到）；缩放过（哪怕 `PINCH_EPS` 那么小的抖动）
+  或正在画 / 选 / 变换时都不算轻点。
+- **三击会回滚前一下落的那个孤点**，但只在前一下「真画过、且真进了历史」时才撤
+  （`undoSingleDot`）——绝不会撤销这次三击之前用户画的东西。
+- ⚠ **已知问题（搬出来才发现，行为按原样保留）**：单指第二下只要落在画布上，就会被
+  「双击画布」或「聚焦适配」吃掉并清零计数，于是**画布内永远攒不到第三下**，
+  `gTripleTap`（三击＝2× 放大）在默认设置下够不到；只有 `canvasIndex < 0`
+  （画布矩形取不到）才走 `skip` 保留计数。`tests/gesture.test.ts` 的
+  `gesture.triple.shadowed.*` 记录了这个现状，**要么改判定顺序、要么承认三击只在边距外有效**，
+  两种改法都会改用户可见行为，改之前先确认。
+
+**还没搬的（P5 第三片）**：手势**会话状态**（`pointers` / `pinchBase` / `fourSeen` / `fourArmed` /
+`panLast` / `gestureMoved` …）与 `onDown/onMove/onUp` 里各分支的**动作体**
 （要碰 `stroke` / `xf` / 选区 / 会话，得连着真机回归一起做）。
 
 ---

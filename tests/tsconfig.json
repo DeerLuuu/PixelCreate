@@ -64,6 +64,7 @@
     "../tests/isoui.test.ts",
     "../tests/viewport.test.ts",
     "../tests/render-server.test.ts",
-    "../tests/input.test.ts"
+    "../tests/input.test.ts",
+    "../tests/gesture.test.ts"
   ]
 }

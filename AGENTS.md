@@ -24,11 +24,12 @@
 src/app/       Session、设置注册表、引导注册表、手势映射、历史编解码
 src/engine/    文档模型、历史栈、像素操作、调色/对称/导出编码、重采样（resample）、颜色分析（color-analysis）
 src/render/    视口、合成器、脏矩形、洋葱皮
-src/servers/   服务层：RenderServer（合成与缓存）、ViewportServer（视图数学）—— 见 docs/ARCHITECTURE.md
+src/servers/   服务层：RenderServer（合成与缓存）、ViewportServer（视图数学）、
+               InputServer / TapMachine（手势策略与轻点序列）—— 见 docs/ARCHITECTURE.md
 src/io/        原生桥接、工程文件（.pxc）、Aseprite 读写（aseread/asewrite/zlib）、自动保存、参考图、安全区、base64
 src/ui/        React 外壳、弹窗、时间线、浮动球、i18n、样式
 android/       MainActivity（Java 层）+ AndroidManifest
-tests/         无 DOM 的引擎/逻辑回归（**4019 条断言**，`node .ts-out/tests/run-tests.js` 末尾会打印条数）
+tests/         无 DOM 的引擎/逻辑回归（**4063 条断言**，`node .ts-out/tests/run-tests.js` 末尾会打印条数）
 docs/          API.md / COMPARISON.md
 ```
 
@@ -93,9 +94,13 @@ java -jar /root/pk/apksigner.jar verify --print-certs /sdcard/Download/PixelCraf
   别把这两件事搬回去 —— 细节与"不要改回去"清单见 `docs/API.md` §15b。
 
 **工具与手势**
-- **手势策略与算术在 `servers/input.ts`**（`InputServer` 的第一片）：鼠标按键意图、方向盘的 pinch
-  解算（中点不动点）、四指划动判定、长按策略、点击容差；`render/view.ts` 只留会话状态与动作体。
-  口径与"还没搬的部分"见 `docs/API.md` §15c。
+- **手势判定分两片，都在 `src/servers/` 里**：
+  · `input.ts`（`InputServer` 第一片）= 策略与算术的**纯函数**：鼠标按键意图、pinch 解算（中点不动点）、
+    四指划动判定、长按策略、点击容差 —— 口径见 `docs/API.md` §15c。
+  · `gesture.ts`（第二片）= **轻点序列状态机** `TapMachine`：单击 / 双击（边距·画布·换画布）/ 三击 /
+    双指双击，容差 480ms·64px·80px，`up()` 返回 `TapOutcome`，动作体仍由 `view.ts` 执行 ——
+    口径与**一个已知问题（画布内三击够不到）**见 `docs/API.md` §15c2，`tests/gesture.test.ts` 钉住现状。
+  `render/view.ts` 只留触点会话状态（`pointers` / `pinchBase` / `fourSeen` …）与各分支的动作体。
 - `View`（`src/render/view.ts`）接管画布手势：画布边距双击 = undo、双指双击 = redo、三击 = 2× 放大；手势 → 动作映射在 `src/app/gestures.ts`，设置里可改。
 - 震动统一走 `Session.hapticTick(tag, scale)`（受 `gesture.haptic` 开关与 `prefs.hapticLen` 控制）。
 - 形状：统一栅格 inside+border（实心/空心），Zingl 椭圆，笔刷 `brushStamp` 镜像对称（Aseprite 移植）。
@@ -292,6 +297,10 @@ java -jar /root/pk/apksigner.jar verify --print-certs /sdcard/Download/PixelCraf
 - `AndroidManifest.xml` 版本号与 changelog 的 `APP_VERSION` 已由 `tests/changelog.test.ts` 静态校验（不一致会测试失败）；
   改版本号仍然要手动改两处 + 加一条更新日志（见 §6.1）。
 - `view.ts` / `session.ts` / `App.tsx` 仍偏大：手势/渲染、会话、UI 可继续拆。
+- **三击（`gTripleTap` ＝ 2× 放大）在默认设置下够不到**：单指第二下只要落在画布上，就会被
+  「双击画布（映射了动作）」或「聚焦适配（没映射）」吃掉并清零连点计数，所以攒不到第三下；
+  只有 `canvasIndex < 0` 才保留计数。现状由 `tests/gesture.test.ts` 的 `gesture.triple.shadowed.*`
+  钉住，口径见 `docs/API.md` §15c2。修法＝改判定顺序或承认三击只在边距外有效，**两种都改用户可见行为，先问用户**。
 - PC 模式按**输入证据**识别（`src/io/pcmode.ts` 的 `resolvePcMode`：真实鼠标事件 > 触摸事件/触摸点否决 > 媒体查询 `(pointer: fine)` + `(hover: hover)`），**不看屏幕宽度**；设置里可强制开关；渲染已做脏矩形增量，仍未做 overlay 笔迹层 / Web Worker（优先级见 `docs/COMPARISON.md`）。
 
 ---
@@ -383,6 +392,10 @@ stamp 从 `-T/2` 起画，早先的锚点比顶点偏左 `T/2`，栅格 / 足迹
 `i-remap` / `i-skew` / `i-mesh` / `i-snap` / `i-snap-half`，画在 `app2/www/index.html` 的 sprite 里），
 分组 = 同一屏同时出现的入口，组内不得重复；主菜单 / 调色板动作行 / 魔法球 / 选择球 / iso 参数条全部接线。
 接口见 docs/API.md §6d + §17.5，`tests/icons.test.ts` 校验组内唯一与存在性。
+手势状态机分片搬出（P5，同日）：`src/servers/input.ts`（策略与算术的纯函数，+47 断言）与
+`src/servers/gesture.ts` 的 `TapMachine`（轻点序列：单击 / 双击边距·画布·换画布 / 三击 / 双指双击，
+容差 480ms·64px·80px，`up()` 返回 `TapOutcome`，动作体仍在 `view.ts`，+44 断言）；
+口径见 docs/API.md §15c / §15c2；搬的过程中发现**画布内三击够不到**（见 §7）。
 
 ---
 

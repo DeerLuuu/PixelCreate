@@ -47,6 +47,7 @@ import { testIsoUi } from "./isoui.test";
 import { testViewport } from "./viewport.test";
 import { testRenderServer } from "./render-server.test";
 import { testInput } from "./input.test";
+import { testGesture } from "./gesture.test";
 
 async function main(): Promise<void> {
   console.log("--- history ---");
@@ -81,6 +82,8 @@ async function main(): Promise<void> {
   testRenderServer();
   console.log("--- input server ---");
   testInput();
+  console.log("--- gesture machine (taps) ---");
+  testGesture();
   console.log("--- export ---");
   testExport();
   console.log("--- back ---");
