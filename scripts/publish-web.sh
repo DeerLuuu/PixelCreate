@@ -70,10 +70,14 @@ MSG="chore(web): 同步 Web 构建产物（源提交 $SRC）
 - 静态站点：index.html + js/ + css/ + icons/ + manifest.webmanifest（不含开发用 ui-demo）
 - index.html 里的资源带 ?v=<版本>-<内容指纹>，绕开 Pages 的 10 分钟缓存
 - app.js $(wc -c < "$STAGE/js/app.js") bytes · style.css $(wc -c < "$STAGE/css/style.css") bytes"
-OLD="$(git rev-parse --verify --quiet refs/heads/main || true)"
+# 父提交取**远端** main 的当前位置（本地 main 可能是旧的：别的会话/机器发布过之后，
+# 用本地分支当父提交就会与 origin 分叉 → push 被拒 "non-fast-forward"，本次就是这么踩到的）。
+# 所以先 fetch，再优先用 refs/remotes/origin/main，其次才退回本地 main。
+git fetch --quiet origin main || true
+OLD="$(git rev-parse --verify --quiet refs/remotes/origin/main || git rev-parse --verify --quiet refs/heads/main || true)"
 if [ -n "$OLD" ]; then
   NEW="$(git commit-tree "$TREE" -p "$OLD" -m "$MSG")"
-  if [ "$OLD" = "$(git rev-parse --verify --quiet refs/heads/main)" ] && [ "$(git diff-tree --no-commit-id --name-only -r "$OLD" "$NEW" | wc -l)" = "0" ]; then
+  if [ "$(git diff-tree --no-commit-id --name-only -r "$OLD" "$NEW" | wc -l)" = "0" ]; then
     echo "main 分支内容无变化（产物与上次一致）"
     exit 0
   fi
