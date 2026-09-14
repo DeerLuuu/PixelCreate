@@ -388,6 +388,7 @@ stamp 从 `-T/2` 起画，早先的锚点比顶点偏左 `T/2`，栅格 / 足迹
 | [`docs/COMPARISON.md`](docs/COMPARISON.md) | 与 Aseprite / Resprite 的对比、痛点复盘与优先级（含最新进展表） |
 | [`docs/COMPARISON-pixelover-pixelcomposer.md`](docs/COMPARISON-pixelover-pixelcomposer.md) | 与 PixelOver / Pixel Composer 的三方对比（只比 2D）：速览表 + 能力大对照表 + 差异化优势 + 缺口清单（含来源与待核清单） |
 | [`docs/PLAN-isobuilder.md`](docs/PLAN-isobuilder.md) | **等距构建（三视图 → 等距像素画）的可行性方案**：上游功能拆解、视觉外壳算法、像素几何口径、与现有能力的映射、分期计划与工作量、风险与落地文件清单 |
+| [`docs/PLAN-ai.md`](docs/PLAN-ai.md) | **AI 接入方案（方案稿，未写代码）**：三个轴（操作 / 生成 / 理解）拆解、三条路线（应用内助手 / 本机工具服务 / 先做地基）与工作量、工具面与权限分级、文档文本化与 token 预算、AI 回合事务、key 与本地端口的安全模型、风险表、待决策问题、落地文件清单 |
 | `AGENTS.md`（本文件） | AI 代理约定：环境、命令、架构、工程约定、出包 runbook、已知缺口、交互与派活规则（§10） |
 
 ---
