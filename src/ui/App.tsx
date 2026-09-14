@@ -28,7 +28,7 @@ import { TimelineBar } from "./timeline";
 import { PreviewBox } from "./preview";
 import { RefImageBox } from "./refimg";
 import type { RefImg } from "./refimg";
-import { ActionSearchModal, PatternPanel, PalettePanel, ColorAnalysisModal, ShadingModal, openFlow, MenuModal, SizeModal, ScaleModal, SheetModal, NewDocModal, ExportModal, AdjustModal, SettingsModal, FrameModal, TagModal, FramePreviewModal, CanvasRefModal, HistoryModal, ShortcutHelpModal, CustomiseModal, histName, importFlow, saveProject, openFileBytes } from "./modals";
+import { ActionSearchModal, PatternPanel, PalettePanel, ColorAdvancedModal, openFlow, MenuModal, SizeModal, ScaleModal, SheetModal, NewDocModal, ExportModal, AdjustModal, SettingsModal, FrameModal, TagModal, FramePreviewModal, CanvasRefModal, HistoryModal, ShortcutHelpModal, CustomiseModal, histName, importFlow, saveProject, openFileBytes } from "./modals";
 import { FxParamDialog, fxDefaults, type FxRun, type FxVals } from "./fxparam";
 import { CanvasTitles } from "./canvas";
 import { ChangelogModal, changelogNeedsShow } from "./changelog";
@@ -116,18 +116,19 @@ export function App() {
   // across rotation (the settings registry re-applies them on change too)
   useEffect(() => watchSafeArea(() => SESSION.prefs), []);
 
-  // 调色板面板里的「颜色分析」按钮：收面板、开弹窗（见 modals.openColorAnalysis）
+  // 「颜色高级模式」（分析 / 明暗两页合并）：调色板动作行的一个入口，以及
+  // 直接落在明暗页的那个入口（见 modals.openColorAdv / openShading）。
+  // 落在哪一页由 `colorAdvTab` 决定，弹窗本身只挂载一次。
+  const [colorAdvTab, setColorAdvTab] = useState<"analysis" | "shading">("analysis");
   useEffect(() => {
-    const onOpen = () => { setPanel(null); setModal("coloranalysis"); };
-    window.addEventListener("pc-color-analysis", onOpen);
-    return () => window.removeEventListener("pc-color-analysis", onOpen);
-  }, []);
-
-  // 同上，「色彩明暗」按钮（见 modals.openShading）
-  useEffect(() => {
-    const onOpen = () => { setPanel(null); setModal("shading"); };
-    window.addEventListener("pc-shading", onOpen);
-    return () => window.removeEventListener("pc-shading", onOpen);
+    const onOpen = () => { setPanel(null); setColorAdvTab("analysis"); setModal("coloradv"); };
+    const onShading = () => { setPanel(null); setColorAdvTab("shading"); setModal("coloradv"); };
+    window.addEventListener("pc-color-adv", onOpen);
+    window.addEventListener("pc-shading", onShading);
+    return () => {
+      window.removeEventListener("pc-color-adv", onOpen);
+      window.removeEventListener("pc-shading", onShading);
+    };
   }, []);
 
   // first launch after an update: auto-show the release notes. While they are
@@ -733,8 +734,7 @@ export function App() {
       <Keep on={modal === "shortcuts"} el={modal === "shortcuts" ? <ShortcutHelpModal t={t} onClose={() => setModal(null)} /> : null} />
       <Keep on={modal === "actions"} el={modal === "actions" ? <ActionSearchModal t={t} onClose={() => setModal(null)} /> : null} />
       <Keep on={modal === "patterns"} el={modal === "patterns" ? <PatternPanel t={t} onClose={() => setModal(null)} /> : null} />
-      <Keep on={modal === "coloranalysis"} el={modal === "coloranalysis" ? <ColorAnalysisModal t={t} onClose={() => setModal(null)} /> : null} />
-      <Keep on={modal === "shading"} el={modal === "shading" ? <ShadingModal t={t} onClose={() => setModal(null)} onOpenPalette={() => setPanel("palette")} /> : null} />
+      <Keep on={modal === "coloradv"} el={modal === "coloradv" ? <ColorAdvancedModal t={t} initialTab={colorAdvTab} onClose={() => setModal(null)} onOpenPalette={() => setPanel("palette")} /> : null} />
       {/* 等距图形：模式开着时常驻一条紧凑参数条（不是弹窗，画布要看得见） */}
       {snap.isoOn && <IsoBar t={t} onOpenPalette={() => setPanel("palette")} />}
       <Keep on={modal === "changelog"} el={modal === "changelog" ? <ChangelogModal onClose={() => { setModal(null); setClgBlock(false); }} /> : null} />

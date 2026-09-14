@@ -198,7 +198,9 @@ const hover = useHoverTip({ title: t("brushSize"), desc: bd(snap.lang, "brush"),
 真机反馈：新功能借用旧图标（等距图形用 `i-grid`、色彩明暗用 `i-dedupe`、颜色分析用 `i-search`）
 在菜单里并排出现时完全分不清 —— 详情见 `docs/API.md` §17.5。
 
-**色阶条（色彩明暗面板）**：一行 = `.sh-row`（`.sh-rowlabel` 定宽标签 + `.sh-strip` 等宽网格），
+**色阶条（颜色高级模式的「明暗」页）**：一行 = `.sh-row`（`.sh-rowlabel` 定宽标签 + `.sh-strip` 等宽网格），
+（合并面板的两页用 `.cadv-pane` 包一层，切换靠 `hidden` 属性 —— 注意 `.cadv-pane[hidden]{display:none}` 必须显式写，
+否则 `.cadv-pane` 的 `display:flex` 会把 `hidden` 属性覆盖掉。）
 每个色块是 `.sh-swatch`（`.big` 用于基色与温度色），背景一律走 `chipCss()` 内联样式（诚实显示不透明度），
 组件侧 `.sh-` 已进 `tests/ui-tokens.test.ts` 的 `SHELL` 名单——新面板照这个模式加类前缀，别在 CSS 里写死颜色。
 

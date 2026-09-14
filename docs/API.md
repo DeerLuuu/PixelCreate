@@ -316,7 +316,7 @@ flatRamps(ramps, rows?, dedupe = true): RGBA[]         // 摊平（「加入调�
    `mix` 行按比例混 alpha，其余各行保留基色 alpha；
 2. `slots` 的「夹范围 + 强制奇数」放进纯函数，而不是只放在界面的 `onchange` 里（测试与调用方都受益）。
 
-面板 `ShadingModal`（`src/ui/modals.tsx`）与调色板的接线：
+`ShadingPane`（`src/ui/modals.tsx`，「颜色高级模式」的明暗页）与调色板的接线：
 
 | 位置 | 手势 / 按钮 | 行为 |
 |---|---|---|
@@ -478,7 +478,7 @@ adjustPixel(r, g, b, a, adj): [number, number, number]
 `src/engine/color-analysis.ts`
 
 高级颜色分析器的全部逻辑（纯函数、无 DOM、可单测）：统计、近似色分组、替换、
-按颜色选像素、多层压平。面板 `ui/modals.tsx` 的 `ColorAnalysisModal` 只做呈现。
+按颜色选像素、多层压平。面板 `ui/modals.tsx` 的 `AnalysisPane`（「颜色高级模式」的分析页）只做呈现。
 
 **距离口径（全文件唯一一个）**：RGB 空间的等权欧氏距离，比较时用平方值，
 容差按 `d = sqrt(dr²+dg²+db²) ≤ tol` 解释；`rgbDistanceSq` 内部再除以 3，
@@ -1773,7 +1773,7 @@ nextPlayFrameIn(mode, fi, dir, w): PlayStep                    // 循环/乒乓�
 | `HsvWheel` / `HoldAdjust` / `PreviewBox` / `RefImageBox` / `ReplayOverlay` | 各自文件 | 色轮、长按拖动数值、预览浮窗（右上角按钮 = 二级菜单：白底/黑底/格子底 + 灰度预览，灰度只作用于画面本身）、参考图、历史回放 |
 | `TabBar` / `DropMenu` | `ui/tabs.tsx` | 共用选项卡与可展开下拉（色板 / 导出 / 更新日志 / 播放速度）。**下拉列表用 `createPortal` 挂到 `document.body` 并 `position:fixed`**（坐标按按钮的视口位置算）：时间轴控制条是 `overflow-x:auto` 的滚动容器，绝对定位的列表会被它整块裁掉——「播放速度色片点了没反应」就是这么来的；任何放在滚动容器里的下拉都靠这条活着 |
 | `ChangelogModal` | `ui/changelog.tsx` | 更新日志：`CHANGELOG`（`ClgVersion[]`，每项 `it(kind, zh, en)`）+ `APP_VERSION` / `BUILD_TAG`；PC 竖排版本列表、触屏横向标签条，分类（add/imp/fix）可折叠。**条目文案是纯文本渲染**（`<li>{x.zh}</li>`，没有 Markdown 解析）——`**加粗**` 与反引号会原样显示，所以文案里不许出现它们，测试 `tests/changelog.test.ts` 会拦（同时校验 `APP_VERSION` 与 `AndroidManifest.xml` 的 `versionName` 一致、条目单行格式、中英一一对应） |
-| `ShadingModal` | `ui/modals.tsx` | 色彩明暗（调色板生成器）：算法在 `engine/shading.ts`，面板只摆控件与色块；基色块打开调色板挑色（`onOpenPalette` + `SESSION.awaitColorPick`），生成色块轻点＝前景色 / 长按＝加进色卡 / 电脑右键＝背景色，每行的「+」加入当前色卡、「保存」存成新色卡（`savePalettePresetOf`）。入口＝调色板面板 + 主菜单（`openShading()` → `pc-shading` → App 里 `setModal("shading")`） |
+| `ColorAdvancedModal` | `ui/modals.tsx` | **颜色高级模式**：一个弹窗两页（`AnalysisPane` 颜色分析 / `ShadingPane` 色彩明暗），`initialTab` 决定落在哪页；两页**按需挂载**（分析页要扫画布，不该在明暗页白跑）挂上后不再卸载。入口＝调色板面板动作行的一条 + 主菜单一条（`openColorAdv()` → `pc-color-adv`；`openShading()` → `pc-shading` 直接落明暗页），App 侧只挂一个 `Keep`。算法仍然分别在 `engine/color-analysis.ts` 与 `engine/shading.ts` |
 | `IsoBar` | `ui/iso.tsx` | 等距图形模式的**参数条**（常驻浮层，不是弹窗——模式的手感全在画布上）：形状 chips（6）/ 宽深高 / 图块 4·8·16·32 / 实时读数（尺寸·体素·越界）/ 折叠外观（颜色模式、三面颜色、明暗、阴影、描边、形状专属参数）/ 生成 / 生成到新图层 / 完成。入口＝魔法球「等距图形」+ 主菜单。动作图标走 `feature-icons.ts`（§17.5） |
 | `useBlankTap` | `ui/base.tsx` | 点容器空白处执行动作（调色板面板点击关闭） |
 | 时间线分割线 | `ui/App.tsx`（`.tl-grip`） | 时间线面板顶部的拖动条：上下拖动 = `setTlHeight()`（面板总高度 140–520px，默认 200），拖动时显示 px 浮标，双击复位 200；`prefs.tlH` 是整块面板高度，矩阵 `flex:1` 填充，图层行不足时用 `.ase-fill` 单元格补底 |
@@ -1807,8 +1807,8 @@ nextPlayFrameIn(mode, fi, dir, w): PlayStep                    // 循环/乒乓�
 
 ```ts
 const FEATURE_ICONS = {
-  menu:    { iso: "i-iso", colorAnalysis: "i-ca", shading: "i-shade", customise: "i-grid", … },
-  palette: { remap: "i-remap", dedupe: "i-dedupe", shading: "i-shade", … },
+  menu:    { iso: "i-iso", colorAdv: "i-cadv", customise: "i-grid", … },
+  palette: { remap: "i-remap", dedupe: "i-dedupe", colorAdv: "i-cadv", … },
   fxOrb:   { iso: "i-iso", outline: "i-fx-o1", … },
   selRing: { gridSnap: "i-snap", mesh: "i-mesh", quad: "i-skew", halfSnap: "i-snap-half", … },
   isoBar:  { generate: "i-plus", newLayer: "i-layers", look: "i-palette" },

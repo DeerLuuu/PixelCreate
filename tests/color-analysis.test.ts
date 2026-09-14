@@ -618,7 +618,7 @@ function testSessionDegenerate(): void {
 }
 
 // 让 tsc 保留上面那条副作用导入（see_modals 只用于此处）
-export const CA_MODALS_LOADED: boolean = typeof modalsModule.ColorAnalysisModal === "function";
+export const CA_MODALS_LOADED: boolean = typeof modalsModule.ColorAdvancedModal === "function";
 
 export function testColorAnalysis(): void {
   testColourKey();
@@ -651,12 +651,20 @@ export function testColorAnalysisPanel(): void {
   const app = read("App.tsx");
   const modals = read("modals.tsx");
 
-  ok("ca.panel.modal-id", /"coloranalysis"/.test(modals), "ModalId 里没有 coloranalysis");
-  ok("ca.panel.keep-rendered", /modal === "coloranalysis"/.test(app), "App 没有渲染 ColorAnalysisModal");
-  ok("ca.panel.imported", /ColorAnalysisModal/.test(app));
-  ok("ca.panel.open-event-listener", /pc-color-analysis/.test(app), "App 没有监听打开事件");
-  ok("ca.panel.palette-entry", /guide="pal-color-analysis"/.test(modals), "调色板面板没有入口");
-  ok("ca.panel.menu-entry", /go\("coloranalysis"\)/.test(modals), "主菜单没有入口");
+  // 与「色彩明暗」合并成「颜色高级模式」之后：一个 ModalId、一个入口（明暗页由页签切换）
+  ok("ca.panel.modal-id", /"coloradv"/.test(modals), "ModalId 里没有 coloradv");
+  ok("ca.panel.keep-rendered", /modal === "coloradv"/.test(app), "App 没有渲染 ColorAdvancedModal");
+  ok("ca.panel.imported", /ColorAdvancedModal/.test(app));
+  ok("ca.panel.open-event-listener", /pc-color-adv/.test(app), "App 没有监听打开事件");
+  ok("ca.panel.palette-entry", /guide="pal-color-adv"/.test(modals), "调色板面板没有入口");
+  ok("ca.panel.menu-entry", /go\("coloradv"\)/.test(modals), "主菜单没有入口");
+  // 合并之后不该再有旧的两个入口 / 旧 ModalId
+  ok("ca.panel.merged.no-old-entry", modals.indexOf("pal-shading") < 0 && modals.indexOf("pal-color-analysis") < 0);
+  // ModalId 联合类型里不该再留着旧的两个 id（"shading" 作为页签名仍然存在，所以只查那一行）
+  const modalIdLine = modals.split("\n").find((l) => l.indexOf("export type ModalId") === 0) || "";
+  ok("ca.panel.merged.no-old-id", modalIdLine.indexOf("\"coloranalysis\"") < 0 && modalIdLine.indexOf("\"shading\"") < 0
+    && modalIdLine.indexOf("\"coloradv\"") >= 0, modalIdLine.slice(0, 80));
+  ok("ca.panel.merged.tabs", modals.indexOf("cadv-tab-analysis") >= 0 && modals.indexOf("cadv-tab-shading") >= 0);
   for (const a of ["ca-hint", "ca-scope-canvas", "ca-scope-layer", "ca-scope-selection", "ca-scope-frames", "ca-ops", "ca-table", "ca-hist", "ca-replace", "ca-run", "dlg-color-analysis"]) {
     ok("ca.panel.anchor." + a, modals.indexOf(a) >= 0, "缺少锚点 " + a);
   }
@@ -675,7 +683,7 @@ export function testColorAnalysisPanel(): void {
   const React = require("react");
   const { renderToStaticMarkup } = require("react-dom/server");
   eq("ca.panel.markup.exported", CA_MODALS_LOADED, true);
-  const { ColorAnalysisModal } = modalsModule;
+  const { ColorAdvancedModal } = modalsModule;
   const { SESSION } = require(SRC + "/ui/singleton");
   const { makeT } = require(SRC + "/ui/i18n");
   const d = SESSION.doc;
@@ -685,7 +693,9 @@ export function testColorAnalysisPanel(): void {
   cel.data.set(buf(2, 2, (x, y) => (y === 0 ? (x === 0 ? RED : [251, 2, 2, 255] as RGBA) : (x === 0 ? GREEN : BLUE))));
   // 三个板色都被"用到"（蓝归到最近的黑），第四个才是真正没用到的
   d.palette = [[9, 9, 9, 255], [0, 255, 0, 255], [255, 0, 0, 255], [75, 0, 130, 255]];
-  const html: string = renderToStaticMarkup(React.createElement(ColorAnalysisModal, { t: makeT("zh"), onClose: () => { /* noop */ } }));
+  const html: string = renderToStaticMarkup(React.createElement(ColorAdvancedModal, {
+    t: makeT("zh"), onClose: () => { /* noop */ }, initialTab: "analysis",
+  }));
   ok("ca.panel.markup.renders", html.length > 200, "len=" + html.length);
   ok("ca.panel.markup.dialog", html.indexOf('data-guide="dlg-color-analysis"') >= 0);
   ok("ca.panel.markup.hex", html.indexOf("#ff0000") >= 0 && html.indexOf("#fb0202") >= 0, "统计表里应有红与近红");

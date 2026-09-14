@@ -1305,6 +1305,9 @@ html[data-pc] .cu-dlg{width:min(92vw,800px)}
 .dlg-ca{width:min(94vw,620px);max-height:min(92vh,calc(100dvh - var(--sat) - var(--sab) - 16px))}
 html[data-pc] .dlg-ca{width:min(680px,70vw)}
 .dlg-ca .dlg-body{display:flex;flex-direction:column;gap:6px;padding-top:8px}
+/* 「颜色高级模式」= 颜色分析 + 色彩明暗两页：用 hidden 属性切换，两页各自保留状态 */
+.cadv-pane{display:flex;flex-direction:column;gap:6px}
+.cadv-pane[hidden]{display:none}
 .ca-note{font-size:10px;line-height:1.45}
 .ca-scope{gap:5px}
 .ca-hud{display:flex;flex-wrap:wrap;gap:6px;margin:2px 0}

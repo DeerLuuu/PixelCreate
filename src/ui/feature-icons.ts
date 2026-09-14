@@ -17,8 +17,7 @@ export const FEATURE_ICONS = {
     export: "i-export",
     open: "i-open",
     import: "i-import",
-    colorAnalysis: "i-ca",
-    shading: "i-shade",
+    colorAdv: "i-cadv",
     iso: "i-iso",
     settings: "i-gear",
     shortcuts: "i-keys",
@@ -32,8 +31,7 @@ export const FEATURE_ICONS = {
     remap: "i-remap",
     dedupe: "i-dedupe",
     fromCanvas: "i-pal-from-canvas",
-    colorAnalysis: "i-ca",
-    shading: "i-shade",
+    colorAdv: "i-cadv",
   },
   /** 魔法球（fx）：日常效果 + 等距图形入口 */
   fxOrb: {

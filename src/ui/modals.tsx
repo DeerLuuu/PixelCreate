@@ -41,10 +41,12 @@ import { FEATURE_ICONS } from "./feature-icons";
 
 /** 打开颜色分析面板：App 侧监听这个事件切到 ColorAnalysisModal，
  *  同时把调色板面板收起来（面板与弹窗是两套状态，只有 App 能同时改） */
-export function openColorAnalysis(): void {
-  window.dispatchEvent(new Event("pc-color-analysis"));
+/** 打开「颜色高级模式」（分析 / 明暗两页合并成一个面板）。与其它面板弹窗一样：
+ *  面板与弹窗是两套状态，只有 App 能同时改，所以这里只派发事件。 */
+export function openColorAdv(): void {
+  window.dispatchEvent(new Event("pc-color-adv"));
 }
-export type ModalId = "menu" | "changelog" | "newdoc" | "newproject" | "export" | "adjust" | "settings" | "frame" | "framePrev" | "size" | "scaleadv" | "sheet" | "history" | "canvasRef" | "shortcuts" | "customise" | "actions" | "patterns" | "coloranalysis" | "shading" | null;
+export type ModalId = "menu" | "changelog" | "newdoc" | "newproject" | "export" | "adjust" | "settings" | "frame" | "framePrev" | "size" | "scaleadv" | "sheet" | "history" | "canvasRef" | "shortcuts" | "customise" | "actions" | "patterns" | "coloradv" | null;
 export type SizeMode = "canvas" | "sprite";
 export type SheetData = { w: number; h: number; px: Uint8ClampedArray; name: string };
 
@@ -152,10 +154,8 @@ export function PalettePanel({ t, onClose }: { t: ReturnType<typeof makeT>; onCl
           )}
           <Btn icon={FEATURE_ICONS.palette.fromCanvas} label={t("palFromCanvas")} title={t("palFromCanvasHint")}
             onClick={() => SESSION.paletteFromCanvas()} guide="pal-from-canvas" />
-          <Btn icon={FEATURE_ICONS.palette.colorAnalysis} label={t("ca.open")} title={t("ca.hint")}
-            onClick={openColorAnalysis} guide="pal-color-analysis" />
-          <Btn icon={FEATURE_ICONS.palette.shading} label={t("sh.open")} title={t("sh.hint")}
-            onClick={openShading} guide="pal-shading" />
+          <Btn icon={FEATURE_ICONS.palette.colorAdv} label={t("cadv.open")} title={t("cadv.hint")}
+            onClick={openColorAdv} guide="pal-color-adv" />
         </RowActions>
         <div data-guide="pal-ops">
           <TabBar<"palette" | "doc" | "recent">
@@ -423,8 +423,7 @@ export function MenuModal({ t, snap, onClose, onOpen, onSheet, onRef, onGuide }:
           {go("export")(t("exportCanvas"), FEATURE_ICONS.menu.export, "menu-export")}
           {act(t("open"), FEATURE_ICONS.menu.open, () => void openFlow("new"), "menu-open")}
           <Btn label={t("import")} icon={FEATURE_ICONS.menu.import} className="menuitem" guide="menu-import" onClick={() => setSub("import")} />
-          {go("coloranalysis")(t("ca.open"), FEATURE_ICONS.menu.colorAnalysis, "menu-color-analysis")}
-          {go("shading")(t("sh.open"), FEATURE_ICONS.menu.shading, "menu-shading")}
+          {go("coloradv")(t("cadv.open"), FEATURE_ICONS.menu.colorAdv, "menu-color-adv")}
           {act(t("iso.open"), FEATURE_ICONS.menu.iso, () => SESSION.enterIso(), "menu-iso")}
           {go("settings")(t("settings"), FEATURE_ICONS.menu.settings, "menu-settings")}
           {go("shortcuts")(t("shortcutHelp"), FEATURE_ICONS.menu.shortcuts, "menu-shortcuts")}
@@ -1809,7 +1808,12 @@ function HistoRow({ label, counts, max, hint }: { label: string; counts: number[
   );
 }
 
-export function ColorAnalysisModal({ t, onClose }: { t: ReturnType<typeof makeT>; onClose: () => void }) {
+/**
+ * 「颜色高级模式」的「分析」页（原来是独立弹窗 ColorAnalysisModal）。
+ * 只负责内容，外壳（Dialog / 页签 / 关闭）由 ColorAdvancedModal 提供 —— 所以
+ * `data-guide="dlg-color-analysis"` 落在这个 pane 上，SSR 结构测试照旧能扫到。
+ */
+function AnalysisPane({ t, hidden }: { t: ReturnType<typeof makeT>; hidden: boolean }) {
   const snap = useSession();                 // 画布/选区/调色板变了要重算
   const [scope, setScope] = useState<CaScope>("canvas");
   const [sort, setSort] = useState<CaSort>("count");
@@ -1899,14 +1903,8 @@ export function ColorAnalysisModal({ t, onClose }: { t: ReturnType<typeof makeT>
   ] : [];
 
   return (
-    <Dialog title={t("ca.title")} onClose={onClose} className="dlg-ca" bodyClass="col"
-      guide="dlg-color-analysis"
-      top={<div className="row-note" data-guide="ca-hint">{t("ca.hint")}</div>}
-      extra={<div className="row-note ca-note">{t("ca.scopeNote")}</div>}
-      footer={<>
-        <Btn icon="i-save" label={t("ca.export")} onClick={() => { if (ana) SESSION.exportColourStatsCsv(ana, t("ca." + scope)); }} />
-        <Btn label={t("close")} className="primary" onClick={onClose} />
-      </>}>
+    <div className="cadv-pane" data-guide="dlg-color-analysis" hidden={hidden}>
+      <div className="row-note" data-guide="ca-hint">{t("ca.hint")}</div>
       {/* 1) 范围 + 排序 + 刷新 */}
       <ChipGroup<CaScope> value={scope} onChange={setScope} className="ca-scope"
         options={[
@@ -2038,7 +2036,12 @@ export function ColorAnalysisModal({ t, onClose }: { t: ReturnType<typeof makeT>
           }} />
         </RowActions>
       </div>
-    </Dialog>
+
+      <div className="row-note ca-note">{t("ca.scopeNote")}</div>
+      <RowActions>
+        <Btn icon="i-save" label={t("ca.export")} onClick={() => { if (ana) SESSION.exportColourStatsCsv(ana, t("ca." + scope)); }} />
+      </RowActions>
+    </div>
   );
 }
 
@@ -2047,7 +2050,7 @@ export function ColorAnalysisModal({ t, onClose }: { t: ReturnType<typeof makeT>
 // 算法在 engine/shading.ts（纯函数），这里只负责摆放控件与色块。
 // ---------------------------------------------------------------------------
 
-/** 打开色彩明暗面板（同 openColorAnalysis：面板与弹窗两套状态，只有 App 能同时改） */
+/** 打开「颜色高级模式」并直接落在「明暗」页（调色板面板里的入口用同一个弹窗） */
 export function openShading(): void {
   window.dispatchEvent(new Event("pc-shading"));
 }
@@ -2090,8 +2093,12 @@ function ShSwatch({ c, title, onTap, onHold, onBg, big, guide, pick }: {
   );
 }
 
-export function ShadingModal({ t, onClose, onOpenPalette }: {
-  t: ReturnType<typeof makeT>; onClose: () => void; onOpenPalette: () => void;
+/**
+ * 「颜色高级模式」的「明暗」页（原来是独立弹窗 ShadingModal）。
+ * 内容与行为不变，只是不再自带 Dialog 外壳；`data-guide="dlg-shading"` 落在这个 pane 上。
+ */
+function ShadingPane({ t, onOpenPalette, hidden }: {
+  t: ReturnType<typeof makeT>; onOpenPalette: () => void; hidden: boolean;
 }) {
   const snap = useSession();
   const [base, setBase] = useState<RGBA>(() => [SESSION.fg[0], SESSION.fg[1], SESSION.fg[2], SESSION.fg[3]]);
@@ -2175,22 +2182,8 @@ export function ShadingModal({ t, onClose, onOpenPalette }: {
   );
 
   return (
-    <Dialog
-      title={t("sh.title")}
-      onClose={onClose}
-      className="dlg-sh"
-      bodyClass="col"
-      guide="dlg-shading"
-      top={<div className="row-note" data-guide="sh-hint">{t("sh.hint")}</div>}
-      extra={<div className="row-note sh-note">{t("sh.rowNote")}</div>}
-      footer={<>
-        <Btn icon="i-palette" label={t("sh.toPalette")} title={t("sh.toPaletteHint")} onClick={() => {
-          addToPalette(flatRamps(ramps));
-        }} guide="sh-to-palette" />
-        <Btn icon="i-revert" label={t("sh.reset")} onClick={() => setParams({ ...SHADING_DEFAULTS })} guide="sh-reset" />
-        <Btn label={t("close")} className="primary" onClick={onClose} />
-      </>}
-    >
+    <div className="cadv-pane" data-guide="dlg-shading" hidden={hidden}>
+      <div className="row-note" data-guide="sh-hint">{t("sh.hint")}</div>
       {/* 基色：点色块打开调色板挑一个新基色；「取当前」＝读当前前景 / 背景色 */}
       <div className="sh-row">
         <span className="sh-rowlabel">{t("sh.base")}</span>
@@ -2241,6 +2234,59 @@ export function ShadingModal({ t, onClose, onOpenPalette }: {
         <NumberField label={t("sh.slots")} hint={t("sh.slotsHint")} min={SHADING_SLOTS_MIN} max={SHADING_SLOTS_MAX}
           value={params.slots} onChange={(v) => set({ slots: normalizeSlots(Number(v)) })} />
       </>}
+
+      <div className="row-note sh-note">{t("sh.rowNote")}</div>
+      <RowActions>
+        <Btn icon="i-palette" label={t("sh.toPalette")} title={t("sh.toPaletteHint")} onClick={() => {
+          addToPalette(flatRamps(ramps));
+        }} guide="sh-to-palette" />
+        <Btn icon="i-revert" label={t("sh.reset")} onClick={() => setParams({ ...SHADING_DEFAULTS })} guide="sh-reset" />
+      </RowActions>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// 颜色高级模式：把「颜色分析」与「色彩明暗」合并成一个面板的两页。
+// 为什么合并：两者都是"围绕颜色做分析 / 生成"的工具，入口原来挤在调色板动作行里
+// 并排两个按钮，真机上既占地方又分不清该点哪个；合并后一个入口 + 页签切换，
+// 两页各自保留原来的结构与锚点（分析与明暗的 SSR 结构测试照旧生效）。
+
+export type ColorAdvTab = "analysis" | "shading";
+
+export function ColorAdvancedModal({ t, onClose, onOpenPalette, initialTab = "analysis" }: {
+  t: ReturnType<typeof makeT>; onClose: () => void; onOpenPalette?: () => void;
+  /** 从调色板的「明暗」入口进来时直接落在明暗页 */
+  initialTab?: ColorAdvTab;
+}) {
+  const [tab, setTab] = useState<ColorAdvTab>(initialTab);
+  // 两页**按需挂载**：分析页要扫一遍画布（大画布不便宜），不该在明暗页白跑；
+  // 挂上之后就不再卸载 —— 切回来时统计、色阶参数都还在。
+  const [seen, setSeen] = useState<Record<ColorAdvTab, boolean>>({
+    analysis: initialTab === "analysis",
+    shading: initialTab === "shading",
+  });
+  const goTab = (v: ColorAdvTab): void => {
+    setTab(v);
+    setSeen((s) => (s[v] ? s : { ...s, [v]: true }));
+  };
+  return (
+    <Dialog title={t("cadv.title")} onClose={onClose} className="dlg-ca" bodyClass="col"
+      guide="dlg-color-adv"
+      top={<div className="row-note" data-guide="cadv-hint">{t("cadv.hint")}</div>}
+      footer={<Btn label={t("close")} className="primary" onClick={onClose} />}>
+      <TabBar<ColorAdvTab>
+        value={tab}
+        onChange={goTab}
+        items={[
+          { id: "analysis", label: t("cadv.tabAnalysis"), guide: "cadv-tab-analysis" },
+          { id: "shading", label: t("cadv.tabShading"), guide: "cadv-tab-shading" },
+        ]}
+      />
+      {seen.analysis ? <AnalysisPane t={t} hidden={tab !== "analysis"} /> : null}
+      {seen.shading
+        ? <ShadingPane t={t} onOpenPalette={onOpenPalette ?? (() => undefined)} hidden={tab !== "shading"} />
+        : null}
     </Dialog>
   );
 }

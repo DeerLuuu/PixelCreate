@@ -119,6 +119,8 @@ export function testIcons(): void {
   // 近期新功能的图标没有被改回「借来的」那个
   ok("icons.entry.iso", F.menu.iso === F.fxOrb.iso);
   ok("icons.entry.iso-not-customise", F.menu.iso !== F.menu.customise);
-  ok("icons.entry.shading-not-remap", F.palette.shading !== F.palette.remap);
-  ok("icons.entry.ca-not-shading", F.palette.colorAnalysis !== F.palette.shading);
+  // 颜色分析 / 色彩明暗合并成「颜色高级模式」后只有一个入口，图标也要是专属的那一个
+  ok("icons.entry.cadv-not-remap", F.palette.colorAdv !== F.palette.remap);
+  ok("icons.entry.cadv-not-dedupe", F.palette.colorAdv !== F.palette.dedupe);
+  ok("icons.entry.cadv-not-indexed", F.palette.colorAdv !== F.palette.indexed);
 }

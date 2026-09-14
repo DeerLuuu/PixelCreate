@@ -156,13 +156,18 @@ export function testShading(): void {
   /* eslint-disable @typescript-eslint/no-var-requires */
   const React = require("react");
   const { renderToStaticMarkup } = require("react-dom/server");
-  const { ShadingModal } = require(SRC + "/ui/modals");
+  const { ColorAdvancedModal } = require(SRC + "/ui/modals");
   const { makeT } = require(SRC + "/ui/i18n");
+  // 与「颜色分析」合并成「颜色高级模式」后：从明暗页进来（initialTab="shading"）
   const html: string = renderToStaticMarkup(
-    React.createElement(ShadingModal, { t: makeT("zh"), onClose: () => { /* noop */ }, onOpenPalette: () => { /* noop */ } }),
+    React.createElement(ColorAdvancedModal, {
+      t: makeT("zh"), onClose: () => { /* noop */ }, onOpenPalette: () => { /* noop */ }, initialTab: "shading",
+    }),
   );
   ok("shading.panel.markup.renders", html.length > 400, "len=" + html.length);
   ok("shading.panel.markup.dialog", html.indexOf('data-guide="dlg-shading"') >= 0);
+  // 合并后的外壳：两页共用一个弹窗，页签能切（外壳锚点是 cadv-*）
+  ok("shading.panel.markup.merged-shell", html.indexOf('data-guide="dlg-color-adv"') >= 0 && html.indexOf("cadv-tab-shading") >= 0);
   ok("shading.panel.markup.rows", SHADING_ROWS.every((row) => html.indexOf('data-guide="sh-row-' + row + '"') >= 0));
   const swatches = (html.match(/class="sh-swatch/g) || []).length;
   eq("shading.panel.markup.swatches", swatches, 6 * 7 + 2 + 2); // 六行 × 7 格 + 两个基色 + 两个温度色
