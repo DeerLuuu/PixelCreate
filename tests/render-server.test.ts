@@ -11,7 +11,8 @@ import { Doc } from "../src/engine/doc";
 import type { Rect } from "../src/engine/types";
 import type { ComposeCache, OnionSpec } from "../src/render/compositor";
 import {
-  RenderServer, compositeIsStale, compositeKey, onionKeyOf, onionSpecOf, otherCompositeKey,
+  RenderDebug, RenderServer, compositeIsStale, compositeKey, onionKeyOf, onionSpecOf,
+  otherCompositeKey, repaintRegion,
   type CanvasFactory, type CompositorApi,
 } from "../src/servers/render";
 import { eq, ok } from "./common";
@@ -206,5 +207,98 @@ export function testRenderServer(): void {
     const p2 = srv.checkerPattern(ctx);
     ok("rs.checker.made", !!p1 && !!p2);
     eq("rs.checker.created-once", created(), 1);   // 只创建一个 2×2 画布
+  }
+
+  // ------------------------------------------------ 脏矩形 → 屏幕重绘区域
+  // 平铺模式下同样的像素在屏幕上出现 9 次，只重绘中心那一块会让邻居副本留旧画面
+  {
+    const base = { zoom: 10, ox: 0, oy: 0, vpW: 360, vpH: 640, docW: 32, docH: 32 };
+    const dirty = { x: 2, y: 3, w: 4, h: 5 };
+    // 不平铺：脏矩形映射到屏幕 + 2px 余量（screenRectOf 的 pad）
+    // 屏幕矩形 = 脏矩形 × zoom ± 2px 余量：x 18..62、y 28..82
+    eq("rr.off", repaintRegion(dirty, { ...base, tile: "off" }), { x: 18, y: 28, w: 44, h: 54 });
+    // 横向平铺：左右两个副本一起并进来（一个副本 = 一个文档宽 = 320px）
+    eq("rr.row", repaintRegion(dirty, { ...base, tile: "row" }), { x: 0, y: 28, w: 360, h: 54 });
+    // 九宫格：上下也并进来，宽度撑满整个视口
+    const grid = repaintRegion(dirty, { ...base, tile: "grid" });
+    eq("rr.grid.width", grid ? grid.w : null, 360);
+    ok("rr.grid.taller-than-row", !!grid && grid.h > 54);
+    // 完全在视口外的脏区域：不用重绘
+    eq("rr.outside", repaintRegion({ x: 50, y: 50, w: 2, h: 2 }, { ...base, vpW: 100, vpH: 100, tile: "off" }), null);
+    // 缩小视图（zoom < 1）时区域也跟着缩
+    // 缩到 0.5 倍时 2px 余量反而成了主导（脏矩形本身只有 2×2.5 屏幕像素）
+    eq("rr.zoomed-out", repaintRegion(dirty, { ...base, zoom: 0.5, tile: "off" }), { x: 0, y: 0, w: 5, h: 6 });
+    // server 上的薄包装与纯函数一致（"重绘规则属于渲染服务"）
+    const { srv } = mkServer();
+    eq("rr.via-server", srv.repaintScreenRegion(dirty, { ...base, tile: "row" }), { x: 0, y: 28, w: 360, h: 54 });
+  }
+
+  // ---------------------------------------------------------- 渲染调试模式
+  {
+    const d = new RenderDebug();
+    const f = fakeFactory();
+    const { api, rec } = fakeApi(f);
+    const srv = new RenderServer({ factory: f.factory, compositor: api, debug: d });
+    const doc = new Doc(32, 32, "t");
+    const note = (e: Partial<Parameters<RenderServer["noteFrame"]>[0]> = {}): void => {
+      srv.noteFrame({
+        composed: true, rebuilt: false, reason: "partial", fi: 0,
+        docRect: { x: 1, y: 1, w: 2, h: 2 }, screen: { x: 8, y: 8, w: 24, h: 24 },
+        fullBlit: false, ms: 1.5, ...e,
+      });
+    };
+
+    // 关着的时候：一条都不记（热路径零成本），计数也不动
+    note();
+    eq("dbg.off.events", d.events().length, 0);
+    eq("dbg.off.frames", d.totals.frames, 0);
+
+    // 打开后开始记录
+    d.setEnabled(true);
+    note({ composed: true, rebuilt: true, reason: "first" });
+    note({ composed: false, rebuilt: false, reason: "skip", docRect: null, screen: null });
+    note({ fullBlit: true, ms: 4 });
+    eq("dbg.events", d.events().length, 3);
+    eq("dbg.totals", [d.totals.frames, d.totals.composes, d.totals.rebuilds, d.totals.partials, d.totals.skips, d.totals.fullBlits],
+       [3, 2, 1, 1, 1, 1]);
+    eq("dbg.timing", [d.totals.lastMs, d.totals.maxMs], [4, 4]);
+    eq("dbg.reason-kept", d.events()[0].reason, "first");
+    ok("dbg.text", d.text().includes("compose=2") && d.text().includes("full-dirty") === false);
+    ok("dbg.text-row", d.text().includes("f0"));
+
+    // 事件流订阅：收到通知；退订后不再收到
+    let hits = 0;
+    const off = d.subscribe(() => { hits++; });
+    note();
+    eq("dbg.subscribe", hits >= 1, true);
+    off();
+    const before = hits;
+    note();
+    eq("dbg.unsubscribe", hits, before);
+
+    // 环形缓冲上限：留最近 cap 条
+    for (let i = 0; i < d.cap + 10; i++) note();
+    eq("dbg.cap", d.events().length, d.cap);
+
+    // clear 清空计数与事件；关掉开关也清空（别留陈旧数字误导）
+    d.clear();
+    eq("dbg.clear", [d.events().length, d.totals.frames], [0, 0]);
+    note();
+    d.setEnabled(false);
+    eq("dbg.disable-clears", d.events().length, 0);
+
+    // compose 的 reason 分类：直接断到"为什么走这条路径"
+    d.setEnabled(true);
+    const r1 = srv.compose(doc, 0, ONION, "0", false);
+    eq("dbg.reason.first", r1.reason, "first");
+    srv.invalidate({ x: 1, y: 1, w: 2, h: 2 });
+    eq("dbg.reason.partial", srv.compose(doc, 0, ONION, "0", false).reason, "partial");
+    srv.invalidate();
+    eq("dbg.reason.full-dirty", srv.compose(doc, 0, ONION, "0", false).reason, "full-dirty");
+    eq("dbg.reason.force", srv.compose(doc, 0, ONION, "0", true).reason, "force");
+    srv.invalidate({ x: 0, y: 0, w: 1, h: 1 });
+    doc.layers[0].visible = false;
+    eq("dbg.reason.key-changed", srv.compose(doc, 0, ONION, "0", false).reason, "key-changed");
+    eq("dbg.compose-count", rec.full, 4);
   }
 }

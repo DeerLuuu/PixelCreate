@@ -57,6 +57,8 @@ export interface Prefs {
   magZoom: number;
   /** show the pixel loupe while picking a colour */
   loupe: boolean;
+  /** 渲染调试 HUD：显示每一次重绘做了什么（整幅/局部、脏矩形、屏幕区域、耗时、原因） */
+  renderDebug: boolean;
   /** 快捷圆盘子球直径（px，36..96） */
   pieItem: number;
   /** 快捷圆盘半径（px，0 = 按屏幕与子球数量自动适配） */
@@ -1374,7 +1376,7 @@ export class Session {
 
   private loadPrefs(): Prefs {
     const p: Prefs = {
-      lang: "zh", theme: "dark", pcMode: "auto", gridMode: "off", gridSize: 1, magZoom: 12, loupe: true,
+      lang: "zh", theme: "dark", pcMode: "auto", gridMode: "off", gridSize: 1, magZoom: 12, loupe: true, renderDebug: false,
       pieItem: 58, pieRadius: 0, keymap: {},
       layout: { ...DEFAULT_LAYOUT }, barOrder: [], barHidden: [], orbPrefs: {}, dockPos: null, pieSlotPos: null, barExtra: {}, orbExtra: {},
       onionOn: false, onionBefore: 1, onionAfter: 0, onionAlpha: 55, onionTint: true, onionWrap: true,

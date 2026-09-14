@@ -579,6 +579,10 @@ const defs: SettingDef[] = [
     label: "loupe", default: true, refresh: "changed",
   },
   {
+    path: "display.renderDebug", field: "renderDebug", kind: "bool", group: "display",
+    label: "renderDebug", desc: "renderDebugDesc", default: false, refresh: "changed",
+  },
+  {
     path: "display.magZoom", field: "magZoom", kind: "int", group: "display",
     label: "magZoom", default: 12, min: 8, max: 20, unit: "px", reset: 12, refresh: "changed",
   },

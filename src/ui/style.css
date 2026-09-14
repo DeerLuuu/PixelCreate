@@ -528,6 +528,19 @@ html[data-pc] .orb-item{width:48px;height:48px}
 .a-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--anchor-dot); }
 .a-dot.on { background: var(--accent-4); }
 .size-note { font-size: 11px; color: var(--dim-2); margin: 6px 0 2px; }
+
+/* 渲染调试 HUD（设置 → 显示 → 渲染调试）：只在打开时挂载，不吃指针事件 */
+.rdbg { position: fixed; top: calc(var(--sat) + 6px); left: 6px; z-index: 60; max-width: min(92vw, 560px);
+  padding: var(--sp-2) var(--sp-3); border: 1px solid var(--line); border-radius: var(--r-1);
+  background: var(--hud-deep); opacity: .92; pointer-events: none;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--fs-1); color: var(--dim);
+  display: flex; flex-direction: column; gap: 2px; }
+.rdbg-head { display: flex; flex-direction: column; gap: 2px; }
+.rdbg-title { color: var(--accent-4); font-weight: 700; }
+.rdbg-stat { color: var(--dim-2); }
+.rdbg-list { display: flex; flex-direction: column; gap: 1px; max-height: 30vh; overflow: hidden; }
+.rdbg-row { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rdbg-dim { color: var(--dim-2); }
 .size-note-adv { color: var(--accent); }
 
 /* 高级缩放对话框：算法说明 / 倍率快捷 / 原图-缩放后对比预览 */

@@ -17,6 +17,7 @@ import { pieFocusIndex, pieRadiusFor, pieSlots } from "./pie-layout";
 import { CBAR_ACTIONS, TOPBAR_ACTIONS, dropIndexAt, nearestSlotIndex, orderedActions, stepsBetween } from "../app/uibar";
 import { chordForAction, chordOf } from "../app/keymap";
 import { ReplayOverlay } from "./replay";
+import { RenderDebugHud } from "./renderdebug";
 import * as bridge from "../io/bridge";
 import { writeClipboardPng } from "../io/clipboard";
 import { pasteClipboard } from "./paste";
@@ -700,6 +701,8 @@ export function App() {
         onSearch={() => setModal("actions")}
         onPatterns={() => setModal("patterns")} />}
       {replayOn && <ReplayOverlay t={t} snap={snap} nameFn={(lb) => histName(lb, t, snap.lang)} onClose={() => { setModal(null); setReplayOn(false); }} />}
+      {/* 渲染调试 HUD（设置 → 显示 → 渲染调试）：显示每一次重绘做了什么 */}
+      <RenderDebugHud t={t} />
       <Keep on={panel === "palette"} el={panel === "palette" ? (
         <Overlay full={!land && !pcMode} onClose={() => setPanel(null)}>
           <PalettePanel t={t} onClose={() => setPanel(null)} />

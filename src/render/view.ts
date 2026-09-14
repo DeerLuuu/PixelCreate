@@ -1,7 +1,7 @@
 // Interactive viewport: composite drawing, pan/zoom gestures, tool strokes.
 import type { Doc } from "../engine/doc";
 import type { RGBA, Rect} from "../engine/types";
-import { clampRect, screenRectOf, unionRect, tileOffsets, tileRect, type TileMode } from "./rect";
+import { tileOffsets, type TileMode } from "./rect";
 import { Sel } from "../engine/doc";
 import { Cel } from "../engine/cel";
 import * as comp from "./compositor";
@@ -33,7 +33,7 @@ import { takeNotches, wheelNotches } from "../engine/scrub";
 import { cursorAttr, cursorFor } from "./cursor";
 import { isPc } from "../io/pcmode";
 import * as Vp from "../servers/viewport";
-import { RenderServer, onionKeyOf, onionSpecOf } from "../servers/render";
+import { RenderServer, onionKeyOf, onionSpecOf, type RenderReason } from "../servers/render";
 import { hexToRgba } from "../engine/color";
 
 interface PxPoint {
@@ -890,30 +890,33 @@ export class View {
     const lv = this.lastView;
     if (lv.ox !== this.ox || lv.oy !== this.oy || lv.zoom !== this.zoom || lv.w !== vw || lv.h !== vh) this.blitFull = true;
     this.lastView = { ox: this.ox, oy: this.oy, zoom: this.zoom, w: vw, h: vh };
+    const t0 = this.render.debugEnabled ? this.render.nowMs() : 0;
     const need = force || this.render.needsCompose;
     if (!need && !this.blitFull) {
       // nothing changed on the pixel canvas (e.g. only the overlay moved)
       this.drawOverlay(false);
+      this.noteFrame(false, false, "skip", null, null, false, t0);
       return;
     }
     const tileMode = s.prefs.tileMode as TileMode;
     const tile = tileMode !== "off";
     let region: Rect | null = null;
+    let reason: RenderReason = "skip";
+    let docRect: Rect | null = null;
+    let rebuilt = false;
+    let wasFull = this.blitFull;
     if (need) {
       const p = s.prefs;
       const res = this.render.compose(doc, s.curFrame(), onionSpecOf(p), onionKeyOf(p), force);
-      const dirty = res.consumed;
-      if (!res.rebuilt && !this.blitFull && dirty) {
-        let u = screenRectOf(dirty, this.ox, this.oy, this.zoom);
-        if (tile) {
-          // the same pixels show up in the 8 neighbour copies: their screen
-          // rects have to be repainted as well
-          for (const [dx, dy] of tileOffsets(tileMode)) {
-            if (dx === 0 && dy === 0) continue;
-            u = unionRect(u, screenRectOf(tileRect(dirty, doc.w, doc.h, dx, dy), this.ox, this.oy, this.zoom))!;
-          }
-        }
-        region = clampRect(u, vw, vh);
+      reason = res.reason;
+      rebuilt = res.rebuilt;
+      docRect = res.consumed;
+      wasFull = this.blitFull;
+      if (!res.rebuilt && !wasFull && docRect) {
+        // 屏幕重绘区域（含平铺的 8 个邻居副本）由 RenderServer 算：它就是"重绘什么"的规则
+        region = this.render.repaintScreenRegion(docRect, {
+          zoom: this.zoom, ox: this.ox, oy: this.oy, vpW: vw, vpH: vh, docW: doc.w, docH: doc.h, tile: tileMode,
+        });
       }
     }
     const ctx = this.pix.getContext("2d")!;
@@ -979,8 +982,21 @@ export class View {
     }
     if (region) ctx.restore(); // end the dirty-rect clip
     this.blitFull = false;
+    this.noteFrame(need, rebuilt, reason, docRect, region, wasFull, t0);
     this.drawOverlay(need);
     if (this.onViewChanged) this.onViewChanged();
+  }
+
+  /** 把"这一帧渲染了什么"回报给 RenderServer 的调试记录（关掉调试时零成本） */
+  private noteFrame(
+    composed: boolean, rebuilt: boolean, reason: RenderReason,
+    docRect: Rect | null, screen: Rect | null, fullBlit: boolean, t0: number,
+  ): void {
+    if (!this.render.debugEnabled) return;
+    this.render.noteFrame({
+      composed, rebuilt, reason, fi: this.session.curFrame(),
+      docRect, screen, fullBlit, ms: t0 ? this.render.nowMs() - t0 : 0,
+    });
   }
 
   /** draw every non-focused canvas at its place in the infinite space */

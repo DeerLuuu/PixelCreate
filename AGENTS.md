@@ -28,7 +28,7 @@ src/servers/   服务层：RenderServer（合成与缓存）、ViewportServer（
 src/io/        原生桥接、工程文件（.pxc）、Aseprite 读写（aseread/asewrite/zlib）、自动保存、参考图、安全区、base64
 src/ui/        React 外壳、弹窗、时间线、浮动球、i18n、样式
 android/       MainActivity（Java 层）+ AndroidManifest
-tests/         无 DOM 的引擎/逻辑回归（**3936 条断言**，`node .ts-out/tests/run-tests.js` 末尾会打印条数）
+tests/         无 DOM 的引擎/逻辑回归（**3962 条断言**，`node .ts-out/tests/run-tests.js` 末尾会打印条数）
 docs/          API.md / COMPARISON.md
 ```
 
@@ -85,6 +85,9 @@ java -jar /root/pk/apksigner.jar verify --print-certs /sdcard/Download/PixelCraf
 - `Session` 单例（`src/app/session.ts`）：持有 doc / history / prefs / 工具状态，`changed()` 驱动 React（`useSyncExternalStore`）；UI 状态改动都走它。
 - `History`（`src/engine/history.ts`）：`record`（廉价逆向）/ `pushPixels`（像素差分）/ `pushStruct`（全档快照，复杂操作）；`undo/redo/jumpTo`；`histMode` = `steps`（默认 **120** 条，`prefs.histSteps`；`History.cap` 初值 60 会在 session 初始化时被 `setCap(histSteps)` 覆盖）/ `full`（完整回放）。工程文件可内嵌历史（`src/io/historyfile.ts` + `src/app/history-io.ts`）。
 - 渲染增量：`Stroke.takeDirty()` → `composeRectInto` → 视口脏矩形 blit；`Session.repaint()` 由 rAF 合并，`repaintRect(rect)` 只更新局部；洋葱皮 / 选区着色都有缓存版本号。
+- **渲染调试**：设置 → 显示 →「渲染调试」（或控制台 `__pcRender.text()`）能看到**每一次重绘做了什么**：
+  整幅/局部/跳过、原因（`first` / `full-dirty` / `force` / `key-changed`）、脏矩形 → 屏幕重绘区域、耗时。
+  排查"卡顿"与"画面不更新"先看它，别靠猜。实现与字段见 `docs/API.md` §15b.4。
 - **合成所有权在 `servers/render.ts` 的 `RenderServer`**（合成缓冲、合成键、失效区域、多画布缓存、棋盘格），
   视图数学在 `servers/viewport.ts`（缩放/平移/坐标/旋转矩阵，纯函数）。`render/view.ts` 只做 blit 与覆盖层，
   别把这两件事搬回去 —— 细节与"不要改回去"清单见 `docs/API.md` §15b。

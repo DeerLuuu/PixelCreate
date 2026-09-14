@@ -1414,6 +1414,57 @@ surfaceDelta(rot, zoom, dx, dy): { x; y }                        // 表面拖拽
 
 ---
 
+### 15b.3 平铺重绘区域（`repaintRegion`）
+
+```ts
+interface RepaintRegionOpts { zoom; ox; oy; vpW; vpH; docW; docH; tile: TileMode }
+repaintRegion(dirty: Rect, o: RepaintRegionOpts): Rect | null      // 纯函数
+RenderServer.repaintScreenRegion(dirty, o): Rect | null            // 薄包装（"重绘规则属于渲染服务"）
+```
+
+把**文档空间的脏矩形**换成**要重绘的屏幕区域**：映射到屏幕（`screenRectOf` 自带 2px 余量，
+避免缩放取整露边）→ **平铺模式下把 8 个邻居副本的区域一并并进来** → 裁到视口（越界交给 canvas 裁剪是浪费）。
+返回 `null` 表示这块脏区域完全在视口外。
+
+平铺那条是必须的：同样的像素在屏幕上出现 9 次，只重绘中心那一块的话，四周副本会留在旧画面上
+（真机表现："开了平铺后涂画，邻居副本半拍才更新"）。这段规则原先散在 `View.refresh` 里，
+现在归 server，且有断言钉住（`tests/render-server.test.ts` 的 `rr.*`）。
+
+### 15b.4 渲染调试模式（"这一次渲染到底渲染了什么"）
+
+设置 → 显示 → **渲染调试**（`display.renderDebug`，默认关）。打开后左上角出现一块只读 HUD：
+计数（重绘 / 合成 / 整幅 / 局部 / 跳过 / 整块 blit / 上次 / 峰值耗时）+ **最近 8 次重绘**，
+每行形如 `#12 f0 局部 partial 脏[8,8 4x4] 屏[78,78 44x54] 1.2ms`。
+
+```ts
+type RenderKind = "full" | "partial";
+type RenderReason = "first" | "full-dirty" | "force" | "key-changed" | "partial" | "skip";
+
+interface RenderEvent { seq; t; kind: RenderKind | "skip"; reason; fi;
+  docRect: Rect | null;   // 这次合成消费的脏矩形（整幅 = null）
+  screen: Rect | null;    // 实际重绘的屏幕区域（整块 = null）
+  fullBlit: boolean; ms: number; w; h }
+
+class RenderDebug {
+  readonly cap = 60; readonly totals: RenderTotals;
+  get enabled(); setEnabled(v); events(); clear(); subscribe(fn); when();
+  note(e);                      // 关掉时第一行就 return —— **热路径零成本**
+  text(limit = 20): string;      // 控制台友好的一行行文本
+}
+const renderDebug: RenderDebug;                       // 应用共用一份
+RenderServer.noteFrame({ composed, rebuilt, reason, fi, docRect, screen, fullBlit, ms });
+```
+
+- **为什么由 server 记而不是视图层自己记**：HUD 要的是"一次重绘"的完整画像 —— 合成路径与
+  脏矩形来自 server，屏幕区域来自视图变换，只有两边合起来才知道。所以视图层在 `refresh` 结束时
+  调一次 `noteFrame`。
+- `reason` 把"为什么走整幅重建"分细了（`first` / `full-dirty` / `force` / `key-changed`）：
+  整幅重建是渲染性能的主要风险，看 HUD 就能判断"这次卡顿是不是又整幅重建了"。
+- `skip` 表示这一帧**只重画了覆盖层**（像素画布没动）—— 排查"点一下没反应"时先看有没有 skip。
+- 控制台入口：`__pcRender.setEnabled(true)` / `__pcRender.text()` / `__pcRender.totals` / `__pcRender.clear()`。
+- **关掉时零开销**：`note()` 立即返回，视图层也先问 `debugEnabled` 才取时间戳；组件不挂载。
+- 组件 `src/ui/renderdebug.tsx`（`.rdbg*` 类，`pointer-events:none`，不挡手势）。
+
 ## 16. IO
 
 ### 16.1 原生桥接 `src/io/bridge.ts`
@@ -2184,7 +2235,7 @@ Stroke 侧：`BrushState.pattern` 一填，落笔统一走 `paintOne()`——图
 ### 测试
 
 ```bash
-npm test        # 3936 条断言：引擎 / 选区 / 历史 / 播放 / 设置 / 引导 / 渲染 / 导出 / Aseprite 读写 / 返回手势 / UI 控件与令牌（末尾打印 assertions: N）
+npm test        # 3962 条断言：引擎 / 选区 / 历史 / 播放 / 设置 / 引导 / 渲染 / 导出 / Aseprite 读写 / 返回手势 / UI 控件与令牌（末尾打印 assertions: N）
 ```
 
 新增纯逻辑（算法、布局、解析、决策）时，优先抽成无 DOM 依赖的函数再补一条 `tests/*.test.ts` 断言——这是本项目保持可回归的主要手段。

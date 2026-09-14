@@ -498,7 +498,7 @@ modules.config.json ──> scripts/modules.mjs ──> src/modules/_generated.t
 | **P2** | `AnimationServer` | 播放与标签已是纯逻辑 | 播放范围、循环模式、速度用例全绿 |
 | **P3** | `SelectionServer` | 收拢 `xform/warp/resample`，**切断 View 里的选区业务分支** | `tests/xformui.test.ts` 那套行为断言全绿 |
 | **P4** | `RenderServer` + `ViewportServer` | 拆 `view.ts`（4,820） | 同一文档合成结果**逐字节一致**；脏矩形面积不退化 |
-| ↳ | **状态：🟡 部分完成**（2026-09-14）：`RenderServer` / `ViewportServer` 已落地（`src/servers/`），`View` 只剩 11 处委托；继续拆的是手势状态机（P5）与 `View` 持有的视口字段 | — | 全量测试 3936 条 ALL PASS；`check-bundle` 通过 |
+| ↳ | **状态：🟡 部分完成**（2026-09-14）：`RenderServer`（含**平铺重绘区域**与**渲染调试记录**）/ `ViewportServer` 已落地（`src/servers/`）；继续拆的是手势状态机（P5）与 `View` 持有的视口字段 | — | 全量测试 3962 条 ALL PASS；`check-bundle` 通过 |
 | **P5** | `InputServer` | 手势状态机真正搬出 View | 手势 / PC 模式 / 多球互斥用例全绿 |
 | **P6** | `DocumentServer` | **最后动**（所有人依赖它） | "cel 与画布等大"等不变量由类型与断言守住 |
 | **P7** | `SignalHub` | 分域订阅替换全量 `changed()` | React 重渲染次数下降；UI 无视觉回归 |
@@ -595,7 +595,7 @@ Server 化： P0 ─ P1 ─ P2 ─ P3 ─ P4 ─ P5 ─ P6 ─ P7 ────�
 | 现状盘点 + 目标架构（本文） | ✅ 2026-09-14 |
 | 修 `engine/history.ts` 的类型反向依赖 | ⬜ |
 | P0 HistoryServer | ⬜ |
-| P4 RenderServer + ViewportServer | 🟡 部分完成（`src/servers/`：合成状态与视图数学已抽出，+89 条断言） |
+| P4 RenderServer + ViewportServer | 🟡 部分完成（`src/servers/`：合成状态、**平铺重绘区域**、**渲染调试 HUD**、视图数学已抽出；+115 条断言） |
 | P1 PaletteServer | ⬜ |
 | P2 AnimationServer | ⬜ |
 | P3 SelectionServer | ⬜ |
