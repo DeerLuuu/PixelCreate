@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AI 画一只猫 · PixelCraft 本地 AI 工具服务实录</title>
+<style>
+  :root {
+    --bg: #14151a; --panel: #1c1e26; --line: #2c2f3a;
+    --fg: #e8e9ee; --dim: #9aa0ae; --accent: #ffa300;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 15px/1.7 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+  }
+  header, main, footer { max-width: 880px; margin: 0 auto; padding: 0 20px; }
+  header { padding-top: 40px; }
+  h1 { font-size: 26px; margin: 0 0 8px; }
+  h2 { font-size: 17px; margin: 32px 0 10px; color: var(--accent); }
+  .sub { color: var(--dim); margin: 0 0 8px; }
+  code, pre { font-family: ui-monospace, Consolas, monospace; }
+  code { background: #22242c; padding: 1px 5px; border-radius: 4px; font-size: 13px; }
+  pre {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+    padding: 14px 16px; overflow-x: auto; font-size: 13px; line-height: 1.6;
+  }
+  .player {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+    padding: 16px; display: flex; flex-direction: column; align-items: center; gap: 12px;
+  }
+  canvas { width: 256px; height: 256px; image-rendering: pixelated; border-radius: 8px; }
+  .bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: center; }
+  button {
+    background: #2a2d38; color: var(--fg); border: 1px solid var(--line);
+    border-radius: 8px; padding: 7px 13px; font-size: 13px; cursor: pointer;
+  }
+  button:hover { border-color: var(--accent); }
+  #cap { color: var(--fg); font-size: 13px; }
+  #idx { color: var(--dim); font-size: 12px; }
+  ol, ul { padding-left: 22px; }
+  li { margin: 4px 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  th, td { border: 1px solid var(--line); padding: 7px 10px; text-align: left; vertical-align: top; }
+  th { background: #23252e; color: var(--dim); font-weight: 600; }
+  footer { color: var(--dim); font-size: 13px; padding: 30px 20px 50px; }
+  a { color: var(--accent); }
+  .note { color: var(--dim); font-size: 13px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>AI 画一只猫</h1>
+  <p class="sub">PixelCraft 本地 AI 工具服务的真实实录：外部 AI 在 <code>127.0.0.1</code> 上通过 JSON 协议逐笔下笔，画完只是<strong>一步撤销</strong>。</p>
+  <p class="note">画布 64×64 · 等距体素 · 7 帧（空白 → 躯干 → 尾巴 → 头 → 左耳 → 右耳 → 胸口）</p>
+</header>
+
+<main>
+  <section class="player">
+    <canvas id="cv" width="256" height="256"></canvas>
+    <div class="bar">
+      <button id="play">暂停</button>
+      <button id="prev">上一笔</button>
+      <button id="next">下一笔</button>
+      <button id="speed">速度 1×</button>
+      <span id="cap"></span>
+      <span id="idx"></span>
+    </div>
+  </section>
+
+  <h2>每一笔是什么</h2>
+  <ol id="steps"></ol>
+
+  <h2>它是怎么发生的</h2>
+  <ul>
+    <li><strong>服务只绑 <code>127.0.0.1</code>，默认关闭，token 每次启动随机</strong>；写操作分三档（<code>read</code> / <code>draw</code> / <code>all</code>），破坏性工具默认<strong>一律拒绝</strong>（确认界面属后续期）。</li>
+    <li>协议只有两个入口：<code>GET /ai/health</code>（版本 / 文档版本号 / 档位，由 TS 单源应答）与 <code>POST /ai</code>（<code>list_tools</code>、<code>digest</code>、<code>read_region</code>、<code>call_tool</code>、<code>turn_begin/preview/commit/rollback</code>、<code>status</code>）。</li>
+    <li>AI 不是"贴一张图"：它先 <code>digest</code> 读画布尺寸与包围盒，再用 <code>iso_set</code> 设参数、<code>iso_origin</code> 标落点、<code>iso_generate</code> 落笔，然后 <code>read_region</code> 把像素读回来核对 —— <strong>画一笔、看一眼、再修一版</strong>，这次实录一共迭代了 9 轮。</li>
+    <li>所有落笔都包在一个<strong>AI 回合</strong>里：整个过程中间不落历史，收尾时合成<strong>一条</strong>撤销记录。想丢掉这一轮就 <code>turn_rollback</code>，或者撤销一次。</li>
+  </ul>
+
+  <h2>为什么是"体素猫"，不是像素画</h2>
+  <p>这一期的工具表里<strong>还没有像素笔刷</strong>（<code>draw_path</code> / <code>fill</code> / <code>fx_*</code> 属后续期），能落笔的只有等距体素工具。而 <code>tile=4</code> 时最小可画单元是 <code>1×1×1</code> 体素 = <strong>6×5 像素</strong>，差不多是半张脸 —— 所以眼睛、胡须、表情都画不到能看的程度（试过，糊成一块）。最后靠"浅色头 + 深色躯干 + 双耳 + 尾巴 + 胸口浅块"把结构区分开。</p>
+
+  <h2>怎么复现</h2>
+  <pre># 1) 编译一次（宿主直接 require 编译产物）
+node node_modules/typescript/bin/tsc -p tests/tsconfig.json
+
+# 2) 起本地工具服务（会打印端口与随机 token）
+node toolchain/ai-server.mjs --port 8787 --tier draw
+
+# 3) 用带 token 的客户端按顺序发调用（序列见下面的 JSON）
+curl.exe -s -H "Authorization: Bearer &lt;token&gt;" http://127.0.0.1:8787/ai/health</pre>
+  <p class="note">这一轮完整的调用序列：<a href="ai-demo-recipe.json" download>下载 ai-demo-recipe.json</a>（每一项就是一次 <code>POST /ai</code>，按顺序重放即可画出同一只猫）。</p>
+
+  <h2>它属于哪一块</h2>
+  <table>
+    <tr><th>期</th><th>内容</th></tr>
+    <tr><td>C0</td><td>文档文本化：<code>docDigest</code> / <code>readRegion</code> / <code>applyOps</code></td></tr>
+    <tr><td>C1</td><td>工具表：48 个工具（read 4 / draw 38 / destructive 5 / ui 1）</td></tr>
+    <tr><td>C2</td><td>回合事务：一轮一条撤销、期间不写自动保存</td></tr>
+    <tr><td>C3</td><td>本地工具服务：TS 协议路由 + 开发宿主 + Android 端口服务（<code>AiServer.java</code>）</td></tr>
+    <tr><td>后续</td><td>C4 电脑侧 MCP 转发、C5 应用内助手与像素级绘图工具</td></tr>
+  </table>
+  <p class="note">接口文档见仓库 <code>docs/API.md</code> §21–§24，方案见 <code>docs/PLAN-ai.md</code>。返回 <a href="./">PixelCraft 应用</a>。</p>
+</main>
+
+<footer>
+  PixelCraft 像素工坊 · 这只猫由本地 AI 工具服务画出，动画是 7 帧原始像素（未做任何美化）
+</footer>
+
+<script>
+const FRAMES = 7, FW = 256, FH = 256, SPRITE = "ai-demo-sprite.png";
+const CAPS = [
+  "空白画布 64×64（只有棋盘格）",
+  "① 躯干：4×4×4 方块 + 接触阴影",
+  "② 尾巴：1×1×3 竖在躯干右侧",
+  "③ 头：3×3×3，顶面调亮一档",
+  "④ 左耳：1×1×2 楔形",
+  "⑤ 右耳：1×1×2 楔形",
+  "⑥ 胸前浅色块（收尾）",
+];
+const cv = document.getElementById("cv");
+const ctx = cv.getContext("2d");
+ctx.imageSmoothingEnabled = false;
+const img = new Image();
+let i = 0, playing = true, timer = null;
+const speeds = [[900, "1×"], [450, "2×"], [1800, "0.5×"]];
+let sp = 0;
+
+function draw() {
+  ctx.clearRect(0, 0, FW, FH);
+  ctx.drawImage(img, i * FW, 0, FW, FH, 0, 0, FW, FH);
+  document.getElementById("cap").textContent = CAPS[i] || "";
+  document.getElementById("idx").textContent = (i + 1) + " / " + FRAMES;
+}
+function schedule() {
+  clearInterval(timer);
+  if (playing) timer = setInterval(() => { i = (i + 1) % FRAMES; draw(); }, speeds[sp][0]);
+}
+img.onload = () => { draw(); schedule(); };
+img.src = SPRITE;
+
+document.getElementById("play").onclick = (e) => {
+  playing = !playing;
+  e.target.textContent = playing ? "暂停" : "播放";
+  schedule();
+};
+document.getElementById("prev").onclick = () => { i = (i - 1 + FRAMES) % FRAMES; draw(); };
+document.getElementById("next").onclick = () => { i = (i + 1) % FRAMES; draw(); };
+document.getElementById("speed").onclick = (e) => {
+  sp = (sp + 1) % speeds.length;
+  e.target.textContent = "速度 " + speeds[sp][1];
+  schedule();
+};
+const ol = document.getElementById("steps");
+CAPS.forEach((c) => { const li = document.createElement("li"); li.textContent = c; ol.appendChild(li); });
+</script>
+</body>
+</html>
