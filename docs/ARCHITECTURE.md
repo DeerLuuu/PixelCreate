@@ -110,7 +110,7 @@
 | 环节 | 方式 |
 |---|---|
 | Web 产物 | esbuild 单文件 IIFE（约 1.1 MB minified）→ `app2/www/js/app.js` |
-| 测试 | `tests/` **45 个文件 / 13,286 行 / 3,847 条断言**，零 DOM，Node 直跑 |
+| 测试 | `tests/` **58 个测试文件（`*.test.ts(x)`，不含 `.ts-out/`）/ 17,272 行 / 7376 条断言**，零 DOM，Node 直跑；同一 `tests/` 下共 61 个源文件 / 17,565 行 |
 | APK | 无 Gradle：`javac` + `d8` → 塞进模板 APK → `apksigner` |
 | Web 发布 | `scripts/publish-web.sh --push` → `main` 分支（Pages 根）；`scripts/sync-web.sh` 取回产物 |
 | 一致性 | 仓库 / APK / Pages 必须是同一份 md5 |

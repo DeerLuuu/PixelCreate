@@ -23,17 +23,18 @@
 
 ```
 src/app/       Session、设置注册表、引导注册表、手势映射、历史编解码、AI（ai-doc 文档文本化 / ai-tools 工具表 /
-               ai-turn 回合事务 / ai-rpc 协议路由 / ai-serve 本地服务生命周期）—— 接口见 docs/API.md §21–§24
+               ai-draw 落笔适配层（笔迹·形状·填充·擦除·特效·变换）/ ai-turn 回合事务 / ai-rpc 协议路由 /
+               ai-serve 本地服务生命周期 / ai-chat 应用内助手的整轮循环）—— 接口见 docs/API.md §21–§26
 src/engine/    文档模型、历史栈、像素操作、调色/对称/导出编码、重采样（resample）、颜色分析（color-analysis）
 src/render/    视口、合成器、脏矩形、洋葱皮
 src/servers/   服务层：RenderServer（合成与缓存）、ViewportServer（视图数学）、
                InputServer / GestureController（手势策略 · 轻点序列 · 指针事件入口）—— 见 docs/ARCHITECTURE.md
 src/io/        原生桥接、工程文件（.pxc）、Aseprite 读写（aseread/asewrite/zlib）、自动保存、参考图、安全区、base64
-src/ui/        React 外壳、弹窗、时间线、浮动球、i18n、样式
+src/ui/        React 外壳、弹窗、时间线、浮动球、i18n、样式、AiPanel（应用内助手面板）
 android/       MainActivity（Java 层）+ AiServer（本地 AI 端口服务，纯 JDK）+ AndroidManifest
-tests/         无 DOM 的引擎/逻辑回归（**6340 条断言**，`node .ts-out/tests/run-tests.js` 末尾会打印条数）
+tests/         无 DOM 的引擎/逻辑回归（**7376 条断言**，`node .ts-out/tests/run-tests.js` 末尾会打印条数）
 docs/          API.md / COMPARISON.md / PLAN-ai.md / ARCHITECTURE.md / UI.md / PC.md
-toolchain/     自写开发脚本（devserver / make-icon / check-bundle / stress-stroke / ai-server）
+toolchain/     自写开发脚本（devserver / make-icon / check-bundle / stress-stroke / ai-server / pc-mcp / pc-shell+pc-shell.cmd）
 ```
 
 ---
@@ -45,6 +46,7 @@ toolchain/     自写开发脚本（devserver / make-icon / check-bundle / stres
 - `aapt2` 在本容器是 Android/x86 二进制、**跑不起来**，所以打包走「`javac` + `d8` → 往模板 APK 里塞」的路线（见 §6）。
 - 浏览器调试：`node toolchain/devserver.js`（`app2/www`，端口 8090；`app2/www/js/telemetry.js` 会把错误与布局信息 POST 到 `/log`）。
 - `toolchain/` 只保留自写脚本（`devserver.js`、`make-icon.js`、`check-bundle.mjs`、`stress-stroke.mjs`、`ai-server.mjs`；`/toolchain/*` 被忽略，每个脚本各靠 `.gitignore` 里一条 `!` 白名单入库）：`node toolchain/make-icon.js <outdir>` 生成 Android 启动图标，`node toolchain/make-icon.js --pwa app2/www/icons` 生成 manifest 用的 192/512 图标（尺寸必须和 `manifest.webmanifest` 一致，否则 Chrome 报 “Resource size is not correct”），`node toolchain/check-bundle.mjs [bundle]` 把 Web 产物放进最小 DOM 桩里真跑一遍（**esbuild 按「源文件往上最近的 tsconfig.json」决定 JSX 变换：构建目录里多出一份没有 `"jsx": "react-jsx"` 的 tsconfig，就会打出引用全局 React 的白屏包**；`scripts/build-web.sh` 已内置这道自检），`node toolchain/stress-stroke.mjs` 量**笔迹性能基线**（每步同步耗时 + 重合成次数与耗时；改渲染或笔迹相关代码前后各跑一次，基线表在 `docs/COMPARISON.md` §三.1）；`node toolchain/ai-server.mjs` 是**本机开发 / 验证用的 Node 宿主**（本地 AI 工具服务：只绑 `127.0.0.1`，`--port` / `--tier` / `--token` / `--version` 或环境变量 `AI_PORT` / `AI_TIER` / `AI_TOKEN` 可配，`--help` 看用法；启动会打印端口与随机 token，并用 curl 示例提示怎么调）。它**不重写协议** —— 直接 require `tests/.ts-out` 里编译好的 `src/app/ai-rpc.js` / `ai-serve.js` / `session.js`（Session 靠 `tests/session.test.ts` 的 `stubEnv()` 跑起来），所以**先跑一次** `node node_modules/typescript/bin/tsc -p tests/tsconfig.json`，缺产物会打印编译提示并退出；这个宿主没有确认 UI，destructive 工具一律回 `cancelled`（与 APK 默认口径一致），协议表与口径见 `docs/API.md` §24。`.gitignore` 的 `/toolchain/*` + 逐条白名单里也加了 `!/toolchain/ai-server.mjs`（新脚本要入库必须同样加一行）；SDK 下载物已清理。
+- **AI 的电脑侧入口（本轮新增，两个脚本都靠 `.gitignore` 白名单入库）**：`node toolchain/pc-mcp.mjs --port 8787 --token <hex>` 是 **C4 的 MCP 入口**（stdio 换行分隔 JSON-RPC 2.0 ↔ 本机 `POST /ai` 的薄转发，`tools/list` 现取现映射、`tools/call` 不吞错；`AI_PORT` / `AI_TOKEN` / `AI_TIMEOUT` 也可配）。**前置**：先在应用里打开本地 AI 服务（或 `node toolchain/ai-server.mjs --tier draw`）并拿到它启动时打印的 token，再把同一个 token 配给宿主；`--token` / `AI_TOKEN` 现在**真的生效**（修过一处「模块顶层求值先于 `parseArgs`，把传入的 token 静默吞掉」的顺序缺陷），token **未指定时才**随机生成 —— banner / `--help` / 文件头文案已按这条改准。`node toolchain/pc-shell.mjs` 是**P7 的电脑桌面壳**（Windows 双击 `toolchain\pc-shell.cmd`）：伺服 `app2/www` + 在同一个端口提供 `/ai` 两个入口 + 用 SSE 把请求转发进窗口页面里那张真实画布，协议与 APK 的 `AiServer.java` 一致、一行都不重写。用法、宿主配置示例与工具数口径见 `docs/API.md` §25。**`node --check` 只能验 `.mjs`**，`.cmd` 要用 `cmd /c toolchain\pc-shell.cmd --help`。
 - 大改动可用 git 回滚（仓库已有 90+ 提交）。
 
 ---
@@ -321,16 +323,51 @@ java -jar /root/pk/apksigner.jar verify --print-certs /sdcard/Download/PixelCraf
   每次移动重建笔尖图案、每格新建数组（镜像 ×2、平铺 ×9，一次移动可产生数万个小数组）→ GC 停顿。
   下一步的性能活是这条热路径去分配，不是覆盖层。
 - PC 模式按**输入证据**识别（`src/io/pcmode.ts` 的 `resolvePcMode`：真实鼠标事件 > 触摸事件/触摸点否决 > 媒体查询 `(pointer: fine)` + `(hover: hover)`），**不看屏幕宽度**；设置里可强制开关；渲染已做脏矩形增量，仍未做 Web Worker 导出 / 大画布长时间压力测试（优先级见 `docs/COMPARISON.md`）。
-- **AI 本地工具服务（C0–C3）已落地，缺口与取舍如下**（接口见 `docs/API.md` §21–§24，方案见 `docs/PLAN-ai.md`）：
-  · **参数描述缺失**：48 个工具、89 个参数里 **52 个没有 `desc`**（只影响模型选工具 / 填参数的准确率，不影响正确性）；
-  · `readRegion` 的 `opts.fi` / `opts.li` 小数仍**静默截断**（`applyOps` 侧已统一成 `warnings`，两条路径口径暂时不一致）；
+- **AI 本地工具服务（C0–C5 + P1 已落地）**（接口见 `docs/API.md` §21–§26，方案与进度见 `docs/PLAN-ai.md`）：
+  · **已落地**：C0 文本化 / C1 工具表 / C2 回合事务 / C3 本机端口服务 / **C4 电脑侧 MCP 入口（`toolchain/pc-mcp.mjs`）**
+    / **C5 应用内助手（`src/app/ai-chat.ts` + `src/ui/AiPanel.tsx`，含 destructive 确认框与 key 管理）**
+    / **P1 像素级绘制工具面（13 条，落笔在 `src/app/ai-draw.ts`）**。工具表 **61 条 = read 4 / draw 49 / destructive 7 / ui 1**，
+    三个「工具数」口径见 `docs/API.md` §25.3（协议层 `list_tools {}` 在 `all` 档是 **60**，显式点名 `ui` 是 **61**，
+    MCP 层 `tools/list` 是 **61**）。
+  · **参数描述缺失**：61 个工具、176 个参数里 **52 个没有 `desc`**（只影响模型选工具 / 填参数的准确率，
+    不影响正确性；MCP 层会按 `AiParamType` 自动补一句，见 `docs/API.md` §25.3）。
+  · **协议层 / MCP 的 destructive 仍然默认拒绝**：应用内助手自己有确认框（`docs/API.md` §26.4），
+    但 `curl` / MCP 这条路上没有宿主注入确认器（`setAiConfirmer()`）—— 想让 Claude Desktop 真去删图层，
+    得先给协议层接一个真确认 UI。
+  · **特效与变换走 `Session.maskOp()` 的「结构快照」**（`History.pushStruct`：整档 before / after 各一份），
+    不是 `pushPixels` 的稀疏像素差分。这是**不动 `session.ts` / `history.ts` 接口**这条口径下的**有意取舍**：
+    ① C1 的硬口径是「写入经 `Session` 既有方法」，`ai-draw.ts` 因此完全不 import `History`；
+    ② 变换会顺手改选区掩码，只有结构快照能把它一起撤销。代价是**大画布**（1024² × 多图层）下一步要
+    两份整档快照（像素画常态 64²～256² 无所谓）。**要换差分从哪里下手**：给 `Session.maskOp()` 加一个
+    「只记像素」的开关，或让 `ai-draw.ts` 直接走 `History.pushPixels` —— 两条都要改 `src/app/session.ts` /
+    `src/engine/history.ts` 的接口，本轮明确不做（计划见 `docs/API.md` §22.8 末尾）。
+  · **`docRev` 是单调修订号，不是内容指纹**：`Doc.restore()` 自己会 `pixelRev++`，所以回滚 / undo / redo
+    也让它 +1；判断「是否回到原样」要比**内容**（图层 / 调色板 / cel 字节），不能比 rev（`docs/API.md` §23.3 第 11 条）。
+  · **读回口径已修（P14）**：`readRegion` 在「字节 → hex」那一步反乘（内部 `straightHexAt()`），
+    所以半透明像素读回来是**直通 RGBA**，与工具入参 `#rrggbbaa`、`doc.palette` 三者一致
+    （`a=255` 恒等 / `a=0` 记 `.` / `0<a<255` 允许每通道 ±1、上界 ≈ `ceil(255/(2a))` / `a=1` 不可还原；
+    边界见 `docs/API.md` §21.2）。**写入 / 合成 / 渲染一行未动**，改的只是读侧解释。
+  · `palette_from_canvas`（`Session.paletteFromCanvas`）与这条读回口径**同源但本轮未修**：它直接遍历
+    `doc.cels` 的**原始字节**取色（存的是预乘值），没走 `straightHexAt()`，所以「从画布生成调色板」
+    与 `read_region` 读同一批半透明像素时两边可能对不上。修它要动 `src/app/session.ts`，本轮明确不做
+    （见 `docs/API.md` §21.4）。
+  · **cel 字节的「存储语义」在本仓库里并不统一**（本轮最有价值的缺口，**别当成 bug 顺手改**）：
+    `blendOver`（`src/engine/color.ts`，写半透明像素走它）把 RGB **按 alpha 缩过**再存，
+    而 `resample` / `blurCel` / `compositor.celToCanvas` 都把**同一批字节当直通 RGBA**处理
+    （前者乘完再除回来、后两者直接 `putImageData`）—— 同一块 cel，读法不同、结果不同。
+    **统一它一定会改画面观感**（存量半透明像素的显示会变），**须先问用户**再动；本轮只把读侧解释
+    （`readRegion`）修到自洽。
+  · `readRegion` 的 `opts.fi` / `opts.li` 小数仍**静默截断**（`applyOps` 侧已统一成 `warnings`，两条路径口径暂时不一致）。
   · **跨画布 AI 回合的 History entry 是 payload-less**：`history.dump()` 实测返回 `[]`，会让该步与**更早步骤**
-    一起从 `.pxc` 内嵌历史里消失（单画布走 `pushStruct` 可序列化；in-session 一条 undo 仍覆盖两张画布）；
+    一起从 `.pxc` 内嵌历史里消失（单画布走 `pushStruct` 可序列化；in-session 一条 undo 仍覆盖两张画布）。
   · 回合开着时**页面隐藏的同步 flush 会早退**：回合跨过「页面隐藏 + 进程被杀」时，回合开始前那几笔不落盘
-    （口径 4 的固有取舍）；
-  · 模块级 `lastCommitError` 在「回合没开」早退时**不清**，可能携带上一次的陈旧错误（一行加固未做）；
-  · **History 层显式批量抑制开关 / 回合看门狗：本轮决定不做**（会改 `History` 语义并牵动 90+ 提交的回归面）；
-  · **C4（电脑侧 MCP 转发）与 C5（应用内助手、key 管理、聊天窗、destructive 确认 UI）未做**；
+    （口径 4 的固有取舍）。
+  · 模块级 `lastCommitError` 在「回合没开」早退时**不清**，可能携带上一次的陈旧错误（一行加固未做）。
+  · **History 层显式批量抑制开关 / 回合看门狗：本轮决定不做**（会改 `History` 语义并牵动 90+ 提交的回归面）。
+  · **契约勘误（写进仓库，别让它只活在任务记录里）**：C5 那次的 inScope 把第 10 个改动文件写成
+    **不存在的 `src/ui/settings.ts`**，实际改的是 **`src/app/settings.ts`**（`CHAT_SETTINGS` +
+    `SETTING_SECRET_PATHS`）；运行时按 inScope 拒收越界路径，所以那次记录里只有 9 项 + 一行 output 勘误。
+    以后写任务 inScope 请对着真实路径抄。
   · 若干**弱断言**（例如 `digest.tokens` 用同一个公式反推期望值，只保证自洽、不保证预算真实）。
 
 ---
@@ -461,7 +498,7 @@ stamp 从 `-T/2` 起画，早先的锚点比顶点偏左 `T/2`，栅格 / 足迹
 基线表写进 `docs/COMPARISON.md` §三.1，AGENTS §7 记了「不做 overlay」的理由与下一步该做的去分配。
 AI 本地工具服务（C0–C3，1.1.1.9 之后）：`src/app/ai-doc.ts`（`docDigest` / `readRegion` / `applyOps` 三个纯函数：
 颜色身份 = RGBA 四通道、palette 写 `#rrggbbaa`、空 ops 恒 `ok`、cel 惰性创建、完全在画布外时 `w=h=0` 且 `x/y`
-回显请求坐标）+ `src/app/ai-tools.ts`（48 个工具 = read 4 / draw 38 / destructive 5 / ui 1；`callTool` 顺序固定
+回显请求坐标）+ `src/app/ai-tools.ts`（**当时** 48 个工具 = read 4 / draw 38 / destructive 5 / ui 1；`callTool` 顺序固定
 「校验 → destructive 确认 → 执行」；**tier 只决定要不要确认与 `listTools` 默认给不给，不决定能不能调**）
 + `src/app/ai-turn.ts`（一轮一条 undo + 回合期间不刷 autosave + `runAiTurn` 安全入口）+ `src/app/ai-rpc.ts`
 （传输无关的协议路由，一份 `route()` 喂同步 / 异步两个入口）+ `src/app/ai-serve.ts`（JS 生命周期、`window.__pc_ai_call`、
@@ -473,6 +510,21 @@ health 的 body 是空串；异步挂起走空串 + `PixelBridge.aiRespond`（�
 空闲 300s 无请求自动 rollback。设置项 `ai.server` / `ai.port` / `ai.tier` / `ai.turnIdleSec`
 （默认 `false` / `8787` / `read` / `300s`）。**APK 新增 `INTERNET` 权限**（Android 上监听本地端口也要它）：
 服务默认关闭、只绑 `127.0.0.1`、应用不发起任何出站请求。接口见 `docs/API.md` §21–§24，缺口见 §7。
+AI 工具面与电脑侧入口（本轮，1.1.1.9 之后）：**P1 像素级绘制工具面** —— 新适配层 `src/app/ai-draw.ts`
+（组合 `Stroke` 笔迹 / 形状 / 油漆桶 / 擦除 + `engine/effects.ts` 的 8 个既有特效 + `tools/xform.ts` 纯仿射与
+`tools/select.ts` 浮动模型；**不 import `History`**，历史一律由 `Stroke.commit()` / `Session.maskOp()` 压栈，
+`tests/ai-draw.test.ts` 用与 `ai-tools.test.ts` 同一条静态规则盯着）把 13 条新工具（`draw_path` / `draw_shape` /
+`fill` / `erase` / `transform` / `fx_outline`+`fx_inline`+`fx_shadow`+`fx_glow`+`fx_invert`+`fx_gray`+
+`fx_round`+`fx_blur`）接到工具表：48 → **61 条 = read 4 / draw 49 / destructive 7 / ui 1**（`erase` / `transform`
+归 destructive —— 它们删 / 移已有像素）。**C4 电脑侧 MCP 入口**：`toolchain/pc-mcp.mjs`（stdio 换行分隔
+JSON-RPC 2.0 ↔ 本机 `POST /ai`，`tools/list` 现取现映射、`tools/call` 不吞错；宿主配置示例见 `docs/API.md` §25）
++ **P7 电脑桌面壳** `toolchain/pc-shell.mjs` / `pc-shell.cmd`（伺服站点 + 同端口 `/ai` + SSE 把请求转发进
+窗口页面，协议与 APK 的 `AiServer.java` 一致；`--token` / `AI_TOKEN` 真正生效、banner 文案改准）。
+**C5 应用内助手**：`src/app/ai-chat.ts`（OpenAI 兼容整轮循环 + 预览后应用 + 失败一律 rollback）+
+`src/ui/AiPanel.tsx`（对话 / 调用摘要 / 应用·放弃 / destructive 复用 `askConfirm`）+ `CHAT_SETTINGS`
+（`ai.chatOn` / `ai.chatEndpoint` / `ai.chatModel` / `ai.chatKey`：**单独一张表不并进 `SETTINGS`**、key 走
+`SETTING_SECRET_PATHS` 不进导出、文本行走 `SettingDef.text` **不新增 `SettingKind`**）+ 主菜单入口与
+`i-ai-chat` 图标。接口见 `docs/API.md` §22.8 / §25 / §26，缺口与取舍见 §7。
 
 ---
 
@@ -488,7 +540,7 @@ health 的 body 是空串；异步挂起走空串 + `PixelBridge.aiRespond`（�
 | [`docs/COMPARISON.md`](docs/COMPARISON.md) | 与 Aseprite / Resprite 的对比、痛点复盘与优先级（含最新进展表） |
 | [`docs/COMPARISON-pixelover-pixelcomposer.md`](docs/COMPARISON-pixelover-pixelcomposer.md) | 与 PixelOver / Pixel Composer 的三方对比（只比 2D）：速览表 + 能力大对照表 + 差异化优势 + 缺口清单（含来源与待核清单） |
 | [`docs/PLAN-isobuilder.md`](docs/PLAN-isobuilder.md) | **等距构建（三视图 → 等距像素画）的可行性方案**：上游功能拆解、视觉外壳算法、像素几何口径、与现有能力的映射、分期计划与工作量、风险与落地文件清单 |
-| [`docs/PLAN-ai.md`](docs/PLAN-ai.md) | **AI 接入方案与分期进度（C0–C3 已落地）**：三个轴（操作 / 生成 / 理解）拆解、三条路线（应用内助手 / 本机工具服务 / 先做地基）与工作量、工具面与权限分级、文档文本化与 token 预算、AI 回合事务、key 与本地端口的安全模型、风险表、待决策问题、落地文件清单与实际进度表（§10）；**接口契约 §5.1 的偏差订正**（palette 含 alpha、`AiSessionLike`、空 ops 恒 ok、`commitTurn(): boolean`、`runAiTurn` 安全入口等）。实现接口见 `docs/API.md` §21–§24（ai-doc / ai-tools / ai-turn / AI 本地工具服务） |
+| [`docs/PLAN-ai.md`](docs/PLAN-ai.md) | **AI 接入方案与分期进度（C0–C5 已落地）**：三个轴（操作 / 生成 / 理解）拆解、三条路线（应用内助手 / 本机工具服务 / 先做地基）与工作量、工具面与权限分级、文档文本化与 token 预算、AI 回合事务、key 与本地端口的安全模型、风险表、待决策问题、落地文件清单与实际进度表（§10）；**接口契约 §5.1 的偏差订正**（palette 含 alpha、`AiSessionLike`、空 ops 恒 ok、`commitTurn(): boolean`、`runAiTurn` 安全入口等）。实现接口见 `docs/API.md` §21–§26（ai-doc / ai-tools / ai-draw / ai-turn / AI 本地工具服务 / MCP 入口 / 应用内助手） |
 | `AGENTS.md`（本文件） | AI 代理约定：环境、命令、架构、工程约定、出包 runbook、已知缺口、交互与派活规则（§10） |
 
 ---

@@ -1,7 +1,10 @@
 # AI 接入（应用内助手 / 本地工具服务 / MCP）· 方案与决策
 
-> 状态：**C0–C3 已落地**（方案 2026-09-14 定稿；分期进度见 §10，落地文件见 §8，接口文档见
-> [`docs/API.md`](API.md) §21–§24）。决策点见 §7，本文只保留方案与契约。
+> 状态：**C0–C5 已落地**（方案 2026-09-14 定稿；分期进度见 §10，落地文件见 §8，接口文档见
+> [`docs/API.md`](API.md) §21–§26）。C4 = 电脑侧 MCP 入口 `toolchain/pc-mcp.mjs`（+ 桌面壳
+> `toolchain/pc-shell.mjs`），C5 = 应用内助手 `src/app/ai-chat.ts` + `src/ui/AiPanel.tsx`，
+> 另有一批 P1 像素级绘制工具（`draw_path` / `draw_shape` / `fill` / `erase` / `transform` / `fx_*`×8，
+> 落笔在 `src/app/ai-draw.ts`）。决策点见 §7，本文只保留方案与契约。
 > **接口以代码为准**：§5.1 是「照着写代码用的」契约，落地过程中出现的偏差已逐条订正（见 §5.1 末尾
 > 「落地后的订正」），改动都写了为什么。
 > 本文只讨论**怎么让 AI 操作这个软件**；「AI 直接生成像素画」当作工具表里的一个工具，见 §1.1。
@@ -54,7 +57,7 @@
 | 唯一改动入口 `Session` | `src/app/session.ts`（约 4.2k 行，公开方法 **287** 个） | AI 只需要一个 `Session` 句柄，不需要 UI |
 | 动作表 + 动作目录 | `Session.allActions()` / `actionById()` / `registerOrbCatalog()`；`src/ui/App.tsx` 里注册 **54+** 条 `{id,label,icon,group,run}` | **工具 schema 的现成来源**；`ActionSearchModal` 已经是它的 UI 壳 |
 | 一切可撤销 | `engine/history.ts`：`record` / `pushPixels` / `pushStruct`；`Session.struct()` | 一轮 AI 操作可合成**一条** undo（§3.3） |
-| 无 DOM 回归套件 | `tests/`（**3847 条断言**，`node .ts-out/tests/run-tests.js`） | 工具层可以像引擎一样被回归测试，不需要模拟器 |
+| 无 DOM 回归套件 | `tests/`（**7376 条断言**，`node .ts-out/tests/run-tests.js`） | 工具层可以像引擎一样被回归测试，不需要模拟器 |
 | 文档即数据 | `Doc` / `Cel.data`（RGBA `Uint8ClampedArray`）/ `palette: RGBA[]` / `Sel.mask` | 可以给模型**文本化视图**：32×32 只有 1024 像素，token 便宜（§3.2） |
 | 工程文件与图片 IO | `io/project.ts`（`.pxc`）、`io/aseread.ts` / `io/asewrite.ts`、`io/exporters.ts`（`pngBytes` / `encodeGIF`） | AI 可读写工程、导出预览图 |
 | 合成器能出图 | `render/compositor.ts`（`composeRectInto` 等） | 需要「给模型看一张图」时用它合成 PNG |
@@ -249,10 +252,10 @@ Claude Desktop / 你的 agent ──stdio MCP──> pc-mcp（电脑侧，几十
 | 工具 | 落到哪 | 现状 |
 |---|---|---|
 | `doc_digest` / `read_region` | 新写（读 `Doc` / `Cel` / `palette` / `Sel`） | 需新增（纯函数，易测） |
-| `draw_path` / `draw_shape` | `tools/stroke.ts` 的 `Stroke` + `ToolKind` | 类可无 UI 实例化，但需要一层参数适配与"无 View"入口 |
-| `fill`（油漆桶/渐变） | `engine/paint.ts`（区域填充与渐变）、`engine/shape.ts` | 有算法；需要文档空间的入口（`Session.quickFill` 现在依赖 `view_`） |
-| `fx_*`（描边/内描边/圆角/模糊/反相/去饱和/投影/外发光） | `engine/effects.ts`（8 个函数） | 有算法；**目前只有弹窗流程**，需要无 UI 入口 |
-| `transform`（移动/缩放/旋转/斜切） | `tools/xform.ts`（纯函数层）+ `tools/select.ts` 的浮动模型 | 有；需要"以参数直接给结果"的入口（现在是手势驱动） |
+| `draw_path` / `draw_shape` | `tools/stroke.ts` 的 `Stroke` + `ToolKind` | **已落地**（`src/app/ai-draw.ts`）：`Stroke` 无 UI 实例化 + 参数适配层 |
+| `fill`（油漆桶/渐变） | `engine/paint.ts`（区域填充与渐变）、`engine/shape.ts` | **已落地**（`src/app/ai-draw.ts`）：走 `Stroke(kind="bucket")`，含相似色容差 / 封口 / 渐变 / 全局填充 |
+| `fx_*`（描边/内描边/圆角/模糊/反相/去饱和/投影/外发光） | `engine/effects.ts`（8 个函数） | **已落地**（`src/app/ai-draw.ts`）：8 个既有函数全给（`fx_outline` / `fx_inline` / `fx_shadow` / `fx_glow` / `fx_invert` / `fx_gray` / `fx_round` / `fx_blur`），作用范围 = 整个图层或当前选区 |
+| `transform`（移动/缩放/旋转/斜切） | `tools/xform.ts`（纯函数层）+ `tools/select.ts` 的浮动模型 | **已落地**（`src/app/ai-draw.ts`）：`move` / `scale`（可镜像）/ `rotate`（带干净角吸附）三种 mode，口径与 `View.endXf()` 对齐；斜切仍只在 UI 里 |
 | `warp`（四角/网格变形） | `tools/warp.ts` | 同上 |
 | `scale`（高级缩放） | `engine/resample.ts` + `Session.scaleAdvanced()` | **已经是纯参数入口**，可直接暴露 |
 | `iso_*`（等距体） | `engine/iso.ts` + `Session.isoGenerate()` | **已经是参数入口**，可直接暴露 |
@@ -482,34 +485,44 @@ isTurnOpen(): boolean
 | 文件 | 内容 | 期 |
 |---|---|---|
 | `src/app/ai-doc.ts` | 摘要 / 区域读 / 结构化操作应用（纯函数，无 DOM） | C0 |
-| `src/app/ai-tools.ts` | 工具表（schema + 校验 + 分发 + tier），48 个工具 | C1 |
+| `src/app/ai-tools.ts` | 工具表（schema + 校验 + 分发 + tier），48 → **61 个工具**（P1 补了 13 条） | C1 / P1 |
+| `src/app/ai-draw.ts` | **P1 适配层**：把 `draw_path` / `draw_shape` / `fill` / `erase` / `transform` / `fx_*`×8 翻成 `Stroke`、`engine/effects.ts`、`tools/xform.ts` + 浮动模型的一次调用（不 import `History`） | P1 |
 | `src/app/ai-turn.ts` | 回合事务（一轮一条 undo + 回合期间不刷 autosave） | C2 |
 | `src/app/ai-rpc.ts` | 传输无关的协议路由（一份 `route()` 喂同步 / 异步两个入口） | C3 |
 | `src/app/ai-serve.ts` | JS 生命周期：读设置起停、`window.__pc_ai_call`、诊断、回合收尾 | C3 |
+| `src/app/ai-chat.ts` | **C5 助手逻辑层**：OpenAI 兼容的整轮循环（function calling）+ 预览后应用（不 import `window`，`fetch` 注入，可单测） | C5 |
+| `src/ui/AiPanel.tsx` | **C5 助手面板**：对话 / 调用摘要 / 「应用 · 放弃」；`isNativeShell()` 门控 | C5 |
 | `android/java/com/pixelcraft/app/AiServer.java` | 本机端口 + token + 只转发（纯 JDK socket，无 `import android.*`） | C3 |
 | `toolchain/ai-server.mjs` | Node 开发宿主（只绑 `127.0.0.1`，复用编译产物，不重写协议） | C3 |
+| `toolchain/pc-mcp.mjs` | **C4 电脑侧 MCP 入口**：stdio（换行分隔 JSON-RPC 2.0）↔ 本机 HTTP 工具的薄转发，工具表现取现映射 | C4 |
+| `toolchain/pc-shell.mjs` + `pc-shell.cmd` | **P7 电脑侧最小启动器壳**：伺服 `app2/www` + 同端口 `/ai` 入口 + SSE 把请求转发进窗口页面（协议与 APK 一致，不重写）；`.cmd` 是 Windows 双击入口 | P7 |
 | `tests/ai-doc.test.ts` / `ai-tools.test.ts` / `ai-turn.test.ts` / `ai-rpc.test.ts` | 四期的回归 | C0–C3 |
+| `tests/ai-draw.test.ts` / `ai-chat.test.ts` | P1 适配层（同一条「无新增写入路径」静态规则）与 C5 整轮循环的回归 | P1 / C5 |
 
 **已落地（改动）**
 
 | 文件 | 改了什么 | 期 |
 |---|---|---|
 | `src/app/session.ts` | 回合门面（`beginAiTurn` / `previewAiTurn` / `commitAiTurn` / `rollbackAiTurn` / `aiTurnOpen` / `aiTurnHandle` / `runAiTurn` / `aiTurnAutosaveSuppressed`、`aiTurnAutosaveHeld` 旗） | C2 |
-| `src/app/settings.ts` + `src/ui/i18n.ts` | 四个声明式设置项 `ai.server` / `ai.port` / `ai.tier` / `ai.turnIdleSec`（自成极小存储，不进 `Session.prefs`） | C3 |
-| `src/io/bridge.ts` | `aiServerStart` / `aiServerStop` / `aiServerStatus` / `aiRespond` / `__pc_ai_call` 声明与桥接 | C3 |
+| `src/app/settings.ts` + `src/ui/i18n.ts` | 四个声明式设置项 `ai.server` / `ai.port` / `ai.tier` / `ai.turnIdleSec`（自成极小存储，不进 `Session.prefs`）；C5 又加了 `CHAT_SETTINGS` 那一组（`ai.chatOn` / `ai.chatEndpoint` / `ai.chatModel` / `ai.chatKey`，**单独一张表不并进 `SETTINGS`**，key 走 `SETTING_SECRET_PATHS`） | C3 / C5 |
+| `src/ui/modals.tsx` | 设置页的**文本行**（`SettingDef.text`，`"password"` 走密文输入，不新增 `SettingKind`）+ 主菜单「AI 助手」入口（`isNativeShell()` 门控）+ 面板挂载 | C5 |
+| `src/ui/feature-icons.ts` + `app2/www/index.html` | 助手入口的专属图标 `i-ai-chat`（`tests/icons.test.ts` 校验组内唯一） | C5 |
+| `src/io/bridge.ts` | `aiServerStart` / `aiServerStop` / `aiServerStatus` / `aiRespond` / `__pc_ai_call` 声明与桥接（`isNativeShell()` 也是 C5 的助手平台门） | C3 / C5 |
 | `src/main.tsx` | `installAiServe(...)` 接线（起停提示、回合空闲秒数现读设置） | C3 |
 | `android/java/com/pixelcraft/app/MainActivity.java` | `PixelBridge` 加 4 个 AI 方法，桥接 `window.__pc_ai_call` 与 `aiRespond` | C3 |
 | `android/AndroidManifest.xml` | 加 `INTERNET`（**只为开本机端口**，服务默认关闭） | C3 |
-| `.gitignore` | `toolchain/*` 白名单加 `!/toolchain/ai-server.mjs` | C3 |
-| `tests/run-tests.ts` + `tests/tsconfig.json` | 四个新测试文件与 `--- ai doc/tools/turn/rpc ---` 段落 | C0–C3 |
-| `docs/API.md` / `README.md` / `AGENTS.md` / 本文 | 新模块小节（API §21–§24）、功能表、文档地图、已知缺口 | 每期 |
+| `.gitignore` | `toolchain/*` 白名单加 `!/toolchain/ai-server.mjs`、`!/toolchain/pc-mcp.mjs`、`!/toolchain/pc-shell.mjs`、`!/toolchain/pc-shell.cmd` | C3 / C4 / P7 |
+| `tests/run-tests.ts` + `tests/tsconfig.json` | 新测试文件与 `--- ai doc/tools/draw/turn/rpc/chat ---` 段落 | C0–C5 |
+| `docs/API.md` / `README.md` / `AGENTS.md` / 本文 | 新模块小节（API §21–§26）、功能表、文档地图、已知缺口 | 每期 |
 
-**未落地（后续期）**
+**未落地（后续期，本轮明确不做）**
 
-| 文件 | 内容 | 期 |
+| 项 | 内容 | 为什么不在这轮 |
 |---|---|---|
-| `toolchain/pc-mcp.mjs`（暂定） | stdio MCP → 本地 HTTP 的薄转发 | C4 |
-| `src/ui/AiPanel.tsx`（暂定） | 状态 / 开关 / token 显示、聊天窗、确认弹框 | C5 |
+| 协议层 / MCP 的 destructive 确认器 | 让外部宿主（`curl` / Claude Desktop）也能确认删图层、清空画布这类操作 | 需要宿主侧的真确认 UI（`setAiConfirmer()` 的接线）；**应用内助手已经有确认框**（API §26.4），两条路别混为一谈 |
+| `warp` / `shading` / `export_*` / `render_preview` / `generate_sprite` 工具 | §4 映射表里剩下的条目（网格变形、色彩明暗、无 UI 导出、视觉回环、文生像素） | 与「操作轴地基」无关，属生成 / 理解轴，或需要额外的无 UI 入口 |
+| `apply_ops` 批量入口 | 一次调用应用一串结构化操作 | C1 起就没做：工具表只做「参数适配 + 调 `Session` 既有方法」，`applyOps` 只是 C0 的纯函数 |
+| `search_tools` / 常用工具前置 | 工具面变大后的「选工具」辅助 | 61 条工具仍在模型的上下文预算内（§3.2 的 token 估算） |
 
 ---
 
@@ -533,8 +546,9 @@ isTurnOpen(): boolean
 |---|---|---|
 | 方案稿（本文） | ✅ 2026-09-14 | 本文 |
 | C0 文本化 | ✅ 完成 | `src/app/ai-doc.ts` + `tests/ai-doc.test.ts`（`aidoc` 段落 195 条断言）；边界口径与 token 预算见 §5.1 与 `docs/API.md` §21 |
-| C1 工具表 | ✅ 完成 | `src/app/ai-tools.ts` + `tests/ai-tools.test.ts`（`aitools` 段落 1138 条断言）：48 个工具 = read 4 / draw 38 / destructive 5 / ui 1；`docs/API.md` §22 |
+| C1 工具表 | ✅ 完成 | `src/app/ai-tools.ts` + `tests/ai-tools.test.ts`（`aitools` 段落 1138 条断言）：**当时** 48 个工具 = read 4 / draw 38 / destructive 5 / ui 1（P1 之后是 61 条，见下表）；`docs/API.md` §22 |
 | C2 回合事务 | ✅ 完成 | `src/app/ai-turn.ts` + `src/app/session.ts` 门面 + `tests/ai-turn.test.ts`（`aiturn` 段落 206 条断言）：一轮一条历史、回合期间不刷 autosave、`runAiTurn` 安全入口；`docs/API.md` §23 |
 | C3 本地工具服务 | ✅ 完成 | `src/app/ai-rpc.ts` + `src/app/ai-serve.ts` + `toolchain/ai-server.mjs` + `android/…/AiServer.java` + `MainActivity` 桥接 + `INTERNET` + 四个设置项（默认关闭 / 只绑 `127.0.0.1` / 默认 `read`）：协议表、状态码、回合收尾守卫见 `docs/API.md` §24 |
-| C4 MCP 转发 | ⬜ 未开始 | 计划 `toolchain/pc-mcp.mjs`（§3.5） |
-| C5 应用内助手 | ⬜ 未开始 | 计划 `src/ui/AiPanel.tsx` + key 管理 + 聊天窗 + destructive 确认 UI（`docs/API.md` §24.8） |
+| P1 像素级工具面 | ✅ 完成 | 13 条新工具（`draw_path` / `draw_shape` / `fill` / `erase` / `transform` / `fx_*`×8）：工具表 48 → **61**（read 4 / draw 49 / destructive 7 / ui 1）；落笔在 `src/app/ai-draw.ts`（只组合既有写入通道，**不新增写入路径**），回归 `tests/ai-draw.test.ts`；接口与 tier 判据见 `docs/API.md` §22.8 |
+| C4 MCP 转发 | ✅ 完成 | `toolchain/pc-mcp.mjs`：stdio（换行分隔 JSON-RPC 2.0）↔ 本机 `POST /ai` 的薄转发，`tools/list` 现取现映射、`tools/call` 不吞错；配套电脑侧壳 `toolchain/pc-shell.mjs` + `pc-shell.cmd`（伺服站点 + 同端口 `/ai` + SSE 转发进窗口页面）。用法、环境变量、宿主配置与三个工具数口径见 `docs/API.md` §25 |
+| C5 应用内助手 | ✅ 完成 | `src/app/ai-chat.ts`（OpenAI 兼容整轮循环 + **预览后应用** + 失败一律 rollback）+ `src/ui/AiPanel.tsx`（对话 / 调用摘要 / 应用·放弃 / destructive 确认框）+ `CHAT_SETTINGS`（`ai.chatOn` / `ai.chatEndpoint` / `ai.chatModel` / `ai.chatKey`，**key 只存本机、不进设置导出**）+ `tests/ai-chat.test.ts`；接口与安全口径见 `docs/API.md` §26 |

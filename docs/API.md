@@ -38,6 +38,8 @@
 22. [AI 工具表 `app/ai-tools.ts`](#22-ai-工具表-appai-toolsts)
 23. [AI 回合事务 `app/ai-turn.ts` 与 Session 门面](#23-ai-回合事务-appai-turnts-与-session-门面)
 24. [AI 本地工具服务（C3）](#24-ai-本地工具服务c3)
+25. [MCP 入口 `toolchain/pc-mcp.mjs` 与电脑侧壳 `toolchain/pc-shell.mjs`](#25-mcp-入口-toolchainpc-mcpmjs-与电脑侧壳-toolchainpc-shellmjs)
+26. [应用内助手 `app/ai-chat.ts` + `ui/AiPanel.tsx`](#26-应用内助手-appai-chatts--uiaipaneltsx)
 
 ---
 
@@ -2451,7 +2453,7 @@ Stroke 侧：`BrushState.pattern` 一填，落笔统一走 `paintOne()`——图
 ### 测试
 
 ```bash
-npm test        # 3972 条断言：引擎 / 选区 / 历史 / 播放 / 设置 / 引导 / 渲染 / 导出 / Aseprite 读写 / 返回手势 / UI 控件与令牌（末尾打印 assertions: N）
+npm test        # 7376 条断言：引擎 / 选区 / 历史 / 播放 / 设置 / 引导 / 渲染 / 导出 / Aseprite 读写 / 返回手势 / UI 控件与令牌 / AI（ai-doc / tools / draw / turn / rpc / chat）（末尾打印 assertions: N）
 ```
 
 新增纯逻辑（算法、布局、解析、决策）时，优先抽成无 DOM 依赖的函数再补一条 `tests/*.test.ts` 断言——这是本项目保持可回归的主要手段。
@@ -2601,6 +2603,20 @@ readRegion(doc: Doc, rect: Rect, opts?: AiReadOpts): AiRegion
 理由：`x/y` 的语义是「实际读到的区域」，而 `w = h = 0` 时「实际读到」就是空，此时请求矩形才是
 「读的是哪块」的真相；否则同一件事会给出两种形状（`x=10` 回 10、`x=-10` 回 0），模型会误判起点。
 
+**颜色口径（读侧反乘，t14 定稿）**：`palette` 里的颜色是**直通 RGBA**（`#rrggbb` / `#rrggbbaa`），
+**不是预乘值**，与工具入参的颜色字面量、`doc.palette` 三者同口径 ——「AI 写进去什么颜色，读回来就是什么颜色」。
+为什么需要这一步：写入路径（`engine/paint.ts` → `engine/color.ts` 的 `blendOver`）存进 cel 的字节是
+**按 alpha 缩过**的（透明底上写 `#ff000080`，字节是 `[128,0,0,128]`），所以 `readRegion` 在
+**字节 → hex 那一步**做反乘（内部函数 `straightHexAt(data, i, a)`：`round(rgb * 255 / a)`）。
+**写入 / 合成 / 渲染一行未动**，改的只是读侧解释。
+
+- `a === 255`：**恒等**（预乘与直通在 alpha=255 时数值相同；与加这个反乘之前逐字节一致）；
+- `a === 0`：一律记 `.`（全透明，不进 `palette`），不会走到反乘分支；
+- `0 < a < 255`：允许**每通道 ±1 的取整误差**，上界 ≈ `ceil(255 / (2a))`（a≥128 时 ≤±1、a=64 ±2、
+  a=8 ±16）—— 根源是写入那一步已经把 RGB 量化成 `round(rgb*a/255)`，**信息不可逆**，不是读回 bug；
+- `a = 1`：写入时只剩 1 个色阶，原始色**不可还原**（同上，写入侧的取舍）；
+- `digest` 只输出 `doc.palette`（不含 cel 字节），本来就直通，不受这条影响。
+
 排版：调色板 ≤ 52 色时索引用 `AI_INDEX_ALPHABET` 的单字符（`rle: true` 且不超 52 色时行内 RLE 成 `2a3b`，
 单次省略次数）；超过 52 色退回**定宽十六进制**索引并自动关闭 RLE。`text` 末尾的 `note:` 行会说明 RLE 开启、
 定宽回退、半透明像素数（`N 个半透明像素按 RGBA 单独占索引，alpha 见 palette 的 #rrggbbaa`）与 `clipped`。
@@ -2672,6 +2688,10 @@ applyOps(doc: Doc, ops: AiOp[], ctx: AiApplyCtx): AiApplyResult
 
 **已知缺口**：
 
+- **`Session.paletteFromCanvas`（工具 `palette_from_canvas`）与 §21.2 的读回口径同源、本轮未修**：
+  它直接遍历 `doc.cels` 的**原始字节**取色（`session.ts` 的 `paletteFromCanvas`），拿到的半透明颜色是
+  **预乘值**，没走 `straightHexAt()` —— 于是「从画布生成调色板」与 `read_region` 读同一批半透明像素时，
+  两边给出的颜色可能对不上。修它要动 `src/app/session.ts`，本轮明确不做（记在 `AGENTS.md` §7）。
 - `readRegion` 的 `opts.fi` / `opts.li` 小数仍是**静默截断**（`intOr` 里的 `Math.trunc`），没走 `warnings`；
   `applyOps` 侧已经统一成 `warnings`（`clamped: li 0.4 → 0`），两条路径口径暂时不一致。
 - `tests/ai-doc.test.ts` 里少数断言偏弱（例如 `digest.tokens` 用同一个公式反推期望值），
@@ -2686,6 +2706,10 @@ applyOps(doc: Doc, ops: AiOp[], ctx: AiApplyCtx): AiApplyResult
 > （解析 fg/bg、把 `"current"` 换成当前图层/帧、把枚举串换成既有方法的联合类型），
 > **绝不新增写入路径** —— 不直接改 doc/cel/palette，不绕过 history。
 > `tests/ai-tools.test.ts` 静态扫源文件里所有 `s.<方法>(` 调用，逐个断言它真的存在于 `Session.prototype` 上。
+> **P1 像素级工具面（后来补的 13 条：`draw_path` / `draw_shape` / `fill` / `erase` / `transform` / `fx_*`×8）**
+> 的落笔逻辑放在适配层 `src/app/ai-draw.ts`（只组合 `tools/stroke.ts` 的 `Stroke`、
+> `engine/effects.ts` 的 8 个既有特效、`tools/xform.ts` 的纯仿射与 `tools/select.ts` 的浮动模型），
+> 表里这 13 条 handler 仍只做参数适配 —— 见 §22.8。
 
 ### 22.1 类型与常量
 
@@ -2727,7 +2751,7 @@ interface AiTool {
 const AI_ARG_CURRENT = "current";
 const AI_TIER_ORDER: readonly AiTier[] = ["read", "draw", "destructive", "ui"];
 const AI_TOOL_ACTION_IDS: readonly string[] = ["undo", "redo"];   // 复用动作表里真的有的两条
-const AI_TOOL_ID_WHITELIST: readonly string[] = [ /* 46 条自己新造的 id */ ];
+const AI_TOOL_ID_WHITELIST: readonly string[] = [ /* 59 条自己新造的 id */ ];
 ```
 
 ### 22.2 对外接口
@@ -2764,18 +2788,20 @@ idRegistrationDiff(): { missingFromTable: string[]; missingFromWhitelist: string
 **`tier` 只决定「要不要确认」与 `listTools` 默认给不给，不决定能不能调** —— 「放行开关」在
 C3 的服务层（设置项 `ai.tier`，见 §24.3）。
 
-### 22.4 工具清单与 `tier` 分布（48 = 4 + 38 + 5 + 1）
+### 22.4 工具清单与 `tier` 分布（61 = 4 + 49 + 7 + 1）
 
 | tier | 数 | id |
 |---|---|---|
 | `read` | 4 | `color_analyse`、`color_groups`、`doc_digest`、`read_region` |
-| `draw` | 38 | `color_merge_group`、`color_replace`、`color_select`、`frame_add`、`frame_duplicate`、`frame_duration`、`frame_move`、`frame_move_to`、`frame_select`、`iso_generate`、`iso_origin`、`iso_set`、`layer_add`、`layer_blend`、`layer_down`、`layer_duplicate`、`layer_move_to`、`layer_opacity`、`layer_rename`、`layer_select`、`layer_toggle_lock`、`layer_toggle_solo`、`layer_toggle_visible`、`layer_up`、`palette_add`、`palette_dedupe`、`palette_from_canvas`、`palette_merge`、`palette_remap`、`palette_remove`、`palette_sort`、`redo`、`tag_add`、`tag_remove`、`tag_rename`、`tag_set_color`、`tag_set_range`、`undo` |
-| `destructive` | 5 | `canvas_clear`、`frame_delete`、`layer_delete`、`layer_merge_down`、`scale` |
+| `draw` | 49 | `color_merge_group`、`color_replace`、`color_select`、`draw_path`、`draw_shape`、`fill`、`frame_add`、`frame_duplicate`、`frame_duration`、`frame_move`、`frame_move_to`、`frame_select`、`fx_blur`、`fx_glow`、`fx_gray`、`fx_inline`、`fx_invert`、`fx_outline`、`fx_round`、`fx_shadow`、`iso_generate`、`iso_origin`、`iso_set`、`layer_add`、`layer_blend`、`layer_down`、`layer_duplicate`、`layer_move_to`、`layer_opacity`、`layer_rename`、`layer_select`、`layer_toggle_lock`、`layer_toggle_solo`、`layer_toggle_visible`、`layer_up`、`palette_add`、`palette_dedupe`、`palette_from_canvas`、`palette_merge`、`palette_remap`、`palette_remove`、`palette_sort`、`redo`、`tag_add`、`tag_remove`、`tag_rename`、`tag_set_color`、`tag_set_range`、`undo` |
+| `destructive` | 7 | `canvas_clear`、`erase`、`frame_delete`、`layer_delete`、`layer_merge_down`、`scale`、`transform` |
 | `ui` | 1 | `set_tool` |
 
 `destructive` 的判定理由（对照 §3.6 举的「删图层 / 帧、清空画布、缩放画布、替换文档」）：
 `layer_delete`（删整层）、`layer_merge_down`（一层被并入另一层后消失，层数 -1）、`frame_delete`（删整帧）、
-`canvas_clear`（清空当前帧全部图层）、`scale`（改画布尺寸 + 重采样，唯一会改 `doc.w/h` 的工具）。
+`canvas_clear`（清空当前帧全部图层）、`scale`（改画布尺寸 + 重采样，唯一会改 `doc.w/h` 的工具）；
+P1 新增的 `erase`（把一块内容清成透明）与 `transform`（移走像素、可能把内容推出画布、缩放 / 旋转还会重采样）
+与 `scale` 同一类，也归这一档。
 `palette_remap` 与 `color_replace`（`scope = canvas`）是**画布级批量像素改写**，但它们
 ① 不改画布尺寸、② 不动图层 / 帧 / 标签结构、③ 一条历史可整条撤销，按 §3.1 的分档留在 `draw`。
 
@@ -2787,13 +2813,20 @@ C3 的服务层（设置项 `ai.tier`，见 §24.3）。
   补丁类工具（`iso_set` 只改想改的参数）需要**省略 = 不动这一项**，所以加一个可选的 `optional`：
   `optional: true` 且调用方没给值时，这个键**不进** `value`，handler 靠 `a.x !== undefined` 判断。
 
-### 22.6 坑点：`AiToolResult.changed` 不可依赖
+### 22.6 坑点：`AiToolResult.changed` 与 `data.changed` 同名不同义
 
-- 43 个写类工具（38 draw + 5 destructive）里只有 `iso_generate` / `scale` 给了矩形 `changed`；
-- 「改了 N 个像素」是 `data.changed`（**数字**，不是矩形，例如 `color_replace`）；
-- 大多数写操作 `changed === undefined`，**拿到它不是错误**；
+- 56 个写类工具（49 `draw` + 7 `destructive`）里只有 **15 条**给了矩形 `changed`：
+  P1 的 13 条（`draw_path` / `draw_shape` / `fill` / `erase` / `fx_*`×8 / `transform`）+
+  `iso_generate` + `scale`；其余（图层 / 帧 / 标签 / 调色板 / 结构类）`changed === undefined`，
+  **拿到它不是错误**；
+- **`data.changed` 有两套语义**，看工具自己的 `returns` 描述区分：
+  · `color_replace` / `palette_remap` 这类是**数字**（这次改了几个像素）；
+  · P1 那 13 条是**布尔**（这一次真的改了没有），像素数在 **`data.pixels`**；
 - 判定「改动生效了吗」一律用 **`docRev`**（前后比对 `result.docRev`）；需要脏矩形就用
   §23 的 `previewTurn()` / §24 的 `turn_preview`。
+  **`docRev` 是单调修订号不是内容指纹**：`Doc.restore()` 自己会 `pixelRev++`，所以
+  **回滚也会让它 +1**（§23.3 第 11 条）；判断「是否回到原样」要比**内容**
+  （图层 / 调色板 / cel 字节），不能比 rev。
 
 ### 22.7 工具 id 与 `Session.allActions()` 的对齐
 
@@ -2803,8 +2836,62 @@ C3 的服务层（设置项 `ai.tier`，见 §24.3）。
 测试断言的是**相等**：`AI_TOOL_ACTION_IDS ∪ AI_TOOL_ID_WHITELIST === 工具表 id 集合`（两个集合互不相交），
 所以加 / 删工具必须同时改白名单，白名单不会变成垃圾桶。
 
-**已知缺口**：89 个参数里 **52 个没有 `desc`**（只影响模型选工具 / 填参数的准确率，不影响正确性）；
-`list_tools` 报出去的就是这份 schema（§24.1），所以模型看到的是「一半参数只有类型与范围」。
+**已知缺口**：176 个参数里 **52 个没有 `desc`**（只影响模型选工具 / 填参数的准确率，不影响正确性）；
+`list_tools` 报出去的就是这份 schema（§24.1），所以模型看到的是「一部分参数只有类型与范围」
+（MCP 层会按 `AiParamType` 给这 52 个自动补一句说明，见 §25.3）。
+
+### 22.8 P1 像素级工具面（13 条，落笔在 `src/app/ai-draw.ts`）
+
+> 这一批是「让 AI 真的能画任意东西」的主体：`ai-tools.ts` 里这 13 条 handler 只做参数适配，
+> 调用落在**新适配层** `src/app/ai-draw.ts` —— 它组合 `tools/stroke.ts` 的 `Stroke`
+> （笔迹 / 形状 / 油漆桶 / 擦除）、`engine/effects.ts` 的 8 个既有特效、`tools/xform.ts` 的纯仿射
+> 与 `tools/select.ts` 的浮动模型。**两边都没有新增写入路径**：`ai-draw.ts` 不 import `History`、
+> 不调用 `history.*`，历史一律由 `Stroke.commit()`（`pushPixels`，无改动不压栈）或
+> `Session.maskOp()`（`pushStruct`）压栈；`tests/ai-draw.test.ts` 用与 `ai-tools.test.ts` 同一条
+> 静态规则盯着它。
+
+| id | tier | 关键参数 | 返回 | 落地 |
+|---|---|---|---|---|
+| `draw_path` | `draw` | `points`（`[x,y][]`，1..4096）、`tool`（`pencil`/`eraser`/`line`/`rect`/`ellipse`/`bucket`）、`size` 1..64、`color`（`#rgb`/`#rrggbb`/`#rrggbbaa`/`fg`/`bg`）、`sym`（`off`/`h`/`v`/`both`/`4`）、`fill`、`brush`?、`layer`/`frame` | `ok` / `changed`（并集矩形）/ `data.changed`（布尔）/ `docRev` | `Stroke`（`runStroke`）；`line`/`rect`/`ellipse` 要**恰好 2 个点**、`bucket` 恰好 1 个 |
+| `draw_shape` | `draw` | `shape`（`line`/`rect`/`ellipse`）、`from`/`to`、`fill`、`size`、`color`、`sym`、`brush`?、`layer`/`frame` | 同上 | `runStroke`（`from → to` 外接框；**不吃**「从中心绘制」开关） |
+| `fill` | `draw` | `at`（种子，必须在画布内）、`color`（`alpha=0` ＝ 擦掉这片区域）、`tolerance` 0..255、`gaps` 0..16、`global`、`gradient`/`gradientTo`/`gradientBlock`/`gradientAt`?、`sym`、`layer`/`frame` | 同上 | `runStroke(kind="bucket")`；`gradientAt` 只在 `gradient=true` 时有意义（否则报错） |
+| `fx_outline` | `draw` | `width` 1..16、`pos`（`outside`/`inside`/`center`）、`color` | `ok` / `changed` / `data.changed`（布尔）/ `data.pixels` / `docRev` | `effects.outlineCel` |
+| `fx_inline` | `draw` | `width` 1..8、`alpha` 0..100、`color` | 同上 | `effects.inlineCel` |
+| `fx_shadow` | `draw` | `dx`/`dy` -64..64、`color`、`alpha` 0..100 | 同上 | `effects.dropShadowCel` |
+| `fx_glow` | `draw` | `radius` 1..16、`color` | 同上 | `effects.outerGlowCel` |
+| `fx_invert` | `draw` | （无独有参数） | 同上 | `effects.invertCel` |
+| `fx_gray` | `draw` | （无独有参数） | 同上 | `effects.desaturateCel` |
+| `fx_round` | `draw` | `radius` 1..8、`mode`（`outer`/`both`） | 同上 | `effects.roundCornersCel` |
+| `fx_blur` | `draw` | `radius` 1..32 | 同上 | `effects.blurCel` |
+| `erase` | `destructive` | `rect`、`shape`（`rect`/`ellipse`）、`fill`、`sym`、`layer`/`frame` | 同上 | `runStroke`（色固定 `[0,0,0,0]`；有选区时只擦选区内，与橡皮工具一致） |
+| `transform` | `destructive` | `mode`（`move`/`scale`/`rotate`）、`scope`（`selection`/`layer`）、`dx`/`dy`、`sx`/`sy`（\|0.02..40\|，负值＝镜像）、`angle`、`snap`、`pivot`（9 档）、`layer`/`frame` | 同上 | `tools/select.ts` 浮动模型 + `tools/xform.ts` 纯仿射（口径与 `View.endXf()` 对齐） |
+
+8 条 `fx_*` 共用 `scope`（`layer` / `selection`）+ `layer` / `frame` 三个参数；
+其余共同口径：
+
+- **参数越界一律拒绝**（不静默钳制）；`transform` 里**与 mode 无关的参数是报错**而不是忽略
+  （模型按别的 mode 填了一组参数时，静默成功会得到「看起来对、其实没动」的结果）；
+- **没有真实改动就不动一个字节、也不压历史**：`fx_*` 先在 cel 副本上试跑一次拿差异
+  （`applyFx`），差值包围盒为空 → 直接返回 `ok:true, changed:false`；
+  `Stroke.commit()` 自己也不压空步、并删掉白建的 cel；
+- 失败都带可读原因：图层锁定 / 图层下标或帧下标不存在 / `scope=selection` 但没有选区 /
+  参考图层（只镜像别处像素，得去源画布做）。
+
+调用示例（协议层 `POST /ai` 的 `call_tool`；`layer` / `frame` 省略 = 当前）：
+
+```json
+{"call":"call_tool","args":{"id":"draw_path","args":{"points":[[2,2],[30,2],[30,30]],"tool":"pencil","size":2,"color":"#ff0000"}}}
+{"call":"call_tool","args":{"id":"transform","args":{"mode":"rotate","scope":"layer","angle":90,"pivot":"cc"}}}
+```
+
+**已知代价（有意取舍，不要当 bug 修）**：`fx_*` 与 `transform` 压的是 `Session.maskOp()`
+的**结构快照**（`History.pushStruct`：整档 before / after 各一份），而不是 `pushPixels`
+的稀疏像素差分。选它的理由有两条：① C1 的硬口径是「写入经 `Session` 既有方法」，
+`ai-draw.ts` 因此完全不 import `History`；② 变换会顺手改选区掩码，只有结构快照能把它
+一起撤销。代价是**大画布**下一步要两份整档快照（像素画常态 64²～256² 无所谓，
+1024² × 多图层时明显比稀疏差分贵）。**要换成差分从哪里下手**：给 `Session.maskOp()`
+加一个「只记像素」的开关，或让 `ai-draw.ts` 走 `History.pushPixels` —— 两条都要动
+`src/app/session.ts` / `src/engine/history.ts` 的接口，本轮明确不做（见 `AGENTS.md` §7）。
 
 ---
 
@@ -2876,6 +2963,10 @@ turnHandle(): AiTurnHandle                      // 交给 C1 的 AiToolCtx.turn
    —— 不留「闸门挂着但 `activeTurn` 为 null」的不可恢复窗口。
 10. 回合的「不动历史」是**临时影子掉** `History` 的三个压栈入口（`record` / `pushPixels` / `pushStruct`）
     实现的；影子残留在身后 = 用户此后的正常绘制**静默不进历史**（丢撤销），所以任何失败路径都必须 rollback。
+11. **`docRev`（`Doc.pixelRev`）是单调修订号，不是内容指纹**：`Doc.restore()` 自己会 `pixelRev++`，
+    所以 `rollbackTurn()` / undo / redo **都会让它 +1** —— 「rev 变了」只说明「有人写过或者被恢复过」，
+    不代表内容真的变了。判断「是否回到原样」要比**内容**（图层 / 帧 / 标签 / 调色板 / cel 字节）；
+    `previewTurn()` 的脏矩形就是这么算的（逐字节比对，见口径 7）。
 
 ### 23.4 回合期间的自动保存
 
@@ -2964,8 +3055,25 @@ turnHandle(): AiTurnHandle                      // 交给 C1 的 AiToolCtx.turn
 | `ai.tier` | 放行 | 说明 |
 |---|---|---|
 | `read`（默认） | §22 的 4 个 `read` 档工具 | 只读 |
-| `draw` | 再放开 38 个 `draw` 档 | 可以改画面 |
-| `all` | 再放开 5 个 `destructive` + 1 个 `ui` | destructive 每一项仍要确认 |
+| `draw` | 再放开 49 个 `draw` 档 | 可以改画面 |
+| `all` | 再放开 7 个 `destructive` + 1 个 `ui` | destructive 每一项仍要确认 |
+
+**工具数的两个口径别混写**（MCP 层是第三个，见 §25.3）：本表的档位记的是**能调**的集合，
+而 `list_tools` 报的是**能列**的集合 —— `ui` 档（`set_tool`）默认不列，所以档位 `all` 下
+`list_tools {}` 返回 **60** 条（4 + 49 + 7），**显式**在 `args.tiers` 里点名 `ui` 才 **61** 条。
+
+**tier 判据（与 `src/app/ai-tools.ts` 文件头逐条一致）**：
+
+- **`draw` ＝ 用画笔能画出的任何效果**：笔迹、形状、油漆桶、橡皮笔刷 —— 也包括**以透明色填充**
+  （`fill{color:"#00000000"}`）与**用橡皮画笔擦**（`draw_path{tool:"eraser"}`）：它们与界面里同一支笔
+  （油漆桶的「擦」、橡皮工具）逐字节同源，不因为「擦」这个字就换档。
+  ⚠ 这不等于 `draw` 档「无害」：`fill` 的 `tolerance=255` 配透明色一次就能擦掉整层像素
+  （t5 实测 4096 → 0）。这类工具能留在 `draw` 档，靠的是助手路线的兜底 ——「预览后应用 + 一轮一条 undo」
+  （§26 / `docs/PLAN-ai.md` §3.3），不是 tier 本身。
+- **`destructive` ＝ 清空 / 替换 / 删除整块画布（整帧全图层）级操作**，外加**按 rect / scope 删掉或搬走
+  一整块已有像素**：`canvas_clear`、`layer_delete` / `layer_merge_down` / `frame_delete`、
+  `scale`（重采样整张画布或整层）、`erase`（把 rect 里的内容清成透明）、`transform`（按 scope 平移 /
+  缩放 / 旋转，可能把像素推出画布）。未确认时**逐字节不动**。
 
 - `aiTierAllows(tier, toolTier)` 是**放行开关**（在 §24.1 的路由里）；被拒时 HTTP 仍是 200，body 形如
   `{"ok":false,"error":"tier \"read\" 不放行 draw 档工具 xxx（当前允许：read；改设置 ai.tier 或先 list_tools 看可用清单）"}`；
@@ -3069,9 +3177,232 @@ public static final String ERR_JS_NOT_READY = "{\"ok\":false,\"error\":\"js-not-
 
 ### 24.8 已知缺口（C3 之后）
 
-- **C4（电脑侧 MCP 转发）与 C5（应用内助手、key 管理、聊天窗）未做**；
-- destructive 的确认 UI 属于 C5：本版本的 `confirm` 默认拒绝，`status` / 诊断里明说
-  「destructive 需宿主确认，本版本未接线（C5 才有确认 UI）」；
+- **C4（电脑侧 MCP 转发）与 C5（应用内助手）已落地**：见 §25 与 §26；协议层本身（状态码 / call 表 /
+  回合收尾守卫）没有变；
+- **协议层的 destructive 仍然默认拒绝**：应用内助手自己有确认框（§26.4），但 MCP / curl 走的是
+  `ai-rpc` 这条路 —— 没有宿主注入确认器（`setAiConfirmer()`，或宿主自己实现 `aiRespond` 的确认 UI）时，
+  destructive 一律回 `{"ok":false,"error":"cancelled"}`。想让 Claude Desktop 真去删图层，得先给协议层
+  接一个真确认器；
 - 档位开关是**粗粒度**的：`draw` 一档同时包含「批量像素改写」（`palette_remap` / `color_replace`）与
   「图层 / 帧 / 调色板结构操作」，关掉 `draw` 会连带失去后者（设置页文案已写清）；
-- 协议层 `read_region` 与工具表 `read_region` 的入参形状不同（§24.1），容易误用。
+- 协议层 `read_region` 与工具表 `read_region` 的入参形状不同（§24.1），容易误用；
+- 61 个工具的 176 个参数里 **52 个没有 `desc`**（§22.7）；
+- `palette_from_canvas`（`Session.paletteFromCanvas`）与 §21.2 的读回口径**同源但本轮未修**：它取的是
+  cel **原始字节**（预乘值），没走 `straightHexAt()`，与 `read_region` 读同一批半透明像素时两边可能对不上
+  —— 详见 §21.4 与 `AGENTS.md` §7 的已知缺口；
+- 跨画布回合的 History entry 是 payload-less、回合开着时页面隐藏的同步 flush 会早退、
+  `lastCommitError` 会带陈旧值：见 §23.5。
+
+---
+
+## 25. MCP 入口 `toolchain/pc-mcp.mjs` 与电脑侧壳 `toolchain/pc-shell.mjs`
+
+> C4（`docs/PLAN-ai.md` §3.5）：MCP 是「宿主 → 工具服务」的方向，要让 AI 操作**我们的**软件，
+> **我们必须当 server**。这两条工具链是那个 server 的电脑侧部分，**协议一行都不重写**：
+> 业务仍在页面的 `ai-rpc` / `Session` 里，它们只搬传输。
+>
+> ```
+> Claude Desktop / 任意 MCP 宿主 ──stdio MCP──> pc-mcp.mjs
+>                                                  │ HTTP + Bearer（127.0.0.1:8787）
+>                                                  ▼
+>                      B 路线服务：pc-shell.mjs（电脑壳，转发进窗口页面）或 APK 的 AiServer.java
+> ```
+
+### 25.1 用法与前置（`toolchain/pc-mcp.mjs`）
+
+```sh
+# 前置（必须）：① 先把本机 AI 工具服务跑起来 ② 拿到它启动时打印的 token
+node toolchain/ai-server.mjs --port 8787 --tier all      # 电脑侧开发宿主（最省事的起法）
+#   手机上：设置 → AI → 打开本地服务；要连手机先在电脑上 adb reverse tcp:8787 tcp:8787
+
+# 宿主拉起 pc-mcp（stdio MCP）；手工调试时也可以在终端里手打 JSON-RPC 行
+node toolchain/pc-mcp.mjs --port 8787 --token <hex>
+node toolchain/pc-mcp.mjs --help
+```
+
+| 参数 / 环境变量 | 默认 | 说明 |
+|---|---|---|
+| `--port` / `-p`、`AI_PORT` | `8787` | 本机服务端口（只连 `127.0.0.1`，绝不连别处） |
+| `--token` / `-t`、`AI_TOKEN` | 空 | **必须由用户显式给出**（服务启动时打印的那串十六进制）；空 token 时启动会 warn：一定会 401 |
+| `--timeout`、`AI_TIMEOUT` | `10000` | 单次 HTTP 调用超时（ms，允许 1000..600000） |
+| `--verbose` / `-v` | 关 | 把转发细节打到 **stderr** |
+
+命令行参数优先于环境变量。**`stdout` 只许出现协议行**（换行分隔的 JSON-RPC 2.0），日志一律走
+`stderr` —— 往 stdout 多打一行，宿主就收到一行解不开的「JSON」，表现是「一接上就断线」。
+
+它只说三件事：`initialize`（回协议版本 / `capabilities.tools` / `serverInfo` / `instructions`）、
+`tools/list`、`tools/call`；`notifications/*` 一律不回。`tools/call` 把工具自身的失败转成
+**`isError: true` 且正文带原因**（不吞错）；路由层拒绝（工具不存在 / 档位不放行）同样是可读的
+MCP 错误；连不上 / 401 / 超时这类连接层问题才转 JSON-RPC error。启动时会做一次**非阻塞探活**
+（连不上也只打一句 warn，不影响 MCP 握手）。
+
+MCP 宿主配置示例（Claude Desktop 的 `claude_desktop_config.json`）：
+
+```json
+{ "mcpServers": { "pixelcraft": {
+    "command": "node",
+    "args": ["<仓库绝对路径>\\toolchain\\pc-mcp.mjs", "--port", "8787"],
+    "env": { "AI_TOKEN": "<服务启动时打印的 token>" } } } }
+```
+
+token 由用户/宿主自己保管：这一层**不加也不减权限** —— 档位由本机服务的设置（`ai.tier`）决定，
+清单原样报给宿主，`cancelled` 原样透传（不重试）。
+
+### 25.2 电脑侧壳 `toolchain/pc-shell.mjs`（+ Windows 双击入口 `pc-shell.cmd`）
+
+```sh
+node toolchain/pc-shell.mjs                       # 起壳 + 自动开应用窗口（默认 127.0.0.1:8787）
+node toolchain/pc-shell.mjs --port 8790 --no-open # 换端口 / 只起服务不开窗（自测用）
+node toolchain/pc-shell.mjs --help
+cmd /c toolchain\pc-shell.cmd --help              # Windows 双击入口；.cmd 不能用 node --check
+```
+
+一个进程干三件事：伺服 `app2/www` 静态站点、在**同一个端口**上提供 AI 工具服务的两个入口
+（`GET /ai/health` + `POST /ai`）、把 AI 请求**转发进窗口里那个页面**。为什么必须转发进页面：
+浏览器页面不能监听端口，壳自己跑一份独立文档的话，AI 画的是另一个进程里的空画布。
+分工与 APK 完全一致（壳顶替 Java 的 socket 与桥两个位置）：
+
+```
+MCP 宿主 / curl ──HTTP(127.0.0.1:8787)──> 壳（只做传输 + 鉴权 + 状态码）
+                                            │ SSE 推 envelope + requestId
+                                            ▼
+                  窗口页面 window.__pc_ai_call(envelopeJson, requestId)   （= ai-serve.ts）
+   壳把结果写回那个 HTTP 响应 <── POST /shell/reply（或页面稍后 aiRespond）
+```
+
+- 通道是 **SSE**：页面刷新 = `EventSource` 自动重连（壳据此判 `js-not-ready` → 503）；
+  壳 → 页面只有这一条流，页面 → 壳只有 `POST /shell/reply`（带 requestId）；
+- 另有 `POST /shell/handshake`（页面运行时现取 token，**不写进 HTML**）、
+  `GET /shell/status`、`POST /shell/shutdown`；`/ai` 的 Bearer 校验用常量时间比较；
+- **服务默认关闭**：页面里的设置 `ai.server` 没打开时壳回 503 `ai-off`，壳不会替用户打开 AI；
+- **「Pages 不背 AI」的注入口径**：壳桥只在**被这个壳伺服**的 index.html 里注入（内联脚本），
+  GitHub Pages / `devserver.js` / 任何普通静态服务都不注入 → `window.PixelBridge` 不存在 →
+  线上永远没有 AI，也没有监听端口的可能；
+- 安全口径与 §24 一致：只绑 `127.0.0.1`；token **未指定时才**随机生成（16 字节 → 32 位十六进制）
+  并打印，给了 `--token` / `AI_TOKEN` **就用给的那个**（两条来源都生效），只在内存里。
+- `node --check toolchain/pc-shell.mjs` 可以；`.cmd` 是批处理，只能 `cmd /c toolchain\pc-shell.cmd --help` 验。
+
+### 25.3 工具表 → MCP schema 的映射口径
+
+工具表**不在这层复制**，唯一源是 `src/app/ai-tools.ts`：`tools/list` 现取现映射
+（先调本机 `list_tools {}`，若档位放行了 `ui` 再**显式点名**要一次全量清单）。
+
+**工具数的三个口径**（同一个东西的三层，别混写）：
+
+| 层 | 口径 | tier=all | tier=draw | tier=read |
+|---|---|---|---|---|
+| 工具表（§22.4） | 表里一共多少条 | **61**（4 + 49 + 7 + 1） | — | — |
+| 协议层 `list_tools` | `{}`＝**能列**的（`ui` 默认不列） | **60** | 53 | 4 |
+| 协议层 `list_tools` | 显式 `tiers` 点名 `ui` | **61** | — | — |
+| MCP 层 `tools/list` | 宿主看到的清单（会再问一次全量） | **61** | 53 | 4 |
+
+映射规则（`AiParamType` → JSON Schema）：
+
+| `AiParamType` | JSON Schema | 备注 |
+|---|---|---|
+| `int` | `integer` + `minimum`/`maximum` | `validateArgs` 对小数**拒绝**，所以不是 `number` |
+| `num` | `number` + 范围 | |
+| `bool` / `string` | `boolean` / `string`（+ `minLength`/`maxLength`） | |
+| `enum` | `string` + `enum: [...]` | 取值表原样搬 |
+| `color` | `string` | `#rgb` / `#rrggbb` / `#rrggbbaa` / `fg` / `bg` |
+| `xy` | `array` + `items:{integer}` + `minItems/maxItems: 2` | |
+| `rect` | `object` + 四个 integer + `required` | |
+| `array` | `array` + `minItems`/`maxItems`；`items` 按 `list_tools` 里同名参数的 `items` 递归 | **元素类型靠 `aiToolInfo()` 原样透传字符串**；下游拿不到就退成放开的 `{}`，不瞎猜（猜 `number` 会让颜色数组自相矛盾） |
+
+- `required` = **既没有 `default` 也不是 `optional`** 的参数 —— 与 `validateArgs` 判「缺少必填参数」
+  的那一条完全一致（两处口径必须一样，否则模型会漏参数然后拿到一条报错）；
+- `AI_ARG_CURRENT`（`"current"`）这种哨兵**不写进 `default`**（它是个字符串，会让 `integer` 的
+  schema 自相矛盾），改为在 `description` 里说明「省略 = 当前帧 / 当前图层」；
+- **`desc` 缺失的参数**（52 个）由这一层按 `AiParamType` 自动补一句「类型 + 范围 / 取值」，
+  另外 `color` 补「fg / bg」、`array` 且元素类型未知时补一句怎么填；
+- 每条工具的 `description` 头一行带 **tier + tier 提示**（只读 / 能改画面 / 每次确认 / 只切界面），
+  非 `read` 档追加「改完用 `read_region` / `doc_digest` 读回复核（docRev 变了才算生效）」；
+- `annotations`（MCP 2025-06-18）：`title` / `readOnlyHint`（`tier === "read"`）/
+  `destructiveHint`（`tier === "destructive"`）。
+
+---
+
+## 26. 应用内助手 `src/app/ai-chat.ts` + `src/ui/AiPanel.tsx`
+
+> C5（A 路线，`docs/PLAN-ai.md` §3.3「一轮 = 一条 undo」/ §3.5 / §3.6 key 与安全模型）：
+> 在应用里说一句话 → 模型 function calling → **预览后应用** → 一轮一条撤销。
+> 逻辑层 `ai-chat.ts` 与平台无关（不 import `window`、不直接调 `fetch`，`fetchFn` 由调用方注入），
+> 所以能在没有 DOM 的测试里用假端点把整轮跑完（`tests/ai-chat.test.ts`）；UI 只负责显示与两个按钮。
+
+### 26.1 平台门与入口
+
+- **只有 `isNativeShell()`（APK / 桌面壳的 `window.PixelBridge`）为真才有助手**：
+  主菜单那一行（`ui/modals.tsx`）与面板自己各判一次；普通浏览器 / GitHub Pages 里
+  **不挂输入框、不连端点、不发任何请求**（只显示一句说明，绝不出现「点了没反应」）。
+  线上 PWA 不背 AI（§3.6 红线）。
+- 入口：主菜单 → 「AI 助手」（图标见 `src/ui/feature-icons.ts`，`i-ai-chat`）；
+  设置页同一门控（`chatRowsVisible()`）。
+
+### 26.2 设置项（`CHAT_SETTINGS`，`src/app/settings.ts`）
+
+| 路径 | 类型 | 默认 | 说明 |
+|---|---|---|---|
+| `ai.chatOn` | bool | `false` | 助手总开关 |
+| `ai.chatEndpoint` | 文本 | 空 | OpenAI 兼容的**基地址**（如 `https://api.openai.com/v1`）；留空 → 自动补 `/chat/completions` |
+| `ai.chatModel` | 文本 | 空 | 模型名 |
+| `ai.chatKey` | 文本（密文行） | 空 | API key |
+
+两条**不要改回去**的实现口径：
+
+1. **`CHAT_SETTINGS` 是单独一张表，不并进 `SETTINGS`**：`tests/session.test.ts` 钉住
+   「导出的取值条数 === `SETTINGS.length`」「导入的 applied === `SETTINGS.length`」，
+   而 key 必须一个字节都不进导出 —— 两者不能同时成立，所以助手这一组单独一张表
+   （照样是声明式的、走同一个设置页渲染器；`SETTINGS_BY_PATH` 两个表都收）。
+   钉子断言：`settings.export.all-paths` / `settings.import.applied`。
+2. **`SettingKind` 保持四个字面量**，文本行不新增 kind，而是走 `SettingDef.text`
+   （`"plain"` / `"password"`，见 `ui/modals.tsx` 的文本行分支）。
+   钉子断言：`settings.no-new-kind` / `settings.kind.count`。
+
+四项都**不进 `Session.prefs`**：自带极小存储（内存缓存 + `localStorage["pc.aichat"]`），
+读不到（Node / 隐私模式 / 坏数据）就退回默认值、不抛异常；文本长度上限 `AI_CHAT_MAX_TEXT`（2048）。
+
+### 26.3 key 的安全口径（**key 只存本机，线上 PWA 不内置**）
+
+- `SETTING_SECRET_PATHS = ["ai.chatKey"]`：`exportSettings()` / `importSettings()` 显式跳过它 ——
+  key **不进设置文件、不进 `.pxc`、不进诊断文本、不进 toast**，也不出现在面板的任何提示里，
+  只写进请求的 `Authorization: Bearer <key>` 头（`ai-chat.ts` 的 `requestModel`）；
+- 面板只显示**端点与模型名**（`aiChatSettings()` 不把 key 渲染出来）；
+- 设置页提供**一键清除**（`clearAiChatKey()`，设置项的 `action`）；
+- 端点 / 模型 / key 三项都要求非空才发请求（`chatConfigError()`），缺项时**连回合都不开**。
+
+### 26.4 一轮的流程与「预览后应用」
+
+`runChatTurn(opts)`：请求模型 → 有 `tool_calls` 就按数组顺序 `callTool` 并把结果回灌 → 再请求，
+直到模型只回文本（或到 `maxRounds` / `maxCalls` 上限）。
+
+| 常量 | 值 | 说明 |
+|---|---|---|
+| `AI_CHAT_DEFAULT_MAX_ROUNDS` | 12 | 「模型 → 工具 → 模型」默认轮数 |
+| `AI_CHAT_MAX_ROUNDS` | 24 | 硬上限（调用方给再大也不超） |
+| `AI_CHAT_MAX_CALLS` | 80 | 一整轮最多真的执行多少次工具调用 |
+| `AI_CHAT_MAX_RESULT_CHARS` | 4000 | 单条工具结果回灌给模型的字符上限（超了截断并写明） |
+| `AI_CHAT_TOOL_TIERS` | `read` / `draw` / `destructive` | 默认给模型的档（`ui` 不暴露，与 `listTools()` 同口径） |
+
+- **一轮 = 一条 undo**：整轮包在 ai-turn 的回合里（预览模式也一样），任何失败路径都
+  `rollbackTurn()` ——「模型中途报错、文档已经被改了一半」不允许出现；
+- **`commit: true`（默认）** 走 `runAiTurn()` 一步落定；
+  **`commit: false`（面板用的预览模式）** 回合**留开着**（结果里 `turnOpen: true`、不落历史、
+  不刷 autosave），用户点「应用」才 `SESSION.commitAiTurn()`（一轮一条撤销）、点「放弃」才
+  `SESSION.rollbackAiTurn()`（逐字节回到这一轮开始，并把模型那半轮从对话里忘掉）；
+- **面板卸载时回合还开着 → 立刻放弃**（`AiPanel` 的卸载钩子）：回合开着时用户自己的写入会被
+  下一次 rollback 吞掉，绝不能把这个状态留下来；
+- **destructive 每次都弹确认框**：面板把 `SESSION.askConfirm()` 接成 `AiToolCtx.confirm`
+  （文案 `aiChatConfirm` + `summarizeToolCall()` 的一句话摘要）；用户拒绝 → `cancelled`，
+  文档一个字节不动。**协议层 / MCP 没有这个确认器**（§24.8），别把两者混为一谈；
+- 工具的 OpenAI schema 由 `toOpenAiTools()` 映射（`src/app/ai-chat.ts`）：`required` 与
+  `validateArgs` 同口径、`int` → `integer`、`xy` → `[integer, integer]`、`rect` → 四个整数、
+  `AI_ARG_CURRENT` 哨兵不进 `default` 而是写进 description；
+- 失败一律说人话（缺 key / 端点不是 http(s) / 网络挂了 / HTTP 4xx-5xx / 返回不是 JSON /
+  工具参数不是合法 JSON），不静默失败、也不把异常抛给 UI；
+- `ChatTurnResult` 里带 `docRevBefore` / `docRev` / `recorded` / `turnOpen` / `stop`
+  （`"text"` / `"maxRounds"` / `"maxCalls"`）与每次调用的 `ChatCallLog`（`revDelta > 0` = 真的改了画面）；
+  面板用 `previewAiTurn()` 拿 `{count, rect}` 显示「这一轮改了哪块」。
+- 相关导出：`chatConfigError` / `formatCallLog` / `changedCount` / `defaultTurnLabel` /
+  `buildSystemPrompt` / `systemMessage` / `userMessage` / `assistantMessage` / `toolResultContent` /
+  `appendToolResult` / `parseToolCalls` / `responseText` / `toOpenAiTools` /
+  `chatCompletionsUrl` / `message`。

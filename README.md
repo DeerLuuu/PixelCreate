@@ -34,7 +34,9 @@
 | 工程 | `.pxc` 工程文件（**唯一文件单位**：内含全部画布、每张画布的位置/帧/图层选择，以及**一条工程级操作记录**，可全局撤销与回放）、**按间隔自动保存**（默认 5 分钟，可调 1–60 分钟；存纯 JSON + 像素 RLE，不存图片）、**自动保存多版本**（默认保留最近 5 版，可调 1–12；内容没变不占新版本）、**自动保存历史面板**（主菜单 →「自动保存历史」或设置 → 数据：逐版恢复 / 导出成 `.pxc` / 删除）、**崩溃恢复提示**（上次没正常退出时启动后说明并列出可回退的版本）、设置文件导入导出；**工具/颜色/对称/参考图/文档默认值全部跨启动保持** |
 | 交互 | 双指缩放/平移、像素放大镜、边缘自动平移、**旋转画布内容 90°**（画布球 → 更多，宽高互换、选区跟随、可撤销）、返回手势逐层关闭 + 二次确认退出；**每个手势的功能都可重映射**（画布内外双击、双指双击、三连击、四指滑动、长按）；抽屉面板（调色板、时间线等）在**手机竖屏铺满全屏**，横屏与电脑模式仍是右侧抽屉 |
 | 体验 | 声明式设置（搜索 / 单项恢复默认 / 分组折叠，含**手势与触控**组）、46 步模块化新手引导（真操作演示）、更新日志（版本选项卡 + 分类折叠）、操作记录与回放、帧预览、中英双语 |
-| AI 工具服务 | **本地 AI 工具服务（默认关闭，要在设置里手动打开）**：在 `127.0.0.1` 上开一个本地端口，外部 AI 助手 / 命令行凭 token（每次启动随机生成）调用 **48 个工具**读写这块画布 —— 读文档摘要与像素区域、画线 / 填色 / 生成等距体、图层 / 帧 / 调色板 / 标签操作；放行范围分三档（**只读**（默认）/ **允许绘制** / **全部**），档位只决定要不要确认与默认列出哪些工具，**不决定工具能不能调**；删图层、清空画布、缩放画布这类破坏性操作**每一项都要确认**，没确认时文档一个字节不动；**一轮 AI 的几十次调用合成一条撤销**（历史标签固定带 `ai: ` 前缀，外部助手断线或超时会自动放弃这一轮并把历史还给你）；**只绑本机、不对局域网开放、服务默认关闭**，APK 为此新增了 `INTERNET` 权限（Android 上监听本地端口也要它），但应用不发起任何出站请求、也没有内置任何 key；电脑上可以用 `node toolchain/ai-server.mjs` 起同一份协议做调试（接口见 [`docs/API.md`](docs/API.md) §24） |
+| AI 工具服务 | **本地 AI 工具服务（默认关闭，要在设置里手动打开）**：在 `127.0.0.1` 上开一个本地端口，外部 AI 助手 / 命令行凭 token（每次启动随机生成）调用 **61 个工具**读写这块画布 —— 读文档摘要与像素区域、画任意折线与形状、油漆桶填充（含容差 / 封口 / 渐变）、擦除一块区域、平移 / 缩放 / 旋转、8 种特效（描边 / 内描边 / 投影 / 外发光 / 反色 / 灰度 / 圆角 / 模糊）、生成等距体、图层 / 帧 / 调色板 / 标签操作；放行范围分三档（**只读**（默认）/ **允许绘制** / **全部**），档位只决定要不要确认与默认列出哪些工具，**不决定工具能不能调**；删图层、清空画布、缩放画布、擦除、变换这类破坏性操作**每一项都要确认**，没确认时文档一个字节不动；**一轮 AI 的几十次调用合成一条撤销**（历史标签固定带 `ai: ` 前缀，外部助手断线或超时会自动放弃这一轮并把历史还给你）；**只绑本机、不对局域网开放、服务默认关闭**，APK 为此新增了 `INTERNET` 权限（Android 上监听本地端口也要它），但应用不发起任何出站请求、也没有内置任何 key；电脑上可以用 `node toolchain/ai-server.mjs` 起同一份协议做调试（接口见 [`docs/API.md`](docs/API.md) §24） |
+| MCP 入口 | **电脑侧 MCP 服务器（Claude Desktop / 任意 MCP 宿主）**：`node toolchain/pc-mcp.mjs --port 8787 --token <服务启动时打印的 token>`（环境变量 `AI_PORT` / `AI_TOKEN` / `AI_TIMEOUT` 也行），在 stdin/stdout 上说 MCP（换行分隔的 JSON-RPC 2.0），把 `tools/list` / `tools/call` 转发到本机 `127.0.0.1` 的 AI 工具服务；**工具清单现取现映射、不在这层复制**（工具数**三个口径**：工具表 61 条 = read 4 / draw 49 / destructive 7 / ui 1；协议层 `list_tools {}` 在档位 `all` 下列 **60** 条（`ui` 档默认不列），**显式点名 `ui`** 才 **61** 条；MCP 层 `tools/list` 一次拿全 **61** 条），权限不加也不减，工具失败原样带原因回给宿主（接口与宿主配置示例见 [`docs/API.md`](docs/API.md) §25）。配套一个**电脑桌面壳** `node toolchain/pc-shell.mjs`（Windows 双击 `toolchain\pc-shell.cmd`）：伺服网页、在同一个端口提供 `/ai` 入口，并把 AI 请求**转发进窗口里那张真实的画布**（协议与 APK 完全一致，不重写） |
+| 应用内助手 | **在应用里说一句话 → AI 调工具 → 预览后应用（APK / 电脑壳里才有）**：设置 → AI 助手填端点 / 模型 / key（OpenAI 兼容的基地址），主菜单 →「AI 助手」打开对话窗；模型用 function calling 调用 61 条工具里的任意一条，一轮结束先给出「这一轮改了哪块」的预览，点「应用」才写进历史（**一轮只占一条撤销**，标签带 `ai: ` 前缀；历史面板里一眼认出）、点「放弃」逐字节回到这一轮开始（中途报错、关掉面板也自动放弃）；删图层、清空画布这类破坏性操作**每次都弹确认框**，拒绝就一个字节都不动；**API key 只存在本机**（不进设置导出 / 工程文件 / 诊断文本，设置页可一键清除），**线上 PWA 不内置任何 key、也不显示这个面板**（只有 APK 与电脑壳里有桥接），浏览器里连输入框都不挂、不发任何请求 |
 | 渲染 | 平铺预览（关闭 / 横向 / 竖向 / 九宫格，只有中心可编辑；**笔迹跨边界环绕补画**，一笔即可画出接缝对得上的无缝瓦片）；增量渲染：笔迹脏矩形合成 + 局部重绘（**平铺的 8 个邻居副本一并重绘**）+ rAF 合并；洋葱皮幽灵帧缓存；选区染色按版本缓存；**渲染调试 HUD**（设置 → 显示 → 渲染调试，看每一次重绘渲染了什么） |
 
 ---
@@ -45,7 +47,7 @@
 npm install            # 安装开发依赖（React / TypeScript / esbuild）
 
 npm run typecheck      # tsc 严格检查
-npm test               # 引擎 / 逻辑回归测试（3972 条断言，无 DOM 依赖；跑完末尾会打印总数）
+npm test               # 引擎 / 逻辑回归测试（7376 条断言，无 DOM 依赖；跑完末尾会打印总数）
 npm run build          # 产出 app2/www/js/app.js + css/style.css
 sh scripts/sync-web.sh # 或者：不自己构建，直接取部署分支 main 上那一份产物（见 AGENTS.md §5.1b）
 ```
@@ -73,22 +75,23 @@ src/
 ├─ engine/      纯像素引擎（无 DOM）：doc / cel / paint / shape / effects / ops / history / color / adjust
 ├─ tools/       工具层：registry（工具表与笔刷状态）、stroke（笔迹引擎）、select（选区与变换）、xform（自由变换的纯几何：锚点 / 命中圈 / 枢轴 / 干净角 / 解算）
 ├─ app/         应用层：session（状态中枢）、settings（设置注册表）、guide（引导注册表）、playback（循环模式）、gestures（手势映射）、history-io（标量历史载荷）、
-│               ai-doc（文档文本化）、ai-tools（AI 工具表）、ai-turn（回合事务）、ai-rpc（AI 协议路由）、ai-serve（本地服务生命周期）
+│               ai-doc（文档文本化）、ai-tools（AI 工具表）、ai-draw（AI 落笔适配层：笔迹 / 形状 / 填充 / 擦除 / 特效 / 变换）、
+│               ai-turn（回合事务）、ai-rpc（AI 协议路由）、ai-serve（本地服务生命周期）、ai-chat（应用内助手的整轮循环 + function calling）
 ├─ render/      view（视口 / 手势 / 渲染）、compositor（合成）、rect（脏矩形工具）、onion（洋葱皮布局）
 ├─ servers/     服务层：render（RenderServer：合成缓冲 / 合成键 / 失效区域 / 多画布缓存）、viewport（缩放平移与坐标数学，纯函数）、
 │               input（手势策略与算术）、gesture（TapMachine 轻点序列 + GestureController 指针事件入口）
 ├─ io/          bridge（原生桥接）、exporters、gifread、project（.pxc）、aseread/asewrite（Aseprite .ase/.aseprite）、zlib（自写 inflate + CompressionStream 压缩）、autosave、clipboard
-└─ ui/          React 界面：App、timeline、modals、changelog、guide(+demo/layout)、hold、preview、i18n、style.css
+└─ ui/          React 界面：App、timeline、modals、changelog、guide(+demo/layout)、hold、preview、i18n、style.css、AiPanel（应用内助手面板）
    └─ ui/kit/    UI 控件库：Dialog、Form（Row/ChipGroup/Segmented/Switch/NumberField/ColorField）、primitives、scrub、令牌与演示页
 tests/          引擎与逻辑测试（无 DOM 依赖，node 直接跑）
 android/        自研 APK 工程（AndroidManifest + MainActivity + 图标）
 app2/www/       PWA 产物（index.html + 构建后的 app.js/style.css）
-toolchain/       开发辅助脚本（devserver 静态服务、make-icon 图标生成、ai-server 本地 AI 工具服务宿主）
+toolchain/       开发辅助脚本（devserver 静态服务、make-icon 图标生成、ai-server 本地 AI 工具服务宿主、pc-mcp 电脑侧 MCP 入口、pc-shell 电脑桌面壳）
 ```
 
 ### 架构要点
 
-- **引擎层零 DOM**：`engine/`、`app/`、`tools/`、`servers/` 全部可在 Node 下测试（4085 条断言跑在纯数据上，含 UI 控件与令牌契约；`npm test` 末尾会打印条数）。
+- **引擎层零 DOM**：`engine/`、`app/`、`tools/`、`servers/` 全部可在 Node 下测试（7376 条断言跑在纯数据上，含 UI 控件与令牌契约；`npm test` 末尾会打印条数）。
 - **服务层**：合成与缓存归 `RenderServer`、视图数学归 `ViewportServer`（`docs/API.md` §15b），手势策略归 `input.ts`、轻点序列 + 四个指针入口 + 触点会话状态归 `gesture.ts`（§15c / §15c2 / §15c3），`render/view.ts` 只做 blit、覆盖层与各工具的动作体 —— 这是 `docs/ARCHITECTURE.md` 里 Server 化的落地进度。
 - **声明式注册表**：设置项写在 `src/app/settings.ts`，引导步骤写在 `src/app/guide.ts`；新增功能 = 一条声明 + i18n 文案，界面自动生成。
 - **增量渲染**：笔迹只重合成/重绘改动区域（`Rect` + `composeRectInto` + `celToCanvasRect`），一帧一次绘制（rAF 合并）。
