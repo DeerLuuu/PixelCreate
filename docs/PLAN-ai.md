@@ -277,6 +277,149 @@ Claude Desktop / 你的 agent ──stdio MCP──> pc-mcp（电脑侧，几十
 每期都保持「`tsc` 0 错误 + 全量测试 ALL PASS + 文档同步（§5.3）」的既有节奏；
 C0/C1/C2 **完全不碰权限与网络**，即使后面改主意也不浪费。
 
+### 5.1 接口契约（C0–C2 落地用）
+
+这一节是**照着写代码用的**：签名、字段、失败口径都定死。改这一节等于改接口，必须先改文档再改代码。
+
+#### C0 `src/app/ai-doc.ts`（纯函数，无 DOM、无网络）
+
+```ts
+interface AiDigest {
+  docRev: number;                 // doc.pixelRev 快照：模型据此判断"我的改动生效了吗"
+  w: number; h: number;
+  layers: Array<{ li: number; name: string; visible: boolean; locked: boolean; opacity: number; blend: BlendMode }>;
+  frames: Array<{ fi: number; ms: number; cels: number }>;
+  tags: Array<{ name: string; from: number; to: number }>;
+  palette: string[];              // "#rrggbb"
+  sel: { x: number; y: number; w: number; h: number; pixels: number } | null;
+  bbox: { x: number; y: number; w: number; h: number } | null;   // 当前帧可见图层的非空包围盒
+  inkRatio: number;               // 非透明像素占比，0..1，3 位小数
+  text: string;                   // 单行摘要（§3.2 的格式）
+  tokens: number;                 // ceil(text.length / 3.5)
+}
+docDigest(doc: Doc, opts?: { fi?: number }): AiDigest
+
+interface AiRegion {
+  x: number; y: number; w: number; h: number; fi: number; li: number;
+  rows: string[];                 // 每行一个字符串：`.` = 透明，a-z/A-Z 循环映射调色板下标，>52 色回退两位十六进制
+  palette: string[];              // rows 用到的颜色（子集），顺序 = 索引顺序
+  clipped: boolean;               // 请求区域被文档边界裁剪过
+  text: string;                   // 带 y= 行号的排版文本
+  tokens: number;
+}
+readRegion(doc: Doc, rect: Rect, opts?: { fi?: number; li?: number; rle?: boolean; maxPixels?: number }): AiRegion
+```
+
+边界口径（每条都要有单测）：
+
+1. `rect` 部分越界 → 裁剪并把 `clipped = true`；完全在文档外 → `rows` 为空数组 + `clipped = true`，**不抛异常**；
+2. `li` / `fi` 越界 → 落到当前值并在 `text` 里带一行 `warn:`，不静默；
+3. 空 cel / 该层该帧没有 cel → 全 `.` 行、`palette` 为空；
+4. 索引色模式按文档调色板取索引；非索引模式按精确 RGB 匹配，未命中就追加到 `palette` 尾部；
+5. `maxPixels` 默认 65536（256×256），超出时返回**最大可读窗口**并 `clipped = true` —— 绝不产生兆级字符串（§3.2 的 token 预算就是这条约束）。
+
+```ts
+type AiColor = string;            // "#rrggbb" / "#rrggbbaa" / "fg" / "bg"
+type AiOp =
+  | { op: "pixels"; x: number; y: number; rgba: [number, number, number, number] }
+  | { op: "line"; x0: number; y0: number; x1: number; y1: number; color: AiColor; size?: number }
+  | { op: "rect"; x: number; y: number; w: number; h: number; color: AiColor; fill?: boolean }
+  | { op: "erase"; x: number; y: number; w: number; h: number }
+  | { op: "fill"; x: number; y: number; color: AiColor; tolerance?: number };
+
+interface AiApplyCtx {
+  session: Session;               // 只用它的既有入口（paint / shape / ops / 前景背景色）
+  fi?: number; li?: number;
+  resolveColor?: (c: AiColor) => RGBA | null;
+}
+interface AiApplyResult {
+  ok: boolean;
+  applied: number;
+  changed: { x: number; y: number; w: number; h: number } | null;
+  docRev: number;
+  warnings: string[];             // 含 "clamped: <字段> → <最终值>"（§3.1 原则 2）
+  errors: Array<{ index: number; reason: string }>;
+}
+applyOps(doc: Doc, ops: AiOp[], ctx: AiApplyCtx): AiApplyResult
+```
+
+`applyOps` 的口径：
+
+- **一次调用 = 一条事务边界**：只写像素（经 `engine/paint.ts`、`engine/shape.ts` 等既有函数），
+  **不碰 history、不碰 autosave** —— 那是 C2 的事；
+- 单个 op 非法 → 记进 `errors` 并跳过，其余照常执行（**部分成功是常态**，与 UI 的"空状态 toast"口径一致）；
+- `ops` 为空 → `ok = true`、`applied = 0`、`changed = null`（不写像素）；
+- 写了但值没变（画同色）→ `applied` 计入、`changed` 仍返回矩形（调用方靠 `docRev` 判断）；
+- 不直接改 `Doc` / `Cel` 之外的状态（图层、帧、调色板的增删属于 C1 的工具，不在这里）。
+
+#### C1 `src/app/ai-tools.ts`
+
+```ts
+type AiTier = "read" | "draw" | "destructive" | "ui";
+type AiParamType = "int" | "num" | "bool" | "string" | "enum" | "color" | "xy" | "rect" | "array";
+interface AiToolParam { type: AiParamType; values?: string[]; min?: number; max?: number; default?: unknown; items?: AiParamType; desc?: string }
+interface AiTool {
+  id: string;                     // 与 Session.allActions() 同一命名空间
+  title: string;                  // 纯文本（工具表这一层不翻译，UI 再查 i18n）
+  tier: AiTier;
+  params: Record<string, AiToolParam>;
+  returns: Record<string, string>;
+  handler: (args: Record<string, unknown>, ctx: AiToolCtx) => AiToolResult | Promise<AiToolResult>;
+}
+interface AiToolCtx {
+  session: Session;
+  confirm: (req: { tool: string; tier: AiTier; summary: string }) => Promise<boolean>;
+  turn: { isOpen(): boolean; mark(): void } | null;
+}
+interface AiToolResult { ok: boolean; changed?: { x: number; y: number; w: number; h: number } | null; docRev?: number; warn?: string[]; error?: string }
+
+listTools(opts?: { tiers?: AiTier[] }): AiTool[]          // 稳定顺序：tier 分组，组内按 id 字典序；默认不含 "ui"
+getTool(id: string): AiTool | null
+validateArgs(tool: AiTool, args: unknown):
+  | { ok: true; value: Record<string, unknown> }
+  | { ok: false; reason: string }
+callTool(id: string, args: unknown, ctx: AiToolCtx): Promise<AiToolResult>
+```
+
+`callTool` 的**固定顺序**：① 校验参数（不合格直接返回 `{ok:false, error}`，**不执行、不确认**）
+→ ② `tier === "destructive"` 必须先 `await ctx.confirm(...)`，返回 false 就 `{ok:false, error:"cancelled"}`
+→ ③ 执行 handler，把结果原样返回。
+
+覆盖范围：§4 映射表里标「已有方法」的条目**全部要有工具**
+（`palette_*` / `color_*` / `layer_*` / `frame_*` / `tag_*` / `undo` / `redo` / `scale` / `iso_*`），
+每条 handler 只做「参数适配 + 调既有 Session 方法」，**不新增写入路径**。
+工具 id 与 `Session.allActions()` 对齐：能对上的直接复用，对不上的新增 id 并在测试里维护白名单
+（测试会断言"清单里的 id 全都在工具表里"）。
+
+#### C2 回合事务 `src/app/ai-turn.ts`（必要时在 `Session` 上加薄门面）
+
+```ts
+beginAiTurn(label: string): number                        // 返回 turnId；期间写操作不动历史、不触发 autosave
+previewTurn(): { count: number; rect: Rect | null }        // 这一轮会改哪块（不改文档）
+commitTurn(): boolean                                      // 一条历史（结构快照）+ 一次 autosave；无改动返回 false
+rollbackTurn(): void                                       // 恢复到回合开始（逐字节一致）
+isTurnOpen(): boolean
+```
+
+- 实现沿用既有 `struct()` 的做法：`begin` 时 `doc.capture()` 快照（**全部画布**，不只当前那张），
+  `commit` 用 `History.pushStruct(label, …)` 合成**一条**记录；
+- 回合标签固定前缀 `ai: `（例如 `ai: 描出史莱姆轮廓并铺底色`），历史面板里一眼认出；
+- 回合进行中抑制 `Session.scheduleAutosave()`（等价于 `replayActive` 的处理），`commitTurn()` 后补一次；
+- 任何异常 / 取消 / 工具报错 → `rollbackTurn()`，并走与 `View.flushStroke()` 相同的路径把
+  未落定的笔迹与浮动变形落定/清掉，保证"回滚后与新开时逐字节一致"；
+- **默认「预览后应用」**（§3.3）：`previewTurn` 只画覆盖层、`commitTurn` 才落盘。C0–C2 只提供 API，
+  按钮与确认文案属于 C5。
+
+#### §7 的五个决策对本期的约束（只列影响面，不替用户拍板）
+
+| 决策 | 影响本期哪里 |
+|---|---|
+| Q1 离线承诺（加不加 `INTERNET`） | 决定 C3 能不能做；**本期 C0–C2 一行网络代码都没有**，怎么答都不浪费 |
+| Q2 key 策略（自建网关 / 应用内直填） | 只影响 C5 的设置页与文档措辞 |
+| Q3 AI 默认行为（预览后应用 / 直接应用） | 只影响 C5 的默认按钮；API 层两种都已留出（`previewTurn` / `commitTurn`） |
+| Q4 C 路线是否现在做 | 正是本期内容 |
+| Q5 生成轴（文生像素图） | 与本期无关；将来加 `image_*` 工具时复用同一套 tier 与回合事务 |
+
 ---
 
 ## 6. 风险与对策
