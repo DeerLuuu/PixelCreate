@@ -34,10 +34,6 @@ mkdir -p "$STAGE/.github/workflows"
 cp web/pages.yml "$STAGE/.github/workflows/pages.yml"
 cp web/README.md "$STAGE/README.md"
 cp web/.nojekyll "$STAGE/.nojekyll"
-# AI 实录页（只有部署源 web/ 里这一份，APK 的 assets 里不带它）
-cp web/ai-demo.html "$STAGE/ai-demo.html"
-cp web/ai-demo-sprite.png "$STAGE/ai-demo-sprite.png"
-cp web/ai-demo-recipe.json "$STAGE/ai-demo-recipe.json"
 
 # ------------------- 2b) 给资源加「版本-内容指纹」后缀，绕过 Pages 的缓存
 # GitHub Pages 对 html/js/css 一律发 Cache-Control: max-age=600，而 index.html 里
