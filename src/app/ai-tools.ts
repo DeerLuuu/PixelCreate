@@ -34,6 +34,26 @@
 // 与 C0 的接缝：读类工具直接转发 `ai-doc.ts` 的 `docDigest` / `readRegion`（纯函数，无 DOM）；
 //   写类工具当前一律走 `Session` 的既有方法，`applyOps` 留给 C2/C5 的「应用一批操作」入口。
 //
+// P1 像素级工具面（后来补的这批：draw_path / draw_shape / fill / erase / transform / fx_*×8）：
+//   这一批的 handler 仍然只做参数适配，落笔在 `src/app/ai-draw.ts` —— 那里组合的是
+//   `tools/stroke.ts` 的 Stroke（笔迹 / 形状 / 油漆桶 / 擦除）、`engine/effects.ts` 的 8 个
+//   既有特效、`tools/xform.ts` 的纯仿射 + `tools/select.ts` 的浮动模型。**两边都没有新增写入
+//   路径**：本文件只把 engine 的既有函数原样递给 ai-draw 去跑，历史一律由 `Stroke.commit()`
+//   或 `Session.maskOp()` 压栈；`tests/ai-draw.test.ts` 用与这里同一条静态规则盯着那个文件。
+//   tier 判据（加新工具时照这个判；t14 起改成与实现自洽的表述）：
+//     · **draw ＝ 用画笔能画出的任何效果**：笔迹、形状、油漆桶、橡皮笔刷 —— 也包括
+//       **以透明色填充**（`fill{color:"#00000000"}`）与**用橡皮画笔擦**（`draw_path{tool:"eraser"}`）：
+//       它们与界面里同一支笔（油漆桶的「擦」、橡皮工具）逐字节同源，不因为「擦」这个字就换档。
+//       ⚠ 这不等于 draw 档「无害」：`fill` 的 tolerance=255 配透明色一次就能擦掉整层像素
+//       （t5 实测 4096 → 0）。这类工具能留在 draw 档，靠的是助手路线的兜底 ——
+//       「预览后应用 + 一轮一条 undo」（PLAN-ai §3.3 / C5），不是 tier 本身。
+//     · **destructive ＝ 清空 / 替换 / 删除整块画布（整帧全图层）级操作**，外加**按 rect / scope
+//       删掉或搬走一整块已有像素**：`canvas_clear`、`layer_delete` / `layer_merge_down` /
+//       `frame_delete`、`scale`（重采样整张画布或整层）、`erase`（把 rect 里的内容清成透明）、
+//       `transform`（按 scope 平移 / 缩放 / 旋转，可能把像素推出画布）。未确认时**逐字节不动**。
+//   `transform` 里「与 mode 无关的参数」是**报错**而不是静默忽略：模型按别的 mode 填了一组参数
+//   时，静默成功会得到一个「看起来对、其实没动」的结果，比报错难查得多（§3.1 原则 2 同一条口径）。
+//
 // 两处对 §5.1 接口的**加字段**（只加可选字段，不改既有字段语义）：
 //   · `AiToolResult.data`：§5.1 只留了 ok/changed/docRev/warn/error，读类工具的结果（摘要 / 区域）
 //     没有地方放；
@@ -42,6 +62,7 @@
 //   §5.1 里列出的四个函数签名（listTools / getTool / validateArgs / callTool）一字未改。
 
 import { hexToRgba, rgbaToHex } from "../engine/color";
+import * as fxE from "../engine/effects";
 import { ISO_SHAPES, ISO_TILES } from "../engine/iso";
 import type { IsoShapeId, IsoTile } from "../engine/iso";
 import { SCALE_ALGOS } from "../engine/resample";
@@ -49,6 +70,12 @@ import { BLEND_MODES } from "../engine/types";
 import type { Rect, RGBA } from "../engine/types";
 import { CORE_TOOLS, SELECT_TOOLS, SHAPE_TOOLS } from "../tools/registry";
 import type { ToolId } from "../tools/registry";
+import type { PivotPreset } from "../tools/xform";
+import {
+  AI_FX_SCOPES, AI_PIVOTS, AI_SCALE_MAX, AI_SCALE_MIN, AI_SHAPE_KINDS, AI_STROKE_KINDS, AI_SYMS,
+  AI_XFORM_MODES, AI_XFORM_SCOPES, applyFx, runStroke, runTransform,
+} from "./ai-draw";
+import type { AiFxScope, AiStrokeKind, AiSymName, AiXformMode, AiXformScope, CelFx } from "./ai-draw";
 import { AI_MAX_REGION_PIXELS, docDigest, readRegion } from "./ai-doc";
 import type { Session, IsoPrefs, ScaleScope } from "./session";
 
@@ -128,6 +155,10 @@ export const AI_TOOL_ID_WHITELIST: readonly string[] = [
   "color_replace",
   "color_select",
   "doc_digest",
+  "draw_path",
+  "draw_shape",
+  "erase",
+  "fill",
   "frame_add",
   "frame_delete",
   "frame_duplicate",
@@ -135,6 +166,14 @@ export const AI_TOOL_ID_WHITELIST: readonly string[] = [
   "frame_move",
   "frame_move_to",
   "frame_select",
+  "fx_blur",
+  "fx_glow",
+  "fx_gray",
+  "fx_inline",
+  "fx_invert",
+  "fx_outline",
+  "fx_round",
+  "fx_shadow",
   "iso_generate",
   "iso_origin",
   "iso_set",
@@ -167,6 +206,7 @@ export const AI_TOOL_ID_WHITELIST: readonly string[] = [
   "tag_rename",
   "tag_set_color",
   "tag_set_range",
+  "transform",
 ];
 
 // ------------------------------------------------------------------ 参数校验
@@ -349,6 +389,55 @@ function rectOf(v: unknown): Rect {
   return { x: o.x, y: o.y, w: o.w, h: o.h };
 }
 
+/** 写类工具的统一结果：ok + docRev +（真碰到像素时）changed 矩形 + data */
+function written(
+  s: Session,
+  r: { changed: boolean; rect: Rect | null; error?: string },
+  extra?: Record<string, unknown>,
+): AiToolResult {
+  if (r.error) return { ok: false, error: r.error, docRev: s.doc.pixelRev };
+  const data: Record<string, unknown> = { changed: r.changed };
+  if (extra) for (const k of Object.keys(extra)) data[k] = extra[k];
+  const out: AiToolResult = { ok: true, docRev: s.doc.pixelRev, data };
+  if (r.rect) out.changed = r.rect;
+  return out;
+}
+
+/**
+ * `draw_path` 的点数口径（§3.1 原则 2：越界/多给的参数**拒绝**，不静默忽略）：
+ * 形状工具只看首尾两点，所以必须**恰好 2 个**；油漆桶只看种子，必须**恰好 1 个**；
+ * pencil / eraser 是折线，1..4096 都合法（schema 已经拦了上限）。
+ */
+function pathPointCountError(kind: string, n: number): string | null {
+  if (kind === "line" || kind === "rect" || kind === "ellipse") {
+    return n === 2 ? null : "tool=" + kind + " 需要恰好 2 个点（起点与终点，允许 2；收到 " + n + " 个）";
+  }
+  if (kind === "bucket") {
+    return n === 1 ? null : "tool=bucket 需要恰好 1 个点（填充种子，允许 1；收到 " + n + " 个）";
+  }
+  return null;
+}
+
+/** 点必须在画布内（xy 参数没范围可限，只有这里能拦） */
+function inCanvasError(s: Session, x: number, y: number, name: string): string | null {
+  const w = s.doc.w, h = s.doc.h;
+  if (x < 0 || y < 0 || x >= w || y >= h) {
+    return name + " 必须在画布内（x 允许 0.." + (w - 1) + "，y 允许 0.." + (h - 1) + "；收到 [" + x + ", " + y + "]）";
+  }
+  return null;
+}
+
+/** 渐变量化档 → 引擎的块大小（`engine/paint.ts` 的 gradientFillRegion 收 1 / 2 / 4 / 8） */
+const GRAD_BLOCK: Record<string, number> = { rgb: 1, "2": 2, "4": 4, "8": 8 };
+
+/** fx_* 共用的三个参数（作用范围 + 目标图层 / 帧） */
+const FX_TARGET: Record<string, AiToolParam> = {
+  scope: { type: "enum", values: AI_FX_SCOPES.slice(), default: "layer",
+    desc: "layer = 整个图层；selection = 只在当前选区里生效（需要先建立选区）" },
+  layer: { type: "int", min: 0, default: AI_ARG_CURRENT, desc: "图层号，省略 = 当前图层" },
+  frame: { type: "int", min: 0, default: AI_ARG_CURRENT, desc: "帧号，省略 = 当前帧" },
+};
+
 /** 确认框里给用户看的一句话（纯文本，C3/C5 直接显示） */
 export function summarizeToolCall(tool: AiTool, value: Record<string, unknown>): string {
   const keys = Object.keys(value);
@@ -369,6 +458,16 @@ function tool(
   handler: AiToolHandler,
 ): AiTool {
   return { id, title, tier, params, returns, handler };
+}
+
+/** fx_* 的公共尾巴：把「作用范围 + 目标图层 / 帧」翻成 ai-draw 的一次 applyFx */
+function fxResult(s: Session, label: string, fn: CelFx, a: Record<string, unknown>): AiToolResult {
+  const r = applyFx(s, label, fn, {
+    li: at(a.layer, s.curLayer()),
+    fi: at(a.frame, s.curFrame()),
+    scope: a.scope as AiFxScope,
+  });
+  return written(s, r, { pixels: r.pixels });
 }
 
 // ------------------------------------------------------------------ 工具表
@@ -432,6 +531,180 @@ const TOOLS: readonly AiTool[] = [
     }),
 
   // ---------------- draw：允许（可关） ----------------
+  // P1 像素级工具面（docs/PLAN-ai.md §4 里标 C5+ 的那批）：handler 只做参数适配，
+  // 落笔 / 特效 / 变换全部交给 src/app/ai-draw.ts（那里只组合 Stroke 与 engine 既有函数）。
+  tool("draw_path", "画一条路径", "draw",
+    {
+      points: { type: "array", items: "xy", min: 1, max: 4096, desc: "折线顶点 [x,y]，画布坐标（越界的部分自然被裁掉）" },
+      tool: { type: "enum", values: AI_STROKE_KINDS.slice(), default: "pencil",
+        desc: "落笔方式：pencil / eraser ＝ 折线笔迹（逐点连线），line / rect / ellipse ＝ 只取首尾两点，bucket ＝ 只取首点当填充种子" },
+      size: { type: "int", min: 1, max: 64, default: 1, desc: "笔尖直径：笔迹与空心形状的线宽（实心形状只用它算脏矩形）" },
+      color: { type: "color", default: "fg", desc: "颜色；tool=eraser 时忽略（橡皮固定擦除）" },
+      sym: { type: "enum", values: AI_SYMS.slice(), default: "off",
+        desc: "对称：h ＝ 水平镜像线（上下对称），v ＝ 垂直镜像线（左右对称），both / 4 ＝ 两条线（四向）" },
+      fill: { type: "bool", default: true, desc: "tool=rect / ellipse 时是否实心" },
+      brush: { type: "enum", values: ["circle", "square"], optional: true, desc: "笔尖形状，省略 = 用当前的画笔形状" },
+      layer: { type: "int", min: 0, default: AI_ARG_CURRENT, desc: "图层号，省略 = 当前图层" },
+      frame: { type: "int", min: 0, default: AI_ARG_CURRENT, desc: "帧号，省略 = 当前帧" },
+    },
+    { ok: "true / false（点数与 tool 不匹配 / 图层锁定 / 下标不存在）", changed: "画到的像素并集矩形", data: "{ changed }", docRev: "文档版本号" },
+    (a, ctx) => {
+      const s = ctx.session;
+      const kind = a.tool as AiStrokeKind;
+      const pts = (a.points as number[][]).map((p) => [p[0], p[1]] as [number, number]);
+      const bad = pathPointCountError(kind, pts.length);
+      if (bad) return { ok: false, error: bad, docRev: s.doc.pixelRev };
+      const r = runStroke(s, {
+        kind, li: at(a.layer, s.curLayer()), fi: at(a.frame, s.curFrame()),
+        size: Number(a.size), color: rgbaOf(a.color, s), sym: a.sym as AiSymName,
+        shapeFill: a.fill === true, points: pts, label: "draw-path",
+        brushShape: a.brush === undefined ? undefined : (a.brush as "circle" | "square"),
+      });
+      return written(s, r);
+    }),
+
+  tool("draw_shape", "画一个形状", "draw",
+    {
+      shape: { type: "enum", values: AI_SHAPE_KINDS.slice(), desc: "line / rect / ellipse" },
+      from: { type: "xy", desc: "起点 [x,y]（含）" },
+      to: { type: "xy", desc: "终点 [x,y]（含）；rect / ellipse 用它和 from 组成外接矩形" },
+      fill: { type: "bool", default: false, desc: "rect / ellipse 是否实心（line 忽略）" },
+      size: { type: "int", min: 1, max: 64, default: 1, desc: "线宽（笔尖直径）" },
+      color: { type: "color", default: "fg", desc: "#rrggbb / #rrggbbaa / fg / bg" },
+      sym: { type: "enum", values: AI_SYMS.slice(), default: "off", desc: "对称（同 draw_path）" },
+      brush: { type: "enum", values: ["circle", "square"], optional: true, desc: "笔尖形状，省略 = 用当前的画笔形状" },
+      layer: { type: "int", min: 0, default: AI_ARG_CURRENT, desc: "图层号，省略 = 当前图层" },
+      frame: { type: "int", min: 0, default: AI_ARG_CURRENT, desc: "帧号，省略 = 当前帧" },
+    },
+    { ok: "true / false（图层锁定 / 下标不存在）", changed: "画到的像素并集矩形", data: "{ changed }", docRev: "文档版本号" },
+    (a, ctx) => {
+      const s = ctx.session;
+      const r = runStroke(s, {
+        kind: a.shape as AiStrokeKind,
+        li: at(a.layer, s.curLayer()), fi: at(a.frame, s.curFrame()),
+        size: Number(a.size), color: rgbaOf(a.color, s), sym: a.sym as AiSymName,
+        shapeFill: a.fill === true, points: [a.from as number[], a.to as number[]] as Array<[number, number]>,
+        label: "draw-shape",
+        brushShape: a.brush === undefined ? undefined : (a.brush as "circle" | "square"),
+      });
+      return written(s, r);
+    }),
+
+  tool("fill", "油漆桶填充", "draw",
+    {
+      at: { type: "xy", desc: "填充种子 [x,y]（必须在画布内）" },
+      color: { type: "color", default: "fg", desc: "填充色（alpha=0 时＝擦掉这片区域，与油漆桶的「擦」一致）" },
+      tolerance: { type: "int", min: 0, max: 255, default: 0, desc: "per-channel 容差（0 = 只填与种子完全同色的区域）" },
+      gaps: { type: "int", min: 0, max: 16, default: 0, desc: "封口：填之前把轮廓上 ≤N px 的缺口补上（0 = 不封口）" },
+      global: { type: "bool", default: false, desc: "true = 整层同色像素全填（不连通），false = 只填相连区域" },
+      gradient: { type: "bool", default: false, desc: "true = 填成 color → gradientTo 的渐变" },
+      gradientTo: { type: "color", default: "bg", desc: "渐变终点色（只在 gradient=true 时有意义）" },
+      gradientBlock: { type: "enum", values: ["rgb", "2", "4", "8"], default: "rgb", desc: "渐变量化：rgb = 逐像素，其余 = 按 N×N 色块" },
+      gradientAt: { type: "xy", optional: true, desc: "渐变方向与长度：从 at 指向这个点；省略 = 区域包围盒自上而下" },
+      sym: { type: "enum", values: AI_SYMS.slice(), default: "off", desc: "对称（同 draw_path）" },
+      layer: { type: "int", min: 0, default: AI_ARG_CURRENT, desc: "图层号，省略 = 当前图层" },
+      frame: { type: "int", min: 0, default: AI_ARG_CURRENT, desc: "帧号，省略 = 当前帧" },
+    },
+    { ok: "true / false（种子在画布外 / 图层锁定 / 参数矛盾）", changed: "被填到的像素并集矩形", data: "{ changed }", docRev: "文档版本号" },
+    (a, ctx) => {
+      const s = ctx.session;
+      const seed = a.at as number[];
+      const bad = inCanvasError(s, seed[0], seed[1], "at");
+      if (bad) return { ok: false, error: bad, docRev: s.doc.pixelRev };
+      const grad = a.gradient === true;
+      const gradAt = a.gradientAt as number[] | undefined;
+      if (!grad && gradAt) {
+        return { ok: false, error: "gradientAt 只在 gradient=true 时有意义（当前 gradient=false）；要么打开渐变，要么去掉 gradientAt", docRev: s.doc.pixelRev };
+      }
+      const r = runStroke(s, {
+        kind: "bucket", li: at(a.layer, s.curLayer()), fi: at(a.frame, s.curFrame()),
+        size: 1, color: rgbaOf(a.color, s), sym: a.sym as AiSymName,
+        fillTolerance: Number(a.tolerance), fillGaps: Number(a.gaps), bucketGlobal: a.global === true,
+        gradient: grad ? { end: rgbaOf(a.gradientTo, s), block: GRAD_BLOCK[String(a.gradientBlock)] ?? 1 } : null,
+        gradientTo: grad && gradAt ? [gradAt[0], gradAt[1]] : null,
+        points: [[seed[0], seed[1]]], label: "fill",
+      });
+      return written(s, r);
+    }),
+
+  // ---------------- fx_*：engine/effects.ts 的 8 个既有特效 ----------------
+  // 作用范围 = 整个图层（默认）或当前选区；一条历史（Session.maskOp 的结构快照）。
+  tool("fx_outline", "描边", "draw",
+    {
+      width: { type: "int", min: 1, max: 16, default: 1, desc: "描边宽度（px）" },
+      pos: { type: "enum", values: ["outside", "inside", "center"], default: "outside", desc: "画在轮廓外 / 内 / 内外各一半" },
+      color: { type: "color", default: "fg", desc: "描边色" },
+      ...FX_TARGET,
+    },
+    { ok: "true / false（图层锁定 / scope=selection 但没有选区）", changed: "被改动的像素矩形", data: "{ changed, pixels }", docRev: "文档版本号" },
+    (a, ctx) => fxResult(ctx.session, "fx-outline",
+      (d, w, h) => fxE.outlineCel(d, w, h, Number(a.width), rgbaOf(a.color, ctx.session), a.pos as fxE.OutlinePos), a)),
+
+  tool("fx_inline", "内描边", "draw",
+    {
+      width: { type: "int", min: 1, max: 8, default: 1, desc: "往里画几圈（最外圈原色保留）" },
+      alpha: { type: "int", min: 0, max: 100, default: 100, desc: "与底下像素的混合比例（%），100 = 完全覆盖" },
+      color: { type: "color", default: "fg", desc: "内描边色" },
+      ...FX_TARGET,
+    },
+    { ok: "true / false（图层锁定 / 没有选区 / 没有透明背景）", changed: "被改动的像素矩形", data: "{ changed, pixels }", docRev: "文档版本号" },
+    (a, ctx) => fxResult(ctx.session, "fx-inline",
+      (d, w, h) => fxE.inlineCel(d, w, h, Number(a.width), rgbaOf(a.color, ctx.session), Math.round(Number(a.alpha) * 2.55)), a)),
+
+  tool("fx_shadow", "投影", "draw",
+    {
+      dx: { type: "int", min: -64, max: 64, default: 3, desc: "水平偏移（px，正数向右）" },
+      dy: { type: "int", min: -64, max: 64, default: 3, desc: "垂直偏移（px，正数向下）" },
+      color: { type: "color", default: "#000000", desc: "影子颜色" },
+      alpha: { type: "int", min: 0, max: 100, default: 59, desc: "影子不透明度（%）" },
+      ...FX_TARGET,
+    },
+    { ok: "true / false（图层锁定 / 没有选区）", changed: "被改动的像素矩形", data: "{ changed, pixels }", docRev: "文档版本号" },
+    (a, ctx) => fxResult(ctx.session, "fx-shadow", (d, w, h) => {
+      const c = rgbaOf(a.color, ctx.session);
+      fxE.dropShadowCel(d, w, h, Number(a.dx), Number(a.dy), [c[0], c[1], c[2], Math.round((Number(a.alpha) / 100) * 255)], true);
+    }, a)),
+
+  tool("fx_glow", "外发光", "draw",
+    {
+      radius: { type: "int", min: 1, max: 16, default: 2, desc: "向外发光几圈（每圈更淡）" },
+      color: { type: "color", default: "fg", desc: "发光颜色" },
+      ...FX_TARGET,
+    },
+    { ok: "true / false（图层锁定 / 没有选区）", changed: "被改动的像素矩形", data: "{ changed, pixels }", docRev: "文档版本号" },
+    (a, ctx) => fxResult(ctx.session, "fx-glow", (d, w, h) => {
+      const c = rgbaOf(a.color, ctx.session);
+      fxE.outerGlowCel(d, w, h, Number(a.radius), [c[0], c[1], c[2], c[3] > 0 ? c[3] : 255]);
+    }, a)),
+
+  tool("fx_invert", "反色", "draw",
+    { ...FX_TARGET },
+    { ok: "true / false（图层锁定 / 没有选区）", changed: "被改动的像素矩形", data: "{ changed, pixels }", docRev: "文档版本号" },
+    (a, ctx) => fxResult(ctx.session, "fx-invert", (d) => fxE.invertCel(d), a)),
+
+  tool("fx_gray", "灰度", "draw",
+    { ...FX_TARGET },
+    { ok: "true / false（图层锁定 / 没有选区）", changed: "被改动的像素矩形", data: "{ changed, pixels }", docRev: "文档版本号" },
+    (a, ctx) => fxResult(ctx.session, "fx-gray", (d) => fxE.desaturateCel(d), a)),
+
+  tool("fx_round", "圆角化", "draw",
+    {
+      radius: { type: "int", min: 1, max: 8, default: 2, desc: "削几层（1..8）" },
+      mode: { type: "enum", values: ["outer", "both"], default: "outer", desc: "outer = 只削外直角；both = 连内凹角与 1px 洞一起补" },
+      ...FX_TARGET,
+    },
+    { ok: "true / false（图层锁定 / 没有选区）", changed: "被改动的像素矩形", data: "{ changed, pixels }", docRev: "文档版本号" },
+    (a, ctx) => fxResult(ctx.session, "fx-round",
+      (d, w, h) => fxE.roundCornersCel(d, w, h, Number(a.radius), a.mode as fxE.RoundMode), a)),
+
+  tool("fx_blur", "模糊", "draw",
+    {
+      radius: { type: "int", min: 1, max: 32, default: 2, desc: "模糊半径（px；两遍盒式模糊，近似高斯）" },
+      ...FX_TARGET,
+    },
+    { ok: "true / false（图层锁定 / 没有选区）", changed: "被改动的像素矩形", data: "{ changed, pixels }", docRev: "文档版本号" },
+    (a, ctx) => fxResult(ctx.session, "fx-blur", (d, w, h) => fxE.blurCel(d, w, h, Number(a.radius)), a)),
+
   tool("undo", "撤销", "draw", {},
     { ok: "是否执行了撤销（没有可撤销的步骤时为 false）", docRev: "撤销后的文档版本号" },
     (_a, ctx) => {
@@ -919,6 +1192,83 @@ const TOOLS: readonly AiTool[] = [
     }),
 
   // ---------------- destructive：每次确认 ----------------
+  // `erase` 与 `transform` 归这一档：它们**删掉 / 移走**已有像素（擦除会把一块内容清成透明，
+  // 变换可能把像素推出画布、缩放 / 旋转还会重采样）—— 与既有的 `scale`（改画布尺寸 / 重采样）
+  // 同一类。写得再多也只是覆盖像素的 `fill` / `color_replace` / `fx_*` 仍然留在 draw 档。
+  tool("erase", "擦除一块区域", "destructive",
+    {
+      rect: { type: "rect", desc: "要擦掉的区域 {x,y,w,h}（画布坐标；w / h 必须 ≥1）" },
+      shape: { type: "enum", values: ["rect", "ellipse"], default: "rect", desc: "擦除区域的外形（ellipse = 内切椭圆）" },
+      fill: { type: "bool", default: true, desc: "true = 整块擦掉；false = 只擦 1px 轮廓" },
+      sym: { type: "enum", values: AI_SYMS.slice(), default: "off", desc: "对称（同 draw_path）" },
+      layer: { type: "int", min: 0, default: AI_ARG_CURRENT, desc: "图层号，省略 = 当前图层" },
+      frame: { type: "int", min: 0, default: AI_ARG_CURRENT, desc: "帧号，省略 = 当前帧" },
+    },
+    { ok: "true / false（w / h 为 0 / 图层锁定 / 下标不存在）", changed: "擦到的像素并集矩形",
+      data: "{ changed }（有选区时只擦选区内的部分，与橡皮工具一致）", docRev: "文档版本号" },
+    (a, ctx) => {
+      const s = ctx.session;
+      const rc = rectOf(a.rect);
+      if (rc.w < 1 || rc.h < 1) {
+        return { ok: false, error: "rect 的 w / h 必须 ≥1（允许 1..画布尺寸；收到 w=" + rc.w + ", h=" + rc.h + "）", docRev: s.doc.pixelRev };
+      }
+      const r = runStroke(s, {
+        kind: a.shape as AiStrokeKind, li: at(a.layer, s.curLayer()), fi: at(a.frame, s.curFrame()),
+        size: 1, color: [0, 0, 0, 0], sym: a.sym as AiSymName, shapeFill: a.fill !== false,
+        points: [[rc.x, rc.y], [rc.x + rc.w - 1, rc.y + rc.h - 1]], label: "erase",
+      });
+      return written(s, r);
+    }),
+
+  tool("transform", "变换图层或选区", "destructive",
+    {
+      mode: { type: "enum", values: AI_XFORM_MODES.slice(), desc: "move（平移）/ scale（缩放，可镜像）/ rotate（旋转）" },
+      scope: { type: "enum", values: AI_XFORM_SCOPES.slice(), default: "selection",
+        desc: "selection = 只变换选区里的内容（需要先建立选区）；layer = 变换整个图层（无视选区，作用范围＝整幅画布）" },
+      dx: { type: "int", min: -4096, max: 4096, default: 0, desc: "mode=move：水平位移（整格，正数向右）" },
+      dy: { type: "int", min: -4096, max: 4096, default: 0, desc: "mode=move：垂直位移（整格，正数向下）" },
+      sx: { type: "num", min: -40, max: 40, default: 1, desc: "mode=scale：横向倍率，0.02..40（负值＝镜像翻转）" },
+      sy: { type: "num", min: -40, max: 40, default: 1, desc: "mode=scale：纵向倍率，0.02..40（负值＝镜像翻转）" },
+      angle: { type: "num", min: -360, max: 360, default: 0, desc: "mode=rotate：旋转角度（度，正数＝顺时针）" },
+      snap: { type: "bool", default: false, desc: "mode=rotate：把角度吸到像素画的干净角（26.565° 那一族，与 UI 的角度吸附同一张表）" },
+      pivot: { type: "enum", values: AI_PIVOTS.slice(), default: "cc", desc: "枢轴（缩放 / 旋转的不动点）：tl / tc / tr / cl / cc / cr / bl / bc / br，cc = 正中" },
+      layer: { type: "int", min: 0, default: AI_ARG_CURRENT, desc: "图层号，省略 = 当前图层" },
+      frame: { type: "int", min: 0, default: AI_ARG_CURRENT, desc: "帧号，省略 = 当前帧" },
+    },
+    { ok: "true / false（参数与 mode 矛盾 / 没有选区 / 图层锁定 / 空图层）", changed: "落进画布的像素并集矩形",
+      data: "{ changed, pixels }（内容被推出画布的部分不会写进来）", docRev: "文档版本号" },
+    (a, ctx) => {
+      const s = ctx.session;
+      const mode = a.mode as AiXformMode;
+      const dx = Number(a.dx), dy = Number(a.dy), sx = Number(a.sx), sy = Number(a.sy);
+      const angle = Number(a.angle), snap = a.snap === true;
+      const pivot = String(a.pivot);
+      // 与 mode 无关的参数**拒绝**（不静默忽略）：模型按别的 mode 填的一组参数会得到一个
+      // 「看起来成功、其实没动」的结果，比报错难查得多。
+      if (mode === "move" && (sx !== 1 || sy !== 1 || angle !== 0 || snap || pivot !== "cc")) {
+        return { ok: false, error: "mode=move 只接受 dx / dy；sx / sy / angle / snap / pivot 属于 scale / rotate（当前 sx=" + sx + ", sy=" + sy + ", angle=" + angle + ", snap=" + snap + ", pivot=" + pivot + "）", docRev: s.doc.pixelRev };
+      }
+      if (mode === "scale") {
+        if (dx !== 0 || dy !== 0 || angle !== 0 || snap) {
+          return { ok: false, error: "mode=scale 只接受 sx / sy / pivot；dx / dy / angle / snap 属于 move / rotate（当前 dx=" + dx + ", dy=" + dy + ", angle=" + angle + ", snap=" + snap + "）", docRev: s.doc.pixelRev };
+        }
+        for (const v of [sx, sy]) {
+          const mag = Math.abs(v), okMag = mag >= AI_SCALE_MIN && mag <= AI_SCALE_MAX;
+          if (!Number.isFinite(v) || v === 0 || !okMag) {
+            return { ok: false, error: "缩放倍率的绝对值允许 " + AI_SCALE_MIN + ".." + AI_SCALE_MAX + "（负值＝镜像；不做静默钳制，请自己收进范围；收到 " + v + "）", docRev: s.doc.pixelRev };
+          }
+        }
+      }
+      if (mode === "rotate" && (dx !== 0 || dy !== 0 || sx !== 1 || sy !== 1)) {
+        return { ok: false, error: "mode=rotate 只接受 angle / snap / pivot；dx / dy / sx / sy 属于 move / scale（当前 dx=" + dx + ", dy=" + dy + ", sx=" + sx + ", sy=" + sy + "）", docRev: s.doc.pixelRev };
+      }
+      const r = runTransform(s, {
+        li: at(a.layer, s.curLayer()), fi: at(a.frame, s.curFrame()),
+        mode, scope: a.scope as AiXformScope, dx, dy, sx, sy, angle, snap, pivot: pivot as PivotPreset,
+      });
+      return written(s, r, { pixels: r.pixels });
+    }),
+
   tool("layer_delete", "删除当前图层", "destructive", {},
     { ok: "true / false（只剩一个图层）", data: "{ layers }", docRev: "文档版本号" },
     (_a, ctx) => {

@@ -11,7 +11,7 @@
 //   · §4 映射表里标「已有方法」的条目全部有工具。
 import { Doc } from "../src/engine/doc";
 import { Session } from "../src/app/session";
-import { docDigest, readRegion } from "../src/app/ai-doc";
+import { AI_INDEX_ALPHABET, docDigest, readRegion } from "../src/app/ai-doc";
 import {
   AI_ARG_CURRENT, AI_TIER_ORDER, AI_TOOL_ACTION_IDS, AI_TOOL_ID_WHITELIST,
   allToolIds, callTool, getTool, idRegistrationDiff, listTools, validateArgs,
@@ -66,6 +66,20 @@ function inkCount(s: Session): number {
   return n;
 }
 
+/**
+ * 用 `read_region` 读回**一格**像素的规范颜色串（`.` = 全透明 → null）。
+ * P1 的「真画完再读回」断言全靠它：走的是模型自己会走的那条读路径（索引网格 → 调色板），
+ * 而不是直接戳 cel 的字节。
+ */
+async function readPx(kit: CtxKit, x: number, y: number, li = 0, fi = 0): Promise<string | null> {
+  const r = await callTool("read_region", { rect: { x, y, w: 1, h: 1 }, li, fi }, kit.ctx);
+  const reg = r.data as { rows: string[]; palette: string[] };
+  const ch = reg.rows[0] ? reg.rows[0][0] : ".";
+  if (ch === ".") return null;
+  const i = AI_INDEX_ALPHABET.indexOf(ch);
+  return i >= 0 ? reg.palette[i] : null;
+}
+
 /** 有内容的会话：3 色调色板、16 个红像素、两帧两个标签（tag_* 的工具要有真 id 可用） */
 function live(): Session {
   const s = new Session();
@@ -103,7 +117,7 @@ export async function testAiTools(): Promise<void> {
 
   // ------------------------------------------------------------ 1. 表结构 / schema
   const all = listTools({ tiers: ALL_TIERS });
-  eq("aitools.count", all.length, 48);
+  eq("aitools.count", all.length, 61);
   eq("aitools.action-ids", AI_TOOL_ACTION_IDS, ["undo", "redo"]);
   eq("aitools.list-default-no-ui", listTools().filter((t) => t.tier === "ui").length, 0);
   eq("aitools.list-ui-only", listTools({ tiers: ["ui"] }).map((t) => t.id), ["set_tool"]);
@@ -126,6 +140,29 @@ export async function testAiTools(): Promise<void> {
   eq("aitools.list-tiers-order-ignored", listTools({ tiers: ["destructive", "read"] }).map((t) => t.id),
     all.filter((t) => t.tier === "read" || t.tier === "destructive").map((t) => t.id));
   eq("aitools.list-unknown-tier-filter", listTools({ tiers: ["nope" as AiTier] }).length, 0);
+
+  // P1 新工具的 tier 分档与参数 desc（写像素＝draw；删掉 / 移走已有像素＝destructive）
+  const P1_TIERS: Record<string, AiTier> = {
+    draw_path: "draw", draw_shape: "draw", fill: "draw",
+    fx_outline: "draw", fx_inline: "draw", fx_shadow: "draw", fx_glow: "draw",
+    fx_invert: "draw", fx_gray: "draw", fx_round: "draw", fx_blur: "draw",
+    erase: "destructive", transform: "destructive",
+  };
+  eq("aitools.p1.count", Object.keys(P1_TIERS).length, 13);
+  let p1Params = 0, p1NoDesc = 0;
+  for (const id of Object.keys(P1_TIERS)) {
+    const t = getTool(id);
+    ok("aitools.p1.in-table." + id, !!t);
+    if (!t) continue;
+    ok("aitools.p1.tier." + id, t.tier === P1_TIERS[id], id + " → " + t.tier);
+    ok("aitools.p1.returns-docrev." + id, Object.prototype.hasOwnProperty.call(t.returns, "docRev"));
+    for (const name of Object.keys(t.params)) {
+      p1Params++;
+      if (!t.params[name].desc) p1NoDesc++;
+    }
+  }
+  ok("aitools.p1.params-sane", p1Params >= 60, "params=" + p1Params);
+  eq("aitools.p1.params-desc", p1NoDesc, 0);
 
   // 每个 schema 都自洽
   for (const t of all) {
@@ -216,6 +253,12 @@ export async function testAiTools(): Promise<void> {
     ["undo", "undo"], ["redo", "redo"], ["scaleAdvanced", "scale"], ["clearCanvas", "canvas_clear"],
     ["setIsoPref", "iso_set"], ["setIsoOrigin", "iso_origin"], ["isoGenerate", "iso_generate"],
     ["setTool", "set_tool"],
+    // P1 像素级工具面：handler 调的是 src/app/ai-draw.ts，而 ai-draw 只走 Session 的这几个门面
+    ["brush", "draw_path"], ["brush", "draw_shape"], ["paletteSnap", "draw_path"],
+    ["strokeTarget", "draw_shape"], ["refPaintBlock", "erase"], ["repaint", "fill"],
+    ["changedUI", "fill"], ["maskOp", "fx_outline"], ["maskOp", "fx_inline"], ["maskOp", "fx_shadow"],
+    ["maskOp", "fx_glow"], ["maskOp", "fx_invert"], ["maskOp", "fx_gray"], ["maskOp", "fx_round"],
+    ["maskOp", "fx_blur"], ["maskOp", "transform"],
   ];
   const proto = Session.prototype as unknown as Record<string, unknown>;
   for (const [method, toolId] of covered) {
@@ -325,12 +368,15 @@ export async function testAiTools(): Promise<void> {
   eq("aitools.call.invalid-destructive.no-confirm", kitBad.asked.length, 0);
   eq("aitools.call.invalid-destructive.doc-untouched", docBytes(sBad), badBefore);
 
-  // ② destructive 未确认 → cancelled，且文档逐字节不变
-  for (const id of ["canvas_clear", "layer_delete", "frame_delete", "layer_merge_down", "scale"]) {
+  // ② destructive 未确认 → cancelled，且文档逐字节不变（P1 新增的 erase / transform 同款）
+  for (const id of ["canvas_clear", "layer_delete", "frame_delete", "layer_merge_down", "scale", "erase", "transform"]) {
     const sc = live();
     const cancelKit = mkCtx(sc, false);
     const before = docBytes(sc);
-    const args: Args = id === "scale" ? { w: 32, h: 32 } : {};
+    const args: Args = id === "scale" ? { w: 32, h: 32 }
+      : id === "erase" ? { rect: { x: 0, y: 0, w: 4, h: 4 } }
+        : id === "transform" ? { mode: "move", scope: "layer", dx: 3, dy: 3 }
+          : {};
     const res = await callTool(id, args, cancelKit.ctx);
     eq("aitools.call.cancel.result." + id, res, { ok: false, error: "cancelled" });
     eq("aitools.call.cancel.asked." + id, cancelKit.asked.length, 1);
@@ -419,6 +465,19 @@ export async function testAiTools(): Promise<void> {
     iso_generate: () => ({ target: "layer" }),
     iso_origin: () => ({ at: [4, 4] }),
     iso_set: () => ({ shape: "box", w: 2, d: 2, h: 1, tile: "4", colorMode: "mono" }),
+    draw_path: () => ({ points: [[1, 1], [6, 6]], tool: "pencil", size: 1, color: "#ff00ff" }),
+    draw_shape: () => ({ shape: "rect", from: [1, 1], to: [5, 5], fill: true, color: "#00ffff" }),
+    fill: () => ({ at: [0, 0], color: "#123456", tolerance: 0, gaps: 0 }),
+    erase: () => ({ rect: { x: 0, y: 0, w: 2, h: 2 } }),
+    transform: () => ({ mode: "move", scope: "layer", dx: 1, dy: 1 }),
+    fx_outline: () => ({ width: 1, pos: "outside", color: "#000000" }),
+    fx_inline: () => ({ width: 1, alpha: 100, color: "#000000" }),
+    fx_shadow: () => ({ dx: 1, dy: 1, color: "#000000", alpha: 50 }),
+    fx_glow: () => ({ radius: 1, color: "#ffffff" }),
+    fx_invert: () => ({}),
+    fx_gray: () => ({}),
+    fx_round: () => ({ radius: 1, mode: "outer" }),
+    fx_blur: () => ({ radius: 1 }),
     layer_add: () => ({}),
     layer_blend: () => ({ blend: "multiply" }),
     layer_duplicate: () => ({}),
@@ -593,4 +652,274 @@ export async function testAiTools(): Promise<void> {
   const tinyKit = mkCtx(sTiny, true);
   eq("aitools.behave.tiny.doc", [sTiny.doc.w, sTiny.doc.h], [16, 16]);
   eq("aitools.behave.tiny.digest", (await callTool("doc_digest", {}, tinyKit.ctx)).ok, true);
+
+  // ------------------------------------------------------------ 9. read 档：一个字节都不动
+  // 「read 档跑不动任何写操作」在 C1 这一层的口径＝read 档的三个工具调完之后文档逐字节不变，
+  // 而且它们**不触发确认**（确认是 destructive 档专属）。
+  const sReadOnly = live();
+  const roKit = mkCtx(sReadOnly, false);           // 确认回调一律拒绝：read 档根本不该问
+  const roBefore = docBytes(sReadOnly);
+  const RO_ARGS: Record<string, Args> = {
+    doc_digest: {}, read_region: { rect: { x: 0, y: 0, w: 8, h: 8 }, fi: 0, li: 0 },
+    color_analyse: { scope: "canvas" }, color_groups: { scope: "layer", tol: 8 },
+  };
+  const readIds = listTools({ tiers: ["read"] }).map((t) => t.id);
+  eq("aitools.readtier.ids", readIds, ["color_analyse", "color_groups", "doc_digest", "read_region"]);
+  for (const id of readIds) {
+    ok("aitools.readtier.has-args." + id, !!RO_ARGS[id]);
+    const r = await callTool(id, RO_ARGS[id] ?? {}, roKit.ctx);
+    eq("aitools.readtier.ok." + id, r.ok, true);
+  }
+  eq("aitools.readtier.bytes", docBytes(sReadOnly), roBefore);
+  eq("aitools.readtier.no-confirm", roKit.asked.length, 0);
+
+  // ------------------------------------------------------------ 10. P1 像素级工具：真画完再读回
+  // 每个工具都「调一次 → 用 read_region 把像素读回来」，验形状与颜色真的落到画布上；
+  // 越界 / 矛盾的参数一律被拒且 reason 带允许范围，且**文档逐字节不变**。
+  const P = live();                                 // 64x64，layer0/frame0 的 (0..3,0..3) 是 16 个红像素
+  const pk = mkCtx(P, true);
+  /** 读回 P 会话里的一格（本节大部分断言都用它） */
+  const px = (x: number, y: number, li = 0, fi = 0): Promise<string | null> => readPx(pk, x, y, li, fi);
+
+  // --- draw_path：折线笔迹（3 个点 → 两段线）---
+  const dp = await callTool("draw_path", { points: [[10, 10], [19, 10], [19, 14]], tool: "pencil", size: 1, color: "#00ff00", layer: 0, frame: 0 }, pk.ctx);
+  eq("aitools.draw.path.ok", dp.ok, true);
+  eq("aitools.draw.path.changed-rect", dp.changed, { x: 10, y: 10, w: 10, h: 5 });
+  eq("aitools.draw.path.head", await px(10, 10), "#00ff00");
+  eq("aitools.draw.path.corner", await px(19, 10), "#00ff00");
+  eq("aitools.draw.path.tail", await px(19, 14), "#00ff00");
+  eq("aitools.draw.path.empty-before", await px(9, 10), null);
+  eq("aitools.draw.path.empty-after", await px(19, 15), null);
+
+  // --- draw_path：形状子集（line / rect / ellipse，只取首尾两点）---
+  const dl = await callTool("draw_path", { points: [[10, 20], [19, 20]], tool: "line", size: 3, color: "#0000ff" }, pk.ctx);
+  eq("aitools.draw.path.line.ok", dl.ok, true);
+  eq("aitools.draw.path.line-px", await px(14, 20), "#0000ff");
+  eq("aitools.draw.path.line-width", await px(14, 19), "#0000ff");       // size=3 → 上下各铺 1px
+  const drect = await callTool("draw_path", { points: [[24, 20], [27, 23]], tool: "rect", fill: true, color: "#ff00ff" }, pk.ctx);
+  eq("aitools.draw.path.rect.ok", drect.ok, true);
+  eq("aitools.draw.path.rect-corner", await px(24, 20), "#ff00ff");
+  eq("aitools.draw.path.rect-fill", await px(26, 22), "#ff00ff");
+  eq("aitools.draw.path.rect-outside", await px(28, 20), null);
+
+  // --- draw_shape：实心 / 空心 ---
+  const ds = await callTool("draw_shape", { shape: "rect", from: [30, 30], to: [33, 32], fill: true, color: "#ff0000" }, pk.ctx);
+  eq("aitools.shape.rect.ok", ds.ok, true);
+  eq("aitools.shape.rect.filled", await px(31, 31), "#ff0000");
+  const de = await callTool("draw_shape", { shape: "ellipse", from: [40, 40], to: [48, 48], fill: false, color: "#00ffff" }, pk.ctx);
+  eq("aitools.shape.ellipse.ok", de.ok, true);
+  eq("aitools.shape.ellipse.outline", await px(44, 40), "#00ffff");       // 椭圆顶边中点
+  eq("aitools.shape.ellipse.hollow", await px(44, 44), null);             // 空心：中心必须是空的
+  const def = await callTool("draw_shape", { shape: "ellipse", from: [40, 40], to: [48, 48], fill: true, color: "#00ffff" }, pk.ctx);
+  eq("aitools.shape.ellipse.fill-ok", def.ok, true);
+  eq("aitools.shape.ellipse.filled", await px(44, 44), "#00ffff");
+
+  // --- fill：油漆桶（种子 / 容差 / 封口 / 渐变）---
+  // 先给 (0,4) 放一个「几乎同色」的像素（ΔR=1），它是红块的 4 邻接邻居
+  await callTool("draw_path", { points: [[0, 4]], tool: "pencil", color: "#fe0000" }, pk.ctx);
+  const fl = await callTool("fill", { at: [0, 0], color: "#0000ff", tolerance: 0, gaps: 0, layer: 0, frame: 0 }, pk.ctx);
+  eq("aitools.fill.ok", fl.ok, true);
+  eq("aitools.fill.seed", await px(0, 0), "#0000ff");
+  eq("aitools.fill.far-corner", await px(3, 3), "#0000ff");
+  eq("aitools.fill.tolerance-zero-leaves-neighbour", await px(0, 4), "#fe0000");
+  eq("aitools.fill.stops-at-colour-change", await px(4, 0), null);
+  // 容差 2 时 ΔR=1 的邻居算同色 → 一起被填
+  const sTol = live();
+  const tlk = mkCtx(sTol, true);
+  await callTool("draw_path", { points: [[0, 4]], tool: "pencil", color: "#fe0000" }, tlk.ctx);
+  const flTol = await callTool("fill", { at: [0, 0], color: "#00ff00", tolerance: 2, gaps: 0 }, tlk.ctx);
+  eq("aitools.fill.tolerance-ok", flTol.ok, true);
+  eq("aitools.fill.tolerance-includes-neighbour", await readPx(tlk, 0, 4), "#00ff00");
+  eq("aitools.fill.tolerance-block", await readPx(tlk, 3, 3), "#00ff00");
+  // gaps 封口：能给、能跑（口径 0..16）
+  const sGap = live();
+  const gpk = mkCtx(sGap, true);
+  const flGap = await callTool("fill", { at: [0, 20], color: "#123456", tolerance: 0, gaps: 2, layer: 0, frame: 0 }, gpk.ctx);
+  eq("aitools.fill.gaps-ok", flGap.ok, true);
+  eq("aitools.fill.gaps-px", await readPx(gpk, 0, 20), "#123456");
+  // 渐变：从种子指向 gradientAt，两端分别是起止色（逐像素 ramp，b=1）
+  const sGrad = live();
+  const glk = mkCtx(sGrad, true);
+  const flG = await callTool("fill", { at: [0, 40], color: "#ff0000", gradient: true, gradientTo: "#0000ff", gradientAt: [63, 40], layer: 0, frame: 0 }, glk.ctx);
+  eq("aitools.fill.gradient-ok", flG.ok, true);
+  eq("aitools.fill.gradient-start", await readPx(glk, 0, 40), "#ff0000");
+  eq("aitools.fill.gradient-end", await readPx(glk, 63, 40), "#0000ff");
+  ok("aitools.fill.gradient-mid", (await readPx(glk, 32, 40)) !== "#ff0000" && (await readPx(glk, 32, 40)) !== "#0000ff");
+
+  // --- erase：矩形擦除（destructive，确认后执行）---
+  const sEr = live();
+  const ek = mkCtx(sEr, true);
+  ok("aitools.erase.before-ink", (await readPx(ek, 0, 0)) !== null);
+  const er = await callTool("erase", { rect: { x: 0, y: 0, w: 4, h: 4 }, layer: 0, frame: 0 }, ek.ctx);
+  eq("aitools.erase.ok", er.ok, true);
+  eq("aitools.erase.asked-once", ek.asked.length, 1);
+  eq("aitools.erase.tier", ek.asked[0].tier, "destructive");
+  eq("aitools.erase.bytes-after", inkCount(sEr), 0);
+  eq("aitools.erase.cleared", await readPx(ek, 0, 0), null);
+  eq("aitools.erase.keeps-outside", await readPx(ek, 5, 5), null);
+  // 有选区时只擦选区里的部分：先画一个选区外的绿像素，擦 8x8 的区域，绿的必须活下来
+  const sErSel = live();
+  const esk = mkCtx(sErSel, true);
+  await callTool("draw_shape", { shape: "rect", from: [6, 6], to: [6, 6], fill: true, color: "#00ff00" }, esk.ctx);
+  await callTool("color_select", { color: "#ff0000", tolerance: 0, scope: "layer" }, esk.ctx);
+  await callTool("erase", { rect: { x: 0, y: 0, w: 8, h: 8 }, layer: 0, frame: 0 }, esk.ctx);
+  eq("aitools.erase.selection-inside-cleared", await readPx(esk, 0, 0), null);
+  eq("aitools.erase.selection-outside-kept", await readPx(esk, 6, 6), "#00ff00");
+  const sErNoSel = live();
+  const ensk = mkCtx(sErNoSel, true);
+  await callTool("erase", { rect: { x: 0, y: 0, w: 4, h: 4 }, layer: 0, frame: 0 }, ensk.ctx);
+  eq("aitools.erase.no-selection-clears-all", inkCount(sErNoSel), 0);
+
+  // --- transform：移动（整层 / 选区）+ 旋转 ---
+  const sTf = live();
+  const tk = mkCtx(sTf, true);
+  const mv = await callTool("transform", { mode: "move", scope: "layer", dx: 10, dy: 0, layer: 0, frame: 0 }, tk.ctx);
+  eq("aitools.transform.move.ok", mv.ok, true);
+  eq("aitools.transform.move.asked", tk.asked.length, 1);
+  eq("aitools.transform.move.old-spot-empty", await readPx(tk, 0, 0), null);
+  eq("aitools.transform.move.new-spot", await readPx(tk, 10, 0), "#ff0000");
+  eq("aitools.transform.move.rect", mv.changed, { x: 10, y: 0, w: 4, h: 4 });
+  const rot = await callTool("transform", { mode: "rotate", scope: "layer", angle: 90, pivot: "cc", layer: 0, frame: 0 }, tk.ctx);
+  eq("aitools.transform.rotate.ok", rot.ok, true);
+  // 画布 64x64，枢轴 cc=(32,32)，顺时针 90°：(x,y) → (64-y, x)；方块 10..13 x 0..3 → 61..64 x 10..13（x=64 被裁）
+  eq("aitools.transform.rotate.px", await readPx(tk, 61, 10), "#ff0000");
+  eq("aitools.transform.rotate.old-spot-empty", await readPx(tk, 10, 0), null);
+  // 选区分档：选区跟着内容走（doc_digest 的 sel 就是证据）
+  const sTfSel = live();
+  const tsk = mkCtx(sTfSel, true);
+  await callTool("color_select", { color: "#ff0000", tolerance: 0, scope: "layer" }, tsk.ctx);
+  const selDig0 = await callTool("doc_digest", {}, tsk.ctx);
+  eq("aitools.transform.sel.pre-sel", (selDig0.data as { sel: unknown }).sel, { x: 0, y: 0, w: 4, h: 4, pixels: 16 });
+  const smv = await callTool("transform", { mode: "move", scope: "selection", dx: 0, dy: 8, layer: 0, frame: 0 }, tsk.ctx);
+  eq("aitools.transform.sel.ok", smv.ok, true);
+  const selDig1 = await callTool("doc_digest", {}, tsk.ctx);
+  eq("aitools.transform.sel.moved", (selDig1.data as { sel: unknown }).sel, { x: 0, y: 8, w: 4, h: 4, pixels: 16 });
+  eq("aitools.transform.sel.px-moved", await readPx(tsk, 0, 8), "#ff0000");
+  eq("aitools.transform.sel.old-empty", await readPx(tsk, 0, 0), null);
+
+  // --- fx_*：8 个引擎既有特效（每个用一个干净会话，读回一个决定性像素）---
+  const sFx1 = live();
+  const fk1 = mkCtx(sFx1, true);
+  const fxIn = await callTool("fx_invert", { scope: "layer", layer: 0, frame: 0 }, fk1.ctx);
+  eq("aitools.fx.invert.ok", fxIn.ok, true);
+  eq("aitools.fx.invert.px", await readPx(fk1, 0, 0), "#00ffff");                     // 红 → 青
+  eq("aitools.fx.invert.keeps-transparent", await readPx(fk1, 10, 10), null);
+  eq("aitools.fx.invert.changed-rect", fxIn.changed, { x: 0, y: 0, w: 4, h: 4 });
+
+  const sFx2 = live();
+  const fk2 = mkCtx(sFx2, true);
+  const fxGray = await callTool("fx_gray", { scope: "layer", layer: 0, frame: 0 }, fk2.ctx);
+  eq("aitools.fx.gray.ok", fxGray.ok, true);
+  eq("aitools.fx.gray.px", await readPx(fk2, 0, 0), "#4c4c4c");                       // round(0.299*255) = 76 = 0x4c
+  eq("aitools.fx.gray.keeps-transparent", await readPx(fk2, 10, 10), null);
+
+  const sFx3 = live();
+  const fk3 = mkCtx(sFx3, true);
+  const fxOut = await callTool("fx_outline", { width: 1, pos: "outside", color: "#000000", scope: "layer", layer: 0, frame: 0 }, fk3.ctx);
+  eq("aitools.fx.outline.ok", fxOut.ok, true);
+  eq("aitools.fx.outline.ring", await readPx(fk3, 4, 0), "#000000");                  // 轮廓外 1px
+  eq("aitools.fx.outline.keeps-fill", await readPx(fk3, 1, 1), "#ff0000");
+
+  const sFx4 = live();
+  const fk4 = mkCtx(sFx4, true);
+  const fxInl = await callTool("fx_inline", { width: 1, alpha: 100, color: "#ffffff", scope: "layer", layer: 0, frame: 0 }, fk4.ctx);
+  eq("aitools.fx.inline.ok", fxInl.ok, true);
+  eq("aitools.fx.inline.inner", await readPx(fk4, 1, 1), "#ffffff");                  // 往里一圈变白
+  eq("aitools.fx.inline.outer-ring-kept", await readPx(fk4, 0, 0), "#ff0000");        // 最外圈原色保留
+
+  const sFx5 = live();
+  const fk5 = mkCtx(sFx5, true);
+  const fxSh = await callTool("fx_shadow", { dx: 8, dy: 0, color: "#000000", alpha: 100, scope: "layer", layer: 0, frame: 0 }, fk5.ctx);
+  eq("aitools.fx.shadow.ok", fxSh.ok, true);
+  eq("aitools.fx.shadow.copy", await readPx(fk5, 10, 1), "#000000");
+  eq("aitools.fx.shadow.original-kept", await readPx(fk5, 1, 1), "#ff0000");
+
+  const sFx6 = live();
+  const fk6 = mkCtx(sFx6, true);
+  const fxGl = await callTool("fx_glow", { radius: 1, color: "#ffffff", scope: "layer", layer: 0, frame: 0 }, fk6.ctx);
+  eq("aitools.fx.glow.ok", fxGl.ok, true);
+  eq("aitools.fx.glow.ring", await readPx(fk6, 4, 0), "#ffffff80");                   // 255*1/(1+1) = 128
+  eq("aitools.fx.glow.original-kept", await readPx(fk6, 0, 0), "#ff0000");
+
+  const sFx7 = live();
+  const fk7 = mkCtx(sFx7, true);
+  const fxBl = await callTool("fx_blur", { radius: 1, scope: "layer", layer: 0, frame: 0 }, fk7.ctx);
+  eq("aitools.fx.blur.ok", fxBl.ok, true);
+  const blurEdge = await readPx(fk7, 3, 1);
+  ok("aitools.fx.blur.edge-semi", blurEdge !== null && blurEdge.length === 9 && blurEdge.indexOf("#ff00") === 0, String(blurEdge));
+
+  // 圆角化要一块够厚的形状（细线 / 小方块会被刻意跳过，见 effects.roundCornersCel）
+  const sFx8 = live();
+  const fk8 = mkCtx(sFx8, true);
+  await callTool("draw_shape", { shape: "rect", from: [20, 20], to: [27, 27], fill: true, color: "#ff0000" }, fk8.ctx);
+  const fxRd = await callTool("fx_round", { radius: 1, mode: "outer", scope: "layer", layer: 0, frame: 0 }, fk8.ctx);
+  eq("aitools.fx.round.ok", fxRd.ok, true);
+  eq("aitools.fx.round.corner-cut", await readPx(fk8, 20, 20), null);
+  eq("aitools.fx.round.edge-kept", await readPx(fk8, 21, 20), "#ff0000");
+
+  // 空图层 / 无差异：一个字节都不动，也不压历史（changed:false 不是失败）
+  const sFx9 = live();
+  const fk9 = mkCtx(sFx9, true);
+  sFx9.history.clear();
+  const fxNoop = await callTool("fx_invert", { scope: "layer", layer: 0, frame: 1 }, fk9.ctx);
+  eq("aitools.fx.noop.ok", fxNoop.ok, true);
+  eq("aitools.fx.noop.changed", (fxNoop.data as { changed: boolean }).changed, false);
+  eq("aitools.fx.noop.no-history", sFx9.history.canUndo(), false);
+
+  // 选区分档：只有选区里的像素能被特效改到
+  const sFxSel = live();
+  const fsk = mkCtx(sFxSel, true);
+  await callTool("draw_shape", { shape: "rect", from: [20, 20], to: [23, 23], fill: true, color: "#00ff00" }, fsk.ctx);
+  await callTool("color_select", { color: "#ff0000", tolerance: 0, scope: "layer" }, fsk.ctx);
+  const fxSel = await callTool("fx_invert", { scope: "selection", layer: 0, frame: 0 }, fsk.ctx);
+  eq("aitools.fx.selection.ok", fxSel.ok, true);
+  eq("aitools.fx.selection.changed-rect", fxSel.changed, { x: 0, y: 0, w: 4, h: 4 });
+  eq("aitools.fx.selection.inside", await readPx(fsk, 0, 0), "#00ffff");              // 选区内的红 → 青
+  eq("aitools.fx.selection.outside-kept", await readPx(fsk, 20, 20), "#00ff00");      // 选区外的绿一个字节没动
+  eq("aitools.fx.selection.outside-transparent", await readPx(fsk, 30, 30), null);
+
+  // --- 非法参数：拒绝 + reason 带范围 + 文档逐字节不变 ---
+  const sBad2 = live();
+  const bk2 = mkCtx(sBad2, true);
+  const badBefore2 = docBytes(sBad2);
+  const badCases: Array<[string, Args, string]> = [
+    ["draw_path", { points: [{ nope: 1 }] as unknown as number[][], tool: "pencil" }, "期望 [x,y]"],
+    ["draw_path", { points: [[0, 0]], size: 0 }, "小于最小值 1"],
+    ["draw_path", { points: [[0, 0]], size: 65 }, "大于最大值 64"],
+    ["draw_path", { points: new Array(4097).fill([0, 0]), tool: "pencil" }, "大于允许的 1..4096"],
+    ["draw_path", { points: [[1, 1], [5, 5], [9, 9]], tool: "line" }, "恰好 2 个点"],
+    ["draw_path", { points: [[1, 1], [5, 5]], tool: "bucket" }, "恰好 1 个点"],
+    ["draw_shape", { shape: "circle", from: [1, 1], to: [4, 4] }, "不在"],
+    ["draw_shape", { shape: "rect", from: [1, 1], to: [4, 4], fill: "yes" }, "期望 true/false"],
+    ["fill", { at: [999, 0] }, "必须在画布内"],
+    ["fill", { at: [0, 0], tolerance: 256 }, "大于最大值 255"],
+    ["fill", { at: [0, 0], gaps: 17 }, "大于最大值 16"],
+    ["fill", { at: [0, 0], gradientAt: [3, 3] }, "只在 gradient=true 时有意义"],
+    ["erase", { rect: { x: 0, y: 0, w: 0, h: 4 } }, "必须 ≥1"],
+    ["erase", { rect: { x: 0, y: 0, w: 4, h: 4, z: 1 } }, "未知字段 z"],
+    ["transform", { mode: "skew" }, "不在"],
+    ["transform", { mode: "move", dx: 1, sx: 2 }, "mode=move 只接受 dx / dy"],
+    ["transform", { mode: "rotate", angle: 90, dy: 2 }, "mode=rotate 只接受 angle"],
+    ["transform", { mode: "scale", sx: 0 }, "绝对值允许 0.02..40"],
+    ["transform", { mode: "scale", sx: 0.01 }, "绝对值允许 0.02..40"],
+    ["transform", { mode: "scale", sx: 100 }, "大于最大值 40"],
+    ["transform", { mode: "move", scope: "selection", dx: 2 }, "需要先建立选区"],
+    ["fx_outline", { width: 0 }, "小于最小值 1"],
+    ["fx_outline", { width: 1, pos: "middle" }, "不在"],
+    ["fx_blur", { radius: 33 }, "大于最大值 32"],
+    ["fx_invert", { scope: "selection" }, "需要先建立选区"],
+    ["fx_gray", { scope: "both" }, "不在"],
+  ];
+  for (let i = 0; i < badCases.length; i++) {
+    const [id, args, needle] = badCases[i];
+    const r = await callTool(id, args, bk2.ctx);
+    eq("aitools.bad." + i + ".tool", id, id);
+    eq("aitools.bad." + i + ".rejected", r.ok, false);
+    ok("aitools.bad." + i + ".reason." + id, (r.error ?? "").indexOf(needle) >= 0, JSON.stringify([id, args, r.error]).slice(0, 220) );
+  }
+  eq("aitools.bad.doc-untouched", docBytes(sBad2), badBefore2);
+  // callTool 的顺序是死的：参数级拒绝**完全不确认**；handler 级拒绝发生在确认之后
+  // （destructive 档先问再执行），所以这几条 erase / transform 会先弹一次确认框。
+  eq("aitools.bad.confirms-only-after-valid-args", bk2.asked.map((r) => r.tool),
+    ["erase", "transform", "transform", "transform", "transform", "transform"]);
 }
