@@ -29,7 +29,7 @@ src/servers/   服务层：RenderServer（合成与缓存）、ViewportServer（
 src/io/        原生桥接、工程文件（.pxc）、Aseprite 读写（aseread/asewrite/zlib）、自动保存、参考图、安全区、base64
 src/ui/        React 外壳、弹窗、时间线、浮动球、i18n、样式
 android/       MainActivity（Java 层）+ AndroidManifest
-tests/         无 DOM 的引擎/逻辑回归（**4085 条断言**，`node .ts-out/tests/run-tests.js` 末尾会打印条数）
+tests/         无 DOM 的引擎/逻辑回归（**4155 条断言**，`node .ts-out/tests/run-tests.js` 末尾会打印条数）
 docs/          API.md / COMPARISON.md
 ```
 
@@ -412,6 +412,20 @@ stamp 从 `-T/2` 起画，早先的锚点比顶点偏左 `T/2`，栅格 / 足迹
 瘦到 **54 个**（只剩方法 + `session` / `host` / 视口三元组 / `onFramePreview`）；
 `View` 侧一律 `this.gesture.<字段>`（162 处），测试里的窥视改走 `v.gesture.*`（`warpui` / `xformui` /
 `view` 三个白盒测试的 `VX` 类型同步扩了 `gesture`）。
+数据安全收尾（自动保存多版本，同日）：`io/autosave.ts` 改成**环形槽位 + 小索引**——一个 object store 里
+`index` 存版本表（新的在前）、`h0..h15` 十六个槽位装工程数据，每存一次只写一个槽位（`seq % 16`），
+淘汰＝删索引尾部 + 删它占的槽位；**槽位数（16）必须大于最大保留数（12）**，否则新槽位会压到在册版本
+（文件头写死的约束）；内容哈希相同时只更新「最近保存时间/原因」，不占新版本也不写大对象；
+配额不足时**覆盖最旧那版占的槽位**（不新增占用），仍失败就一个旧版本都不动、回落到 localStorage；
+旧版本只写的 `current` 在第一次读到时迁移成第 1 版。崩溃判定＝`pc.autosave.clean`：启动写 `0`、
+切后台或 `pagehide` **同步**写 `1` 再 flush（异步 flush 在卸载时跑不完，漏标记就会误报崩溃）。
+`Session` 侧新增 `checkBootCrash()`（挂 `bootRecover` → App 弹 `RecoverModal`）/ `restoreAutosaveVersion`
+（面板已问过就 `{ask:false}`，避免连问两次）/ `exportAutosaveVersion`（导出 .pxc）/ `dropAutosaveVersion`；
+设置项 `data.autosaveKeep`（1–12，默认 5）；UI 是 `AutosaveHistory`（设置 → 数据 内嵌、主菜单
+「自动保存历史」、恢复提示三处共用）。存储布局与恢复流程见 docs/API.md §16.5 + §11，
+新图标 `i-recover` 登记在 §17.5；`tests/autosave.test.ts` 用内存后端覆盖迁移 / 追加 / 去重 / 条数与字节淘汰 /
+配额不足两种结局（+63 断言，共 4155）。无头 Edge 实测：3 版并存、恢复最早那版后再保存字节数一致
+（内容真的换回去）、崩溃提示只在非正常退出时出现。
 
 ---
 

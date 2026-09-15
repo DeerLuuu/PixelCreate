@@ -1097,6 +1097,14 @@ hapticTick(tag, scale = 1): boolean    // 受 gesture.haptic 开关控制，长�
 savePrefs(): void
 scheduleAutosave() / flushAutosave(): Promise<void> / restoreAutosave(): Promise<Doc | null>
 autosaveInfo() / clearAutosave()
+// 多版本自动保存（§16.5）：启动自检 + 历史版本操作
+checkBootCrash(): Promise<boolean>       // 上次没正常退出 → bootRecover 挂上版本表，App 弹恢复面板
+bootRecover: { versions: AutosaveVersion[] } | null    // 非 null 时 App 渲染 RecoverModal
+dismissBootRecover(): void
+autosaveVersions() / autosaveHistorySupported()
+restoreAutosaveVersion(seq): Promise<boolean>          // 走 loadProjectText（会先问过用户）
+exportAutosaveVersion(seq): Promise<void>              // 导出成 .pxc
+dropAutosaveVersion(seq): Promise<void>
 ```
 
 ---
@@ -1824,12 +1832,26 @@ serialize(doc, history?): Promise<string>   // .pxc（JSON，history 由 history
 parse(text): Promise<Doc | null>
 parseProject(text): Promise<{ doc: Doc; history: unknown | null } | null>
 
-// src/io/autosave.ts
-saveAutosave(text, meta): Promise<"idb" | "local" | "too-big" | "fail">
-loadAutosave(): Promise<AutosaveRecord | null>
+// src/io/autosave.ts —— 多版本（环形槽位 + 小索引）
+saveAutosave(text, meta, reason?, keep?): Promise<"idb" | "local" | "too-big" | "fail">
+loadAutosave(): Promise<AutosaveRecord | null>          // 最新一版
 autosaveMeta(): Promise<AutosaveMeta | null>
-clearAutosave(): Promise<void>
-const AUTOSAVE_MAX_BYTES = 32 * 1024 * 1024;
+autosaveVersions(): Promise<AutosaveVersion[]>          // 新的在前（没有 IDB 时是空数组）
+readAutosaveVersion(seq): Promise<AutosaveRecord | null>
+dropAutosaveVersion(seq): Promise<void>
+historySupported(): Promise<boolean>                    // = IndexedDB 可用
+clearAutosave(): Promise<void>                          // 最新一版 + 全部历史
+const AUTOSAVE_MAX_BYTES = 32 * 1024 * 1024;   // 单份上限
+const AUTOSAVE_HISTORY_BYTES = 64 * 1024 * 1024; // 历史总量上限（超了先淘汰最旧的）
+const AUTOSAVE_KEEP_DEFAULT = 5, AUTOSAVE_KEEP_MAX = 12;
+// 干净退出标记（localStorage，同步写）：启动时 markSessionRunning()，
+// 切后台/卸载时 markCleanExit()；wasCleanExit() 在启动自检里读，false = 上次崩了
+markSessionRunning() / markCleanExit() / wasCleanExit(): boolean
+// 后端无关的版本逻辑（测试用内存后端直接驱动，见 tests/autosave.test.ts）
+hashText(s): string
+readIndex(kv) / pushVersion(kv, rec, reason, opts) / listVersions(kv) / readVersion(kv, seq) / dropVersion(kv, seq)
+interface AutosaveKv { get(k); put(k, v); del(k) }
+interface AutosaveVersion { seq; slot; savedAt; bytes; hash; name; w; h; frames; layers; reason }
 
 // src/io/gifread.ts
 interface GifData { w; h; frames: Array<{ data: Uint8ClampedArray; delayMs: number }> }
@@ -1838,6 +1860,19 @@ tryReadGif(bytes): GifData | null
 // src/io/clipboard.ts
 writeClipboardPng(canvas): Promise<boolean>
 ```
+
+**多版本自动保存的存储布局与口径**（1.1.1.9，真机反馈「只有一份自动保存，改错了没得退」）：
+
+| 项 | 口径 |
+|---|---|
+| 存储 | 一个 object store（`pixelcraft/autosave`）里：`index` = 版本表（新的在前，只有几十字节/条），`h0`..`h15` = 16 个**环形槽位**装工程数据 |
+| 写入 | 每存一次只写**一个**槽位（`seq % 16`），不搬动旧数据；淘汰 = 从索引尾部删版本 + 删它占的槽位 |
+| 为什么槽位 16 > 最大保留 12 | 新槽位序号与在册版本序号至少差 13，取模后**不可能**撞上在册版本的槽位（文件头写死的约束，改成相等就会互相覆盖） |
+| 内容没变 | 哈希（`hashText`，FNV-1a + 长度）相同 → 只更新「最近保存时间/原因」，**不占新版本、不写大对象**（否则每 5 分钟的定时保存半小时就把槽位填满同一份内容） |
+| 淘汰顺序 | 先按「保留版本数」（设置项 `data.autosaveKeep`，1–12）再按总字节（64MB）；**最新一版永远留着** |
+| 配额不足 | 写新槽位失败时改成**覆盖最旧那版占的槽位**（它本来就要淘汰），不新增占用；仍失败就 `stored=false`，**旧版本一个都不动**（调用方回落到 localStorage，再失败才提示"存储空间不足"） |
+| 崩溃判定 | `pc.autosave.clean`：启动写 `0`、切后台或 `pagehide` 时**先 flush 再写 `1`**。后台被系统杀掉不会误报（隐藏前已存过一份） |
+| 兼容 | 旧版本只写 `current`：第一次读到时迁移成第 1 版并删掉它；localStorage 兜底路径仍是单槽位（`historySupported()` 为 false，面板提示"当前环境不支持历史版本"） |
 
 ### 16.6 Aseprite 文件 `src/io/aseread.ts` + `src/io/asewrite.ts` + `src/io/zlib.ts`
 
@@ -1951,6 +1986,7 @@ nextPlayFrameIn(mode, fi, dir, w): PlayStep                    // 循环/乒乓�
 | `ChangelogModal` | `ui/changelog.tsx` | 更新日志：`CHANGELOG`（`ClgVersion[]`，每项 `it(kind, zh, en)`）+ `APP_VERSION` / `BUILD_TAG`；PC 竖排版本列表、触屏横向标签条，分类（add/imp/fix）可折叠。**条目文案是纯文本渲染**（`<li>{x.zh}</li>`，没有 Markdown 解析）——`**加粗**` 与反引号会原样显示，所以文案里不许出现它们，测试 `tests/changelog.test.ts` 会拦（同时校验 `APP_VERSION` 与 `AndroidManifest.xml` 的 `versionName` 一致、条目单行格式、中英一一对应） |
 | `ColorAdvancedModal` | `ui/modals.tsx` | **颜色高级模式**：一个弹窗两页（`AnalysisPane` 颜色分析 / `ShadingPane` 色彩明暗），`initialTab` 决定落在哪页；两页**按需挂载**（分析页要扫画布，不该在明暗页白跑）挂上后不再卸载。入口＝调色板面板动作行的一条 + 主菜单一条（`openColorAdv()` → `pc-color-adv`；`openShading()` → `pc-shading` 直接落明暗页），App 侧只挂一个 `Keep`。算法仍然分别在 `engine/color-analysis.ts` 与 `engine/shading.ts` |
 | `IsoBar` | `ui/iso.tsx` | 等距图形模式的**参数条**（常驻浮层，不是弹窗——模式的手感全在画布上）：形状 chips（6）/ 宽深高 / 图块 4·8·16·32 / 实时读数（尺寸·体素·越界）/ 折叠外观（颜色模式、三面颜色、明暗、阴影、描边、形状专属参数）/ 生成 / 生成到新图层 / 完成。入口＝魔法球「等距图形」+ 主菜单。动作图标走 `feature-icons.ts`（§17.5） |
+| `AutosaveHistory` / `RecoverModal` / `AutosaveModal` | `ui/modals.tsx` | 自动保存的**多版本历史**（一列：时间 / 大小 / 工程名 + 恢复·导出·删除）与两个入口：设置 → 数据 里内嵌、主菜单「自动保存历史」（`AutosaveModal`）、以及启动时「上次没正常退出」的恢复面板（`RecoverModal`，由 `SESSION.bootRecover` 驱动）。数据在 `io/autosave.ts`（§16.5），组件只负责列出来与发指令 |
 | `useBlankTap` | `ui/base.tsx` | 点容器空白处执行动作（调色板面板点击关闭） |
 | 时间线分割线 | `ui/App.tsx`（`.tl-grip`） | 时间线面板顶部的拖动条：上下拖动 = `setTlHeight()`（面板总高度 140–520px，默认 200），拖动时显示 px 浮标，双击复位 200；`prefs.tlH` 是整块面板高度，矩阵 `flex:1` 填充，图层行不足时用 `.ase-fill` 单元格补底 |
 | 安全区 | `io/safearea.ts` | 把原生 insets 写成 CSS 变量 `--sat/--sab/--sal/--sar`，贴边控件统一用它们留白 |

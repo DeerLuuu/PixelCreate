@@ -1394,3 +1394,12 @@ html[data-pc] .dlg-sh{width:min(600px,64vw)}
 .iso-acts .btn{flex:0 0 auto;white-space:nowrap}
 .iso-bar .chip{flex:0 0 auto}
 .iso-hint{font-size:11px;color:var(--dim);line-height:1.35}
+
+/* 自动保存历史（设置 → 数据 / 启动恢复提示 / 主菜单「自动保存历史」） */
+.as-list{display:flex;flex-direction:column;gap:6px;margin:6px 0 2px}
+.as-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:6px 8px;border:1px solid var(--line);border-radius:var(--r-2);background:var(--bg3)}
+.as-main{flex:1 1 150px;min-width:0;display:flex;flex-wrap:wrap;gap:2px 8px;align-items:baseline;font-size:11px;color:var(--text-2)}
+.as-main b{font-weight:700;color:var(--text)}
+.as-why{font-style:normal;color:var(--dim)}
+.as-acts{margin:0;flex:0 0 auto;gap:4px}
+.as-acts .btn{flex:0 0 auto;white-space:nowrap;padding:4px 8px;min-height:26px;font-size:11px}

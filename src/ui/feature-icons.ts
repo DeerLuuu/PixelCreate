@@ -17,6 +17,7 @@ export const FEATURE_ICONS = {
     export: "i-export",
     open: "i-open",
     import: "i-import",
+    recover: "i-recover",
     colorAdv: "i-cadv",
     iso: "i-iso",
     settings: "i-gear",

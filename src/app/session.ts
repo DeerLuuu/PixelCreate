@@ -94,6 +94,8 @@ export interface Prefs {
   autosave: boolean;
   /** autosave interval in minutes (1..60) */
   autosaveMin: number;
+  /** how many autosave versions to keep (1..AUTOSAVE_KEEP_MAX) */
+  autosaveKeep: number;
   /** store the operation history inside saved project files */
   recordHistory: boolean;
   /** add frame via FrameAdd: clone current frame's cels into the new one */
@@ -601,6 +603,12 @@ export class Session {
   private autosaveTimer: number | null = null;
   /** changes happened since the last autosave write */
   private autosaveDirty = false;
+  /**
+   * 启动时发现「上次没正常退出」时的恢复提示（见 `checkBootCrash`）。
+   * 非 null 且 App 挂载完成 → 弹恢复面板；`restoreAutosave()` 已经把最新一版恢复回来了，
+   * 面板的作用是告诉用户这件事，并给出换到更早版本的入口。
+   */
+  bootRecover: { versions: autosave.AutosaveVersion[] } | null = null;
   private replayActive = false;
   private opacityLive: { li: number; from: number; to: number } | null = null;
   /** visibility of every layer before the last solo-hide (null = not soloing) */
@@ -629,7 +637,17 @@ export class Session {
     try {
       if (typeof document !== "undefined") {
         document.addEventListener("visibilitychange", () => {
-          if (document.hidden) void this.flushAutosave();
+          if (!document.hidden) return;
+          // 「干净退出」标记**同步**先写：flush 是异步的，页面卸载时不一定跑得完，
+          // 而漏一个标记就会在下次启动误报「上次没有正常退出」（隐藏前那一份已经存过了）
+          autosave.markCleanExit();
+          void this.flushAutosave("hide");
+        });
+      }
+      if (typeof window !== "undefined") {
+        window.addEventListener("pagehide", () => {
+          autosave.markCleanExit();
+          void this.flushAutosave("hide");
         });
       }
     } catch { /* ignore */ }
@@ -1316,7 +1334,7 @@ export class Session {
       });
     }, ms);
   }
-  async writeAutosave(force = false): Promise<void> {
+  async writeAutosave(force = false, reason: autosave.AutosaveReason = "timer"): Promise<void> {
     if (!force && !this.autosaveDirty) return;
     // 落盘前先把「还在手上的东西」落定：未结束的笔迹与浮动变形（含自由变换）
     // 只存在于内存里，图层甚至已经被 floatCut 清空——带着它们存会存出「图层被清空」的草稿
@@ -1330,7 +1348,7 @@ export class Session {
         w: this.doc.w, h: this.doc.h,
         frames: this.doc.frames.length, layers: this.doc.layers.length,
       };
-      const where = await autosave.saveAutosave(txt, meta);
+      const where = await autosave.saveAutosave(txt, meta, reason, this.prefs.autosaveKeep);
       if ((where === "fail" || where === "too-big") && Date.now() - this.lastSaveNote > 8000) {
         this.lastSaveNote = Date.now();
         const en = this.prefs.lang === "en";
@@ -1338,16 +1356,18 @@ export class Session {
           ? (en ? "Autosave skipped (project too large)" : "自动保存跳过（工程过大）")
           : (en ? "Autosave failed (storage full)" : "自动保存失败（存储空间不足）"));
       }
+      // 让设置里的「上次自动保存」与历史版本列表立刻跟上（changedUI：不动像素版本）
+      this.changedUI();
     } catch { /* ignore */ }
   }
   /** write right now (page hidden / about to be killed): never lose the last strokes */
-  async flushAutosave(): Promise<void> {
+  async flushAutosave(reason: autosave.AutosaveReason = "hide"): Promise<void> {
     if (!this.prefs.autosave || this.replayActive) return;
     if (this.autosaveTimer !== null) {
       window.clearTimeout(this.autosaveTimer);
       this.autosaveTimer = null;
     }
-    await this.writeAutosave(true);
+    await this.writeAutosave(true, reason);
   }
   /** bring back the autosaved space at launch (no confirmation prompt) */
   async restoreAutosave(): Promise<boolean> {
@@ -1363,6 +1383,75 @@ export class Session {
   }
   async clearAutosave(): Promise<void> {
     await autosave.clearAutosave();
+    this.changed();
+  }
+
+  // ---------- 自动保存历史（多版本 / 崩溃恢复）----------
+  /**
+   * 启动自检：上次是不是**正常退出**。必须先于 `restoreAutosave()` 调用
+   * （`restoreAutosave` 拿到的是最新一版，这里只负责决定要不要弹恢复提示，
+   * 并把「本进程正在运行」的标记写下去）。返回是否有历史版本可换。
+   */
+  async checkBootCrash(): Promise<boolean> {
+    const crashed = !autosave.wasCleanExit();
+    autosave.markSessionRunning();
+    if (!crashed) return false;
+    try {
+      const versions = await autosave.autosaveVersions();
+      if (!versions.length) return false;
+      this.bootRecover = { versions };
+      this.changed();
+      return true;
+    } catch { return false; }
+  }
+  /** 关掉启动恢复提示（用户选择"就用现在这份"） */
+  dismissBootRecover(): void {
+    if (!this.bootRecover) return;
+    this.bootRecover = null;
+    this.changed();
+  }
+  autosaveVersions(): Promise<autosave.AutosaveVersion[]> {
+    return autosave.autosaveVersions();
+  }
+  autosaveHistorySupported(): Promise<boolean> {
+    return autosave.historySupported();
+  }
+  /**
+   * 恢复到某一版（替换整个空间）。
+   * `ask` 默认 true = 由 `loadProjectText` 弹一次「会丢掉未保存的改动」确认；
+   * 面板自己已经问过更具体的「用这一版替换当前打开的工程？」时传 `{ ask: false }`，
+   * 免得连问两次。
+   */
+  async restoreAutosaveVersion(seq: number, opts: { ask?: boolean } = {}): Promise<boolean> {
+    const rec = await autosave.readAutosaveVersion(seq);
+    if (!rec) return false;
+    const ok = await this.loadProjectText(rec.text, { ask: opts.ask !== false });
+    if (!ok) return false;
+    this.bootRecover = null;
+    const at = new Date(rec.meta?.savedAt || Date.now()).toLocaleString();
+    toastFn((this.prefs.lang === "en" ? "Restored the autosave from " : "已恢复到 ") + at);
+    this.changed();
+    return true;
+  }
+  /** 把某一版导出成 .pxc（先救出来再说） */
+  async exportAutosaveVersion(seq: number): Promise<void> {
+    const rec = await autosave.readAutosaveVersion(seq);
+    if (!rec) return;
+    const d = new Date(rec.meta?.savedAt || Date.now());
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const stamp = d.getFullYear() + pad(d.getMonth() + 1) + pad(d.getDate()) + "-" + pad(d.getHours()) + pad(d.getMinutes());
+    const name = (rec.meta?.name || this.doc.name || "art") + "-autosave-" + stamp + ".pxc";
+    bridge.saveBytes(name, "application/json", new TextEncoder().encode(rec.text), (ok) => {
+      toastFn(ok ? (this.prefs.lang === "en" ? "Exported" : "已导出") : (this.prefs.lang === "en" ? "Cancelled" : "已取消"));
+    });
+  }
+  async dropAutosaveVersion(seq: number): Promise<void> {
+    await autosave.dropAutosaveVersion(seq);
+    if (this.bootRecover) {
+      const rest = this.bootRecover.versions.filter((v) => v.seq !== seq);
+      this.bootRecover = rest.length ? { versions: rest } : null;
+    }
+    this.changed();
   }
   syncAll(): void {
     // refresh the reference mirrors FIRST: the composite below is built from the
@@ -1380,7 +1469,7 @@ export class Session {
       pieItem: 58, pieRadius: 0, keymap: {},
       layout: { ...DEFAULT_LAYOUT }, barOrder: [], barHidden: [], orbPrefs: {}, dockPos: null, pieSlotPos: null, barExtra: {}, orbExtra: {},
       onionOn: false, onionBefore: 1, onionAfter: 0, onionAlpha: 55, onionTint: true, onionWrap: true,
-      autosave: true, autosaveMin: 5, recordHistory: true, newFrameCopy: false, railSwap: true, previewBg: "white", previewGray: false, tileMode: "off", tlH: 200, tlHv: 2,
+      autosave: true, autosaveMin: 5, autosaveKeep: autosave.AUTOSAVE_KEEP_DEFAULT, recordHistory: true, newFrameCopy: false, railSwap: true, previewBg: "white", previewGray: false, tileMode: "off", tlH: 200, tlHv: 2,
       immersive: true, safeArea: true, safeExtra: 0,
       histMode: "steps", histSteps: 120, shadowNewLayer: false, autoPan: true,
       snapOn: true, snapRange: 14, snapGap: 8, snapInColor: "#78ffb4", snapOutColor: "#ff6464",
@@ -1482,6 +1571,9 @@ export class Session {
       else if (saved.tileMode === "repeat" || saved.tileMode === "mirror") p.tileMode = "grid";
       if (typeof saved.autosave === "boolean") p.autosave = saved.autosave;
       if (typeof saved.autosaveMin === "number") p.autosaveMin = Math.max(1, Math.min(60, Math.round(saved.autosaveMin)));
+    if (typeof saved.autosaveKeep === "number") {
+      p.autosaveKeep = Math.max(1, Math.min(autosave.AUTOSAVE_KEEP_MAX, Math.round(saved.autosaveKeep)));
+    }
       if (typeof saved.recordHistory === "boolean") p.recordHistory = saved.recordHistory;
       if (typeof saved.newFrameCopy === "boolean") p.newFrameCopy = saved.newFrameCopy;
       if (typeof saved.railSwap === "boolean") p.railSwap = saved.railSwap;

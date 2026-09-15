@@ -21,6 +21,9 @@ createRoot(host).render(<App />);
 void (async () => {
   try {
     const { SESSION } = await import("./ui/singleton");
+    // 先问「上次是不是正常退出」（这一步同时把"本次正在运行"的标记写下去，
+    // 必须先于任何自动保存写入），再恢复最新一版；崩溃时 Session 会挂出恢复面板
+    await SESSION.checkBootCrash();
     await SESSION.restoreAutosave(); // brings back every open canvas
     // bring back the floating reference image as well
     await SESSION.restoreRefImage();

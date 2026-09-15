@@ -86,6 +86,10 @@ export function testIcons(): void {
     ["i-mesh", "i-grid"],
     ["i-snap", "i-grid"],
     ["i-snap-half", "i-snap"],
+    // 自动保存历史（多版本恢复）：不能和"操作历史 / 保存 / 图层"看起来一样
+    ["i-recover", "i-history"],
+    ["i-recover", "i-save"],
+    ["i-recover", "i-layers"],
   ];
   for (const [a, b] of pairs) {
     const A = byId.get(a), B = byId.get(b);
@@ -94,7 +98,7 @@ export function testIcons(): void {
   }
   // the new purpose-built icons really are in the sprite
   for (const id of ["i-resize-mode", "i-sel-grow", "i-sel-shrink", "i-indexed", "i-paste-layer", "i-paste-canvas",
-    "i-iso", "i-ca", "i-shade", "i-remap", "i-skew", "i-mesh", "i-snap", "i-snap-half"]) {
+    "i-iso", "i-ca", "i-shade", "i-remap", "i-skew", "i-mesh", "i-snap", "i-snap-half", "i-recover"]) {
     ok("icons.new." + id, byId.has(id));
   }
 

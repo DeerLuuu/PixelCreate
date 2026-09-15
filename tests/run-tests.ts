@@ -49,6 +49,7 @@ import { testRenderServer } from "./render-server.test";
 import { testInput } from "./input.test";
 import { testGesture } from "./gesture.test";
 import { testGestureHost } from "./gesture-host.test";
+import { testAutosave } from "./autosave.test";
 
 async function main(): Promise<void> {
   console.log("--- history ---");
@@ -153,6 +154,8 @@ async function main(): Promise<void> {
   testIso();
   console.log("--- isometric mode (UI) ---");
   testIsoUi();
+  console.log("--- autosave versions (ring) ---");
+  await testAutosave();
   finish();
 }
 

@@ -12,6 +12,7 @@ import * as bridge from "../io/bridge";
 import { applySafeArea } from "../io/safearea";
 import { applyTheme } from "../io/theme";
 import { applyPcMode, pcModeOf, pcModeOn } from "../io/pcmode";
+import { AUTOSAVE_KEEP_DEFAULT, AUTOSAVE_KEEP_MAX } from "../io/autosave";
 
 export type SettingValue = boolean | number | string;
 export type SettingKind = "bool" | "int" | "enum" | "color";
@@ -613,6 +614,13 @@ const defs: SettingDef[] = [
     path: "data.autosaveMin", field: "autosaveMin", kind: "int", group: "data",
     label: "autosaveMinLabel", desc: "autosaveMinDesc", default: 5, min: 1, max: 60,
     unit: "min", reset: 5, refresh: "none",
+    visible: (s) => s.prefs.autosave,
+  },
+  {
+    path: "data.autosaveKeep", field: "autosaveKeep", kind: "int", group: "data",
+    label: "autosaveKeepLabel", desc: "autosaveKeepDesc",
+    default: AUTOSAVE_KEEP_DEFAULT, min: 1, max: AUTOSAVE_KEEP_MAX,
+    reset: AUTOSAVE_KEEP_DEFAULT, refresh: "none",
     visible: (s) => s.prefs.autosave,
   },
 ];

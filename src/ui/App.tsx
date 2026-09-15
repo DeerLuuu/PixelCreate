@@ -28,7 +28,7 @@ import { TimelineBar } from "./timeline";
 import { PreviewBox } from "./preview";
 import { RefImageBox } from "./refimg";
 import type { RefImg } from "./refimg";
-import { ActionSearchModal, PatternPanel, PalettePanel, ColorAdvancedModal, openFlow, MenuModal, SizeModal, ScaleModal, SheetModal, NewDocModal, ExportModal, AdjustModal, SettingsModal, FrameModal, TagModal, FramePreviewModal, CanvasRefModal, HistoryModal, ShortcutHelpModal, CustomiseModal, histName, importFlow, saveProject, openFileBytes } from "./modals";
+import { ActionSearchModal, PatternPanel, PalettePanel, ColorAdvancedModal, AutosaveModal, RecoverModal, openFlow, MenuModal, SizeModal, ScaleModal, SheetModal, NewDocModal, ExportModal, AdjustModal, SettingsModal, FrameModal, TagModal, FramePreviewModal, CanvasRefModal, HistoryModal, ShortcutHelpModal, CustomiseModal, histName, importFlow, saveProject, openFileBytes } from "./modals";
 import { FxParamDialog, fxDefaults, type FxRun, type FxVals } from "./fxparam";
 import { CanvasTitles } from "./canvas";
 import { ChangelogModal, changelogNeedsShow } from "./changelog";
@@ -717,6 +717,9 @@ export function App() {
       <Keep on={modal === "newproject"} el={modal === "newproject" ? <NewDocModal t={t} mode="project" onClose={() => setModal(null)} /> : null} />
       <Keep on={modal === "export"} el={modal === "export" ? <ExportModal t={t} snap={snap} onClose={() => setModal(null)} /> : null} />
       <Keep on={modal === "settings"} el={modal === "settings" ? <SettingsModal t={t} onClose={() => setModal(null)} /> : null} />
+      <Keep on={modal === "autosave"} el={modal === "autosave" ? <AutosaveModal t={t} onClose={() => setModal(null)} /> : null} />
+      {/* 上次没正常退出：最新一版已经恢复回来了，这里给「换更早版本」的入口 */}
+      <Keep on={!!SESSION.bootRecover} el={SESSION.bootRecover ? <RecoverModal t={t} onClose={() => SESSION.dismissBootRecover()} /> : null} />
       <Keep on={modal === "adjust"} el={modal === "adjust" ? <AdjustModal t={t} onClose={() => setModal(null)} /> : null} />
       <Keep on={frameDlgIdx !== null} el={frameDlgIdx !== null ? <FrameModal t={t} snap={snap} fi={typeof frameDlgIdx === "number" ? frameDlgIdx : snap.frameIdx} batch={frameDlgIdx === "batch"} onClose={() => setFrameDlgIdx(null)} /> : null} />
       <Keep on={tagDlgId !== null} el={tagDlgId !== null ? <TagModal t={t} snap={snap} id={tagDlgId} onClose={() => setTagDlgId(null)} /> : null} />

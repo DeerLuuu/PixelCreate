@@ -46,7 +46,7 @@ import { FEATURE_ICONS } from "./feature-icons";
 export function openColorAdv(): void {
   window.dispatchEvent(new Event("pc-color-adv"));
 }
-export type ModalId = "menu" | "changelog" | "newdoc" | "newproject" | "export" | "adjust" | "settings" | "frame" | "framePrev" | "size" | "scaleadv" | "sheet" | "history" | "canvasRef" | "shortcuts" | "customise" | "actions" | "patterns" | "coloradv" | null;
+export type ModalId = "menu" | "changelog" | "newdoc" | "newproject" | "export" | "adjust" | "settings" | "frame" | "framePrev" | "size" | "scaleadv" | "sheet" | "history" | "canvasRef" | "shortcuts" | "customise" | "actions" | "patterns" | "coloradv" | "autosave" | null;
 export type SizeMode = "canvas" | "sprite";
 export type SheetData = { w: number; h: number; px: Uint8ClampedArray; name: string };
 
@@ -424,6 +424,7 @@ export function MenuModal({ t, snap, onClose, onOpen, onSheet, onRef, onGuide }:
           {act(t("open"), FEATURE_ICONS.menu.open, () => void openFlow("new"), "menu-open")}
           <Btn label={t("import")} icon={FEATURE_ICONS.menu.import} className="menuitem" guide="menu-import" onClick={() => setSub("import")} />
           {go("coloradv")(t("cadv.open"), FEATURE_ICONS.menu.colorAdv, "menu-color-adv")}
+          {go("autosave")(t("asHistory"), FEATURE_ICONS.menu.recover, "menu-autosave")}
           {act(t("iso.open"), FEATURE_ICONS.menu.iso, () => SESSION.enterIso(), "menu-iso")}
           {go("settings")(t("settings"), FEATURE_ICONS.menu.settings, "menu-settings")}
           {go("shortcuts")(t("shortcutHelp"), FEATURE_ICONS.menu.shortcuts, "menu-shortcuts")}
@@ -995,6 +996,90 @@ function SettingRow({ def, t }: { def: SettingDef; t: ReturnType<typeof makeT> }
   );
 }
 
+/**
+ * 自动保存历史（一列版本：恢复 / 导出 / 删除）。
+ * 两个地方共用：设置 → 数据 里内嵌，以及启动时「上次没正常退出」的恢复提示。
+ * 版本数据在 `io/autosave.ts`（环形槽位），这里只负责列出来和发指令。
+ */
+export function AutosaveHistory({ t, onRestored }: { t: ReturnType<typeof makeT>; onRestored?: () => void }) {
+  const snap = useSession();
+  const [bump, setBump] = useState(0);
+  const [rows, setRows] = useState<autosave.AutosaveVersion[] | null>(null);
+  const [idb, setIdb] = useState(true);
+  useEffect(() => {
+    let live = true;
+    void (async () => {
+      const supported = await SESSION.autosaveHistorySupported();
+      const list = await SESSION.autosaveVersions();
+      if (!live) return;
+      setIdb(supported);
+      setRows(list);
+    })();
+    return () => { live = false; };
+  }, [bump, snap]);
+  const reload = () => setBump((n) => n + 1);
+  const reasonText = (r: autosave.AutosaveReason): string =>
+    t(r === "hide" ? "asReasonHide" : r === "manual" ? "asReasonManual" : r === "start" ? "asReasonStart" : "asReasonTimer");
+  const restore = async (seq: number) => {
+    const ok = await SESSION.askConfirm({ msg: t("asRestoreAsk"), yes: t("asRestore"), no: t("cancel") });
+    if (!ok) return;
+    // 上面这句已经是确认了，别再让 loadProjectText 问第二次
+    if (await SESSION.restoreAutosaveVersion(seq, { ask: false })) onRestored?.();
+    reload();
+  };
+  const remove = async (seq: number) => {
+    const ok = await SESSION.askConfirm({ msg: t("asDeleteAsk"), yes: t("asDelete"), no: t("cancel") });
+    if (!ok) return;
+    await SESSION.dropAutosaveVersion(seq);
+    bridge.toast(t("asDeleted"));
+    reload();
+  };
+  if (!idb) return <div className="row-note">{t("asHistoryNoIdb")}</div>;
+  if (!rows) return null;   // 读取中：不闪「暂无历史」
+  if (!rows.length) return <div className="row-note">{t("asHistoryEmpty")}</div>;
+  return (
+    <div className="as-list" data-guide="as-history">
+      <div className="row-note">{t("asHistoryCount").replace("{n}", String(rows.length))}</div>
+      {rows.map((v) => (
+        <div className="as-row" key={v.seq}>
+          <div className="as-main">
+            <b>{new Date(v.savedAt).toLocaleString()}</b>
+            <span>{Math.max(1, Math.round(v.bytes / 1024)) + "KB"}{v.name ? " · " + v.name + " " + v.w + "×" + v.h : ""}</span>
+            <i className="as-why">{reasonText(v.reason)}</i>
+          </div>
+          <RowActions className="as-acts">
+            <Btn label={t("asRestore")} onClick={() => void restore(v.seq)} />
+            <Btn label={t("asExport")} onClick={() => void SESSION.exportAutosaveVersion(v.seq)} />
+            <Btn label={t("asDelete")} className="danger" onClick={() => void remove(v.seq)} />
+          </RowActions>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** 启动时的崩溃恢复提示：最新一版已经恢复了，这里给出「换更早版本」的入口 */
+export function RecoverModal({ t, onClose }: { t: ReturnType<typeof makeT>; onClose: () => void }) {
+  return (
+    <Dialog title={t("asRecoverTitle")} onClose={onClose} bodyClass="col" guide="dlg-recover"
+      footer={<Btn label={t("asRecoverKeep")} className="primary" onClick={onClose} />}>
+      <div className="row-note">{t("asRecoverBody")}</div>
+      <AutosaveHistory t={t} onRestored={onClose} />
+    </Dialog>
+  );
+}
+
+/** 主菜单 →「自动保存与恢复」：不开设置也能翻历史版本 */
+export function AutosaveModal({ t, onClose }: { t: ReturnType<typeof makeT>; onClose: () => void }) {
+  return (
+    <Dialog title={t("asHistory")} onClose={onClose} bodyClass="col"
+      footer={<Btn label={t("close")} onClick={onClose} />}>
+      <div className="row-note">{t("autosaveKeepDesc")}</div>
+      <AutosaveHistory t={t} />
+    </Dialog>
+  );
+}
+
 /** Settings dialog, generated entirely from the declaration table in
  *  src/app/settings.ts: adding a setting there makes it appear here. */
 export function SettingsModal({ t, onClose }: { t: ReturnType<typeof makeT>; onClose: () => void }) {
@@ -1062,9 +1147,10 @@ export function SettingsModal({ t, onClose }: { t: ReturnType<typeof makeT>; onC
                       : t("autosaveNone")}
                   </div>
                   <RowActions>
-                    <Btn label={t("autosaveNow")} onClick={() => { void SESSION.flushAutosave().then(() => SESSION.autosaveInfo().then(setAsInfo)); }} />
+                    <Btn label={t("autosaveNow")} onClick={() => { void SESSION.flushAutosave("manual").then(() => SESSION.autosaveInfo().then(setAsInfo)); }} />
                     <Btn label={t("autosaveClear")} className="danger" onClick={() => { void SESSION.clearAutosave().then(() => setAsInfo(null)); }} />
                   </RowActions>
+                  <AutosaveHistory t={t} />
                   {/* vibration diagnostics: what the page can actually see */}
                   <HapticReport t={t} />
                 </>
