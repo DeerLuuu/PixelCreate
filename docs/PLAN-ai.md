@@ -1,6 +1,9 @@
 # AI 接入（应用内助手 / 本地工具服务 / MCP）· 方案与决策
 
-> 状态：**方案稿，暂不写代码**（2026-09-14 定稿待评审）。决策点见 §7，落地清单见 §8。
+> 状态：**C0–C3 已落地**（方案 2026-09-14 定稿；分期进度见 §10，落地文件见 §8，接口文档见
+> [`docs/API.md`](API.md) §21–§24）。决策点见 §7，本文只保留方案与契约。
+> **接口以代码为准**：§5.1 是「照着写代码用的」契约，落地过程中出现的偏差已逐条订正（见 §5.1 末尾
+> 「落地后的订正」），改动都写了为什么。
 > 本文只讨论**怎么让 AI 操作这个软件**；「AI 直接生成像素画」当作工具表里的一个工具，见 §1.1。
 > 相关：`AGENTS.md`（工程约定）、`docs/API.md`（现有接口）、`docs/PLAN-isobuilder.md`（同格式的姊妹方案稿）。
 
@@ -156,9 +159,13 @@ y= 9 .......aabbbbbccc.
 ```ts
 beginAiTurn(label: string): number      // 打开回合（返回 turnId），期间所有写操作只累积不动历史
 previewTurn(): { count: number; rect: Rect | null }   // 预览：这一轮会改哪块
-commitTurn(): void                      // 落一条历史（结构快照），关闭回合
+commitTurn(): boolean                   // 落一条历史（结构快照），关闭回合；无改动返回 false（不是失败）
 rollbackTurn(): void                    // 放弃：恢复到回合开始的状态
 ```
+
+> 落地订正：这里早先写的是 `commitTurn(): void`，实际返回 `boolean`（无改动 / 回合没开时是 `false`），
+> 因为调用方必须能区分「落了一条」和「什么都没改」。另外新增了单一安全入口
+> `runAiTurn(label, fn)`（见 §5.1 末尾），C3/C5 的复合流程用它，协议动词不要用。
 
 - **中间不刷历史、不刷 autosave**（沿用 `docs/API.md` 里 `struct()` 的既有做法）；
 - 工具报错、模型超时、用户点取消 → 一律 `rollbackTurn()`；
@@ -290,7 +297,7 @@ interface AiDigest {
   layers: Array<{ li: number; name: string; visible: boolean; locked: boolean; opacity: number; blend: BlendMode }>;
   frames: Array<{ fi: number; ms: number; cels: number }>;
   tags: Array<{ name: string; from: number; to: number }>;
-  palette: string[];              // "#rrggbb"
+  palette: string[];              // "#rrggbb"；alpha < 255 时是 "#rrggbbaa"（C0 落地订正，见 §5.1 末尾）
   sel: { x: number; y: number; w: number; h: number; pixels: number } | null;
   bbox: { x: number; y: number; w: number; h: number } | null;   // 当前帧可见图层的非空包围盒
   inkRatio: number;               // 非透明像素占比，0..1，3 位小数
@@ -328,7 +335,7 @@ type AiOp =
   | { op: "fill"; x: number; y: number; color: AiColor; tolerance?: number };
 
 interface AiApplyCtx {
-  session: Session;               // 只用它的既有入口（paint / shape / ops / 前景背景色）
+  session: AiSessionLike;         // 只读 fg/bg/li/fi 四个字段；不是 `Session`（C0 落地订正，见 §5.1 末尾）
   fi?: number; li?: number;
   resolveColor?: (c: AiColor) => RGBA | null;
 }
@@ -348,7 +355,9 @@ applyOps(doc: Doc, ops: AiOp[], ctx: AiApplyCtx): AiApplyResult
 - **一次调用 = 一条事务边界**：只写像素（经 `engine/paint.ts`、`engine/shape.ts` 等既有函数），
   **不碰 history、不碰 autosave** —— 那是 C2 的事；
 - 单个 op 非法 → 记进 `errors` 并跳过，其余照常执行（**部分成功是常态**，与 UI 的"空状态 toast"口径一致）；
-- `ops` 为空 → `ok = true`、`applied = 0`、`changed = null`（不写像素）；
+- `ops` 为空 → `ok = true`、`applied = 0`、`changed = null`（不写像素），
+  **与目标图层锁没锁无关**：「没有 op 可失败」不是失败，所以这条早退排在锁定检查前面
+  （否则「锁定图层 + 空 `ops`」会给出 `ok:false` 且 `errors` 为空）；
 - 写了但值没变（画同色）→ `applied` 计入、`changed` 仍返回矩形（调用方靠 `docRev` 判断）；
 - 不直接改 `Doc` / `Cel` 之外的状态（图层、帧、调色板的增删属于 C1 的工具，不在这里）。
 
@@ -410,6 +419,24 @@ isTurnOpen(): boolean
 - **默认「预览后应用」**（§3.3）：`previewTurn` 只画覆盖层、`commitTurn` 才落盘。C0–C2 只提供 API，
   按钮与确认文案属于 C5。
 
+#### 落地后的订正（C0–C3 实现与本文的差异，一律以代码为准）
+
+| 位置 | 本文原写法 | 实际实现 | 为什么 |
+|---|---|---|---|
+| C0 `AiDigest.palette` / `AiRegion.palette` | `"#rrggbb"` | 半透明项是 **`#rrggbbaa`** | 颜色身份按 RGBA 四通道，不用另开「透明度表」；文档化时漏了 alpha（`docs/API.md` §21.1 / §21.2） |
+| C0 `AiApplyCtx.session` | `session: Session` | **`session: AiSessionLike`**（`{fg,bg,li,fi}`） | `applyOps` 只读这四个字段；用结构类型才能不 import 4.2k 行、依赖 DOM 桩的 `session.ts`，于是 C0 能在 Node 里单测 |
+| C0 `applyOps` 空 `ops` | `ok = true`（未说图层状态） | `ok = true`，**且与图层锁定无关** | 「没有 op 可失败」不是失败；早退排在锁定检查前面，否则「锁定图层 + 空 ops」会 `ok:false` 且 `errors` 空 |
+| C0 `readRegion` 完全在画布外 | 只说 `rows` 为空 + `clipped` | `w = h = 0`，**`x/y` 回显请求坐标**（口径①） | `w = h = 0` 时「实际读到」就是空，请求矩形才是「读的是哪块」的真相；否则 `x=10` 回 10、`x=-10` 回 0，同一件事两种形状 |
+| C2 `commitTurn(): void` | 无返回值 | **`boolean`**（无改动 / 回合没开 → `false`） | 调用方必须能区分「落了一条」与「什么都没改」 |
+| C2 新增入口 | 无 | `runAiTurn(label, fn)`（`src/app/ai-turn.ts` + `Session` 门面） | 手写 begin/try/commit 漏掉任何一条失败路径都会留下「回合一直开着」的残留：历史不落、autosave 被永久压住、用户此后的写入会被下一次 rollback 吞掉 |
+| §3.1 L1 的 `apply_ops` 工具 | 列在工具面里 | C1 **没有**这条工具（`applyOps` 只是 C0 的纯函数） | 工具表这一层只做「参数适配 + 调既有 Session 方法」，不新增写入路径；`applyOps` 留给 C2/C5 的批量入口（`docs/API.md` §22.1） |
+| §3.1 原则 2「返回里带 `clamped: true`」 | 布尔标记 | 引擎侧是 **`warnings: string[]`**（`"clamped: size 999 → 64"`），工具表侧是**直接拒绝**非法参数 | 两种口径各管一层：真的会被悄悄改小的参数记字符串警告（带原值 → 最终值，模型可读）；参数形状不对一律 `{ok:false, reason}`，宁可让模型重发 |
+| C3 协议状态码 | 只列了 200 / 400 / 401 / 404 / 405 / 503 | 另有 **413**（TS 按字符上限 262144、Java 按字节上限 1 MiB，两档都先挡再交给路由） | body 超限需要一个明确的状态码，而不是被解析成 400（`docs/API.md` §24.1） |
+
+另有两条**实现层面的约定**（本节没写、但下游必须知道）：
+`AiToolResult.changed` **不可依赖**（43 个写类工具只有 2 个给矩形），判生效一律用 `docRev`；
+`ctx.confirm` 省略时**一律拒绝**（C3 没有确认 UI，那是 C5），禁止为了「让工具能用」默认放行。
+
 #### §7 的五个决策对本期的约束（只列影响面，不替用户拍板）
 
 | 决策 | 影响本期哪里 |
@@ -448,37 +475,50 @@ isTurnOpen(): boolean
 
 ---
 
-## 8. 落地文件清单（预计）
+## 8. 落地文件清单
 
-**新增**
+**已落地（新增）**
 
 | 文件 | 内容 | 期 |
 |---|---|---|
-| `src/app/ai-doc.ts` | 摘要 / 区域读 / 结构化操作应用（纯函数） | C0 |
-| `src/app/ai-tools.ts` | 工具表（schema + 校验 + 分发 + tier） | C1 |
-| `src/app/ai-turn.ts` | 回合事务（或并入 `session.ts`） | C2 |
-| `tests/ai-doc.test.ts` / `tests/ai-tools.test.ts` / `tests/ai-turn.test.ts` | 三期的回归 | C0–C2 |
-| `android/…/AiServer.java`（暂定） | 本机端口 + token + 路由（只依赖 JDK socket） | C3 |
-| `src/ui/AiPanel.tsx`（暂定） | 状态/开关/token 显示（C3）、聊天窗（C5） | C3/C5 |
-| `toolchain/pc-mcp.mjs`（暂定） | stdio MCP → 本地 HTTP 的薄转发 | C4 |
+| `src/app/ai-doc.ts` | 摘要 / 区域读 / 结构化操作应用（纯函数，无 DOM） | C0 |
+| `src/app/ai-tools.ts` | 工具表（schema + 校验 + 分发 + tier），48 个工具 | C1 |
+| `src/app/ai-turn.ts` | 回合事务（一轮一条 undo + 回合期间不刷 autosave） | C2 |
+| `src/app/ai-rpc.ts` | 传输无关的协议路由（一份 `route()` 喂同步 / 异步两个入口） | C3 |
+| `src/app/ai-serve.ts` | JS 生命周期：读设置起停、`window.__pc_ai_call`、诊断、回合收尾 | C3 |
+| `android/java/com/pixelcraft/app/AiServer.java` | 本机端口 + token + 只转发（纯 JDK socket，无 `import android.*`） | C3 |
+| `toolchain/ai-server.mjs` | Node 开发宿主（只绑 `127.0.0.1`，复用编译产物，不重写协议） | C3 |
+| `tests/ai-doc.test.ts` / `ai-tools.test.ts` / `ai-turn.test.ts` / `ai-rpc.test.ts` | 四期的回归 | C0–C3 |
 
-**改动**
+**已落地（改动）**
 
-| 文件 | 改什么 | 期 |
+| 文件 | 改了什么 | 期 |
 |---|---|---|
-| `src/app/session.ts` | 回合事务；把"UI 弹窗流程"里的能力抽成无 UI 入口（特效/导出/变换） | C1–C2 |
-| `src/ui/App.tsx` | 工具表接线（面板开关、状态提示） | C3+ |
-| `android/AndroidManifest.xml` | `INTERNET`（B/A 才加） | C3+ |
-| `src/app/settings.ts` + `src/ui/i18n.ts` | AI 开关、key 管理、权限分级的声明式设置项 | C3+ |
-| `docs/API.md` / `README.md` / `AGENTS.md` | 新模块小节、功能表、文档地图（按 §5.3 的硬要求） | 每期 |
+| `src/app/session.ts` | 回合门面（`beginAiTurn` / `previewAiTurn` / `commitAiTurn` / `rollbackAiTurn` / `aiTurnOpen` / `aiTurnHandle` / `runAiTurn` / `aiTurnAutosaveSuppressed`、`aiTurnAutosaveHeld` 旗） | C2 |
+| `src/app/settings.ts` + `src/ui/i18n.ts` | 四个声明式设置项 `ai.server` / `ai.port` / `ai.tier` / `ai.turnIdleSec`（自成极小存储，不进 `Session.prefs`） | C3 |
+| `src/io/bridge.ts` | `aiServerStart` / `aiServerStop` / `aiServerStatus` / `aiRespond` / `__pc_ai_call` 声明与桥接 | C3 |
+| `src/main.tsx` | `installAiServe(...)` 接线（起停提示、回合空闲秒数现读设置） | C3 |
+| `android/java/com/pixelcraft/app/MainActivity.java` | `PixelBridge` 加 4 个 AI 方法，桥接 `window.__pc_ai_call` 与 `aiRespond` | C3 |
+| `android/AndroidManifest.xml` | 加 `INTERNET`（**只为开本机端口**，服务默认关闭） | C3 |
+| `.gitignore` | `toolchain/*` 白名单加 `!/toolchain/ai-server.mjs` | C3 |
+| `tests/run-tests.ts` + `tests/tsconfig.json` | 四个新测试文件与 `--- ai doc/tools/turn/rpc ---` 段落 | C0–C3 |
+| `docs/API.md` / `README.md` / `AGENTS.md` / 本文 | 新模块小节（API §21–§24）、功能表、文档地图、已知缺口 | 每期 |
+
+**未落地（后续期）**
+
+| 文件 | 内容 | 期 |
+|---|---|---|
+| `toolchain/pc-mcp.mjs`（暂定） | stdio MCP → 本地 HTTP 的薄转发 | C4 |
+| `src/ui/AiPanel.tsx`（暂定） | 状态 / 开关 / token 显示、聊天窗、确认弹框 | C5 |
 
 ---
 
 ## 9. 参考与事实依据
 
-- 本次盘点基于仓库当前提交（`master`，`1.1.1.8`，3847 条断言）的实际源码：
+- 本次盘点基于方案定稿时的仓库（`master`，`1.1.1.8`，3847 条断言）的实际源码：
   `src/app/session.ts`、`src/engine/*`、`src/tools/stroke.ts`、`src/render/compositor.ts`、
-  `src/io/exporters.ts`、`android/AndroidManifest.xml`（只有 `VIBRATE`）、`tests/`。
+  `src/io/exporters.ts`、`android/AndroidManifest.xml`（当时只有 `VIBRATE`）、`tests/`。
+  C0–C3 落地后本仓库的断言数已增至 6000+（`node .ts-out/tests/run-tests.js` 末行会打印条数）。
 - Android 本地端口与 `INTERNET` 权限：
   [socket EPERM 的典型表现](https://codemia.io/knowledge-hub/path/javanetsocketexception_socket_failed_eperm_operation_not_permitted_1)、
   [「不用 INTERNET 权限能不能 ServerSocket」讨论](https://cloud.tencent.cn/developer/ask/sof/829926?from=16139)、
@@ -489,12 +529,12 @@ isTurnOpen(): boolean
 
 ## 10. 进度
 
-| 期 | 状态 |
-|---|---|
-| 方案稿（本文） | ✅ 2026-09-14 |
-| C0 文本化 | ⬜ 未开始 |
-| C1 工具表 | ⬜ |
-| C2 回合事务 | ⬜ |
-| C3 本地工具服务 | ⬜ |
-| C4 MCP 转发 | ⬜ |
-| C5 应用内助手 | ⬜ |
+| 期 | 状态 | 落地 |
+|---|---|---|
+| 方案稿（本文） | ✅ 2026-09-14 | 本文 |
+| C0 文本化 | ✅ 完成 | `src/app/ai-doc.ts` + `tests/ai-doc.test.ts`（`aidoc` 段落 195 条断言）；边界口径与 token 预算见 §5.1 与 `docs/API.md` §21 |
+| C1 工具表 | ✅ 完成 | `src/app/ai-tools.ts` + `tests/ai-tools.test.ts`（`aitools` 段落 1138 条断言）：48 个工具 = read 4 / draw 38 / destructive 5 / ui 1；`docs/API.md` §22 |
+| C2 回合事务 | ✅ 完成 | `src/app/ai-turn.ts` + `src/app/session.ts` 门面 + `tests/ai-turn.test.ts`（`aiturn` 段落 206 条断言）：一轮一条历史、回合期间不刷 autosave、`runAiTurn` 安全入口；`docs/API.md` §23 |
+| C3 本地工具服务 | ✅ 完成 | `src/app/ai-rpc.ts` + `src/app/ai-serve.ts` + `toolchain/ai-server.mjs` + `android/…/AiServer.java` + `MainActivity` 桥接 + `INTERNET` + 四个设置项（默认关闭 / 只绑 `127.0.0.1` / 默认 `read`）：协议表、状态码、回合收尾守卫见 `docs/API.md` §24 |
+| C4 MCP 转发 | ⬜ 未开始 | 计划 `toolchain/pc-mcp.mjs`（§3.5） |
+| C5 应用内助手 | ⬜ 未开始 | 计划 `src/ui/AiPanel.tsx` + key 管理 + 聊天窗 + destructive 确认 UI（`docs/API.md` §24.8） |

@@ -50,6 +50,10 @@ import { testInput } from "./input.test";
 import { testGesture } from "./gesture.test";
 import { testGestureHost } from "./gesture-host.test";
 import { testAutosave } from "./autosave.test";
+import { testAiDoc } from "./ai-doc.test";
+import { testAiTools } from "./ai-tools.test";
+import { testAiTurn } from "./ai-turn.test";
+import { testAiRpc } from "./ai-rpc.test";
 import { testHans } from "./hans.test";
 
 async function main(): Promise<void> {
@@ -157,6 +161,14 @@ async function main(): Promise<void> {
   testIsoUi();
   console.log("--- autosave versions (ring) ---");
   await testAutosave();
+  console.log("--- ai doc (C0 text view) ---");
+  testAiDoc();
+  console.log("--- ai tools ---");
+  await testAiTools();
+  console.log("--- ai turn ---");
+  await testAiTurn();
+  console.log("--- ai rpc ---");
+  await testAiRpc();
   console.log("--- simplified Chinese only (hans) ---");
   testHans();
   finish();

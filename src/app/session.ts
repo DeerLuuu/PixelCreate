@@ -43,6 +43,13 @@ import { snapToTargets, snapCandidates, snapGapRect, stackGap, tightenLegacyStac
 import { BUILTIN_PATTERNS, PATTERN_MAX, patternBytes, patternFromBytes, type PatternDef } from "../data/patterns";
 import { bytesToB64 } from "../engine/b64";
 import { TAG_COLORS, clampRange, nextTagName, normalizeTags, tagAt as findTag } from "../engine/tags";
+// C2 回合事务的薄门面（实现全在 ai-turn.ts；这里只转发，**不改既有方法的行为**）
+import {
+  beginAiTurn as aiBeginTurn, bindTurnHost as aiBindTurnHost, commitTurn as aiCommitTurn,
+  isTurnOpen as aiIsTurnOpen, previewTurn as aiPreviewTurn, rollbackTurn as aiRollbackTurn,
+  runAiTurn as aiRunAiTurn, turnHandle as aiTurnHandle,
+} from "./ai-turn";
+import type { AiTurnHandle, AiTurnPreview, AiTurnRunResult } from "./ai-turn";
 
 export interface Prefs {
   lang: "zh" | "en";
@@ -1319,11 +1326,14 @@ export class Session {
   private lastSaveNote = 0;
   /** mark replay mode: skip autosave while the history replay viewer steps */
   setReplayMode(on: boolean): void { this.replayActive = on; }
-  /** mark the project dirty; the actual write happens on the autosave
-   *  INTERVAL (Settings -> Data, default 5 minutes), not on every change.
-   *  Hiding the app still flushes immediately (flushAutosave). */
+  /**
+   * mark the project dirty; the actual write happens on the autosave
+   * INTERVAL (Settings -> Data, default 5 minutes), not on every change.
+   * Hiding the app still flushes immediately (flushAutosave).
+   * 两面独立的旗都能挡住写盘：`replayActive`（回放查看器）与 `aiTurnAutosaveHeld`（C2 的 AI 回合）。
+   */
   scheduleAutosave(): void {
-    if (!this.prefs.autosave || this.replayActive) return;
+    if (!this.prefs.autosave || this.replayActive || this.aiTurnAutosaveHeld) return;
     this.autosaveDirty = true;
     if (this.autosaveTimer !== null) return;
     const ms = Math.max(10_000, Math.round((this.prefs.autosaveMin || 5) * 60_000));
@@ -1335,6 +1345,10 @@ export class Session {
     }, ms);
   }
   async writeAutosave(force = false, reason: autosave.AutosaveReason = "timer"): Promise<void> {
+    // 回放查看器 / AI 回合期间，**非强制**的写盘一律早退：即使有来路不明的旧计时器回调跑到
+    // 这里（回合开始前就排定的那一次），也不会把回合中间的半成品写进磁盘。
+    // `force=true`（flushAutosave → 页面隐藏 / 卸载时的同步落盘）不受影响。
+    if (!force && (this.replayActive || this.aiTurnAutosaveHeld)) return;
     if (!force && !this.autosaveDirty) return;
     // 落盘前先把「还在手上的东西」落定：未结束的笔迹与浮动变形（含自由变换）
     // 只存在于内存里，图层甚至已经被 floatCut 清空——带着它们存会存出「图层被清空」的草稿
@@ -1362,7 +1376,7 @@ export class Session {
   }
   /** write right now (page hidden / about to be killed): never lose the last strokes */
   async flushAutosave(reason: autosave.AutosaveReason = "hide"): Promise<void> {
-    if (!this.prefs.autosave || this.replayActive) return;
+    if (!this.prefs.autosave || this.replayActive || this.aiTurnAutosaveHeld) return;
     if (this.autosaveTimer !== null) {
       window.clearTimeout(this.autosaveTimer);
       this.autosaveTimer = null;
@@ -2991,6 +3005,70 @@ export class Session {
   struct(label: string, fn: () => void): void {
     this.history.pushStruct(label, this.doc, fn);
     this.syncAfterDocChange();
+  }
+
+  // ---------- C2 AI 回合事务（薄门面：只转发给 src/app/ai-turn.ts；UI 不要依赖它）----------
+  /**
+   * 回合是否压住了自动保存（C2 用）。与回放查看器的 `replayActive` **相互独立**：
+   * 两面旗在闸门处做 OR，谁都不会把对方清掉（早先「进回合时记下 replayActive、收尾还原」
+   * 的做法会在回合与回放重叠时把回放模式关掉，t14-F3）。
+   */
+  private aiTurnAutosaveHeld = false;
+  /**
+   * C2：回合期间抑制自动保存。只动 `aiTurnAutosaveHeld` 这一面旗（**不碰** `replayActive`，
+   * 也不在收尾时还原它）；幂等。挂抑制时还会把**已经排定**的那次自动保存 `clearTimeout` 掉：
+   * 否则回合拖过 `autosaveMin` 时，那次计时器会在回合中间触发，把一份可能马上被 rollback 掉的
+   * 半成品写进磁盘（t14-F2）。
+   */
+  aiTurnAutosaveSuppressed(on: boolean): void {
+    if (on) {
+      if (this.aiTurnAutosaveHeld) return;
+      this.aiTurnAutosaveHeld = true;
+      if (this.autosaveTimer !== null) {
+        window.clearTimeout(this.autosaveTimer);
+        this.autosaveTimer = null;
+      }
+      return;
+    }
+    this.aiTurnAutosaveHeld = false;
+  }
+  /**
+   * C2 的**单一安全入口**：begin → `fn()` → commit，`fn` 抛异常就 rollback 并把异常装进
+   * `error` 返回；C3/C5 请只用这一条（手写 begin/finally 漏一条失败路径就会让回合一直开着）。
+   */
+  runAiTurn<T>(label: string, fn: () => T | Promise<T>): Promise<AiTurnRunResult<T>> {
+    aiBindTurnHost(this);
+    return aiRunAiTurn(label, fn);
+  }
+  /** 打开一个 AI 回合（返回 turnId；0 = 没有绑过宿主，回合未打开） */
+  beginAiTurn(label: string): number {
+    aiBindTurnHost(this);
+    return aiBeginTurn(label);
+  }
+  /** 这一轮会改多少操作、哪块像素（只算不改文档） */
+  previewAiTurn(): AiTurnPreview {
+    aiBindTurnHost(this);
+    return aiPreviewTurn();
+  }
+  /** 一轮一条历史（结构快照）+ 补一次 autosave；无改动返回 false 且不压栈 */
+  commitAiTurn(): boolean {
+    aiBindTurnHost(this);
+    return aiCommitTurn();
+  }
+  /** 放弃这一轮：文档（含全部画布）恢复到回合开始，逐字节一致 */
+  rollbackAiTurn(): void {
+    aiBindTurnHost(this);
+    aiRollbackTurn();
+  }
+  /** 回合是不是开着 */
+  aiTurnOpen(): boolean {
+    aiBindTurnHost(this);
+    return aiIsTurnOpen();
+  }
+  /** 交给 C3 的 `AiToolCtx.turn`（形状由 C1 定死：`{ isOpen, mark }`） */
+  aiTurnHandle(): AiTurnHandle {
+    aiBindTurnHost(this);
+    return aiTurnHandle();
   }
 
   // ---------- 等距图形（iso）----------

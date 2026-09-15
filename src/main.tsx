@@ -6,6 +6,10 @@ import { backAction, type BackState } from "./ui/back";
 import { applyTheme } from "./io/theme";
 import { applyPcMode, pcModeOf, watchPcCapabilities } from "./io/pcmode";
 import { setHoverTipsEnabled } from "./ui/kit";
+import * as bridge from "./io/bridge";
+import { APP_VERSION } from "./ui/changelog";
+import { AI_SERVE_REASON_KEYS, installAiServe } from "./app/ai-serve";
+import { aiServeSettings } from "./app/settings";
 
 // colour theme before the first paint (prefs are read synchronously in Session)
 applyTheme(SESSION.prefs.theme);
@@ -73,3 +77,34 @@ const backState: BackState = { warnAt: 0 };
   }
   return true;
 };
+
+// ------------------------------------------------------------------ C3 本地 AI 端口服务
+//
+// 设置 → AI 服务 里打开（默认关闭，只绑 127.0.0.1）。这里只做接线：
+//   · 是否启动 / 端口 / 放行档位都读 src/app/settings.ts 的声明（ai.server / ai.port / ai.tier），
+//     用户改设置时会即时起停（ai-serve 订阅了那个存储）；
+//   · **回合空闲收尾显式接线**（`ai.turnIdleSec`，默认 300s）：用函数形式现读设置项，
+//     既保证「不传也武装守卫」这条兜底落在生产路径上，又让改设置立刻生效（不钉死在启动那一刻）；
+//   · 启动成功 / 绑定失败 / 停止时用既有 toast 提示端口与 token；
+//   · 浏览器与 PWA 里没有 `window.PixelBridge.aiServerStart`，installAiServe 会全部降级成 no-op，
+//     不会占端口也不会抛。
+// 诊断入口：控制台 `__pcAi.text()`（一行）或 `__pcAi.status()`（对象）。
+installAiServe({
+  session: SESSION,
+  version: APP_VERSION,
+  turnIdleSec: () => aiServeSettings().turnIdleSec,
+  notice: (n) => {
+    const t = makeT(SESSION.prefs.lang);
+    const msg = n.running
+      ? t("aiServerNoticeOn").replace("{port}", String(n.port)).replace("{token}", n.token)
+      : t("aiServerNoticeOff").replace("{reason}", t(AI_SERVE_REASON_KEYS[n.reason]));
+    bridge.toast(msg);
+  },
+  log: (line) => {
+    try {
+      console.info(line);
+    } catch {
+      /* 控制台不可用也不算什么 */
+    }
+  },
+});

@@ -34,6 +34,10 @@
 18. [多画布空间 / 新工具与特效（1.0.7.11 追加）](#18-多画布空间--新工具与特效)
 19. [扩展指南](#19-扩展指南)
 20. [UI 控件库 `ui/kit/`](#20-ui-控件库-uikit)
+21. [AI 文档文本化 `app/ai-doc.ts`](#21-ai-文档文本化-appai-docts)
+22. [AI 工具表 `app/ai-tools.ts`](#22-ai-工具表-appai-toolsts)
+23. [AI 回合事务 `app/ai-turn.ts` 与 Session 门面](#23-ai-回合事务-appai-turnts-与-session-门面)
+24. [AI 本地工具服务（C3）](#24-ai-本地工具服务c3)
 
 ---
 
@@ -2514,3 +2518,560 @@ interface DialogProps {
 `style.css` 顶部 `:root` 定义尺寸令牌与主题色/固定色令牌，`[data-theme="light"]` 覆盖全部主题色令牌；
 `io/theme.ts` 的 `applyTheme(mode)` / `themeMode(v)` 写 `<html data-theme>` 与 `<meta name="theme-color">`，
 设置项为 `display.theme`（`Prefs.theme`，默认 `dark`）。
+
+---
+
+## 21. AI 文档文本化 `src/app/ai-doc.ts`
+
+> C0（[`docs/PLAN-ai.md`](PLAN-ai.md) §3.2 / §5.1）：把画布变成模型能读的文本，把结构化操作安全地写回文档。
+> **纯函数 + 无 DOM**：不 import `Session`（只用结构类型 `AiSessionLike`），不碰 history、不碰 autosave
+> —— 那两件事属于 §23 的回合事务。所以它能在 Node 里直接跑（`tests/ai-doc.test.ts` 就是这么测的）；
+> 也**不产生兆级字符串**（`readRegion` 的 `maxPixels` 就是这条约束）。
+
+```ts
+const AI_INDEX_ALPHABET: string;      // "a…zA…Z"：0–51 号索引字符
+const AI_MAX_REGION_PIXELS = 65536;   // 一次 readRegion 的像素上限（256×256），token 预算的硬闸门
+const AI_MAX_BRUSH = 64;              // 笔迹尺寸上限，与 UI 的笔刷上限一致
+const AI_TOKENS_PER_CHAR = 3.5;       // token 估算：ASCII 约 3.5 字符 / token
+```
+
+### 21.1 `docDigest(doc, opts?)`
+
+```ts
+interface AiDigestLayer { li: number; name: string; visible: boolean; locked: boolean; opacity: number; blend: BlendMode }
+interface AiDigestFrame { fi: number; ms: number; cels: number }   // cels = 该帧有 cel 对象的图层数（空 cel 也算「有」）
+interface AiDigestTag { name: string; from: number; to: number }
+interface AiDigest {
+  docRev: number;                   // doc.pixelRev 快照：模型据此判断"我的改动生效了吗"
+  w: number; h: number;
+  layers: AiDigestLayer[];
+  frames: AiDigestFrame[];
+  tags: AiDigestTag[];
+  palette: string[];                // "#rrggbb"；alpha < 255 时是 "#rrggbbaa"（与 readRegion 同一口径）
+  sel: { x: number; y: number; w: number; h: number; pixels: number } | null;
+  bbox: { x: number; y: number; w: number; h: number } | null;   // 当前帧可见图层的非空包围盒（含端点）
+  inkRatio: number;                 // 非透明像素占比，0..1，3 位小数
+  text: string;                     // 单行摘要（恒定长度）
+  tokens: number;                   // ceil(text.length / 3.5)
+}
+docDigest(doc: Doc, opts?: { fi?: number }): AiDigest
+```
+
+`opts.fi` 先 `Math.trunc` 再夹到 `0..frames.length-1`（非数字当 0），**不记警告、不抛异常**。
+`text` 形如：
+
+```
+digest: 32x32 | rev: 12 | layers: ["bg","sprite"](hidden) | frames: 3 | tags: [{"idle",0,2}] | colors: 12 | sel: (2,3)+(4x4) 16px | bbox: (6,4)-(24,20) | ink: 0.412
+```
+
+`sel` 只在掩膜真的选中像素时才不是 `null`（`Sel.hasAny()`），`pixels` 是掩膜里的选中像素数；
+`bbox` 只统计**可见且 `opacity > 0`** 的图层（隐藏图层不参与，与「看见的画面」同口径）；
+`inkRatio` 是「至少一层可见图层不透明」的像素占画布总像素的比例。
+
+### 21.2 `readRegion(doc, rect, opts?)`
+
+```ts
+interface AiRegion {
+  x: number; y: number; w: number; h: number;   // 实际读取到的区域（见「口径 5 的例外」）
+  fi: number; li: number;
+  rows: string[];                   // 每行一个字符串：`.` = 全透明，其余是 palette 的下标字符
+  palette: string[];                // rows 用到的颜色（先按文档调色板顺序取子集，再按首次出现顺序追加新颜色）
+  clipped: boolean;                 // 请求区域被画布边界或 maxPixels 裁剪过
+  text: string;                     // 带 y= 行号与 palette 行的排版文本
+  tokens: number;
+}
+interface AiReadOpts { fi?: number; li?: number; rle?: boolean; maxPixels?: number }
+readRegion(doc: Doc, rect: Rect, opts?: AiReadOpts): AiRegion
+```
+
+**五条边界口径**（每条都有单测）：
+
+1. `rect` 部分越界 → 裁剪进画布并置 `clipped = true`，`x/y/w/h` 报**实际读到**的区域；
+2. `li` / `fi` 越界 → 夹到 `0..len-1`，`text` 里带一行 `warn:`（例如 `warn: li 3 超出图层范围 0..1，已回退到 1`），不静默；
+3. 目标图层在这一帧没有 cel → 全 `.` 行、`palette` 为空（不是错误，`readRegion` 没有 `ok` 字段）；
+4. 颜色身份按 **RGBA 四通道**：同一 RGB 不同 alpha 是**两个**索引，`palette` 里写成 `#rrggbbaa`
+   —— **这是对 `docs/PLAN-ai.md` §5.1 早先「`palette: string[]; // "#rrggbb"`」的修正**（实际含 alpha），
+   `alpha === 0` 一律记 `.`，不需要另开「透明度表」；
+5. `maxPixels` 默认 65536（256×256）：超出时保留**左上角、整行保留**、截断行数并置 `clipped = true`
+   —— 这是 §3.2 token 预算的落地（1024×1024 全图约 30 万 token，不可能整图发给模型）。
+
+**口径 5 的例外（请求区域完全在画布外，口径①）**：请求矩形与画布**没有交集**时返回
+`w = h = 0`、`rows = []`、`palette = []`、`clipped = true`，而 `x/y` **回显请求坐标**（不是裁剪后的 0），
+`text` 首行为 `region requested (x=10,y=10,w=4,h=4) → 完全在画布外 @frame 0, layer 0:`。
+理由：`x/y` 的语义是「实际读到的区域」，而 `w = h = 0` 时「实际读到」就是空，此时请求矩形才是
+「读的是哪块」的真相；否则同一件事会给出两种形状（`x=10` 回 10、`x=-10` 回 0），模型会误判起点。
+
+排版：调色板 ≤ 52 色时索引用 `AI_INDEX_ALPHABET` 的单字符（`rle: true` 且不超 52 色时行内 RLE 成 `2a3b`，
+单次省略次数）；超过 52 色退回**定宽十六进制**索引并自动关闭 RLE。`text` 末尾的 `note:` 行会说明 RLE 开启、
+定宽回退、半透明像素数（`N 个半透明像素按 RGBA 单独占索引，alpha 见 palette 的 #rrggbbaa`）与 `clipped`。
+
+### 21.3 `applyOps(doc, ops, ctx)`
+
+```ts
+type AiColor = string;   // "#rgb" / "#rrggbb" / "#rrggbbaa" / "fg" / "bg"
+type AiOp =
+  | { op: "pixels"; x: number; y: number; rgba: [number, number, number, number] }
+  | { op: "line"; x0: number; y0: number; x1: number; y1: number; color: AiColor; size?: number }
+  | { op: "rect"; x: number; y: number; w: number; h: number; color: AiColor; fill?: boolean }
+  | { op: "erase"; x: number; y: number; w: number; h: number }
+  | { op: "fill"; x: number; y: number; color: AiColor; tolerance?: number };
+
+/** applyOps 只需要 Session 的这几个字段：结构类型而不是 `Session`（见下面的「为什么」） */
+interface AiSessionLike { fg: RGBA; bg: RGBA; li: number; fi: number }
+interface AiApplyCtx {
+  session: AiSessionLike;
+  fi?: number; li?: number;
+  /** 给了就**完全接管**颜色解析（返回 null 走错误口径，不再回落到 fg/bg） */
+  resolveColor?: (c: AiColor) => RGBA | null;
+}
+interface AiApplyResult {
+  ok: boolean;                    // 没有任何 op 失败（部分成功是常态）
+  applied: number;                // 成功执行的 op 数（画同色也算执行成功）
+  changed: Rect | null;           // 实际碰到的像素并集包围盒（没碰到像素为 null）
+  docRev: number;                 // 写入后的文档版本号；只有像素字节真的变了才前进
+  warnings: string[];             // 含 "clamped: <字段> <原值> → <最终值>"
+  errors: Array<{ index: number; reason: string }>;
+}
+applyOps(doc: Doc, ops: AiOp[], ctx: AiApplyCtx): AiApplyResult
+```
+
+口径（**不要改回去**）：
+
+- **空 `ops` 恒为 `ok: true`**（`applied = 0`、`changed = null`、`docRev` 不动），
+  **与目标图层锁没锁无关** ——「没有 op 可失败」不是失败。这条早退**必须排在锁定检查前面**，
+  否则「锁定图层 + 空 ops」会给出 `ok:false` 且 `errors` 空。`ops` 不是数组时按空处理并记一条 warn。
+- 单个 op 非法 → 记进 `errors`（带 `index`）并跳过，其余照常执行；`ok = errors.length === 0`。
+- **越界坐标不钳制也不搬位置**：画到画布外就是没画（`changed` 会说真话）。只有
+  `size` / `tolerance` / rgba 通道值 / `li` / `fi` 这类「会被悄悄改小」的参数才进 `warnings`，
+  形如 `clamped: size 999 → 64`、`clamped: li 0.4 → 0`；小数与越界各报一条，**互不遮蔽**。
+- **cel 只在真要写像素时才建**：`put` / `wipe` 先拿 `doc.w/h` 判越界、先问选区掩膜，再 `ensureCel`；
+  `fill` 的种子越界先记 error（文案 `fill 起点 (x,y) 在画布外`）再决定建不建 cel。全程落在画布外的 op
+  一个字节没写，就不会在 `doc.cels` 里留下一条空 Cel（空 cel 会污染 §21.1 的 `frames[].cels` 计数）。
+- `resolveColor` 省略时：`"fg"` / `"bg"` 取 `ctx.session.fg` / `bg`，其余按 `#rgb` / `#rrggbb` / `#rrggbbaa` 解析
+  （`hexToRgba`），不认识就记 `无法解析颜色: …`。
+- **一次调用 = 一条事务边界，但只写像素**：不碰 history、不碰 autosave、不动图层 / 帧 / 调色板的结构
+  （那些是 §22 的工具）；`doc.pixelRev` 只在真的改到字节时前进一次。
+- `changed` 是**像素并集包围盒**，不是「有改动吗」的判据 —— 判生效一律看 `docRev`。
+
+**为什么 `ctx.session` 是结构类型而不是 `Session`**：`session.ts` 有 4.2k 行且依赖 prefs / DOM 桩，
+把它拉进这一层就没法在 Node 里单测了。`applyOps` 实际只读 `fg` / `bg` / `li` / `fi` 四个字段
+（`docs/PLAN-ai.md` §5.1 早先写的是 `session: Session`，已按代码改成 `AiSessionLike`）。
+
+### 21.4 token 预算与 `maxPixels` 的由来
+
+| 区域 | 字符数 | 约 token | 结论 |
+|---|---|---|---|
+| 16×16 全图 | ~290 | ~90 | 随便读 |
+| 32×32 全图 | ~1.1k | ~320 | 默认全图可读 |
+| 64×64 全图 | ~4.2k | ~1.2k | 可读，但每轮都读会贵 |
+| 128×128 全图 | ~16.6k | ~4.8k | 按窗口读 |
+| 1024×1024 全图 | ~1.05M | ~300k | 不可能，只能窗口 + 摘要 |
+
+所以默认上限定在 256×256 像素（65536），`docDigest` 的 `text` 是恒定长度的一行；写操作优先用**命令**
+（画一条线、填一块）而不是回写整个网格 —— 命令的 token 成本与画布大小无关。
+
+**已知缺口**：
+
+- `readRegion` 的 `opts.fi` / `opts.li` 小数仍是**静默截断**（`intOr` 里的 `Math.trunc`），没走 `warnings`；
+  `applyOps` 侧已经统一成 `warnings`（`clamped: li 0.4 → 0`），两条路径口径暂时不一致。
+- `tests/ai-doc.test.ts` 里少数断言偏弱（例如 `digest.tokens` 用同一个公式反推期望值），
+  只能保证「自洽」，不能保证「预算真实」。
+
+---
+
+## 22. AI 工具表 `src/app/ai-tools.ts`
+
+> C1（`docs/PLAN-ai.md` §3.1 工具面 / §3.6 权限分级 / §5.1 C1 契约）。这一层只做一件事：
+> **把模型给的 JSON 翻译成既有 `Session` 方法的一次调用**。每条 handler 只做参数适配
+> （解析 fg/bg、把 `"current"` 换成当前图层/帧、把枚举串换成既有方法的联合类型），
+> **绝不新增写入路径** —— 不直接改 doc/cel/palette，不绕过 history。
+> `tests/ai-tools.test.ts` 静态扫源文件里所有 `s.<方法>(` 调用，逐个断言它真的存在于 `Session.prototype` 上。
+
+### 22.1 类型与常量
+
+```ts
+type AiTier = "read" | "draw" | "destructive" | "ui";
+type AiParamType = "int" | "num" | "bool" | "string" | "enum" | "color" | "xy" | "rect" | "array";
+
+interface AiToolParam {
+  type: AiParamType;
+  values?: string[];          // type === "enum" 的取值表
+  min?: number; max?: number; // int/num = 数值范围（闭区间）；string = 字符数；array = 元素个数
+  default?: unknown;          // 省略该参数时用的值；int 参数可以用 AI_ARG_CURRENT（= 当前图层/帧）
+  optional?: boolean;         // 可以省略、且省略时**不进** value（见 22.5）
+  items?: AiParamType;        // type === "array" 的元素类型
+  desc?: string;              // 纯文本说明（工具表这一层不翻译，UI 再查 i18n）
+}
+interface AiToolResult {
+  ok: boolean;
+  changed?: Rect | null;      // 实际碰到的像素并集矩形；拿不到矩形的方法省掉这个字段（**不可依赖**，见 22.6）
+  docRev?: number;            // 写入后的 `Doc.pixelRev`
+  warn?: string[];
+  error?: string;
+  data?: unknown;             // 输出负载（见 22.5；读类工具的摘要 / 区域对象放这里）
+}
+interface AiToolCtx {
+  session: Session;
+  confirm: (req: { tool: string; tier: AiTier; summary: string }) => Promise<boolean>;  // false = 用户取消
+  turn: { isOpen(): boolean; mark(): void } | null;   // C2 的回合（§23）；开着的成功写操作 mark 一次
+}
+interface AiTool {
+  id: string;                 // 与 Session.allActions() 同一命名空间
+  title: string;              // 纯文本
+  tier: AiTier;
+  params: Record<string, AiToolParam>;
+  returns: Record<string, string>;
+  handler: (args: Record<string, unknown>, ctx: AiToolCtx) => AiToolResult | Promise<AiToolResult>;
+}
+
+const AI_ARG_CURRENT = "current";
+const AI_TIER_ORDER: readonly AiTier[] = ["read", "draw", "destructive", "ui"];
+const AI_TOOL_ACTION_IDS: readonly string[] = ["undo", "redo"];   // 复用动作表里真的有的两条
+const AI_TOOL_ID_WHITELIST: readonly string[] = [ /* 46 条自己新造的 id */ ];
+```
+
+### 22.2 对外接口
+
+```ts
+listTools(opts?: { tiers?: AiTier[] }): AiTool[]
+getTool(id: string): AiTool | null
+validateArgs(tool: AiTool, args: unknown):
+  | { ok: true; value: Record<string, unknown> }
+  | { ok: false; reason: string }
+callTool(id: string, args: unknown, ctx: AiToolCtx): Promise<AiToolResult>
+summarizeToolCall(tool: AiTool, value: Record<string, unknown>): string      // 确认框里给用户看的一句话
+allToolIds(): string[]
+idRegistrationDiff(): { missingFromTable: string[]; missingFromWhitelist: string[] }   // 自检，正常为空
+```
+
+- `listTools` 顺序**稳定**：tier 分组（`read → draw → destructive → ui`），组内按 id 字典序；
+  `opts.tiers` 只筛掉不要的档，传入的档序不影响输出顺序；**默认不含 `ui`**（§3.6）。
+- `validateArgs` 返回**新对象**，不改调用方给的那个；口径是**严格**：多给字段、类型不符、越界、
+  枚举不认识、数组长度越界，一律 `{ok:false, reason}` 并带上允许范围，**不静默钳制**
+  —— 宁可让模型重发一次，也不要把「画在 A 处」悄悄变成「画在 B 处」。
+  缺参且 `default === undefined` 且 `optional !== true` → `缺少必填参数 <name>（<type>，允许 …）`。
+
+### 22.3 `callTool` 的固定顺序
+
+1. `getTool(id)` 找不到 → `{ok:false, error:"unknown tool: <id>"}`；
+2. `validateArgs` 不合格 → `{ok:false, error:"invalid args: <reason>"}`，**不执行、不确认**；
+3. `tier === "destructive"` → `await ctx.confirm({tool, tier, summary})`；返回 false（或抛异常）
+   → `{ok:false, error:"cancelled"}` / `"confirm failed: …"`，**文档一个字节不动**；
+4. 执行 handler（抛异常只转成 `{ok:false, error:"handler failed: …"}`），结果**原样返回**；
+5. `res.ok !== false` 且 `tier !== "read"` 且 `ctx.turn?.isOpen()` → `ctx.turn.mark()` 记一次
+   （读类工具不 mark；回合没开时 `mark()` 不会凭空造出回合）。
+
+**`tier` 只决定「要不要确认」与 `listTools` 默认给不给，不决定能不能调** —— 「放行开关」在
+C3 的服务层（设置项 `ai.tier`，见 §24.3）。
+
+### 22.4 工具清单与 `tier` 分布（48 = 4 + 38 + 5 + 1）
+
+| tier | 数 | id |
+|---|---|---|
+| `read` | 4 | `color_analyse`、`color_groups`、`doc_digest`、`read_region` |
+| `draw` | 38 | `color_merge_group`、`color_replace`、`color_select`、`frame_add`、`frame_duplicate`、`frame_duration`、`frame_move`、`frame_move_to`、`frame_select`、`iso_generate`、`iso_origin`、`iso_set`、`layer_add`、`layer_blend`、`layer_down`、`layer_duplicate`、`layer_move_to`、`layer_opacity`、`layer_rename`、`layer_select`、`layer_toggle_lock`、`layer_toggle_solo`、`layer_toggle_visible`、`layer_up`、`palette_add`、`palette_dedupe`、`palette_from_canvas`、`palette_merge`、`palette_remap`、`palette_remove`、`palette_sort`、`redo`、`tag_add`、`tag_remove`、`tag_rename`、`tag_set_color`、`tag_set_range`、`undo` |
+| `destructive` | 5 | `canvas_clear`、`frame_delete`、`layer_delete`、`layer_merge_down`、`scale` |
+| `ui` | 1 | `set_tool` |
+
+`destructive` 的判定理由（对照 §3.6 举的「删图层 / 帧、清空画布、缩放画布、替换文档」）：
+`layer_delete`（删整层）、`layer_merge_down`（一层被并入另一层后消失，层数 -1）、`frame_delete`（删整帧）、
+`canvas_clear`（清空当前帧全部图层）、`scale`（改画布尺寸 + 重采样，唯一会改 `doc.w/h` 的工具）。
+`palette_remap` 与 `color_replace`（`scope = canvas`）是**画布级批量像素改写**，但它们
+① 不改画布尺寸、② 不动图层 / 帧 / 标签结构、③ 一条历史可整条撤销，按 §3.1 的分档留在 `draw`。
+
+### 22.5 两处「只加可选字段」的扩展
+
+- `AiToolResult.data`：§5.1 只留了 `ok/changed/docRev/warn/error`，读类工具的结果（摘要 / 区域对象）
+  没有地方放，所以加一个**可选** `data` —— 既有字段语义一个都没改。
+- `AiToolParam.optional`：§5.1 只有 `default`，而 `default` 会把「没说」变成「显式设成这个值」；
+  补丁类工具（`iso_set` 只改想改的参数）需要**省略 = 不动这一项**，所以加一个可选的 `optional`：
+  `optional: true` 且调用方没给值时，这个键**不进** `value`，handler 靠 `a.x !== undefined` 判断。
+
+### 22.6 坑点：`AiToolResult.changed` 不可依赖
+
+- 43 个写类工具（38 draw + 5 destructive）里只有 `iso_generate` / `scale` 给了矩形 `changed`；
+- 「改了 N 个像素」是 `data.changed`（**数字**，不是矩形，例如 `color_replace`）；
+- 大多数写操作 `changed === undefined`，**拿到它不是错误**；
+- 判定「改动生效了吗」一律用 **`docRev`**（前后比对 `result.docRev`）；需要脏矩形就用
+  §23 的 `previewTurn()` / §24 的 `turn_preview`。
+
+### 22.7 工具 id 与 `Session.allActions()` 的对齐
+
+界面按钮、快捷键、动作搜索面板、AI 工具必须指向**同一批 id**（§3.1 原则 4），否则「AI 说它撤销了」
+与「用户看到的撤销按钮」会漂成两套名字。能对上的直接复用 → `AI_TOOL_ACTION_IDS`
+（`undo` / `redo` 是动作表里真的有的两条）；对不上的新 id 一律登记进 `AI_TOOL_ID_WHITELIST`。
+测试断言的是**相等**：`AI_TOOL_ACTION_IDS ∪ AI_TOOL_ID_WHITELIST === 工具表 id 集合`（两个集合互不相交），
+所以加 / 删工具必须同时改白名单，白名单不会变成垃圾桶。
+
+**已知缺口**：89 个参数里 **52 个没有 `desc`**（只影响模型选工具 / 填参数的准确率，不影响正确性）；
+`list_tools` 报出去的就是这份 schema（§24.1），所以模型看到的是「一半参数只有类型与范围」。
+
+---
+
+## 23. AI 回合事务 `src/app/ai-turn.ts` 与 Session 门面
+
+> C2（`docs/PLAN-ai.md` §3.3「一轮 = 一条 undo」/ §5.1 C2 契约）：把 AI 一轮里的几十次写操作合成
+> **一条**可撤销历史，并在回合中间一个字节都不写盘。为什么：`prefs.histSteps` 默认 120 条，
+> 而一轮 AI 动辄几十次调用 —— 逐次压栈会把用户自己的撤销挤掉。
+
+### 23.1 类型与常量
+
+```ts
+interface AiTurnPreview { count: number; rect: Rect | null }   // count = 这一轮被 mark() 记的操作数
+interface AiTurnHandle { isOpen(): boolean; mark(): void }     // C1 的 AiToolCtx.turn 形状（定死）
+interface AiTurnRunResult<T> { ok: boolean; result?: T; error?: unknown }
+interface AiTurnSession {                                      // 回合宿主 = Session 的公开面（结构类型）
+  docs: CanvasEntry[]; docIdx: number; layerIdx: number; frameIdx: number;
+  readonly doc: Doc; history: History;
+  readonly view: { flushStroke(): boolean } | null;
+  curLayer(): number; curFrame(): number;
+  syncAll(): void; syncAfterDocChange(): void;
+  aiTurnAutosaveSuppressed(on: boolean): void;                 // 幂等
+}
+const AI_TURN_LABEL_PREFIX = "ai: ";
+const AI_TURN_LABEL_MAX = 80;
+const AI_TURN_LABEL_FALLBACK = "未命名回合";
+```
+
+### 23.2 对外接口
+
+```ts
+bindTurnHost(s: AiTurnSession | null): void
+beginAiTurn(label: string): number              // 返回 turnId（≥1）；没有宿主返回 0 且回合不打开
+runAiTurn<T>(label: string, fn: () => T | Promise<T>): Promise<AiTurnRunResult<T>>   // 单一安全入口
+previewTurn(): AiTurnPreview                    // 只算不改文档；回合没开 → {count:0, rect:null}
+commitTurn(): boolean                           // 一条历史 + 补一次 autosave；无改动 / 回合没开 → false
+rollbackTurn(): void                            // 恢复到回合开始（逐字节一致）；回合没开 → no-op
+isTurnOpen(): boolean
+turnHandle(): AiTurnHandle                      // 交给 C1 的 AiToolCtx.turn
+```
+
+`Session` 的门面（每次调用都 `bindTurnHost(this)`，所以谁先调都能用）：
+`beginAiTurn(label)` / `previewAiTurn()` / `commitAiTurn()` / `rollbackAiTurn()` / `aiTurnOpen()` /
+`aiTurnHandle()` / `runAiTurn(label, fn)` / `aiTurnAutosaveSuppressed(on)`。
+
+**`runAiTurn` 是推荐入口**（C3/C5 的「一次调用 = 一整轮」）：`begin → await fn() → commitTurn()`；
+`fn` 抛异常 → `rollbackTurn()` 并把异常装进 `error` 返回（**不重抛**）；`finally` 里只要回合还开着
+就再 rollback 一次。`ok: true` 表示「正常收尾」，**不**表示「一定落了一条历史」：无改动时
+`commitTurn()` 返回 false、`ok` 仍是 true；收尾真的出错（压栈 / 同步出错）会转成 `ok:false`
+（内部记 `lastCommitError`）。**不要用它实现协议动词** `turn_begin` / `turn_commit` / `turn_rollback`
+—— 它在 `fn` 成功后会自动 commit，拿它实现 `turn_begin` 会在「只有 begin」的请求里就把回合提交掉（§24.4）。
+
+### 23.3 口径（**不要改回去**）
+
+1. 历史标签固定加前缀 `ai: `（调用方自己带了不会重复）；正文归一化空白并截断到 80 字符，空标签用兜底正文。
+2. 失败口径**一律不抛异常**：回合没开时 commit → `false`、rollback → no-op、preview → `{count:0,rect:null}`、
+   isTurnOpen → `false`。
+3. `commitTurn()` 只在**文档内容**真的变了才压栈（cel 字节 / 调色板 / 图层帧标签 / 选区 / 画布尺寸）；
+   只有画布位置或焦点变了 → `false` 且不压栈（历史里不该有内容相同的空步）。
+4. commit 前与 rollback 前都先 `view.flushStroke()`（未落定的笔迹 / 浮动变形先落定；这时历史还关着，
+   不会多出历史步骤）。
+5. **单画布回合**用 `History.pushStruct`（带 before/after 快照，能进 `.pxc` 的内嵌历史）；
+   **跨画布回合**用 `History.record` 的闭包（一条 undo 覆盖所有画布）。
+6. `pixelRev` 不在「逐字节一致」的比较口径里（`Doc.restore()` 自己会 `pixelRev++`，它只是渲染缓存键）。
+7. `mark()` 只累计操作数并让脏矩形缓存失效；脏矩形由 `previewTurn()` 现算（逐字节比对，不在每次 mark 里重扫）。
+8. 回合只挡「AI 的写操作落历史」：用户在回合中间按撤销 / 重做动的仍是既有历史
+   —— **回合开着时用户的写入会被回滚吞掉**，所以回合期间不要放行用户 / UI 的写入（服务层负责这道门）。
+9. `beginTurn` **先发布回合再挂闸门 / 压 autosave**，任何一步抛错都在 catch 里把闸门与抑制还原后重抛
+   —— 不留「闸门挂着但 `activeTurn` 为 null」的不可恢复窗口。
+10. 回合的「不动历史」是**临时影子掉** `History` 的三个压栈入口（`record` / `pushPixels` / `pushStruct`）
+    实现的；影子残留在身后 = 用户此后的正常绘制**静默不进历史**（丢撤销），所以任何失败路径都必须 rollback。
+
+### 23.4 回合期间的自动保存
+
+- 独立字段 `Session.aiTurnAutosaveHeld` 与回放查看器的 `replayActive` **互不覆盖**：三处守卫统一按
+  `replayActive || aiTurnAutosaveHeld` 早退（`scheduleAutosave` / `flushAutosave` / 非强制的 `writeAutosave`）；
+  `aiTurnAutosaveSuppressed(on)` 只置 / 清自己那一面旗（幂等）。
+- 挂抑制时还会 `clearTimeout` **已经排定**的那次自动保存 —— 否则回合拖过 `autosaveMin` 时，
+  那次计时器会在回合中间触发，把一份可能马上被 rollback 掉的半成品写进磁盘。
+- `commitTurn()` 之后补一次；`flushAutosave(force)` 会先查旗，**`writeAutosave(true)` 是逃生门**
+  （只有 force 路径会用得到）。
+
+### 23.5 已知缺口（本轮不做）
+
+- **跨画布回合的 History entry 是 payload-less**：`History.dump()` 实测返回 `[]`，会让该步与**更早步骤**
+  一起从 `.pxc` 的内嵌历史里消失（单画布走 `pushStruct` 可序列化；in-session 一条 undo 仍覆盖两张画布）。
+- **回合开着时页面隐藏的同步 flush 会早退**（口径 4 的固有取舍）：回合跨过「页面隐藏 + 进程被杀」时，
+  回合开始前那几笔不落盘。
+- 模块级 `lastCommitError` 在「回合没开」早退时**不清**，可能携带上一次的陈旧错误（一行加固未做）。
+- **History 层显式批量抑制开关 / 回合看门狗：本轮决定不做**（会改 `History` 语义并牵动 90+ 提交的回归面）。
+
+---
+
+## 24. AI 本地工具服务（C3）
+
+> 传输有两条，**协议只有一份**：`src/app/ai-rpc.ts`（纯函数路由：无 DOM、无网络、无定时器）
+> 定义状态码 / 鉴权 / tier 判定与全部 call；APK 里由 `AiServer.java` + `src/app/ai-serve.ts` 搬运，
+> 开发机上由 `toolchain/ai-server.mjs` 搬运。两条路调**同一份** `handleAiRequest` / `handleAiRequestAsync`。
+> 默认**关闭**：设置里打开才起服务，只绑 `127.0.0.1`，默认档位 `read`（什么都改不了）。
+
+### 24.1 协议表（队长定稿 v4）
+
+| 项 | 内容 |
+|---|---|
+| 监听 | 只绑 `127.0.0.1`（绝不 `0.0.0.0`，也不用 IPv6 回环）；端口来自设置 `ai.port`（默认 8787）；默认关闭 |
+| 鉴权 | 请求头 `Authorization: Bearer <token>`；token 每次启动随机生成（16 字节 → 32 位十六进制），APK 里由 Java 生成并交回 JS，Node 宿主自己生成；**不持久化**（重启即换） |
+| Java→JS 桥 | envelope `{"method":"POST","path":"/ai","body":"<原始 body 文本>"}` 调 `window.__pc_ai_call(envelopeJson, requestId)`（**两个参数**） |
+| envelope 契约 | `body` **恒为 JSON 字符串**，要 `JSON.parse(envelope.body)` 才拿到 `{call,args}`；**例外：`GET /ai/health` 的 body 是空串**（路径分流必须在解析之前，否则对空串 `JSON.parse` 会炸成 400，真机上表现为「健康检查永远失败」） |
+| `GET /ai/health` | 200 `{"ok":true,"result":{"version":"<APP_VERSION>","docRev":<int>,"tier":"read\|draw\|all"}}`，**由 TS 单源应答**（Java 不得自己回 health：`version` / `docRev` / `tier` 只存在于 TS 层） |
+| `POST /ai` | body 为单行 JSON `{"call":"<name>","args":{…}}`；响应恒为单行 JSON：成功 `{"ok":true,"result":…}`，失败 `{"ok":false,"error":"<原因>"}` |
+| 状态码 | 200（**含工具自身失败**，body 是 `{"ok":false,…}`）/ 400（call 不存在、参数形状不对、非法 JSON）/ 401（token 不匹配）/ 404（未知路径）/ 405（路径对、方法不对）/ 413（body 超限）/ 503（Session 没就绪，或路由内部抛异常） |
+| `PixelBridge` | `aiServerStart(port) -> token 字符串`（绑定失败为 `""`）、`aiServerStop()`、`aiServerStatus() -> '{"running":bool,"port":N,"token":"…"}'`、`aiRespond(requestId, json) -> boolean` |
+
+`POST /ai` 的 9 个 call：
+
+| call | args | 结果 |
+|---|---|---|
+| `list_tools` | `{tiers?}` | `{tier, allowed, count, tools:[{id,title,tier,params,returns}]}`（**不含 handler**，函数没法序列化） |
+| `digest` | `{fi?}` | §21 的 `AiDigest` |
+| `read_region` | `{x,y,w,h,fi?,li?,rle?}` | §21 的 `AiRegion` |
+| `call_tool` | `{id,args}` | §22 的 `AiToolResult`；**只有它可能异步** |
+| `turn_begin` | `{label}` | `{turnId, label, warn?}`（`warn: "previous turn rolled back"`，见 24.4） |
+| `turn_preview` | — | `{count, rect}` |
+| `turn_commit` | — | `{committed: boolean}` |
+| `turn_rollback` | — | `{rolledBack: boolean}` |
+| `status` | — | 版本 / `docRev` / `tier` / `allowed` / 各档工具计数 / 回合与空闲收尾口径 / `confirm` 口径 / 宿主信息 |
+
+**两处容易踩的坑**：
+
+- **协议层 `read_region` 是扁平 args `{x,y,w,h,fi?,li?,rle?}`**，而 `list_tools` 里同名工具的 schema 是
+  `rect: {x,y,w,h}` + `maxPixels`（那是给模型看的**工具表**形状）。照 `list_tools` 的 schema 去调协议层的
+  `read_region` 会 **400**（缺 `x`）。两者是不同层的入口，别混用。
+- **413 有两个闸门**：TS 路由按**字符数**卡 `AI_RPC_MAX_BODY = 262144`；Java 侧 `AiServer.MAX_BODY_BYTES`
+  按**字节数**卡 1 MiB（先挡住超大 body 再交给路由）。Node 宿主比路由宽 4 倍地先挡一次
+  （UTF-8 一个字符最多 4 字节）。413 没列在上面那行的「协议状态码」清单里，但两端都已实现。
+
+### 24.2 双返回形态（同步 / 挂起）
+
+- `window.__pc_ai_call(envelopeJson, requestId)` 先走**同步快路径**：所有纯同步的 call 与全部错误路径
+  都在这里回一行 JSON 字符串；
+- `call_tool` 在同步入口回一个哨兵体 `AI_RPC_ASYNC_BODY = '{"ok":false,"error":"needs-async"}'`
+  （C1 的 handler 允许返回 Promise，`callTool` 本身也是 async，同步路径等不了）；
+- `ai-serve` 见到哨兵就**返回空串**表示「挂起」，过一会儿用 `PixelBridge.aiRespond(requestId, json)` 交付。
+  **绝不能把 Promise 直接返回给 Java** —— Java 拿到 Promise 的字符串形式会判 `js-async-unsupported`；
+- `aiRespond` 返回 `false`（10s 超时 / 已经交付过）**只记诊断，不重试**：Java 侧已经放弃了，
+  重发只会把同一个 requestId 的第二次交付丢掉。**只认第一次**；
+- Java 侧失败码（形状均为 `{"ok":false,"error":"…"}`）：`js-not-ready`（页面还没注入桥，回 **503**）、
+  `timeout`（10s）、`js-error`、`js-async-unsupported`、`empty-response`、`shutdown`；
+- `ai-serve.ts` 导出：`installAiServe(deps)` / `uninstallAiServe()` / `applyAiServe()` / `stopAiServe()` /
+  `setAiConfirmer(fn | null)` / `aiServeHandleCall(envelopeJson, requestId)` / `aiServeStatus()` /
+  `aiServeStatusText()` / `randomToken()`，以及 `AiServeDeps` / `AiServeStatus` / `AiServeReason`。
+  诊断入口 `window.__pcAi`：`status()` / `text()` / `start()` / `stop()` / `setConfirmer(fn)` /
+  `setTurnIdleSec(n)`。无桥接（浏览器 / PWA / Node 开发宿主）时**全部降级为 no-op 且不抛**。
+
+### 24.3 权限档（放行开关）与确认器
+
+| `ai.tier` | 放行 | 说明 |
+|---|---|---|
+| `read`（默认） | §22 的 4 个 `read` 档工具 | 只读 |
+| `draw` | 再放开 38 个 `draw` 档 | 可以改画面 |
+| `all` | 再放开 5 个 `destructive` + 1 个 `ui` | destructive 每一项仍要确认 |
+
+- `aiTierAllows(tier, toolTier)` 是**放行开关**（在 §24.1 的路由里）；被拒时 HTTP 仍是 200，body 形如
+  `{"ok":false,"error":"tier \"read\" 不放行 draw 档工具 xxx（当前允许：read；改设置 ai.tier 或先 list_tools 看可用清单）"}`；
+- `ui` 档（`set_tool`）**默认不列**：只有服务档位是 `all` 且调用方**显式**在 `args.tiers` 里要了 `ui` 才列；
+- **`ctx.confirm` 默认必须拒绝**：C3 没有确认 UI（那是 C5），省略 `ctx.confirm` 时用 `AI_CONFIRM_DENY`
+  （恒 false），destructive 工具回 `{"ok":false,"error":"cancelled"}` 且文档一个字节不动。
+  confirmer **可注入**（`setAiConfirmer` / `installAiServe({confirm})`），C5 或宿主接真弹框时才换
+  —— **禁止**为了「让工具能用」把默认值改成 true（一次 `canvas_clear` 就能毁掉用户的作品）。
+
+### 24.4 回合收尾守卫（影子不能残留）
+
+C2 的「回合期间不动历史」是临时影子掉 `History` 三个压栈入口实现的（§23.3 第 10 条），
+影子残留在身后 = 用户此后正常绘制**静默不进历史**，下一次 `turn_begin` 还会把用户这段时间的工作静默回滚。
+所以协议层有三道闸门：
+
+1. **路由抛异常** → `rollbackIfTurnOpen()`；
+2. **嵌套回合先收尾**：`turn_begin` 时已有回合开着 → 先 rollback 上一个，结果带
+   `warn: "previous turn rolled back"`（不报错、不叠加 —— 外部 agent 断线重连是正常结局）；
+3. **空闲收尾**：默认 300s 没有任何请求就自动 rollback，`status` 里能看到 `turnIdleSec` /
+   `turnIdleLeftSec` / `turnIdleRollbacks` 与口径文本；`setAiTurnIdleSeconds()` / 设置项可配（0 = 关掉）。
+
+另有：`aiServerStop()`、`uninstallAiServe()`、页面 `pagehide`、`applyAiServe` 的「设置里关掉服务」分支
+都会**先收尾回合并清守卫，再停端口**；Node 宿主在 SIGINT / SIGTERM 时同样先 rollback。
+
+**空闲守卫的语义（别把 0 当成默认）**：
+
+- **省略 `turnIdleSec` / `undefined`** = 用设置项 `ai.turnIdleSec`（默认 300s），守卫**会**武装；
+- **显式 `0`** = 用户主动关掉这条兜底，守卫**不**武装，诊断写「∞s（已关闭）」；
+- 三处诊断**同源**：`ai-rpc` 的 `status.turnIdleSec` / `ai-serve` 的 `turnGuard` 文案 / 实际定时器读的
+  是同一个 `turnIdleMs`（`ai-serve` 不留第二份记账）；
+- `idleGuardArmed` **只在 `window.__pcAi.status()` 里暴露**；协议 `status` 的等价信息在 `turnGuard`
+  文本的「守卫已武装 / 未武装」里；
+- `__pcAi.setTurnIdleSec(n)` 是**非粘性**的：下一次任何设置变更都会按 `ai.turnIdleSec` 重算并覆盖它；
+- 设置项 `ai.turnIdleSec` 是**整数秒、0 = 关闭**：程序化写 `0.1` 会被归一化成 0（= 关闭）而不是夹到 1s
+  （UI 是 `min: 0` 的整数滑块，用户路径碰不到）。
+
+### 24.5 设置项与 Node 开发宿主
+
+| 设置项 | 类型 | 默认 | 说明 |
+|---|---|---|---|
+| `ai.server` | bool | `false` | 打开才起本地端口服务 |
+| `ai.port` | int（1024–65535） | `8787` | 只绑 `127.0.0.1` |
+| `ai.tier` | enum `read` / `draw` / `all` | `read` | 放行档位 |
+| `ai.turnIdleSec` | int（0–3600，单位 s） | `300` | 回合空闲收尾；0 = 关闭 |
+
+这四个值**不在 `Session.prefs` 里**：Node 开发宿主没有 Session、也没有 DOM，仍要读到同一份声明，
+所以它们自带一个极小存储（内存缓存 + `localStorage["pc.ai"]`），读不到（Node / 隐私模式 / 坏数据）
+就退回默认值、**不抛异常**。`ai.port` / `ai.tier` / `ai.turnIdleSec` 只在 `ai.server` 打开时可见；
+用户改设置会**即时起停**（`onAiServeSettingsChange` 订阅，不重启同一端口时只换档位、不轮换 token）。
+
+Node 开发宿主 `toolchain/ai-server.mjs`（本机开发 / 验证用，**不重新实现协议**）：
+
+```sh
+# 先有编译产物：node node_modules/typescript/bin/tsc -p tests/tsconfig.json
+node toolchain/ai-server.mjs                            # 只绑 127.0.0.1:8787 · 档位 read
+node toolchain/ai-server.mjs --port 8788 --tier draw    # 换端口 / 放开写类工具
+AI_TOKEN=xxx AI_TIER=all node toolchain/ai-server.mjs   # 环境变量也行
+node toolchain/ai-server.mjs --help
+```
+
+它只做三件事：起 http 服务器、把请求规约成 `AiRpcRequest`、调 `tests/.ts-out` 里编译好的
+`handleAiRequestAsync`；Session 在 Node 里靠 `tests/session.test.ts` 的 `stubEnv()`（编译产物）跑起来。
+这个宿主**没有确认 UI**，所以 destructive 一律被拒（与 C3 的默认口径一致）。
+
+### 24.6 Android 侧
+
+`android/java/com/pixelcraft/app/AiServer.java`（**纯 JDK**，没有 `import android.*`，可在容器里单独 `javac` 验证）：
+
+```java
+public interface Handler { String handle(String method, String path, String authHeader, String body); }
+public static String newToken();                                          // 16 字节 → 32 位十六进制
+public synchronized String start(int port, String givenToken, Handler h) throws IOException;   // 返回生效 token
+public synchronized void stop();                                          // 关监听 + 中断池 + 关在飞连接，端口立刻释放
+public boolean isRunning();  public int port();  public String token();
+public static final int MAX_BODY_BYTES = 1024 * 1024;
+public static final String ERR_JS_NOT_READY = "{\"ok\":false,\"error\":\"js-not-ready\"}";
+```
+
+- 常量：`MAX_HEADER_BYTES` 16 KiB / `MAX_HEADERS` 100 / `READ_TIMEOUT_MS` 10000 / `BACKLOG` 16 /
+  线程池 `CORE 2 · MAX 4 · QUEUE 32 · keepAlive 30s` —— **有界**队列：无界「每连接一线程」会让任何本机
+  进程开满 socket 把 App 拖死；
+- `GET /ai/health` 与 `POST /ai` **都转发**给 handler（Java 只做路由与鉴权，不看 call 名 / 工具表 / tier）；
+  `GET /ai`、`POST /ai/health` 是 405（方法允许表是 Java 侧唯一的逐路径差别），其余路径 404；
+  handler 返回 `ERR_JS_NOT_READY` 时回 **503**（那是「页面还没起来」的传输条件，不是工具结果）；
+- 每个请求先按 `Authorization: Bearer` 用**常量时间比较**校验 token，失败回 401（带 `WWW-Authenticate: Bearer`）；
+- **异步挂起占一个 worker**：一次 `call_tool` 要等到 `aiRespond` 或 10s 超时才腾出线程，所以 destructive
+  的确认必须在 **10s** 内完成（`MainActivity.AI_CALL_TIMEOUT_MS = 10000`）。
+
+`MainActivity` 的 `PixelBridge` 方法面：`aiServerStart(port)`（绑定成功才回非空 token）/ `aiServerStop()` /
+`aiServerStatus()`（`{"running":bool,"port":N,"token":"…"}`）/ `aiRespond(requestId, json)`；桥接实现把 envelope
+交给 `window.__pc_ai_call(envelopeJson, requestId)` 并在 worker 线程上等 `ArrayBlockingQueue`，
+`onDestroy` 会 `aiServer.stop()`。失败码与 §24.2 一致。
+
+### 24.7 数据安全与默认不出网
+
+- **APK 现在声明 `INTERNET` 权限**：Android 上**监听本地端口也要它**（socket 创建受该权限门控）。
+  这条权限只用于「开本机端口」；**服务默认关闭**，打开后也只绑 `127.0.0.1`（局域网访问不到），
+  应用本身**不发起任何出站请求**（`src/` 里没有 `fetch` / `XMLHttpRequest` / `WebSocket`）；
+- token 每次启动重新生成、不落盘；`aiServerStop()` / 页面卸载 / 关闭设置都会收尾回合并释放端口；
+- `status` 属于诊断，token 只给诊断用（`aiServeStatusText()` 也只打印末 4 位），**别塞进对外响应**。
+
+### 24.8 已知缺口（C3 之后）
+
+- **C4（电脑侧 MCP 转发）与 C5（应用内助手、key 管理、聊天窗）未做**；
+- destructive 的确认 UI 属于 C5：本版本的 `confirm` 默认拒绝，`status` / 诊断里明说
+  「destructive 需宿主确认，本版本未接线（C5 才有确认 UI）」；
+- 档位开关是**粗粒度**的：`draw` 一档同时包含「批量像素改写」（`palette_remap` / `color_replace`）与
+  「图层 / 帧 / 调色板结构操作」，关掉 `draw` 会连带失去后者（设置页文案已写清）；
+- 协议层 `read_region` 与工具表 `read_region` 的入参形状不同（§24.1），容易误用。

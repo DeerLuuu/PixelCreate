@@ -66,6 +66,10 @@
     "../tests/render-server.test.ts",
     "../tests/input.test.ts",
     "../tests/gesture.test.ts",
-    "../tests/gesture-host.test.ts"
+    "../tests/gesture-host.test.ts",
+    "../tests/ai-doc.test.ts",
+    "../tests/ai-tools.test.ts",
+    "../tests/ai-turn.test.ts",
+    "../tests/ai-rpc.test.ts"
   ]
 }

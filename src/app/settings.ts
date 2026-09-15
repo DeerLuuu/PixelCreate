@@ -13,13 +13,15 @@ import { applySafeArea } from "../io/safearea";
 import { applyTheme } from "../io/theme";
 import { applyPcMode, pcModeOf, pcModeOn } from "../io/pcmode";
 import { AUTOSAVE_KEEP_DEFAULT, AUTOSAVE_KEEP_MAX } from "../io/autosave";
+import { AI_RPC_DEFAULT_PORT, AI_RPC_DEFAULT_TIER, AI_SERVICE_TIERS, AI_TURN_IDLE_SEC_DEFAULT } from "./ai-rpc";
+import type { AiServiceTier } from "./ai-rpc";
 
 export type SettingValue = boolean | number | string;
 export type SettingKind = "bool" | "int" | "enum" | "color";
 /** how the app must react when a value changes */
 export type SettingRefresh = "none" | "changed" | "repaint" | "repaintAll";
 
-export type SettingGroupId = "general" | "canvas" | "screen" | "tools" | "gesture" | "onion" | "history" | "display" | "data";
+export type SettingGroupId = "general" | "canvas" | "screen" | "tools" | "gesture" | "onion" | "history" | "display" | "data" | "ai";
 
 export interface SettingOption {
   value: string;
@@ -111,6 +113,110 @@ export interface SettingsFile {
 
 export const SETTINGS_FILE_VERSION = 1;
 
+// ---------------------------------------------------------------- AI 本地服务设置
+//
+// C3 的本地端口服务（只绑 127.0.0.1，默认关闭）有四个声明式设置：
+// `ai.server` / `ai.port` / `ai.tier` / `ai.turnIdleSec`。
+// 这三个值刻意**不放进 `Session.prefs`**：Node 开发宿主（toolchain/ai-server.mjs）没有 Session、
+// 也没有 DOM，仍要读到同一份声明；而 `Prefs` 只由 session.ts 读写。所以这里自带一个极小存储：
+// 内存缓存 + localStorage("pc.ai")，读不到（Node / 隐私模式 / 坏数据）就退回默认值，**不抛异常**。
+//
+// 为什么默认关闭 + 默认 read：开端口 = 外部进程能改这张画布。默认必须是「不开放」；用户明确打开后
+// 也只读，要写必须自己升到 draw / all（档位口径见 src/app/ai-rpc.ts 的文件头）。
+
+export const AI_SETTINGS_KEY = "pc.ai";
+
+export interface AiServeSettings {
+  /** `ai.server`：是否启动本地端口服务（默认 false） */
+  server: boolean;
+  /** `ai.port`：监听端口（只绑 127.0.0.1，默认 8787） */
+  port: number;
+  /** `ai.tier`：放行档位（默认 read = 只读） */
+  tier: AiServiceTier;
+  /** `ai.turnIdleSec`：AI 回合空闲多少秒自动 rollback（0 = 关闭这条兜底；默认 300） */
+  turnIdleSec: number;
+}
+
+export const AI_PORT_MIN = 1024;
+export const AI_PORT_MAX = 65535;
+/** `ai.turnIdleSec` 的上限（1 小时够长了；0 在下面单独有含义） */
+export const AI_TURN_IDLE_SEC_MAX = 3600;
+
+/** 归一化：端口夹进 1024..65535、空闲秒数夹进 0..3600（**0 保留** = 用户主动关闭）、
+ *  档位只认三个字面量、server 只认真 true */
+export function normalizeAiServeSettings(raw: unknown): AiServeSettings {
+  const o = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+  const port = Math.round(Number(o.port));
+  const idle = Math.round(Number(o.turnIdleSec));
+  const tier = String(o.tier);
+  return {
+    server: o.server === true,
+    port: Number.isFinite(port) ? Math.max(AI_PORT_MIN, Math.min(AI_PORT_MAX, port)) : AI_RPC_DEFAULT_PORT,
+    tier: (AI_SERVICE_TIERS as readonly string[]).indexOf(tier) >= 0 ? (tier as AiServiceTier) : AI_RPC_DEFAULT_TIER,
+    turnIdleSec: Number.isFinite(idle)
+      ? Math.max(0, Math.min(AI_TURN_IDLE_SEC_MAX, idle))
+      : AI_TURN_IDLE_SEC_DEFAULT,
+  };
+}
+
+let aiServeCache: AiServeSettings | null = null;
+const aiServeListeners: Array<(v: AiServeSettings) => void> = [];
+
+function aiStore(): { getItem(k: string): string | null; setItem(k: string, v: string): void } | null {
+  try {
+    const s = (globalThis as { localStorage?: { getItem(k: string): string | null; setItem(k: string, v: string): void } }).localStorage;
+    return s && typeof s.getItem === "function" && typeof s.setItem === "function" ? s : null;
+  } catch {
+    return null;
+  }
+}
+
+function loadAiServeSettings(): AiServeSettings {
+  try {
+    const store = aiStore();
+    const raw = store ? store.getItem(AI_SETTINGS_KEY) : null;
+    if (raw) return normalizeAiServeSettings(JSON.parse(raw));
+  } catch {
+    /* 坏数据 / 没有 localStorage：都用默认值 */
+  }
+  return normalizeAiServeSettings(null);
+}
+
+/** 当前值（返回副本；缓存一次，之后由 `saveAiServeSettings` 维护） */
+export function aiServeSettings(): AiServeSettings {
+  if (!aiServeCache) aiServeCache = loadAiServeSettings();
+  return { ...aiServeCache };
+}
+
+/** 写回部分字段并通知监听者（ai-serve 用它即时起停原生端口）；返回写回后的完整值 */
+export function saveAiServeSettings(patch: Partial<AiServeSettings>): AiServeSettings {
+  const next = normalizeAiServeSettings({ ...aiServeSettings(), ...patch });
+  aiServeCache = next;
+  try {
+    const store = aiStore();
+    if (store) store.setItem(AI_SETTINGS_KEY, JSON.stringify(next));
+  } catch {
+    /* 存不下不算错：写盘失败不影响本次会话 */
+  }
+  for (const cb of aiServeListeners.slice()) {
+    try {
+      cb({ ...next });
+    } catch {
+      /* 监听者自己出错不该拖垮设置写入 */
+    }
+  }
+  return { ...next };
+}
+
+/** 注册「AI 服务设置变了」的监听，返回退订函数（ai-serve 在 install 时订阅） */
+export function onAiServeSettingsChange(cb: (v: AiServeSettings) => void): () => void {
+  aiServeListeners.push(cb);
+  return () => {
+    const i = aiServeListeners.indexOf(cb);
+    if (i >= 0) aiServeListeners.splice(i, 1);
+  };
+}
+
 /** every declared setting as a plain object, ready to be written as JSON */
 export function exportSettings(s: Session): SettingsFile {
   const values: Record<string, SettingValue> = {};
@@ -151,6 +257,7 @@ export const SETTING_GROUPS: Array<{ id: SettingGroupId; label: string }> = [
   { id: "history", label: "groupHistory" },
   { id: "display", label: "groupDisplay" },
   { id: "data", label: "groupData" },
+  { id: "ai", label: "groupAi" },
 ];
 
 const defs: SettingDef[] = [
@@ -622,6 +729,46 @@ const defs: SettingDef[] = [
     default: AUTOSAVE_KEEP_DEFAULT, min: 1, max: AUTOSAVE_KEEP_MAX,
     reset: AUTOSAVE_KEEP_DEFAULT, refresh: "none",
     visible: (s) => s.prefs.autosave,
+  },
+
+  // ---------------------------------------------------------------- ai
+  // 本地端口服务（C3）：三个声明 + 一个自有存储（见文件上方 AI 本地服务设置 一节）。
+  // 值不落在 prefs 上，所以这里一律用 get/set；改完由 saveAiServeSettings 通知 ai-serve 即时起停。
+  {
+    path: "ai.server", kind: "bool", group: "ai",
+    label: "aiServerLabel", desc: "aiServerDesc", default: false, refresh: "none",
+    get: () => aiServeSettings().server,
+    set: (_s, v) => { saveAiServeSettings({ server: v === true }); },
+  },
+  {
+    path: "ai.port", kind: "int", group: "ai",
+    label: "aiPortLabel", desc: "aiPortDesc",
+    default: AI_RPC_DEFAULT_PORT, min: AI_PORT_MIN, max: AI_PORT_MAX,
+    reset: AI_RPC_DEFAULT_PORT, refresh: "none",
+    visible: () => aiServeSettings().server,
+    get: () => aiServeSettings().port,
+    set: (_s, v) => { saveAiServeSettings({ port: Number(v) }); },
+  },
+  {
+    path: "ai.tier", kind: "enum", group: "ai",
+    label: "aiTierLabel", desc: "aiTierDesc", default: AI_RPC_DEFAULT_TIER, refresh: "none",
+    visible: () => aiServeSettings().server,
+    options: [
+      { value: "read", label: "aiTierRead" },
+      { value: "draw", label: "aiTierDraw" },
+      { value: "all", label: "aiTierAll" },
+    ],
+    get: () => aiServeSettings().tier,
+    set: (_s, v) => { saveAiServeSettings({ tier: v as AiServiceTier }); },
+  },
+  {
+    path: "ai.turnIdleSec", kind: "int", group: "ai",
+    label: "aiTurnIdleLabel", desc: "aiTurnIdleDesc",
+    default: AI_TURN_IDLE_SEC_DEFAULT, min: 0, max: AI_TURN_IDLE_SEC_MAX,
+    unit: "s", reset: AI_TURN_IDLE_SEC_DEFAULT, refresh: "none",
+    visible: () => aiServeSettings().server,
+    get: () => aiServeSettings().turnIdleSec,
+    set: (_s, v) => { saveAiServeSettings({ turnIdleSec: Number(v) }); },
   },
 ];
 

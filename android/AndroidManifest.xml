@@ -7,6 +7,10 @@
     <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="34" />
 
     <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- Android gates socket creation behind INTERNET even when the app only
+         listens on 127.0.0.1 (the local AI tool service); the app never uses
+         this permission to dial out on the user's behalf. -->
+    <uses-permission android:name="android.permission.INTERNET" />
 
     <application
         android:label="像素工坊"

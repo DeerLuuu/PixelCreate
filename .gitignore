@@ -20,6 +20,7 @@ tests/.ts-out/
 !/toolchain/make-icon.js
 !/toolchain/check-bundle.mjs
 !/toolchain/stress-stroke.mjs
+!/toolchain/ai-server.mjs
 
 # ---- self-contained web build deps (npm install in repo root) ----
 node_modules/

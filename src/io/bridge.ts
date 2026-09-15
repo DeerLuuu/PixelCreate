@@ -12,7 +12,21 @@ declare global {
       insets?: () => string;
       /** hide (true) / show (false) the system status + navigation bars */
       setImmersive?: (on: boolean) => void;
+      /** C3 本地 AI 端口服务（android/AiServer.java）：只绑 127.0.0.1。
+       *  @returns 新生成的 token（16 字节十六进制）；绑定失败返回 "" */
+      aiServerStart?: (port: number) => string;
+      /** 停掉端口服务（没起也是空操作） */
+      aiServerStop?: () => void;
+      /** `'{"running":bool,"port":N,"token":"..."}'`（Java 侧的实况） */
+      aiServerStatus?: () => string;
+      /** 交付一条**异步**响应（Java 侧 worker 挂起等的那次）。
+       *  @returns 只有第一次交付为 true；超时 / 重复交付为 false */
+      aiRespond?: (requestId: string, json: string) => boolean;
     };
+    /** 原生侧把一条 HTTP 请求转发进来：envelope 是
+     *  `'{"method":"POST","path":"/ai","body":"<原始 body 文本>"}'`（**两个参数**）。
+     *  @returns 一行 JSON 字符串（快路径）；**空串 = 挂起**，等 `PixelBridge.aiRespond` 交付 */
+    __pc_ai_call?: (envelopeJson: string, requestId: string) => string;
   }
 }
 
@@ -66,6 +80,47 @@ export function setImmersive(on: boolean): void {
   try {
     window.PixelBridge?.setImmersive?.(on);
   } catch { /* ignore */ }
+}
+
+// ---------------------------------------------------------------- C3 本地 AI 端口服务
+// 这四个是 android/AiServer.java 的声明面（浏览器 / PWA / Node 里全都没有 → 一律降级 null / false）。
+// 注意 `aiServerStart` 是**同步**返回 token 的：Java 侧绑定成功才回一个非空串，失败回 ""。
+// 生命周期（何时调、token 怎么用）在 src/app/ai-serve.ts；这里只管「安全地调一次桥接」。
+
+/** 起端口服务；返回 Java 生成的新 token，失败（或没有桥接）返回 "" */
+export function aiServerStart(port: number): string {
+  try {
+    const t = window.PixelBridge?.aiServerStart?.(Math.round(port));
+    return typeof t === "string" ? t : "";
+  } catch {
+    return "";
+  }
+}
+
+/** 停端口服务（没有桥接时是空操作） */
+export function aiServerStop(): void {
+  try {
+    window.PixelBridge?.aiServerStop?.();
+  } catch { /* ignore */ }
+}
+
+/** Java 侧的实况 JSON 原文；没有桥接时返回 "" */
+export function aiServerStatus(): string {
+  try {
+    const raw = window.PixelBridge?.aiServerStatus?.();
+    return typeof raw === "string" ? raw : "";
+  } catch {
+    return "";
+  }
+}
+
+/** 交付一条异步响应；false = 超时 / 已经交付过（调用方应记进诊断，不要重试） */
+export function aiRespond(requestId: string, json: string): boolean {
+  try {
+    return window.PixelBridge?.aiRespond?.(String(requestId), String(json)) === true;
+  } catch {
+    return false;
+  }
 }
 
 function b64FromBytes(bytes: Uint8Array): string {

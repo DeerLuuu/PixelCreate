@@ -22,16 +22,18 @@
 目录：
 
 ```
-src/app/       Session、设置注册表、引导注册表、手势映射、历史编解码
+src/app/       Session、设置注册表、引导注册表、手势映射、历史编解码、AI（ai-doc 文档文本化 / ai-tools 工具表 /
+               ai-turn 回合事务 / ai-rpc 协议路由 / ai-serve 本地服务生命周期）—— 接口见 docs/API.md §21–§24
 src/engine/    文档模型、历史栈、像素操作、调色/对称/导出编码、重采样（resample）、颜色分析（color-analysis）
 src/render/    视口、合成器、脏矩形、洋葱皮
 src/servers/   服务层：RenderServer（合成与缓存）、ViewportServer（视图数学）、
                InputServer / GestureController（手势策略 · 轻点序列 · 指针事件入口）—— 见 docs/ARCHITECTURE.md
 src/io/        原生桥接、工程文件（.pxc）、Aseprite 读写（aseread/asewrite/zlib）、自动保存、参考图、安全区、base64
 src/ui/        React 外壳、弹窗、时间线、浮动球、i18n、样式
-android/       MainActivity（Java 层）+ AndroidManifest
-tests/         无 DOM 的引擎/逻辑回归（**4155 条断言**，`node .ts-out/tests/run-tests.js` 末尾会打印条数）
-docs/          API.md / COMPARISON.md
+android/       MainActivity（Java 层）+ AiServer（本地 AI 端口服务，纯 JDK）+ AndroidManifest
+tests/         无 DOM 的引擎/逻辑回归（**6340 条断言**，`node .ts-out/tests/run-tests.js` 末尾会打印条数）
+docs/          API.md / COMPARISON.md / PLAN-ai.md / ARCHITECTURE.md / UI.md / PC.md
+toolchain/     自写开发脚本（devserver / make-icon / check-bundle / stress-stroke / ai-server）
 ```
 
 ---
@@ -42,7 +44,7 @@ docs/          API.md / COMPARISON.md
 - **容器内（实际出包环境）**：`node_modules` 在 `/root/pcbuild`（FUSE 上装不上时在容器私有区安装后回拷）；同步目录 `/root/pcbuild/app/src`、`/root/pcbuild/app/tests`。
 - `aapt2` 在本容器是 Android/x86 二进制、**跑不起来**，所以打包走「`javac` + `d8` → 往模板 APK 里塞」的路线（见 §6）。
 - 浏览器调试：`node toolchain/devserver.js`（`app2/www`，端口 8090；`app2/www/js/telemetry.js` 会把错误与布局信息 POST 到 `/log`）。
-- `toolchain/` 只保留自写脚本（`devserver.js`、`make-icon.js`、`check-bundle.mjs`、`stress-stroke.mjs`）：`node toolchain/make-icon.js <outdir>` 生成 Android 启动图标，`node toolchain/make-icon.js --pwa app2/www/icons` 生成 manifest 用的 192/512 图标（尺寸必须和 `manifest.webmanifest` 一致，否则 Chrome 报 “Resource size is not correct”），`node toolchain/check-bundle.mjs [bundle]` 把 Web 产物放进最小 DOM 桩里真跑一遍（**esbuild 按「源文件往上最近的 tsconfig.json」决定 JSX 变换：构建目录里多出一份没有 `"jsx": "react-jsx"` 的 tsconfig，就会打出引用全局 React 的白屏包**；`scripts/build-web.sh` 已内置这道自检），`node toolchain/stress-stroke.mjs` 量**笔迹性能基线**（每步同步耗时 + 重合成次数与耗时；改渲染或笔迹相关代码前后各跑一次，基线表在 `docs/COMPARISON.md` §三.1）；SDK 下载物已清理。
+- `toolchain/` 只保留自写脚本（`devserver.js`、`make-icon.js`、`check-bundle.mjs`、`stress-stroke.mjs`、`ai-server.mjs`；`/toolchain/*` 被忽略，每个脚本各靠 `.gitignore` 里一条 `!` 白名单入库）：`node toolchain/make-icon.js <outdir>` 生成 Android 启动图标，`node toolchain/make-icon.js --pwa app2/www/icons` 生成 manifest 用的 192/512 图标（尺寸必须和 `manifest.webmanifest` 一致，否则 Chrome 报 “Resource size is not correct”），`node toolchain/check-bundle.mjs [bundle]` 把 Web 产物放进最小 DOM 桩里真跑一遍（**esbuild 按「源文件往上最近的 tsconfig.json」决定 JSX 变换：构建目录里多出一份没有 `"jsx": "react-jsx"` 的 tsconfig，就会打出引用全局 React 的白屏包**；`scripts/build-web.sh` 已内置这道自检），`node toolchain/stress-stroke.mjs` 量**笔迹性能基线**（每步同步耗时 + 重合成次数与耗时；改渲染或笔迹相关代码前后各跑一次，基线表在 `docs/COMPARISON.md` §三.1）；`node toolchain/ai-server.mjs` 是**本机开发 / 验证用的 Node 宿主**（本地 AI 工具服务：只绑 `127.0.0.1`，`--port` / `--tier` / `--token` / `--version` 或环境变量 `AI_PORT` / `AI_TIER` / `AI_TOKEN` 可配，`--help` 看用法；启动会打印端口与随机 token，并用 curl 示例提示怎么调）。它**不重写协议** —— 直接 require `tests/.ts-out` 里编译好的 `src/app/ai-rpc.js` / `ai-serve.js` / `session.js`（Session 靠 `tests/session.test.ts` 的 `stubEnv()` 跑起来），所以**先跑一次** `node node_modules/typescript/bin/tsc -p tests/tsconfig.json`，缺产物会打印编译提示并退出；这个宿主没有确认 UI，destructive 工具一律回 `cancelled`（与 APK 默认口径一致），协议表与口径见 `docs/API.md` §24。`.gitignore` 的 `/toolchain/*` + 逐条白名单里也加了 `!/toolchain/ai-server.mjs`（新脚本要入库必须同样加一行）；SDK 下载物已清理。
 - 大改动可用 git 回滚（仓库已有 90+ 提交）。
 
 ---
@@ -319,6 +321,17 @@ java -jar /root/pk/apksigner.jar verify --print-certs /sdcard/Download/PixelCraf
   每次移动重建笔尖图案、每格新建数组（镜像 ×2、平铺 ×9，一次移动可产生数万个小数组）→ GC 停顿。
   下一步的性能活是这条热路径去分配，不是覆盖层。
 - PC 模式按**输入证据**识别（`src/io/pcmode.ts` 的 `resolvePcMode`：真实鼠标事件 > 触摸事件/触摸点否决 > 媒体查询 `(pointer: fine)` + `(hover: hover)`），**不看屏幕宽度**；设置里可强制开关；渲染已做脏矩形增量，仍未做 Web Worker 导出 / 大画布长时间压力测试（优先级见 `docs/COMPARISON.md`）。
+- **AI 本地工具服务（C0–C3）已落地，缺口与取舍如下**（接口见 `docs/API.md` §21–§24，方案见 `docs/PLAN-ai.md`）：
+  · **参数描述缺失**：48 个工具、89 个参数里 **52 个没有 `desc`**（只影响模型选工具 / 填参数的准确率，不影响正确性）；
+  · `readRegion` 的 `opts.fi` / `opts.li` 小数仍**静默截断**（`applyOps` 侧已统一成 `warnings`，两条路径口径暂时不一致）；
+  · **跨画布 AI 回合的 History entry 是 payload-less**：`history.dump()` 实测返回 `[]`，会让该步与**更早步骤**
+    一起从 `.pxc` 内嵌历史里消失（单画布走 `pushStruct` 可序列化；in-session 一条 undo 仍覆盖两张画布）；
+  · 回合开着时**页面隐藏的同步 flush 会早退**：回合跨过「页面隐藏 + 进程被杀」时，回合开始前那几笔不落盘
+    （口径 4 的固有取舍）；
+  · 模块级 `lastCommitError` 在「回合没开」早退时**不清**，可能携带上一次的陈旧错误（一行加固未做）；
+  · **History 层显式批量抑制开关 / 回合看门狗：本轮决定不做**（会改 `History` 语义并牵动 90+ 提交的回归面）；
+  · **C4（电脑侧 MCP 转发）与 C5（应用内助手、key 管理、聊天窗、destructive 确认 UI）未做**；
+  · 若干**弱断言**（例如 `digest.tokens` 用同一个公式反推期望值，只保证自洽、不保证预算真实）。
 
 ---
 
@@ -446,6 +459,20 @@ stamp 从 `-T/2` 起画，早先的锚点比顶点偏左 `T/2`，栅格 / 足迹
 结论：**合成不是瓶颈**（overlay 省不到 5%，不做）；真正扎眼的是大笔刷的同步峰值，
 怀疑在 `Stroke.stampCells()` 每步重建笔尖图案 + 每格新建数组（镜像 ×2、平铺 ×9）引发 GC。
 基线表写进 `docs/COMPARISON.md` §三.1，AGENTS §7 记了「不做 overlay」的理由与下一步该做的去分配。
+AI 本地工具服务（C0–C3，1.1.1.9 之后）：`src/app/ai-doc.ts`（`docDigest` / `readRegion` / `applyOps` 三个纯函数：
+颜色身份 = RGBA 四通道、palette 写 `#rrggbbaa`、空 ops 恒 `ok`、cel 惰性创建、完全在画布外时 `w=h=0` 且 `x/y`
+回显请求坐标）+ `src/app/ai-tools.ts`（48 个工具 = read 4 / draw 38 / destructive 5 / ui 1；`callTool` 顺序固定
+「校验 → destructive 确认 → 执行」；**tier 只决定要不要确认与 `listTools` 默认给不给，不决定能不能调**）
++ `src/app/ai-turn.ts`（一轮一条 undo + 回合期间不刷 autosave + `runAiTurn` 安全入口）+ `src/app/ai-rpc.ts`
+（传输无关的协议路由，一份 `route()` 喂同步 / 异步两个入口）+ `src/app/ai-serve.ts`（JS 生命周期、`window.__pc_ai_call`、
+诊断、回合收尾）+ `toolchain/ai-server.mjs`（Node 开发宿主）+ `android/java/com/pixelcraft/app/AiServer.java`
+（纯 JDK 的 127.0.0.1 本地端口 + token）+ `MainActivity` 桥接。协议要点：health 由 TS 单源应答；`POST /ai` 9 个 call；
+状态码 200 / 400 / 401 / 404 / 405 / 413 / 503；`Authorization: Bearer`；`envelope.body` 恒为 JSON 字符串而
+health 的 body 是空串；异步挂起走空串 + `PixelBridge.aiRespond`（只认第一次）；destructive 的 `confirm` 默认
+**一律拒绝**（确认 UI 属 C5）。回合三道收尾闸门：路由抛异常 / 嵌套 `turn_begin` 先 rollback（带 warn）/
+空闲 300s 无请求自动 rollback。设置项 `ai.server` / `ai.port` / `ai.tier` / `ai.turnIdleSec`
+（默认 `false` / `8787` / `read` / `300s`）。**APK 新增 `INTERNET` 权限**（Android 上监听本地端口也要它）：
+服务默认关闭、只绑 `127.0.0.1`、应用不发起任何出站请求。接口见 `docs/API.md` §21–§24，缺口见 §7。
 
 ---
 
@@ -461,7 +488,7 @@ stamp 从 `-T/2` 起画，早先的锚点比顶点偏左 `T/2`，栅格 / 足迹
 | [`docs/COMPARISON.md`](docs/COMPARISON.md) | 与 Aseprite / Resprite 的对比、痛点复盘与优先级（含最新进展表） |
 | [`docs/COMPARISON-pixelover-pixelcomposer.md`](docs/COMPARISON-pixelover-pixelcomposer.md) | 与 PixelOver / Pixel Composer 的三方对比（只比 2D）：速览表 + 能力大对照表 + 差异化优势 + 缺口清单（含来源与待核清单） |
 | [`docs/PLAN-isobuilder.md`](docs/PLAN-isobuilder.md) | **等距构建（三视图 → 等距像素画）的可行性方案**：上游功能拆解、视觉外壳算法、像素几何口径、与现有能力的映射、分期计划与工作量、风险与落地文件清单 |
-| [`docs/PLAN-ai.md`](docs/PLAN-ai.md) | **AI 接入方案（方案稿，未写代码）**：三个轴（操作 / 生成 / 理解）拆解、三条路线（应用内助手 / 本机工具服务 / 先做地基）与工作量、工具面与权限分级、文档文本化与 token 预算、AI 回合事务、key 与本地端口的安全模型、风险表、待决策问题、落地文件清单 |
+| [`docs/PLAN-ai.md`](docs/PLAN-ai.md) | **AI 接入方案与分期进度（C0–C3 已落地）**：三个轴（操作 / 生成 / 理解）拆解、三条路线（应用内助手 / 本机工具服务 / 先做地基）与工作量、工具面与权限分级、文档文本化与 token 预算、AI 回合事务、key 与本地端口的安全模型、风险表、待决策问题、落地文件清单与实际进度表（§10）；**接口契约 §5.1 的偏差订正**（palette 含 alpha、`AiSessionLike`、空 ops 恒 ok、`commitTurn(): boolean`、`runAiTurn` 安全入口等）。实现接口见 `docs/API.md` §21–§24（ai-doc / ai-tools / ai-turn / AI 本地工具服务） |
 | `AGENTS.md`（本文件） | AI 代理约定：环境、命令、架构、工程约定、出包 runbook、已知缺口、交互与派活规则（§10） |
 
 ---
