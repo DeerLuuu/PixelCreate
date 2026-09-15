@@ -50,6 +50,7 @@ import { testInput } from "./input.test";
 import { testGesture } from "./gesture.test";
 import { testGestureHost } from "./gesture-host.test";
 import { testAutosave } from "./autosave.test";
+import { testHans } from "./hans.test";
 
 async function main(): Promise<void> {
   console.log("--- history ---");
@@ -156,6 +157,8 @@ async function main(): Promise<void> {
   testIsoUi();
   console.log("--- autosave versions (ring) ---");
   await testAutosave();
+  console.log("--- simplified Chinese only (hans) ---");
+  testHans();
   finish();
 }
 

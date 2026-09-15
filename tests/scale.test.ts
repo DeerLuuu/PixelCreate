@@ -574,7 +574,7 @@ export function testScale(): void {
     ok("ui.icon-not-hardcoded", !/#[0-9a-fA-F]{3,6}/.test(modals.slice(modals.indexOf("function ScaleModal"), modals.indexOf("function SizeModal"))));
     ok("ui.css-classes", css.includes(".scale-frames") && css.includes(".scale-cv") && css.includes(".scale-quote") === false);
     // 对比预览是单独一屏：弹窗里只留按钮，预览面板走 portal（.dlg 自带 transform，
-    // fixed 子元素會被它当包含块）、图更大、有自己的 i18n 文案
+    // fixed 子元素会被它当包含块）、图更大、有自己的 i18n 文案
     ok("ui.scale-compare-button", modals.includes('t("scaleCompare")') && modals.includes('icon="i-compare"'));
     ok("ui.scale-compare-portal", modals.includes("createPortal") && /cmpOpen && createPortal/.test(modals));
     ok("ui.scale-compare-css", css.includes(".dlg-scale-compare"));
