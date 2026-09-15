@@ -42,7 +42,7 @@ docs/          API.md / COMPARISON.md
 - **容器内（实际出包环境）**：`node_modules` 在 `/root/pcbuild`（FUSE 上装不上时在容器私有区安装后回拷）；同步目录 `/root/pcbuild/app/src`、`/root/pcbuild/app/tests`。
 - `aapt2` 在本容器是 Android/x86 二进制、**跑不起来**，所以打包走「`javac` + `d8` → 往模板 APK 里塞」的路线（见 §6）。
 - 浏览器调试：`node toolchain/devserver.js`（`app2/www`，端口 8090；`app2/www/js/telemetry.js` 会把错误与布局信息 POST 到 `/log`）。
-- `toolchain/` 只保留自写脚本（`devserver.js`、`make-icon.js`、`check-bundle.mjs`）：`node toolchain/make-icon.js <outdir>` 生成 Android 启动图标，`node toolchain/make-icon.js --pwa app2/www/icons` 生成 manifest 用的 192/512 图标（尺寸必须和 `manifest.webmanifest` 一致，否则 Chrome 报 “Resource size is not correct”），`node toolchain/check-bundle.mjs [bundle]` 把 Web 产物放进最小 DOM 桩里真跑一遍（**esbuild 按「源文件往上最近的 tsconfig.json」决定 JSX 变换：构建目录里多出一份没有 `"jsx": "react-jsx"` 的 tsconfig，就会打出引用全局 React 的白屏包**；`scripts/build-web.sh` 已内置这道自检）；SDK 下载物已清理。
+- `toolchain/` 只保留自写脚本（`devserver.js`、`make-icon.js`、`check-bundle.mjs`、`stress-stroke.mjs`）：`node toolchain/make-icon.js <outdir>` 生成 Android 启动图标，`node toolchain/make-icon.js --pwa app2/www/icons` 生成 manifest 用的 192/512 图标（尺寸必须和 `manifest.webmanifest` 一致，否则 Chrome 报 “Resource size is not correct”），`node toolchain/check-bundle.mjs [bundle]` 把 Web 产物放进最小 DOM 桩里真跑一遍（**esbuild 按「源文件往上最近的 tsconfig.json」决定 JSX 变换：构建目录里多出一份没有 `"jsx": "react-jsx"` 的 tsconfig，就会打出引用全局 React 的白屏包**；`scripts/build-web.sh` 已内置这道自检），`node toolchain/stress-stroke.mjs` 量**笔迹性能基线**（每步同步耗时 + 重合成次数与耗时；改渲染或笔迹相关代码前后各跑一次，基线表在 `docs/COMPARISON.md` §三.1）；SDK 下载物已清理。
 - 大改动可用 git 回滚（仓库已有 90+ 提交）。
 
 ---
@@ -58,6 +58,10 @@ cp -r android/. /root/pcbuild/app/android/ && cp -r app2/. /root/pcbuild/app/app
 
 # 对齐 Web 产物：不自己构建，取部署分支 main 上那一份（见 §5.1b）
 sh scripts/sync-web.sh            # 加 --check 只比较不写入（不一致退出码 1）
+
+# 笔迹性能基线（需要先起 devserver + 一个开着 CDP 端口的 Chromium；见 §2）
+node toolchain/stress-stroke.mjs            # 最坏配置：512² · 12 图层 · 64px 笔刷 · 平铺 + 洋葱皮
+node toolchain/stress-stroke.mjs --plain    # 对照组：1px 笔刷 · 1 图层
 
 # 类型检查（noUnusedLocals 已开）
 cd /root/pcbuild && ./node_modules/.bin/tsc -p tsconfig.json --noEmit
@@ -307,7 +311,14 @@ java -jar /root/pk/apksigner.jar verify --print-certs /sdcard/Download/PixelCraf
   「双击画布（映射了动作）」或「聚焦适配（没映射）」吃掉并清零连点计数，所以攒不到第三下；
   只有 `canvasIndex < 0` 才保留计数。现状由 `tests/gesture.test.ts` 的 `gesture.triple.shadowed.*`
   钉住，口径见 `docs/API.md` §15c2。修法＝改判定顺序或承认三击只在边距外有效，**两种都改用户可见行为，先问用户**。
-- PC 模式按**输入证据**识别（`src/io/pcmode.ts` 的 `resolvePcMode`：真实鼠标事件 > 触摸事件/触摸点否决 > 媒体查询 `(pointer: fine)` + `(hover: hover)`），**不看屏幕宽度**；设置里可强制开关；渲染已做脏矩形增量，仍未做 overlay 笔迹层 / Web Worker（优先级见 `docs/COMPARISON.md`）。
+- **笔迹 overlay 层：量过之后判定不做**（2026-09-15）。当时的理由「每移动一次都要重合成」不成立：
+  512² · 12 图层 · 64px 笔刷 · 平铺 + 洋葱皮下，**合成峰值只有 0.7ms**（一帧预算 16.7ms），
+  做覆盖层省不到 5%，却要为「目标图层上方有可见图层 / 擦除 / 洋葱皮 / 自动平移」加四条退回分支。
+  实测数据与量法见 `docs/COMPARISON.md` §三.1 的基线表 + `node toolchain/stress-stroke.mjs`。
+  **同一个基线里真正扎眼的是同步耗时峰值 7.7–9.6ms（大笔刷）**，怀疑在 `Stroke.stampCells()`
+  每次移动重建笔尖图案、每格新建数组（镜像 ×2、平铺 ×9，一次移动可产生数万个小数组）→ GC 停顿。
+  下一步的性能活是这条热路径去分配，不是覆盖层。
+- PC 模式按**输入证据**识别（`src/io/pcmode.ts` 的 `resolvePcMode`：真实鼠标事件 > 触摸事件/触摸点否决 > 媒体查询 `(pointer: fine)` + `(hover: hover)`），**不看屏幕宽度**；设置里可强制开关；渲染已做脏矩形增量，仍未做 Web Worker 导出 / 大画布长时间压力测试（优先级见 `docs/COMPARISON.md`）。
 
 ---
 
@@ -427,6 +438,14 @@ stamp 从 `-T/2` 起画，早先的锚点比顶点偏左 `T/2`，栅格 / 足迹
 新图标 `i-recover` 登记在 §17.5；`tests/autosave.test.ts` 用内存后端覆盖迁移 / 追加 / 去重 / 条数与字节淘汰 /
 配额不足两种结局（+63 断言，共 4155）。无头 Edge 实测：3 版并存、恢复最早那版后再保存字节数一致
 （内容真的换回去）、崩溃提示只在非正常退出时出现。
+笔迹性能实测与基线（同日）：把「笔迹 overlay 层」列成性能最后一块**是个没验过的假设**，量完推翻 ——
+新增 `toolchain/stress-stroke.mjs`（无头 Chromium + CDP，按 prefs 造最坏配置：512² 文档 / 12 图层 /
+64px 笔刷 / 平铺九宫格 + 洋葱皮，包住 dispatchEvent 统计每步同步耗时，并读应用自己的渲染调试计数）。
+两组数：1px·1 图层 = 每步 0.14ms / 峰值 0.5ms，重合成 35 次，合成峰值 0.6ms；
+最坏配置 = 每步 0.45ms / **峰值 7.7–9.6ms**（两次可复现），重合成 39 次，合成峰值 0.7ms。
+结论：**合成不是瓶颈**（overlay 省不到 5%，不做）；真正扎眼的是大笔刷的同步峰值，
+怀疑在 `Stroke.stampCells()` 每步重建笔尖图案 + 每格新建数组（镜像 ×2、平铺 ×9）引发 GC。
+基线表写进 `docs/COMPARISON.md` §三.1，AGENTS §7 记了「不做 overlay」的理由与下一步该做的去分配。
 
 ---
 
