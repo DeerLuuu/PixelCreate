@@ -18,6 +18,7 @@
 | `js/telemetry.js` | 调试用遥测：只往本地 devserver 的 `/log` 发；部署在 Pages 上会静默失败，可忽略 |
 | `css/style.css` | 唯一样式表（含设计令牌与浅色主题） |
 | `icons/`、`manifest.webmanifest` | PWA 图标与清单 |
+| `ai-demo.html`、`ai-demo-sprite.png`、`ai-demo-recipe.json` | 「AI 画一只猫」实录页：本地 AI 工具服务画猫的 7 帧动画 + 完整调用序列（源码见 master 的 `docs/PLAN-ai.md` C0–C3） |
 | `.github/workflows/pages.yml` | Pages 部署 workflow（Actions 构建 + 发布，带站点文件校验） |
 | `.nojekyll` | 关闭 Jekyll 处理 |
 
@@ -30,7 +31,7 @@ sh scripts/publish-web.sh --push
 ```
 
 它会重新构建 Web 包，把 `app2/www`（排除开发用的 `ui-demo.*`）+ `web/` 下的部署文件
-（workflow / 本 README / `.nojekyll`）写成本分支的一次新提交并推送。
+（workflow / 本 README / `.nojekyll` / AI 实录页三件）写成本分支的一次新提交并推送。
 `web/` 是 master 上这些部署文件的唯一来源，改部署配置请改那里。
 
 ## 与 APK 版的差别
