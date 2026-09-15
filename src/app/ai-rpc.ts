@@ -282,6 +282,11 @@ export function aiToolInfo(t: AiTool): AiToolInfo {
     const p = t.params[k];
     const o: Record<string, unknown> = { type: p.type };
     if (p.values) o.values = p.values.slice();
+    // `items` 是**数组参数的元素类型**，类型是 `AiParamType` 字符串（例如 "color" / "xy"），
+    // 必须**原样透传字符串**：下游（`toolchain/pc-mcp.mjs` 的 `paramSchema`）只认字符串，
+    // 包成 `{type:…}` 会让它退回 `items: {}`（MCP 层的数组元素类型就丢了 —— palette_merge.colors /
+    // color_merge_group.colors / draw_path.points 都栽在这上面）。
+    if (p.items !== undefined) o.items = p.items;
     if (p.min !== undefined) o.min = p.min;
     if (p.max !== undefined) o.max = p.max;
     if (p.default !== undefined) o.default = p.default;

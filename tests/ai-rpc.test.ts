@@ -235,6 +235,45 @@ export async function testAiRpc(): Promise<void> {
     ok("call.list_tools.tools", Array.isArray(tools.json.result.tools) && tools.json.result.tools.length > 40, "n=" + (tools.json.result.tools ?? []).length);
     ok("call.list_tools.no-handler", JSON.stringify(tools.json.result).indexOf("handler") < 0);
 
+    // —— P8：`aiToolInfo` 必须把 `params[k].items`（**字符串**的 AiParamType）原样透传 ——
+    // 少了它，MCP 层（toolchain/pc-mcp.mjs 的 paramSchema，只认字符串）对数组参数只能退化成
+    // `items: {}`：数组的**元素类型**就丢了（palette_merge.colors / color_merge_group.colors /
+    // draw_path.points 三个都栽在这上面）。这里同时钉住「补 items 没把别的字段挤掉」。
+    const listedById = new Map<string, any>((tools.json.result.tools as any[]).map((t: any) => [t.id, t]));
+    const colorsOf = (id: string): any => listedById.get(id)?.params?.colors;
+    eq("list.items.palette_merge.colors", colorsOf("palette_merge")?.items, "color");
+    eq("list.items.color_merge_group.colors", colorsOf("color_merge_group")?.items, "color");
+    eq("list.items.items-is-string-not-object", typeof colorsOf("palette_merge")?.items, "string");
+    // draw_path.points 是第三种元素类型（"xy"）；参数被改名/去掉时这条自动跳过，不误报
+    if (listedById.get("draw_path")?.params?.points) {
+      eq("list.items.draw_path.points", listedById.get("draw_path")?.params?.points?.items, "xy");
+    }
+    // 同一个参数的其它字段仍在（type / min / max / desc）
+    eq("list.items.palette_merge.type", colorsOf("palette_merge")?.type, "array");
+    eq("list.items.palette_merge.min", colorsOf("palette_merge")?.min, 1);
+    eq("list.items.palette_merge.max", colorsOf("palette_merge")?.max, 64);
+    ok("list.items.palette_merge.desc", typeof colorsOf("palette_merge")?.desc === "string" && colorsOf("palette_merge").desc.length > 0, JSON.stringify(colorsOf("palette_merge")));
+    // int 参数的 min / max / default（含哨兵 "current"）与 optional 也仍在
+    eq("list.no-items.doc_digest.fi.min", listedById.get("doc_digest")?.params?.fi?.min, 0);
+    eq("list.no-items.doc_digest.fi.default", listedById.get("doc_digest")?.params?.fi?.default, "current");
+    eq("list.no-items.iso_set.w.max", listedById.get("iso_set")?.params?.w?.max, 64);
+    eq("list.no-items.iso_set.h.optional", listedById.get("iso_set")?.params?.h?.optional, true);
+    // 通用不变量：**每一个**数组参数的 items 与工具表里的取值逐字相等（将来新增数组参数自动被覆盖）
+    {
+      const rawById = new Map(listTools({ tiers: ["read", "draw", "destructive", "ui"] }).map((t) => [t.id, t] as const));
+      const pairs: string[] = [];
+      const bad: string[] = [];
+      for (const t of tools.json.result.tools as any[]) {
+        for (const k of Object.keys(t.params)) {
+          const rawItems = rawById.get(t.id)?.params[k]?.items;
+          if (rawItems === undefined) continue;
+          if (t.params[k].items === rawItems) pairs.push(t.id + "." + k + "=" + rawItems);
+          else bad.push(t.id + "." + k + "=" + JSON.stringify(t.params[k].items) + "≠" + JSON.stringify(rawItems));
+        }
+      }
+      ok("list.items.all-pass-through", bad.length === 0 && pairs.length >= 3, "pairs=" + pairs.join(",") + " bad=" + bad.join(","));
+    }
+
     const digest = call(post("digest"), ctx);
     eq("call.digest", digest.status, 200);
     eq("call.digest.ok", digest.json.ok, true);

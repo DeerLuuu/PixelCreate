@@ -21,6 +21,12 @@
 //   4. **cel 只在真要写像素时才建**：put/wipe 先判 `doc.w/h` 再取 cel，fill 先判种子越界。
 //      全程落在画布外的 op 一个字节没写，就不该在 doc.cels 里留下一条空 Cel ——
 //      那会污染 docDigest 的 cels 计数（空 cel 也算「有」）。
+//   5. **readRegion 读回的 RGB 是直通（非预乘）**：cel 里 0<a<255 的字节被写入路径
+//      （`blendOver`）按 alpha 缩放过 RGB，这里负责反乘回直通，才与工具入参 `#rrggbbaa`
+//      和 `doc.palette`（直通）三者同口径 —— 「AI 画完自己复看」靠的就是这条。
+//      `a=255` 恒等、`a=0` 走 `.`（全透明）、`0<a<255` 带 ≈`255/(2a)` 的量化误差。
+//      **别把反乘删掉**（证据与误差上界见 `straightHexAt()` 的注释），
+//      也**别**顺手去改写入 / 合成（那是另一件事，见 t14 的交付说明）。
 
 import { clampByte, hexToRgba, rgbaToHex } from "../engine/color";
 import { brushStamp, eraseAt, floodRegion, lineCells, paintAt } from "../engine/paint";
@@ -237,6 +243,39 @@ function rleEncode(cells: string[]): string {
   return out;
 }
 
+/**
+ * cel 字节 → AI 口径的**直通 RGBA**（hex）。
+ *
+ * 为什么需要反乘（证据，别改回去）：AI 的写入路径 `applyOps.put()` → `paintAt()`
+ * （`src/engine/paint.ts:13-14`）在 `0 < a < 255` 时走 `blendOver()`
+ * （`src/engine/color.ts:40-47`），那条公式是**预乘**的 source-over
+ * （`dst.rgb = src.rgb*src.a + dst.rgb*(1-src.a)`，少了最后一步 `/out.a`），
+ * 所以在透明底上写 `#ff000080`（直通 red@50%）落进去的字节是 `[128,0,0,128]`：
+ * 直接 `rgbaToHex()` 出来就是 `#80000080`，与工具入参 `#rrggbbaa`、`doc.palette`（直通）
+ * 永远对不上 —— 「AI 画完自己复看」这条核心用法就断了（t14 修的正是它）。
+ * 写入侧这条语义早有钉子（`tests/ai-doc.test.ts` 的 `aidoc.apply.colour.hex8.rgb`：
+ * 0x11 × 68/255 → 5），所以本次**只改这一处读侧解释**，写入 / 合成一律不动。
+ *
+ * 边界与误差：
+ *   · `a === 255`：恒等（预乘与直通在 alpha=255 时数值相同）—— 与改动前逐字节一致；
+ *   · `a === 0`：调用方已经把它当 `.`（全透明）处理，不会走到这里（这里按全透明兜底）；
+ *   · `0 < a < 255`：`round(rgb * 255 / a)`，单通道误差上界 ≈ `ceil(255 / (2a))`。
+ *     写入那一步已经把 rgb 量化成 `round(rgb*a/255)`，信息不可逆地丢了，于是
+ *     a≥128 时 ≤±1（验收用的 `#ff000080` 正落这一档，逐通道还原）、a=64 时 ±2、
+ *     a 越小越糊，a=1 时写入只剩 1 个色阶、原始色不可还原（那是写入侧的取舍，不是读回 bug）。
+ *
+ * ⚠ 这只解决「AI 写入的半透明像素读回来对不对」。cel 字节的**存储语义**在本仓库里本身并不
+ *   统一：`blendOver` 写的是按 alpha 缩过的值，而 `resample` / `blurCel` / `compositor.celToCanvas`
+ *   都把同一批字节当**直通** RGBA 处理（前者乘完再除回来、后者直接 `putImageData`）。
+ *   要不要统一是另一件事（会动到渲染与存量像素），本任务不动它。
+ */
+function straightHexAt(data: Uint8ClampedArray, i: number, a: number): string {
+  if (a >= 255) return rgbaToHex([data[i], data[i + 1], data[i + 2], 255]);
+  if (a <= 0) return rgbaToHex([0, 0, 0, 0]);
+  const un = (v: number): number => Math.min(255, Math.round((v * 255) / a));
+  return rgbaToHex([un(data[i]), un(data[i + 1]), un(data[i + 2]), a]);
+}
+
 export function readRegion(doc: Doc, rect: Rect, opts: AiReadOpts = {}): AiRegion {
   const notes: string[] = [];
   const r = rect || ({} as Rect);
@@ -281,7 +320,9 @@ export function readRegion(doc: Doc, rect: Rect, opts: AiReadOpts = {}): AiRegio
     clipped = true;
   }
 
-  // 颜色身份 = RGBA：同一 RGB 不同 alpha 是两个索引，alpha 永远能从 palette 读回
+  // 颜色身份 = RGBA：同一 RGB 不同 alpha 是两个索引，alpha 永远能从 palette 读回。
+  // 读回的 RGB 走 `straightHexAt()`（反乘回直通），这样「工具入参 #rrggbbaa」「这里的 palette」
+  // 与「doc.palette」三者同口径 —— 半透明像素不再读出被 alpha 缩过的暗色。
   const cel = doc.celAt(li, fi);
   const keys: string[] = new Array(w * h);
   const used = new Set<string>();
@@ -294,7 +335,7 @@ export function readRegion(doc: Doc, rect: Rect, opts: AiReadOpts = {}): AiRegio
       const i = cel.idx(x, y);
       const a = cel.data[i + 3];
       if (a === 0) { keys[at] = ""; continue; }
-      const hex = rgbaToHex([cel.data[i], cel.data[i + 1], cel.data[i + 2], a]);
+      const hex = straightHexAt(cel.data, i, a);
       keys[at] = hex;
       if (a < 255) semi++;
       if (!used.has(hex)) { used.add(hex); order.push(hex); }

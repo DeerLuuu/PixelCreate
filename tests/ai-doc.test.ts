@@ -9,6 +9,7 @@
 import { Doc, Sel } from "../src/engine/doc";
 import { Cel } from "../src/engine/cel";
 import { Session } from "../src/app/session";
+import { rgbaToHex } from "../src/engine/color";
 import {
   AI_INDEX_ALPHABET, AI_MAX_REGION_PIXELS, applyOps, docDigest, readRegion,
 } from "../src/app/ai-doc";
@@ -48,6 +49,17 @@ function rleDecode(s: string): string {
     out += ch.repeat(num ? parseInt(num, 10) : 1);
   }
   return out;
+}
+
+/** 两个 hex 颜色（#rrggbb / #rrggbbaa）逐通道差是否都 ≤ tol：反乘允许 ±ceil(255/(2a)) */
+function nearHex(a: string, b: string, tol: number): boolean {
+  const ch = (h: string): number[] => {
+    const s = h.replace("#", "");
+    const t = s.length === 6 ? s + "ff" : s;
+    return [0, 2, 4, 6].map((i) => parseInt(t.slice(i, i + 2), 16));
+  };
+  const x = ch(a), y = ch(b);
+  return x.length === y.length && x.every((v, i) => Math.abs(v - y[i]) <= tol);
 }
 
 export function testAiDoc(): void {
@@ -389,6 +401,80 @@ export function testAiDoc(): void {
   // 引擎的 blendOver 会把源 RGB 按 alpha 缩放（0x11 * 68/255 = 4.53 → 5），
   // 这是笔迹本来就有的语义，AI 这层不另立一套，钉住免得以后被"修正"成别的口径。
   eq("aidoc.apply.colour.hex8.rgb", hexaCel.data[hexaCel.idx(0, 0)], 5);
+
+  // ------------------------------------------------ readRegion 反预乘（t14：直通 RGBA 口径）
+  // 上一条钉住的是**写入侧**（cel 里的半透明字节 = 源 RGB × alpha）。读回那一步必须反乘回
+  // 直通，否则「AI 画 #ff000080 → read_region 读回 #80000080」，与工具入参 #rrggbbaa、
+  // doc.palette（都是直通）永远对不上 —— 「AI 画完自己复看」这条核心用法就断了。
+  {
+    const un = new Doc(3, 1, "unpremul");
+    un.palette = [[255, 0, 128, 128]];                 // doc.palette 是直通口径（#rrggbbaa）
+    const uc = un.ensureCel(0, 0);
+    const wr = applyOps(un, [
+      { op: "pixels", x: 0, y: 0, rgba: [255, 0, 128, 128] },        // 直通红@50%：paintAt → blendOver
+      { op: "pixels", x: 1, y: 0, rgba: [255, 0, 128, 255] },        // a=255：必须与改动前一致
+      { op: "pixels", x: 2, y: 0, rgba: [255, 0, 128, 0] },          // a=0：全透明
+    ], CTX);
+    eq("aidoc.region.unpremul.apply.ok", wr.ok, true);
+    eq("aidoc.region.unpremul.apply.applied", wr.applied, 3);
+    // 写入侧没变：cel 里那个半透明像素仍是按 alpha 缩过的字节 [128,0,64,128]（预乘语义，本次不动）
+    eq("aidoc.region.unpremul.cel-bytes.semi",
+      [uc.data[uc.idx(0, 0)], uc.data[uc.idx(0, 0) + 1], uc.data[uc.idx(0, 0) + 2], uc.data[uc.idx(0, 0) + 3]],
+      [128, 0, 64, 128]);
+    eq("aidoc.region.unpremul.cel-bytes.opaque",
+      [uc.data[uc.idx(1, 0)], uc.data[uc.idx(1, 0) + 1], uc.data[uc.idx(1, 0) + 2], uc.data[uc.idx(1, 0) + 3]],
+      [255, 0, 128, 255]);
+    eq("aidoc.region.unpremul.cel-bytes.alpha0",
+      [uc.data[uc.idx(2, 0)], uc.data[uc.idx(2, 0) + 1], uc.data[uc.idx(2, 0) + 2], uc.data[uc.idx(2, 0) + 3]],
+      [0, 0, 0, 0]);
+
+    const rgUn = readRegion(un, { x: 0, y: 0, w: 3, h: 1 });
+    const decUn = decodeRow(rgUn.rows[0], rgUn.palette);
+    // ① 半透明像素读回 = 写进去的直通色（a=128 这一档允许 ±1/通道）
+    ok("aidoc.region.unpremul.roundtrip-semi", nearHex(decUn[0], "#ff008080", 1), decUn[0]);
+    // ② 读回的 hex 就是 doc.palette 里那一条（不再是 #80004080）
+    eq("aidoc.region.unpremul.palette", rgUn.palette, ["#ff008080", "#ff0080"]);
+    eq("aidoc.region.unpremul.matches-doc-palette", rgUn.palette[0], rgbaToHex([255, 0, 128, 128]));
+    // digest 侧同口径核对：它只输出 doc.palette（不含 cel 字节），所以本来就直通、无需反乘
+    const digUn = docDigest(un);
+    eq("aidoc.region.unpremul.digest-palette", digUn.palette, ["#ff008080"]);
+    ok("aidoc.region.unpremul.digest-no-premultiplied-hex", digUn.text.indexOf("#80004080") < 0, digUn.text);
+    ok("aidoc.region.unpremul.text-no-premultiplied-hex", rgUn.text.indexOf("#80004080") < 0, rgUn.text.split("\n")[1] ?? "");
+    ok("aidoc.region.unpremul.text-has-straight-hex", rgUn.text.indexOf("#ff008080") >= 0);
+    // ③ a=255：逐字节与改动前一致（cel 字节已在上面对过，这里对读回值）
+    eq("aidoc.region.unpremul.opaque-exact", decUn[1], rgbaToHex([255, 0, 128, 255]));
+    eq("aidoc.region.unpremul.opaque-hex", decUn[1], "#ff0080");
+    // ④ a=0：全透明走 `.`，不进调色板
+    eq("aidoc.region.unpremul.alpha0-dot", decUn[2], "#00000000");
+    eq("aidoc.region.unpremul.alpha0-not-in-palette", rgUn.palette.indexOf("#00000000"), -1);
+    ok("aidoc.region.unpremul.alpha0-note", rgUn.text.indexOf("1 个半透明像素") >= 0, rgUn.text.split("\n").pop() ?? "");
+  }
+
+  // 反乘的误差上界：写入那一步已经把 RGB 量化成 round(rgb*a/255)，信息不可逆地丢了。
+  // 误差 ≈ ceil(255/(2a))：a=128 ≤±1、a=64 ≤±2、a=8 ≤±16；a=1 时只剩 1 个色阶。
+  {
+    const bd = new Doc(4, 1, "bound");
+    const bc = bd.ensureCel(0, 0);
+    bd.palette = [];
+    applyOps(bd, [
+      { op: "pixels", x: 0, y: 0, rgba: [255, 0, 128, 128] },
+      { op: "pixels", x: 1, y: 0, rgba: [255, 0, 128, 64] },
+      { op: "pixels", x: 2, y: 0, rgba: [255, 0, 128, 8] },
+      { op: "pixels", x: 3, y: 0, rgba: [255, 0, 128, 1] },
+    ], CTX);
+    const rgB = readRegion(bd, { x: 0, y: 0, w: 4, h: 1 });
+    const decB = decodeRow(rgB.rows[0], rgB.palette);
+    ok("aidoc.region.unpremul.bound.a128", nearHex(decB[0], "#ff008080", 1), decB[0]);
+    ok("aidoc.region.unpremul.bound.a64", nearHex(decB[1], "#ff008040", 2), decB[1]);
+    ok("aidoc.region.unpremul.bound.a8", nearHex(decB[2], "#ff008008", 16), decB[2]);
+    ok("aidoc.region.unpremul.bound.a1-lossy", decB[3] !== "#ff008001", decB[3]);
+    // cel 侧字节：round(255*1/255)=1 / round(128*1/255)=1 → 反乘回来是 [255,0,255,1]
+    eq("aidoc.region.unpremul.bound.a1-cel-bytes",
+      [bc.data[bc.idx(3, 0)], bc.data[bc.idx(3, 0) + 1], bc.data[bc.idx(3, 0) + 2], bc.data[bc.idx(3, 0) + 3]],
+      [1, 0, 1, 1]);
+    eq("aidoc.region.unpremul.bound.a1-hex", decB[3], "#ff00ff01");
+    eq("aidoc.region.unpremul.bound.alpha-kept", decB.map((h) => h.slice(-2)), ["80", "40", "08", "01"]);
+  }
   const apOverride = applyOps(col, [{ op: "line", x0: 1, y0: 0, x1: 1, y1: 0, color: "whatever" }],
     { ...CTX, resolveColor: () => [7, 8, 9, 255] });
   eq("aidoc.apply.colour.override.ok", apOverride.ok, true);
