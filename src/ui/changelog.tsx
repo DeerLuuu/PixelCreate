@@ -12,7 +12,7 @@ import { Dialog } from "./kit";
 export const APP_VERSION = "1.1.1.9";
 /** build stamp shown next to the version (support/debug: identifies the exact
  *  package a user is running when the version number itself does not change) */
-export const BUILD_TAG = "31ec1dd";
+export const BUILD_TAG = "72ff2b0";
 
 export type ClgKind = "add" | "imp" | "fix";
 export interface ClgItem { kind: ClgKind; zh: string; en: string }
