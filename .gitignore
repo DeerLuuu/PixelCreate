@@ -11,6 +11,8 @@ app2/www/ui-demo.html
 # ---- scratch / local temp ----
 /_scratch/
 tests/.ts-out/
+# AgentTeams 的团队状态（任务 / 邮箱 / 审批），属于本地状态，不入库
+/.agent-teams/
 
 # ---- toolchain: keep only authored scripts, ignore SDK downloads/extracts ----
 /toolchain/*
