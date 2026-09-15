@@ -52,8 +52,10 @@ import { testGestureHost } from "./gesture-host.test";
 import { testAutosave } from "./autosave.test";
 import { testAiDoc } from "./ai-doc.test";
 import { testAiTools } from "./ai-tools.test";
+import { testAiDraw } from "./ai-draw.test";
 import { testAiTurn } from "./ai-turn.test";
 import { testAiRpc } from "./ai-rpc.test";
+import { testAiChat } from "./ai-chat.test";
 import { testHans } from "./hans.test";
 
 async function main(): Promise<void> {
@@ -165,10 +167,14 @@ async function main(): Promise<void> {
   testAiDoc();
   console.log("--- ai tools ---");
   await testAiTools();
+  console.log("--- ai draw (P1 pixel tool surface) ---");
+  testAiDraw();
   console.log("--- ai turn ---");
   await testAiTurn();
   console.log("--- ai rpc ---");
   await testAiRpc();
+  console.log("--- ai chat (C5 in-app assistant) ---");
+  await testAiChat();
   console.log("--- simplified Chinese only (hans) ---");
   testHans();
   finish();

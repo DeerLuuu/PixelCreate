@@ -17,11 +17,15 @@ import { AI_RPC_DEFAULT_PORT, AI_RPC_DEFAULT_TIER, AI_SERVICE_TIERS, AI_TURN_IDL
 import type { AiServiceTier } from "./ai-rpc";
 
 export type SettingValue = boolean | number | string;
+/** 控件的取值形态。**不要新增字面量**：`tests/ai-rpc.test.ts` 静态钉住这一行只有四个值，
+ *  文本类输入（AI 助手的端点 / 模型 / key）走 `SettingDef.text`，不占 kind。 */
 export type SettingKind = "bool" | "int" | "enum" | "color";
+/** 文本行的输入形态：`"plain"` 普通文本 / `"password"` 密文（API key） */
+export type SettingText = "plain" | "password";
 /** how the app must react when a value changes */
 export type SettingRefresh = "none" | "changed" | "repaint" | "repaintAll";
 
-export type SettingGroupId = "general" | "canvas" | "screen" | "tools" | "gesture" | "onion" | "history" | "display" | "data" | "ai";
+export type SettingGroupId = "general" | "canvas" | "screen" | "tools" | "gesture" | "onion" | "history" | "display" | "data" | "ai" | "chat";
 
 export interface SettingOption {
   value: string;
@@ -34,7 +38,11 @@ export interface SettingDef {
   path: string;
   /** backing Session.prefs field (omit when get/set are supplied) */
   field?: keyof Prefs;
-  kind: SettingKind;
+  /** 控件形态。文本行（AI 助手端点 / 模型 / key）不写 kind，改为写 `text` ——
+   *  `SettingKind` 只允许四个字面量（见上面的注释），文本不是一个 kind 而是一种控件。 */
+  kind?: SettingKind;
+  /** 文本输入行；写它就是文本控件（`kind` 可以不写） */
+  text?: SettingText;
   group: SettingGroupId;
   /** i18n key of the row label */
   label: string;
@@ -86,6 +94,8 @@ export function resetSetting(s: Session, d: SettingDef): void {
 
 /** validate/normalise a value coming from a settings file (undefined = reject) */
 export function coerceSetting(d: SettingDef, v: unknown): SettingValue | undefined {
+  // 文本行（端点 / 模型 / key）先判：它不是四个 kind 里的任何一个
+  if (d.text) return typeof v === "string" ? clipSettingText(v) : undefined;
   if (d.kind === "bool") {
     if (typeof v === "boolean") return v;
     if (v === 1 || v === "1" || v === "true") return true;
@@ -217,10 +227,169 @@ export function onAiServeSettingsChange(cb: (v: AiServeSettings) => void): () =>
   };
 }
 
+// ---------------------------------------------------------------- AI 助手（应用内聊天，C5）
+//
+// 应用内助手（docs/PLAN-ai.md §3.5 A 路线）的三项配置 + 一个总开关。与 C3 的本地端口服务
+// 同一个做法：**值不进 `Session.prefs`**，自带一个极小存储（内存缓存 + localStorage("pc.aichat")），
+// 读不到（Node / 隐私模式 / 坏数据）就退回默认值，**不抛异常**。
+//
+// 为什么 key 必须单独存、而且不进 prefs：
+//   · `prefs` 会随工程 / 设置导出走（`exportSettings` 与 .pxc），**key 只该留在本机**（§3.6 红线）；
+//   · 所以三项都在这里，只有 `ai.chatKey` 例外地**不进设置导出 / 导入**（`SETTING_SECRET_PATHS`）。
+//
+// 为什么 chat 设置不在 `SETTINGS`（导出用的那个数组）里：
+//   `tests/session.test.ts` 钉住「导出的取值条数 === SETTINGS.length」「导入的 applied === SETTINGS.length」，
+//   而 key 又必须**一个字节都不进导出** —— 两者不能同时成立。所以助手这一组单独一张表
+//   （`CHAT_SETTINGS`），照样是声明式的（同一套 `SettingDef`、同一个设置页渲染器），
+//   只是不参与「设置文件导出」这件事；`SETTINGS_BY_PATH` 两个表都收，`settingsOfGroup` 也两个都读。
+
+export const AI_CHAT_SETTINGS_KEY = "pc.aichat";
+/** 三项文本的最大长度（端点 URL / 模型名 / key；够长 JWT 用） */
+export const AI_CHAT_MAX_TEXT = 2048;
+/** 默认端点：留空 —— 不替用户预设任何厂商（§3.6：线上 PWA 绝不内置任何凭据） */
+export const AI_CHAT_DEFAULT_ENDPOINT = "";
+export const AI_CHAT_DEFAULT_MODEL = "";
+
+export interface AiChatSettings {
+  /** `ai.chatOn`：应用内助手总开关（默认 false） */
+  on: boolean;
+  /** `ai.chatEndpoint`：OpenAI 兼容的基地址，例如 https://api.openai.com/v1 */
+  endpoint: string;
+  /** `ai.chatModel`：模型名 */
+  model: string;
+  /** `ai.chatKey`：API key。**只存本机**，不进设置导出 / 导入、不进诊断文本、不进 toast */
+  key: string;
+}
+
+function clipSettingText(v: string): string {
+  const s = String(v ?? "");
+  return s.length > AI_CHAT_MAX_TEXT ? s.slice(0, AI_CHAT_MAX_TEXT) : s;
+}
+
+/** 归一化：三项都只认字符串（其余一律空串）、`on` 只认真 true（与 `normalizeAiServeSettings` 同口径） */
+export function normalizeAiChatSettings(raw: unknown): AiChatSettings {
+  const o = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+  const str = (v: unknown): string => (typeof v === "string" ? clipSettingText(v) : "");
+  return { on: o.on === true, endpoint: str(o.endpoint), model: str(o.model), key: str(o.key) };
+}
+
+let aiChatCache: AiChatSettings | null = null;
+const aiChatListeners: Array<(v: AiChatSettings) => void> = [];
+
+function loadAiChatSettings(): AiChatSettings {
+  try {
+    const store = aiStore();
+    const raw = store ? store.getItem(AI_CHAT_SETTINGS_KEY) : null;
+    if (raw) return normalizeAiChatSettings(JSON.parse(raw));
+  } catch {
+    /* 坏数据 / 没有 localStorage：都用默认值 */
+  }
+  return normalizeAiChatSettings(null);
+}
+
+/** 当前值（返回副本；缓存一次，之后由 `saveAiChatSettings` 维护） */
+export function aiChatSettings(): AiChatSettings {
+  if (!aiChatCache) aiChatCache = loadAiChatSettings();
+  return { ...aiChatCache };
+}
+
+/** 写回部分字段并通知监听者；返回写回后的完整值 */
+export function saveAiChatSettings(patch: Partial<AiChatSettings>): AiChatSettings {
+  const next = normalizeAiChatSettings({ ...aiChatSettings(), ...patch });
+  aiChatCache = next;
+  try {
+    const store = aiStore();
+    if (store) store.setItem(AI_CHAT_SETTINGS_KEY, JSON.stringify(next));
+  } catch {
+    /* 存不下不算错：写盘失败不影响本次会话 */
+  }
+  for (const cb of aiChatListeners.slice()) {
+    try {
+      cb({ ...next });
+    } catch {
+      /* 监听者自己出错不该拖垮设置写入 */
+    }
+  }
+  return { ...next };
+}
+
+/** 注册「助手设置变了」的监听，返回退订函数 */
+export function onAiChatSettingsChange(cb: (v: AiChatSettings) => void): () => void {
+  aiChatListeners.push(cb);
+  return () => {
+    const i = aiChatListeners.indexOf(cb);
+    if (i >= 0) aiChatListeners.splice(i, 1);
+  };
+}
+
+/** 清掉 key（换机器 / 怀疑泄漏时「一键清除」，见 §3.6） */
+export function clearAiChatKey(): void {
+  saveAiChatSettings({ key: "" });
+}
+
+/**
+ * **绝不出现在设置导出 / 导入里的路径**（key 只存在本机，§3.6）。
+ * 两处 `exportSettings` / `importSettings` 都显式跳过它 —— 即使以后有人把这条声明挪进
+ * `SETTINGS`，key 也不会跟着设置文件跑到别的机器上。
+ */
+export const SETTING_SECRET_PATHS: readonly string[] = ["ai.chatKey"];
+
+export function isSecretSettingPath(path: string): boolean {
+  return SETTING_SECRET_PATHS.indexOf(path) >= 0;
+}
+
+/**
+ * 助手那一组设置（声明式，但**不参与设置文件导出**，见文件上方那一节）。
+ * 平台门：只有有原生桥接（APK / 桌面壳的 `window.PixelBridge`）时才出现 ——
+ * 普通浏览器里连这几行都不显示（GitHub Pages 不背 AI，见 §3.6）；
+ * 端点 / 模型 / key 还要等总开关打开（关着的时候设置页只留一条开关）。
+ */
+const chatRowsVisible = (): boolean => bridge.isNativeShell();
+
+export const CHAT_SETTINGS: SettingDef[] = [
+  {
+    path: "ai.chatOn", kind: "bool", group: "chat",
+    label: "aiChatOnLabel", desc: "aiChatOnDesc", default: false, refresh: "none",
+    visible: () => chatRowsVisible(),
+    get: () => aiChatSettings().on,
+    set: (_s, v) => { saveAiChatSettings({ on: v === true }); },
+  },
+  {
+    path: "ai.chatEndpoint", text: "plain", group: "chat",
+    label: "aiChatEndpointLabel", desc: "aiChatEndpointDesc", default: AI_CHAT_DEFAULT_ENDPOINT, refresh: "none",
+    visible: () => chatRowsVisible() && aiChatSettings().on,
+    get: () => aiChatSettings().endpoint,
+    set: (_s, v) => { saveAiChatSettings({ endpoint: String(v) }); },
+  },
+  {
+    path: "ai.chatModel", text: "plain", group: "chat",
+    label: "aiChatModelLabel", desc: "aiChatModelDesc", default: AI_CHAT_DEFAULT_MODEL, refresh: "none",
+    visible: () => chatRowsVisible() && aiChatSettings().on,
+    get: () => aiChatSettings().model,
+    set: (_s, v) => { saveAiChatSettings({ model: String(v) }); },
+  },
+  {
+    path: "ai.chatKey", text: "password", group: "chat",
+    label: "aiChatKeyLabel", desc: "aiChatKeyDesc", default: "", refresh: "none",
+    visible: () => chatRowsVisible() && aiChatSettings().on,
+    get: () => aiChatSettings().key,
+    set: (_s, v) => { saveAiChatSettings({ key: String(v) }); },
+    // §3.6「key 要能一键清除」：清完通知 UI 刷新（输入框里那串字要跟着消失）
+    action: {
+      label: "aiChatKeyClear",
+      run: (sess) => { clearAiChatKey(); sess.changedUI(); bridge.toast("aiChatKeyCleared"); },
+    },
+  },
+];
+
 /** every declared setting as a plain object, ready to be written as JSON */
 export function exportSettings(s: Session): SettingsFile {
   const values: Record<string, SettingValue> = {};
-  for (const d of defs) values[d.path] = s.settingValue(d.path);
+  for (const d of defs) {
+    // key 之类的机密路径**显式跳过**（§3.6：key 只存在本机，绝不跟着设置文件走）
+    if (isSecretSettingPath(d.path)) continue;
+    values[d.path] = s.settingValue(d.path);
+  }
   return { app: "PixelCraft", version: SETTINGS_FILE_VERSION, savedAt: new Date().toISOString(), values };
 }
 
@@ -235,6 +404,8 @@ export function importSettings(s: Session, raw: unknown): { applied: number; ski
   let skipped = 0;
   for (const d of defs) {
     if (!(d.path in src)) continue;
+    // 机密路径显式跳过：别人塞一个 ai.chatKey 进来也不会覆盖本机的 key
+    if (isSecretSettingPath(d.path)) { skipped++; continue; }
     const v = coerceSetting(d, src[d.path]);
     if (v === undefined) { skipped++; continue; }
     s.setSetting(d.path, v);
@@ -258,6 +429,7 @@ export const SETTING_GROUPS: Array<{ id: SettingGroupId; label: string }> = [
   { id: "display", label: "groupDisplay" },
   { id: "data", label: "groupData" },
   { id: "ai", label: "groupAi" },
+  { id: "chat", label: "groupChat" },
 ];
 
 const defs: SettingDef[] = [
@@ -773,15 +945,18 @@ const defs: SettingDef[] = [
 ];
 
 export const SETTINGS: SettingDef[] = defs;
-export const SETTINGS_BY_PATH: Map<string, SettingDef> = new Map(defs.map((d) => [d.path, d]));
+/** 设置页要渲染的全部声明 = 可导出的那张表 + 助手那一组（后者不导出，见上方那一节） */
+const allDefs: SettingDef[] = defs.concat(CHAT_SETTINGS);
+export const SETTINGS_BY_PATH: Map<string, SettingDef> = new Map(allDefs.map((d) => [d.path, d]));
 
 /** settings of one group, in declaration order (visible ones only) */
 export function settingsOfGroup(s: Session, g: SettingGroupId): SettingDef[] {
-  return defs.filter((d) => d.group === g && (!d.visible || d.visible(s)));
+  return allDefs.filter((d) => d.group === g && (!d.visible || d.visible(s)));
 }
 
 /** coerce a raw value to the definition's kind/bounds; null = reject */
 export function normalizeSetting(def: SettingDef, raw: SettingValue): SettingValue | null {
+  if (def.text) return clipSettingText(String(raw ?? ""));
   if (def.kind === "bool") return !!raw;
   if (def.kind === "int") {
     const n = Math.round(Number(raw));

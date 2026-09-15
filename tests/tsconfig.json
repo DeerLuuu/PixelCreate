@@ -69,7 +69,9 @@
     "../tests/gesture-host.test.ts",
     "../tests/ai-doc.test.ts",
     "../tests/ai-tools.test.ts",
+    "../tests/ai-draw.test.ts",
     "../tests/ai-turn.test.ts",
-    "../tests/ai-rpc.test.ts"
+    "../tests/ai-rpc.test.ts",
+    "../tests/ai-chat.test.ts"
   ]
 }

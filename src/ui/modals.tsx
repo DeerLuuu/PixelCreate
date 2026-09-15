@@ -38,6 +38,8 @@ import { REBINDABLE, chordForAction, chordLabel, chordOf, isOverridden, override
 import { CBAR_ACTIONS, LAYOUT_KEYS, ORB_IDS, TOPBAR_ACTIONS, fullOrder } from "../app/uibar";
 import { GROUP_TOLERANCE, type ColourAnalysis, type ColourEntry, type ColourGroup } from "../engine/color-analysis";
 import { FEATURE_ICONS } from "./feature-icons";
+/** C5 应用内助手面板：只有原生桥接环境（APK / 桌面壳）才会真的挂出来，见 AiPanel 文件头 */
+import { AiPanel } from "./AiPanel";
 
 /** 打开颜色分析面板：App 侧监听这个事件切到 ColorAnalysisModal，
  *  同时把调色板面板收起来（面板与弹窗是两套状态，只有 App 能同时改） */
@@ -378,7 +380,7 @@ function parsePaletteBytes(b: Uint8Array): Array<[number, number, number, number
 }
 export function MenuModal({ t, snap, onClose, onOpen, onSheet, onRef, onGuide }: { t: ReturnType<typeof makeT>; snap: Snapshot; onClose: () => void; onOpen: (m: ModalId) => void; onSheet: (d: SheetData) => void; onRef: (d: RefImg) => void; onGuide: () => void }) {
   // the onboarding tour may open a sub-menu when the menu is shown
-  const [sub, setSub] = useState<null | "import">(() => {
+  const [sub, setSub] = useState<null | "import" | "ai">(() => {
     const g = (window as unknown as { __pcGuideMenuSub?: null | "import" }).__pcGuideMenuSub;
     return g ?? null;
   });
@@ -417,7 +419,10 @@ export function MenuModal({ t, snap, onClose, onOpen, onSheet, onRef, onGuide }:
   return (
     <>
       <Dialog title={t("menu")} onClose={onClose} bodyClass="col">
-        {!sub ? (<>
+        {sub === "ai" ? (
+          /* 应用内助手（C5）：面板自己带「返回」，这里的对话框只是它的外壳 */
+          <AiPanel t={t} onBack={() => setSub(null)} />
+        ) : !sub ? (<>
           {go("newproject")(t("newProject"), FEATURE_ICONS.menu.newProject, "menu-new")}
           {act(t("save"), FEATURE_ICONS.menu.save, () => void saveProject(), "menu-save")}
           {go("export")(t("exportCanvas"), FEATURE_ICONS.menu.export, "menu-export")}
@@ -426,6 +431,10 @@ export function MenuModal({ t, snap, onClose, onOpen, onSheet, onRef, onGuide }:
           {go("coloradv")(t("cadv.open"), FEATURE_ICONS.menu.colorAdv, "menu-color-adv")}
           {go("autosave")(t("asHistory"), FEATURE_ICONS.menu.recover, "menu-autosave")}
           {act(t("iso.open"), FEATURE_ICONS.menu.iso, () => SESSION.enterIso(), "menu-iso")}
+          {/* 平台门：普通浏览器 / GitHub Pages 不背 AI —— 连这一行都不出现（§3.6） */}
+          {bridge.isNativeShell() ? (
+            <Btn label={t("aiChatOpen")} icon={FEATURE_ICONS.menu.aiChat} className="menuitem" guide="menu-ai-chat" onClick={() => setSub("ai")} />
+          ) : null}
           {go("settings")(t("settings"), FEATURE_ICONS.menu.settings, "menu-settings")}
           {go("shortcuts")(t("shortcutHelp"), FEATURE_ICONS.menu.shortcuts, "menu-shortcuts")}
           {go("customise")(t("customise"), FEATURE_ICONS.menu.customise, "menu-customise")}
@@ -969,6 +978,21 @@ function SettingRow({ def, t }: { def: SettingDef; t: ReturnType<typeof makeT> }
             onChange={(n) => SESSION.setSetting(def.path, n)} />
         )}
       </div>
+      {def.text && (
+        /* 文本行（AI 助手的端点 / 模型 / key）：`text: "password"` 走密文输入。
+           key 只写进本机存储（`ai.chatKey` 不进设置导出，见 app/settings.ts）。 */
+        <input
+          className="textinput"
+          type={def.text === "password" ? "password" : "text"}
+          value={String(v)}
+          placeholder={t(def.label)}
+          autoComplete="off"
+          autoCorrect="off"
+          spellCheck={false}
+          data-guide={"set-" + def.path}
+          onChange={(e) => SESSION.setSetting(def.path, e.target.value)}
+        />
+      )}
       {def.kind === "color" && (
         <ColorField value={String(v)} onChange={(c) => SESSION.setSetting(def.path, c)} />
       )}

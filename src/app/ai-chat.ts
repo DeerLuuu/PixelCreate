@@ -1,0 +1,651 @@
+// C5 应用内助手（docs/PLAN-ai.md §3.3「一轮 = 一条 undo」/ §3.5 A 路线 / §3.6 key 与安全模型）：
+// 把「用户说一句话」变成「模型选工具 → 我们调工具 → 结果回灌 → 再问模型」这个循环的**纯逻辑层**。
+//
+// 为什么单独一层：
+//   这一层与平台无关 —— 不 import `window`、不直接调 `fetch`（`fetchFn` 由调用方注入），
+//   所以能在没有 DOM 的测试里用假端点把**整轮**跑完（两次 tool_calls 再回文本）。
+//   UI 只负责显示与两个按钮（应用 / 放弃）。
+//
+// 三条不要改回去的口径：
+//   1. **一轮 = 一条 undo**：整轮包在 ai-turn 的回合里（预览模式也一样），任何失败路径都
+//      `rollbackTurn()` ——「模型中途报错、文档已经被改了一半」是不允许出现的。回合里
+//      工具的写操作全部落在 `ctx.turn` 上（由这一层挂 `turnHandle()`），所以 callTool
+//      每成功一次写操作都会 mark 一次，UI 的「改了多少」才有数。
+//   2. **失败说人话**：缺 key / 端点为空的地址 / 网络挂了 / HTTP 4xx-5xx / 返回不是 JSON /
+//      模型给的工具参数不是合法 JSON，都要转成一句能读的错误（带 HTTP 状态或响应前 120 字），
+//      **不静默失败**、也不把异常原样抛给 UI。
+//   3. **预览后应用**（§3.3 建议默认）：`commit: false` 时回合**留开着**交给 UI
+//      （结果里的 `turnOpen: true`），用户点「应用」才 `commitTurn()`、点「放弃」才
+//      `rollbackTurn()`；`commit: true`（默认）走 `runAiTurn()` 一步落定。
+//
+// 与 C1/C2 的接缝：工具表与回合事务**都只通过既有公开面**使用 —— `callTool`（自带
+// 校验 + destructive 确认）与 `runAiTurn / beginAiTurn / commitTurn / rollbackTurn`。
+// 这一层不新增写入路径，也不碰 History。
+
+import type { Rect } from "../engine/types";
+import { AI_ARG_CURRENT, callTool, listTools } from "./ai-tools";
+import type { AiParamType, AiTier, AiTool, AiToolCtx, AiToolParam, AiToolResult } from "./ai-tools";
+import { beginAiTurn, isTurnOpen, rollbackTurn, runAiTurn, turnHandle } from "./ai-turn";
+
+/** 默认最多几轮「模型 → 工具 → 模型」（§3.5 C5 的口径：12） */
+export const AI_CHAT_DEFAULT_MAX_ROUNDS = 12;
+/** 硬上限：调用方给再大也不会超过它（每一轮都在花 token，失控的循环必须挡住） */
+export const AI_CHAT_MAX_ROUNDS = 24;
+/** 一整轮里最多真的执行多少次工具调用（模型一轮塞 100 个 tool_calls 时别把界面卡死） */
+export const AI_CHAT_MAX_CALLS = 80;
+/** 默认给模型的档位：`ui` 档默认不暴露（与 `listTools()` 同一条口径） */
+export const AI_CHAT_TOOL_TIERS: readonly AiTier[] = ["read", "draw", "destructive"];
+/** 单条工具结果回灌给模型的最大字符数（`read_region` 能吐一整块区域；超了截断并写明） */
+export const AI_CHAT_MAX_RESULT_CHARS = 4000;
+/** 端点是「基地址」时自动补的路径（OpenAI 兼容） */
+export const AI_CHAT_COMPLETIONS_PATH = "/chat/completions";
+/** 系统提示词里那份画布摘要的最大字符数 */
+export const AI_CHAT_MAX_DIGEST_CHARS = 6000;
+/** 空标签时的兜底（历史面板里显示成 `ai: 对话`） */
+export const AI_CHAT_LABEL_FALLBACK = "对话";
+/** 从用户消息里取标签时截断到多少字 */
+export const AI_CHAT_LABEL_MAX = 40;
+
+/**
+ * 系统提示词。要点只有三条（其余靠工具自带的 schema 与 desc）：
+ * 工具是唯一能改画面的通道、破坏性操作会弹确认、改完等用户点「应用」才落历史。
+ */
+export const AI_CHAT_SYSTEM_PROMPT = [
+  "你是 PixelCraft 像素画编辑器里的绘制助手。用户会用一句话描述想要什么，你负责把它变成一串工具调用。",
+  "规则：",
+  "1. 只能通过工具改画面 —— 你没有别的方式修改文档；坐标一律是画布像素坐标，左上角是 (0,0)。",
+  "2. 动手前先读：doc_digest 看工程概览，read_region 看具体区域的像素网格（画布小的时候很便宜）。",
+  "3. 破坏性工具（删除图层 / 帧、清空画布、缩放画布、擦除、变换）会弹确认框，用户可能拒绝；被拒绝就不要重试同一个调用。",
+  "4. 这一轮的全部改动会先给用户预览，用户点「应用」才写进历史（一条撤销）；所以尽量在一轮里把事情做完。",
+  "5. 工具返回的 docRev 是文档版本号，变了说明画面真的改了；changed 是这次实际改动的像素矩形。",
+  "6. 全部工具调用结束后，用一两句中文说清你做了什么（用户看的就是这句话）。",
+].join("\n");
+
+// ------------------------------------------------------------------ 消息形状
+
+export type ChatRole = "system" | "user" | "assistant" | "tool";
+
+/** 一次工具调用（OpenAI 兼容形状；`arguments` 恒为字符串） */
+export interface ChatToolCall {
+  id: string;
+  type: "function";
+  function: { name: string; arguments: string };
+}
+
+/** 一条消息（OpenAI `/chat/completions` 的子集） */
+export interface ChatMessage {
+  role: ChatRole;
+  content?: string;
+  /** role === "assistant" 且模型要求调用工具时才有 */
+  tool_calls?: ChatToolCall[];
+  /** role === "tool" 时对应哪一次调用 */
+  tool_call_id?: string;
+  /** role === "tool" 时的工具名（部分宿主会忽略，带上便于排查） */
+  name?: string;
+}
+
+/** `parseToolCalls()` 的产物：`error` 非空 = 这条调用的参数不能用来调工具 */
+export interface ParsedToolCall {
+  id: string;
+  name: string;
+  args: Record<string, unknown>;
+  /** 模型原始给的那段 arguments（合法 JSON 时保留原文，方便回灌） */
+  raw: string;
+  /** `arguments` 不是合法 JSON（或结构不对）时的原因；此时 `args` 是空对象 */
+  error?: string;
+}
+
+/** 一次工具调用的摘要（UI 显示 / 回灌模型都用它） */
+export interface ChatCallLog {
+  id: string;
+  name: string;
+  args: Record<string, unknown>;
+  ok: boolean;
+  error?: string;
+  /** 这次真的碰到了哪块像素（工具没给就是 null） */
+  changed: Rect | null;
+  /** 调用结束时的文档版本号 */
+  docRev: number;
+  /** 文档版本号推进了多少（0 = 一个像素都没改） */
+  revDelta: number;
+  /** 模型给的参数不能解析（这一条**没有**真的调工具） */
+  parseError?: string;
+}
+
+/** `runChatTurn()` 的收尾原因（给 UI 显示「为什么停了」） */
+export type ChatStopReason = "text" | "maxRounds" | "maxCalls";
+
+export interface ChatTurnResult {
+  ok: boolean;
+  /** 模型最后那段文本（失败时是空串，看 `error`） */
+  text: string;
+  /** 可读错误（ok:false 时一定有） */
+  error?: string;
+  /** 完整消息流（含 tool 结果）——下次对话接着用 */
+  messages: ChatMessage[];
+  /** 这一轮每一次工具调用的摘要 */
+  calls: ChatCallLog[];
+  /** 实际发起了几次模型请求 */
+  rounds: number;
+  stop: ChatStopReason;
+  /** 收尾时回合还开着（预览模式成功 → UI 显示「应用 / 放弃」） */
+  turnOpen: boolean;
+  /** 这一轮落了一条历史（`commitTurn()` 返回 true） */
+  recorded: boolean;
+  /** 收尾时的文档版本号 */
+  docRev: number;
+  /** 开始时的文档版本号 */
+  docRevBefore: number;
+}
+
+/** 注入的 fetch（DOM 的 `fetch` 结构上就满足它；测试里给假的） */
+export interface ChatFetchInit {
+  method: string;
+  headers: Record<string, string>;
+  body: string;
+}
+export interface ChatFetchResponse {
+  ok: boolean;
+  status: number;
+  text(): Promise<string>;
+}
+export type ChatFetch = (url: string, init: ChatFetchInit) => Promise<ChatFetchResponse>;
+
+export interface ChatTurnOpts {
+  /** 已经拼好的消息（第一条通常是 system 提示词） */
+  messages: ChatMessage[];
+  ctx: AiToolCtx;
+  endpoint: string;
+  model: string;
+  key?: string;
+  /** 由平台层注入（浏览器 / APK / 桌面壳各给一份） */
+  fetchFn: ChatFetch;
+  /** 省略 = `listTools({ tiers: AI_CHAT_TOOL_TIERS })` */
+  tools?: readonly AiTool[];
+  maxRounds?: number;
+  /** 历史标签正文（`ai: ` 前缀由 ai-turn 加）；省略 = 取最后一条用户消息 */
+  label?: string;
+  /** true（默认）= 整轮直接落一条历史；false = 预览模式，回合留给 UI 收尾 */
+  commit?: boolean;
+  /** 每执行完一次调用回调一次（UI 实时显示摘要） */
+  onCall?: (log: ChatCallLog, index: number) => void;
+}
+
+// ------------------------------------------------------------------ OpenAI 工具 schema
+
+export interface OpenAiToolSchema {
+  type: "function";
+  function: {
+    name: string;
+    description: string;
+    parameters: {
+      type: "object";
+      properties: Record<string, Record<string, unknown>>;
+      required: string[];
+      additionalProperties: false;
+    };
+  };
+}
+
+const SCALAR_JSON: Record<string, string> = {
+  int: "integer", num: "number", bool: "boolean", string: "string", color: "string", enum: "string",
+};
+
+/**
+ * 把 C1 的工具表映射成 OpenAI 兼容的 tools 数组。口径：
+ *   · `required` = **既没有 default 也不是 optional** 的参数（与 `validateArgs` 判定「缺少必填参数」
+ *     的那一条完全一致 —— 两处口径必须一样，否则模型会漏参数然后拿到一条报错）；
+ *   · `default` 照抄进 schema（`AI_ARG_CURRENT` 这种哨兵不是真值，不写进去，
+ *     改为在 description 里说明「省略 = 当前图层/帧」）；
+ *   · `int` 是 `integer`（`validateArgs` 对小数**拒绝**，不静默取整），`num` 才是 `number`；
+ *   · `xy` 是 `[integer, integer]`、`rect` 是 `{x,y,w,h}` 四个整数（与 checkParam 的分支一一对应）；
+ *   · `color` 额外把允许的字面量写进 description（`fg` / `bg` 不是颜色字面量，模型猜不到）。
+ */
+export function toOpenAiTools(tools: readonly AiTool[]): OpenAiToolSchema[] {
+  return tools.map((tool) => {
+    const properties: Record<string, Record<string, unknown>> = {};
+    const required: string[] = [];
+    for (const name of Object.keys(tool.params)) {
+      const p = tool.params[name];
+      properties[name] = paramSchema(p);
+      if (p.optional !== true && p.default === undefined) required.push(name);
+    }
+    return {
+      type: "function" as const,
+      function: {
+        name: tool.id,
+        description: tool.title,
+        parameters: { type: "object" as const, properties, required, additionalProperties: false as const },
+      },
+    };
+  });
+}
+
+/**
+ * 数组元素 / 嵌套值的 JSON schema：`items` 可以再是 `xy` / `rect` / `enum` 这类复合类型
+ * （`validateArgs` 里 `array` 分支就是拿它当一层 `AiToolParam` 递归校验的）。
+ */
+function itemSchema(t: AiParamType): Record<string, unknown> {
+  return t === "xy" || t === "rect" ? paramSchema({ type: t }) : { type: SCALAR_JSON[t] ?? "number" };
+}
+
+function paramSchema(p: AiToolParam): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  if (p.type === "xy") {
+    out.type = "array";
+    out.items = { type: "integer" };
+    out.minItems = 2;
+    out.maxItems = 2;
+  } else if (p.type === "rect") {
+    out.type = "object";
+    out.properties = { x: { type: "integer" }, y: { type: "integer" }, w: { type: "integer" }, h: { type: "integer" } };
+    out.required = ["x", "y", "w", "h"];
+    out.additionalProperties = false;
+  } else if (p.type === "array") {
+    out.type = "array";
+    // 元素类型复用同一套映射：`draw_path` 的 points 是 `items: "xy"`（每个点是 [x,y]），
+    // 不是标量 —— 早先按标量表查会得到 `string`，模型就会发 ["1,1"] 这种参数被拒。
+    out.items = itemSchema(p.items ?? "num");
+    if (p.min !== undefined) out.minItems = p.min;
+    if (p.max !== undefined) out.maxItems = p.max;
+  } else {
+    out.type = SCALAR_JSON[p.type] ?? "string";
+    if (p.type === "enum") out.enum = (p.values ?? []).slice();
+    if (p.type === "int" || p.type === "num") {
+      if (p.min !== undefined) out.minimum = p.min;
+      if (p.max !== undefined) out.maximum = p.max;
+    }
+    if (p.type === "string") {
+      if (p.min !== undefined) out.minLength = p.min;
+      if (p.max !== undefined) out.maxLength = p.max;
+    }
+  }
+  const desc: string[] = [];
+  if (p.desc) desc.push(p.desc);
+  if (p.type === "color") desc.push("取值：#rgb / #rrggbb / #rrggbbaa，或 fg（前景色）/ bg（背景色）");
+  if (p.default === AI_ARG_CURRENT) desc.push("省略 = 当前图层 / 当前帧");
+  else if (p.default !== undefined && p.default !== null) desc.push("默认：" + JSON.stringify(p.default));
+  else if (p.optional === true) desc.push("可省略（省略 = 不改这一项）");
+  if (desc.length) out.description = desc.join("；");
+  if (p.default !== undefined && p.default !== AI_ARG_CURRENT) out.default = p.default;
+  return out;
+}
+
+// ------------------------------------------------------------------ 响应解析
+
+/** 从响应里取第一个 choice 的 message（也接受 `{message}` / 直接给 message 的简化形状） */
+function pickMessage(response: unknown): Record<string, unknown> | null {
+  if (!response || typeof response !== "object") return null;
+  const o = response as Record<string, unknown>;
+  const choices = o.choices;
+  if (Array.isArray(choices) && choices.length) {
+    const c0 = choices[0] as Record<string, unknown> | null | undefined;
+    const m = c0 && typeof c0 === "object" ? c0.message : null;
+    if (m && typeof m === "object") return m as Record<string, unknown>;
+    if (c0 && typeof c0 === "object" && ("content" in c0 || "tool_calls" in c0)) return c0;
+  }
+  const m = o.message;
+  if (m && typeof m === "object") return m as Record<string, unknown>;
+  if ("content" in o || "tool_calls" in o) return o;
+  return null;
+}
+
+/** 模型这次回的文本（没有就是空串） */
+export function responseText(response: unknown): string {
+  const m = pickMessage(response);
+  if (!m) return "";
+  const c = m.content;
+  if (typeof c === "string") return c;
+  // 有的宿主按 parts 数组给内容：只取文本片段
+  if (Array.isArray(c)) {
+    return c.map((part) => {
+      if (typeof part === "string") return part;
+      const t = part && typeof part === "object" ? (part as { text?: unknown }).text : undefined;
+      return typeof t === "string" ? t : "";
+    }).join("");
+  }
+  return "";
+}
+
+/**
+ * 解析模型返回的 tool_calls（**按数组顺序**，顺序就是调用顺序）。
+ * 口径：`arguments` 不是合法 JSON → 这条带 `error` 返回（**不抛异常、也不瞎猜一个空参数去调**），
+ * 调用方把它当成一条失败的工具结果回灌，模型下一轮能自己改；缺 id 时按位置补一个稳定 id。
+ */
+export function parseToolCalls(response: unknown): ParsedToolCall[] {
+  const m = pickMessage(response);
+  if (!m) return [];
+  const raw = m.tool_calls;
+  if (!Array.isArray(raw)) return [];
+  const out: ParsedToolCall[] = [];
+  for (let i = 0; i < raw.length; i++) {
+    const item = raw[i] as Record<string, unknown> | null | undefined;
+    if (!item || typeof item !== "object") continue;
+    const fn = (item.function ?? item) as Record<string, unknown>;
+    const name = typeof fn.name === "string" ? fn.name : "";
+    const id = typeof item.id === "string" && item.id ? item.id : "call_" + i;
+    const rawArgs = fn.arguments;
+    let text = "";
+    if (typeof rawArgs === "string") text = rawArgs;
+    else if (rawArgs && typeof rawArgs === "object") text = JSON.stringify(rawArgs);
+    const parsed = parseArgs(name, text);
+    out.push({ id, name, raw: text, args: parsed.args, ...(parsed.error ? { error: parsed.error } : {}) });
+  }
+  return out;
+}
+
+function parseArgs(name: string, text: string): { args: Record<string, unknown>; error?: string } {
+  if (!name) return { args: {}, error: "模型给的调用没有函数名" };
+  const trimmed = text.trim();
+  if (!trimmed) return { args: {} }; // 无参数工具：空串是合法的
+  let value: unknown;
+  try {
+    value = JSON.parse(trimmed);
+  } catch {
+    return { args: {}, error: name + " 的参数不是合法 JSON：" + clip(trimmed, 120) };
+  }
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return { args: {}, error: name + " 的参数必须是 JSON 对象，收到 " + describe(value) };
+  }
+  return { args: value as Record<string, unknown> };
+}
+
+/** 把模型那条 assistant 消息规范成 OpenAI 形状（回灌时请求体必须是这个形状） */
+export function assistantMessage(response: unknown): ChatMessage {
+  const calls = parseToolCalls(response);
+  const msg: ChatMessage = { role: "assistant", content: responseText(response) };
+  if (calls.length) {
+    msg.tool_calls = calls.map((c) => ({ id: c.id, type: "function" as const, function: { name: c.name, arguments: c.raw } }));
+  }
+  return msg;
+}
+
+// ------------------------------------------------------------------ 消息拼装
+
+/** 工具结果的正文：`ok` / `docRev` / `error` 排在前面，`data` 垫底并截断（token 预算） */
+export function toolResultContent(result: AiToolResult): string {
+  const payload: Record<string, unknown> = { ok: result.ok !== false };
+  if (result.error) payload.error = result.error;
+  if (typeof result.docRev === "number") payload.docRev = result.docRev;
+  if (result.changed) payload.changed = result.changed;
+  if (result.warn && result.warn.length) payload.warn = result.warn;
+  if (result.data !== undefined) payload.data = result.data;
+  return clip(JSON.stringify(payload), AI_CHAT_MAX_RESULT_CHARS);
+}
+
+/**
+ * 把一次调用的结果拼成 `role=tool` 消息（返回新数组）。
+ * `tool_call_id` 必须与模型给的 id 对上，否则端点会直接报 400。
+ */
+export function appendToolResult(
+  messages: readonly ChatMessage[],
+  call: { id: string; name: string },
+  result: AiToolResult,
+): ChatMessage[] {
+  return messages.concat([{
+    role: "tool" as const,
+    tool_call_id: call.id,
+    name: call.name,
+    content: toolResultContent(result),
+  }]);
+}
+
+/** 系统提示词 + 可选的画布摘要（摘要超长就截断，别一开口就把预算吃光） */
+export function buildSystemPrompt(opts: { digest?: string } = {}): string {
+  const d = opts.digest ? clip(opts.digest, AI_CHAT_MAX_DIGEST_CHARS) : "";
+  return d ? AI_CHAT_SYSTEM_PROMPT + "\n\n当前工程摘要（doc_digest 的结果）：\n" + d : AI_CHAT_SYSTEM_PROMPT;
+}
+
+/** `{role:"system"}` 消息 */
+export function systemMessage(opts: { digest?: string } = {}): ChatMessage {
+  return { role: "system", content: buildSystemPrompt(opts) };
+}
+
+/** `{role:"user"}` 消息 */
+export function userMessage(text: string): ChatMessage {
+  return { role: "user", content: String(text ?? "") };
+}
+
+// ------------------------------------------------------------------ 端点
+
+/** 端点是基地址时补 `/chat/completions`；已经写着这个路径就原样用（去掉尾部斜杠） */
+export function chatCompletionsUrl(endpoint: string): string {
+  const base = String(endpoint ?? "").trim().replace(/\/+$/, "");
+  if (!base) return "";
+  if (base.slice(-AI_CHAT_COMPLETIONS_PATH.length) === AI_CHAT_COMPLETIONS_PATH) return base;
+  return base + AI_CHAT_COMPLETIONS_PATH;
+}
+
+/** 配置是否齐全；返回一句人话（null = 可以发请求）。**不碰文档、不发请求** */
+export function chatConfigError(cfg: { endpoint: string; model: string; key: string }): string | null {
+  if (!String(cfg.endpoint ?? "").trim()) return "没有填端点：设置 → AI 助手 → 端点";
+  if (!/^https?:\/\//i.test(String(cfg.endpoint).trim())) return "端点要以 http:// 或 https:// 开头";
+  if (!String(cfg.model ?? "").trim()) return "没有填模型名：设置 → AI 助手 → 模型";
+  if (!String(cfg.key ?? "").trim()) return "没有填 API key：设置 → AI 助手（key 只存在本机）";
+  return null;
+}
+
+function httpError(status: number, body: string): string {
+  const head = clip(body.replace(/\s+/g, " ").trim(), 120);
+  if (status === 401 || status === 403) return "端点拒绝了这个 key（HTTP " + status + "）：" + head;
+  if (status === 404) return "端点地址不对（HTTP 404）：" + head;
+  if (status === 429) return "端点限流了（HTTP 429），等一会儿再试：" + head;
+  return "端点返回 HTTP " + status + "：" + head;
+}
+
+/** 发一次请求并解析 JSON；任何失败都抛一句人话（调用方包在回合里，异常即回滚） */
+async function requestModel(
+  opts: { endpoint: string; model: string; key: string; messages: readonly ChatMessage[]; tools: readonly AiTool[] },
+  fetchFn: ChatFetch,
+): Promise<unknown> {
+  const body: Record<string, unknown> = { model: opts.model, messages: opts.messages };
+  if (opts.tools.length) body.tools = toOpenAiTools(opts.tools);
+  let res: ChatFetchResponse;
+  try {
+    res = await fetchFn(chatCompletionsUrl(opts.endpoint), {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + opts.key },
+      body: JSON.stringify(body),
+    });
+  } catch (e) {
+    throw new Error("连不上端点（" + message(e) + "）：检查端点地址和这台设备的网络");
+  }
+  let text = "";
+  try {
+    text = await res.text();
+  } catch (e) {
+    throw new Error("读端点响应失败：" + message(e));
+  }
+  if (!res.ok) throw new Error(httpError(res.status, text));
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new Error("端点返回的不是 JSON（HTTP " + res.status + "）：" + clip(text.replace(/\s+/g, " ").trim(), 120));
+  }
+  const err = parsed && typeof parsed === "object" ? (parsed as { error?: unknown }).error : null;
+  if (err) {
+    const m = err && typeof err === "object" ? (err as { message?: unknown }).message : err;
+    throw new Error("端点报错：" + (typeof m === "string" && m ? m : JSON.stringify(err)));
+  }
+  return parsed;
+}
+
+// ------------------------------------------------------------------ 整轮
+
+/** 从最后一条用户消息取历史标签（空 → `AI_CHAT_LABEL_FALLBACK`） */
+export function defaultTurnLabel(messages: readonly ChatMessage[]): string {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role !== "user") continue;
+    const text = String(messages[i].content ?? "").replace(/\s+/g, " ").trim();
+    if (text) return text.length > AI_CHAT_LABEL_MAX ? text.slice(0, AI_CHAT_LABEL_MAX) : text;
+  }
+  return AI_CHAT_LABEL_FALLBACK;
+}
+
+function docRevOf(ctx: AiToolCtx): number {
+  const d = (ctx.session as unknown as { doc?: { pixelRev?: number } } | null)?.doc;
+  return typeof d?.pixelRev === "number" ? d.pixelRev : 0;
+}
+
+/** 历史里已有多少步（用来判断 `commitTurn()` 真的落了一条，而不是靠猜） */
+function historyLen(ctx: AiToolCtx): number {
+  const h = (ctx.session as unknown as { history?: { list?(): { labels: string[] } } } | null)?.history;
+  try {
+    const l = h?.list?.();
+    return l && Array.isArray(l.labels) ? l.labels.length : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function clampRounds(n: number | undefined): number {
+  const v = Math.round(Number(n));
+  if (!Number.isFinite(v) || v <= 0) return AI_CHAT_DEFAULT_MAX_ROUNDS;
+  return Math.max(1, Math.min(AI_CHAT_MAX_ROUNDS, v));
+}
+
+/**
+ * 跑完一整轮：请求模型 → 有 `tool_calls` 就按顺序 `callTool` 并把结果回灌 → 再请求，
+ * 直到模型只回文本（或到达 `maxRounds` / 调用次数上限）。
+ *
+ * 回合由这一层打开：`commit` 缺省走 `runAiTurn()`（一轮一条 undo），`commit:false` 走
+ * 「开着回合交给 UI」的预览模式 —— 失败路径两种模式都一样 rollback。
+ */
+export async function runChatTurn(opts: ChatTurnOpts): Promise<ChatTurnResult> {
+  const commit = opts.commit !== false;
+  let messages = opts.messages.slice();
+  const calls: ChatCallLog[] = [];
+  const ctx: AiToolCtx = { ...opts.ctx, turn: opts.ctx.turn ?? turnHandle() };
+  const tools = (opts.tools ?? listTools({ tiers: AI_CHAT_TOOL_TIERS.slice() })).slice();
+  const maxRounds = clampRounds(opts.maxRounds);
+  const label = (opts.label && opts.label.trim()) || defaultTurnLabel(messages);
+  const docRevBefore = docRevOf(ctx);
+  const histBefore = historyLen(ctx);
+
+  const fail = (error: string, rounds: number, stop: ChatStopReason = "text"): ChatTurnResult => ({
+    ok: false, error, text: "", messages, calls, rounds, stop,
+    turnOpen: isTurnOpen(), recorded: false, docRev: docRevOf(ctx), docRevBefore,
+  });
+
+  const cfgErr = chatConfigError({ endpoint: opts.endpoint, model: opts.model, key: opts.key ?? "" });
+  if (cfgErr) {
+    // 配置不全时**连回合都不开**：文档一个字节不动，历史也不会多出空步骤
+    return fail(cfgErr, 0);
+  }
+
+  let text = "";
+  let rounds = 0;
+  let stop: ChatStopReason = "text";
+
+  const body = async (): Promise<void> => {
+    for (let round = 0; round < maxRounds; round++) {
+      rounds = round + 1;
+      const response = await requestModel({
+        endpoint: opts.endpoint, model: opts.model, key: opts.key ?? "", messages, tools,
+      }, opts.fetchFn);
+      messages.push(assistantMessage(response));
+      const parsed = parseToolCalls(response);
+      const said = responseText(response);
+      if (said.trim()) text = said.trim();
+      if (!parsed.length) { stop = "text"; return; }         // 模型不再要求调用：这一轮结束
+      for (const call of parsed) {
+        if (calls.length >= AI_CHAT_MAX_CALLS) { stop = "maxCalls"; return; }
+        const before = docRevOf(ctx);
+        let result: AiToolResult;
+        if (call.error) {
+          // 参数都不能解析：**不要**拿一个空参数去调工具（那会真的改到画布）
+          result = { ok: false, error: call.error };
+        } else {
+          result = await callTool(call.name, call.args, ctx);
+        }
+        const log: ChatCallLog = {
+          id: call.id, name: call.name, args: call.args,
+          ok: result.ok !== false,
+          changed: result.changed ?? null,
+          docRev: docRevOf(ctx),
+          revDelta: 0,
+          ...(result.error ? { error: result.error } : {}),
+          ...(call.error ? { parseError: call.error } : {}),
+        };
+        log.revDelta = log.docRev - before;
+        calls.push(log);
+        opts.onCall?.(log, calls.length - 1);
+        messages = appendToolResult(messages, call, result);
+      }
+    }
+    stop = "maxRounds";
+  };
+
+  if (commit) {
+    const r = await runAiTurn(label, body);
+    if (!r.ok) return fail(message(r.error), rounds);
+    return {
+      ok: true, text: fallbackText(text, calls, stop, maxRounds), messages, calls, rounds, stop,
+      // 落没落历史由 History 自己说了算（只读回合 / 无改动时 runAiTurn 也是 ok:true）
+      turnOpen: false, recorded: historyLen(ctx) > histBefore, docRev: docRevOf(ctx), docRevBefore,
+    };
+  }
+  // 预览模式：回合开着交给 UI（点「应用」才 commitTurn、「放弃」才 rollbackTurn）
+  const turnId = beginAiTurn(label);
+  if (turnId <= 0) return fail("AI 回合没能打开（没有绑定会话）", 0);
+  try {
+    await body();
+  } catch (e) {
+    rollbackTurn(); // 失败一律回到回合开始：文档不变、历史不变
+    return fail(message(e), rounds);
+  }
+  return {
+    ok: true, text: fallbackText(text, calls, stop, maxRounds), messages, calls, rounds, stop,
+    turnOpen: isTurnOpen(), recorded: false, docRev: docRevOf(ctx), docRevBefore,
+  };
+}
+
+/** 模型只调工具不说话时，也要给用户一句「它干了什么」 */
+function fallbackText(text: string, calls: readonly ChatCallLog[], stop: ChatStopReason, maxRounds: number): string {
+  if (text) return text;
+  if (stop === "maxRounds") return "达到最大轮数（" + maxRounds + "），已经停下。这一轮改了 " + changedCount(calls) + " 处画面。";
+  if (stop === "maxCalls") return "工具调用次数到达上限，已经停下。这一轮改了 " + changedCount(calls) + " 处画面。";
+  if (calls.length) return "模型只调用了工具，没有给出说明（共 " + calls.length + " 次调用）。";
+  return "模型没有返回任何内容。";
+}
+
+/** 有过实际像素改动的调用次数（UI 与兜底文案共用） */
+export function changedCount(calls: readonly ChatCallLog[]): number {
+  return calls.filter((c) => c.revDelta > 0 || c.changed).length;
+}
+
+/** 一次工具调用的一句话摘要（纯文本，和 ai-tools 的 `summarizeToolCall` 同一风格） */
+export function formatCallLog(log: ChatCallLog): string {
+  const bits: string[] = [log.name];
+  bits.push(log.ok ? "成功" : "失败");
+  if (log.parseError) bits.push("模型给的参数不是合法 JSON");
+  if (log.error && !log.parseError) bits.push(log.error);
+  if (log.changed) bits.push("改动 " + log.changed.w + "×" + log.changed.h + " 像素");
+  if (log.revDelta > 0) bits.push("docRev " + (log.docRev - log.revDelta) + "→" + log.docRev);
+  return bits.join(" · ");
+}
+
+// ------------------------------------------------------------------ 小工具
+
+/** 可读的异常信息（非 Error 也能读） */
+export function message(e: unknown): string {
+  if (e instanceof Error && e.message) return e.message;
+  if (typeof e === "string" && e) return e;
+  try {
+    return JSON.stringify(e);
+  } catch {
+    return String(e);
+  }
+}
+
+function clip(s: string, max: number): string {
+  const text = String(s ?? "");
+  return text.length > max ? text.slice(0, max) + "…（已截断）" : text;
+}
+
+function describe(v: unknown): string {
+  if (v === null) return "null";
+  if (Array.isArray(v)) return "数组";
+  return typeof v;
+}

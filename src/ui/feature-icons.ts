@@ -20,6 +20,8 @@ export const FEATURE_ICONS = {
     recover: "i-recover",
     colorAdv: "i-cadv",
     iso: "i-iso",
+    /** 应用内助手（C5）：只说一句话就让 AI 画 —— 绝对不能用「设置 / 更新日志」的图标 */
+    aiChat: "i-ai-chat",
     settings: "i-gear",
     shortcuts: "i-keys",
     customise: "i-grid",
