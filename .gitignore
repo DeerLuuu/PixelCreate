@@ -21,6 +21,9 @@ tests/.ts-out/
 !/toolchain/check-bundle.mjs
 !/toolchain/stress-stroke.mjs
 !/toolchain/ai-server.mjs
+!/toolchain/pc-mcp.mjs
+!/toolchain/pc-shell.mjs
+!/toolchain/pc-shell.cmd
 
 # ---- self-contained web build deps (npm install in repo root) ----
 node_modules/
