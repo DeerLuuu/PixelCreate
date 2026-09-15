@@ -97,7 +97,7 @@ java -jar /root/pk/apksigner.jar verify --print-certs /sdcard/Download/PixelCraf
 - **手势判定与触点会话状态全在两个 `src/servers/` 文件里（四片搬完，P5 收尾）**：
   · `input.ts`（`InputServer` 第一片）= 策略与算术的**纯函数**：鼠标按键意图、pinch 解算（中点不动点）、
     四指划动判定、长按策略、点击容差 —— 口径见 `docs/API.md` §15c。
-  · `gesture.ts`（第二、三片）= **轻点序列状态机** `TapMachine`（单击 / 双击边距·画布·换画布 / 三击 /
+  · `gesture.ts`（第二～四片）= **轻点序列状态机** `TapMachine`（单击 / 双击边距·画布·换画布 / 三击 /
     双指双击，容差 480ms·64px·80px，`up()` 返回 `TapOutcome`；口径与**一个已知问题（画布内三击够不到）**
     见 `docs/API.md` §15c2，`tests/gesture.test.ts` 钉住现状）+ **指针事件入口** `GestureController`
     （`onDown` / `onMove` / `onUp` / `onCancel` 整体搬来，约 850 行；**触点会话状态也是控制器的字段**
