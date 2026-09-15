@@ -41,8 +41,12 @@ interface XfG {
 interface Grab { kind: XfKind; anchor?: AnchorId; x: number; y: number }
 interface VX {
   ox: number; oy: number; zoom: number;
-  xf: XfG | null;
-  xfDrag: { kind: XfKind; anchor?: AnchorId } | null;
+  /** 手势控制器：触点会话状态（`xf` / `xfDrag` / `panLast` …）由它持有 */
+  gesture: {
+    xf: XfG | null;
+    xfDrag: { kind: XfKind; anchor?: AnchorId } | null;
+    panLast: unknown;
+  };
   lastWarpError: "noSel" | "tooThin" | "locked" | null;
   onDown(e: PointerEvent): void; onMove(e: PointerEvent): void; onUp(e: PointerEvent): void;
   xfScreenFrame(): { corners: Array<{ x: number; y: number }>; angle: number; spanX: number; spanY: number } | null;
@@ -128,13 +132,13 @@ export function testXformUi(): void {
    * 所以这里按 `(y * w + x) * 4 + 3` 读 alpha —— 不是别的偏移。
    */
   const previewAt = (s: Session, x: number, y: number): boolean => {
-    const g = (s.view as unknown as VX | null)?.xf;
+    const g = (s.view as unknown as VX | null)?.gesture.xf;
     if (!g || !g.buf) return false;
     return g.buf[(y * s.doc.w + x) * 4 + 3] > 0;
   };
   /** 会话里的**浮动预览**覆盖的画布像素范围（没有预览时返回 null） */
   const previewBox = (v: VX): { x0: number; y0: number; x1: number; y1: number } | null => {
-    const g = v.xf;
+    const g = v.gesture.xf;
     if (!g || !g.buf) return null;
     let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
     for (let y = 0; y < 64; y++) {
@@ -352,14 +356,14 @@ export function testXformUi(): void {
     const pc0 = pivotOfFrame(piv.v)!;
     piv.v.onDown(ev(pc0.x, pc0.y));
     dom.flush();
-    eq("xformui.grab.centre-is-pivot", piv.v.xfDrag?.kind, "pivot");
-    const keep0 = [piv.v.xf!.tp!.pivot.x, piv.v.xf!.tp!.pivot.y];
+    eq("xformui.grab.centre-is-pivot", piv.v.gesture.xfDrag?.kind, "pivot");
+    const keep0 = [piv.v.gesture.xf!.tp!.pivot.x, piv.v.gesture.xf!.tp!.pivot.y];
     piv.v.onMove(ev(pc0.x + 24, pc0.y + 24));
     dom.flush();
     ok("xformui.grab.pivot-drag-moved",
-      !!piv.v.xf && piv.v.xf.tp!.pivot.x !== keep0[0] && piv.v.xf.tp!.pivot.y !== keep0[1],
-      piv.v.xf ? JSON.stringify([piv.v.xf.tp!.pivot.x, piv.v.xf.tp!.pivot.y, keep0]) : "no-session");
-    eq("xformui.grab.pivot-not-scale", piv.v.xfDrag?.kind, "pivot");
+      !!piv.v.gesture.xf && piv.v.gesture.xf.tp!.pivot.x !== keep0[0] && piv.v.gesture.xf.tp!.pivot.y !== keep0[1],
+      piv.v.gesture.xf ? JSON.stringify([piv.v.gesture.xf.tp!.pivot.x, piv.v.gesture.xf.tp!.pivot.y, keep0]) : "no-session");
+    eq("xformui.grab.pivot-not-scale", piv.v.gesture.xfDrag?.kind, "pivot");
     piv.v.onUp(ev(pc0.x + 24, pc0.y + 24));
     piv.v.revertXf();
     // 小选区上枢轴压在框中心、抓手离得更近：**最近的赢** → 正中那一下仍然是枢轴
@@ -372,7 +376,7 @@ export function testXformUi(): void {
     const pc1 = pivotOfFrame(piv2.v)!;
     piv2.v.onDown(ev(pc1.x, pc1.y));
     dom.flush();
-    eq("xformui.grab.small-centre-is-pivot", piv2.v.xfDrag?.kind, "pivot");
+    eq("xformui.grab.small-centre-is-pivot", piv2.v.gesture.xfDrag?.kind, "pivot");
     piv2.v.onUp(ev(pc1.x, pc1.y));
     piv2.v.revertXf();
     // 拖动过程中**已显示的抓手不得消失**（kind → anchor 的映射整场不变）
@@ -382,8 +386,8 @@ export function testXformUi(): void {
     const rotGrab = use.v.xfGrabs().find((g) => g.kind === "rotate" && g.anchor === "tl")!;
     use.v.onDown(ev(rotGrab.x, rotGrab.y));
     dom.flush();
-    eq("xformui.grab.rotate-grab-kind", use.v.xfDrag?.kind, "rotate");
-    eq("xformui.grab.rotate-grab-anchor", use.v.xfDrag?.anchor, "tl");
+    eq("xformui.grab.rotate-grab-kind", use.v.gesture.xfDrag?.kind, "rotate");
+    eq("xformui.grab.rotate-grab-anchor", use.v.gesture.xfDrag?.anchor, "tl");
     use.v.onMove(ev(rotGrab.x + 40, rotGrab.y + 24));
     dom.flush();
     eq("xformui.grab.stable-during-drag", use.v.xfGrabs().map((g) => g.kind + ":" + g.anchor), before);
@@ -450,16 +454,16 @@ export function testXformUi(): void {
     const tlCorner0 = { x: f0.corners[0].x, y: f0.corners[0].y };
     v.onDown(ev(brGrab.x, brGrab.y, "mouse"));
     dom.flush();
-    eq("xformui.scale.enter-kind", v.xfDrag?.kind, "scale");
-    eq("xformui.scale.enter-anchor", v.xfDrag?.anchor, "br");
-    eq("xformui.scale.enter-hidden", v.xf!.cut, false);      // 只按下去不改图层
+    eq("xformui.scale.enter-kind", v.gesture.xfDrag?.kind, "scale");
+    eq("xformui.scale.enter-anchor", v.gesture.xfDrag?.anchor, "br");
+    eq("xformui.scale.enter-hidden", v.gesture.xf!.cut, false);      // 只按下去不改图层
     eq("xformui.scale.enter-pixels", diffBytes(celData(s), pristine), 0);
     const dx = 22, dy = 16;                                  // 屏幕像素 (= 5.5 / 4 格)
     const finger = { x: brGrab.x + dx, y: brGrab.y + dy };
     v.onMove(ev(finger.x, finger.y, "mouse"));
     dom.flush();
-    ok("xformui.scale.grew", v.xf!.tp!.sx > 1.2 && v.xf!.tp!.sy > 1.2,
-      JSON.stringify([v.xf!.tp!.sx, v.xf!.tp!.sy]));
+    ok("xformui.scale.grew", v.gesture.xf!.tp!.sx > 1.2 && v.gesture.xf!.tp!.sy > 1.2,
+      JSON.stringify([v.gesture.xf!.tp!.sx, v.gesture.xf!.tp!.sy]));
     // **跟手**：被抓的那个抓手图标跟着指针走（图标画在框角外 6px，所以最多差 ~7px）
     {
       const g1 = v.xfGrabs().find((q) => q.kind === "scale" && q.anchor === "br")!;
@@ -497,8 +501,8 @@ export function testXformUi(): void {
     const brA = a.v.xfGrabs().find((g) => g.kind === "scale" && g.anchor === "br")!;
     a.v.onDown(ev(brA.x, brA.y, "mouse"));
     dragBy(a.v, { x: brA.x, y: brA.y }, 16, 0, true);            // 只往右
-    ok("xformui.scale.free-axis", a.v.xf!.tp!.sx > 1.2 && a.v.xf!.tp!.sy === 1,
-      JSON.stringify([a.v.xf!.tp!.sx, a.v.xf!.tp!.sy]));
+    ok("xformui.scale.free-axis", a.v.gesture.xf!.tp!.sx > 1.2 && a.v.gesture.xf!.tp!.sy === 1,
+      JSON.stringify([a.v.gesture.xf!.tp!.sx, a.v.gesture.xf!.tp!.sy]));
     a.v.revertXf();
     const b = mk(true);
     paint(b.s, 10, 10, 6, 4);
@@ -508,8 +512,8 @@ export function testXformUi(): void {
     dragBy(b.v, { x: brB2.x, y: brB2.y }, 16, 0, true);
     // 等比：两轴取同一个倍率（变化更大的那一轴说了算）
     ok("xformui.scale.aspect-chip",
-      b.v.xf!.tp!.sx > 1.2 && Math.abs(b.v.xf!.tp!.sx - b.v.xf!.tp!.sy) < 1e-9,
-      JSON.stringify([b.v.xf!.tp!.sx, b.v.xf!.tp!.sy]));
+      b.v.gesture.xf!.tp!.sx > 1.2 && Math.abs(b.v.gesture.xf!.tp!.sx - b.v.gesture.xf!.tp!.sy) < 1e-9,
+      JSON.stringify([b.v.gesture.xf!.tp!.sx, b.v.gesture.xf!.tp!.sy]));
     b.v.revertXf();
     b.s.setSetting("tools.selXformAspect", false);
 
@@ -529,12 +533,12 @@ export function testXformUi(): void {
     c.v.onDown(ev(cStart.x, cStart.y, "mouse"));
     dom.flush();
     c.v.onMove(ev(sc(16, 16).x, sc(16, 16).y, "mouse"));   // 还没过收敛点：正倍率
-    const before = [c.v.xf!.tp!.sx, c.v.xf!.tp!.sy];
+    const before = [c.v.gesture.xf!.tp!.sx, c.v.gesture.xf!.tp!.sy];
     c.v.onMove(ev(sc(12, 12).x, sc(12, 12).y, "mouse"));   // 越过收敛点：翻负
     c.v.onUp(ev(sc(12, 12).x, sc(12, 12).y, "mouse"));
     dom.flush();
     {
-      const got = [c.v.xf!.tp!.sx, c.v.xf!.tp!.sy];
+      const got = [c.v.gesture.xf!.tp!.sx, c.v.gesture.xf!.tp!.sy];
       ok("xformui.scale.mirror", before.every((n) => n > 0) && got.every((n) => n < 0),
         JSON.stringify({ before, after: got }));
     }
@@ -558,8 +562,8 @@ export function testXformUi(): void {
     dragBy(e.v, { x: brE.x, y: brE.y }, 16, 8, true);
     // 网格吸附：倍率被吸到整数
     ok("xformui.scale.grid-snap",
-      Number.isInteger(e.v.xf!.tp!.sx) && Number.isInteger(e.v.xf!.tp!.sy) && e.v.xf!.tp!.sx >= 1,
-      JSON.stringify([e.v.xf!.tp!.sx, e.v.xf!.tp!.sy]));
+      Number.isInteger(e.v.gesture.xf!.tp!.sx) && Number.isInteger(e.v.gesture.xf!.tp!.sy) && e.v.gesture.xf!.tp!.sx >= 1,
+      JSON.stringify([e.v.gesture.xf!.tp!.sx, e.v.gesture.xf!.tp!.sy]));
     e.v.revertXf();
     e.s.setSetting("tools.selXformGridSnap", false);
   }
@@ -581,11 +585,11 @@ export function testXformUi(): void {
     const grab = rotGrabAt(v, "tl");
     s.setSetting("tools.selXformAngleSnap", true);
     dragRotate(v, grab, (30 * Math.PI) / 180);
-    ok("xformui.rot.session-alive", !!v.xf, "session");
-    ok("xformui.rot.preview-alive", !!v.xf && (v.xf.cells || []).length > 0,
-      String(v.xf ? (v.xf.cells || []).length : -1));
-    if (v.xf) {
-      const deg = (v.xf.tp!.angle * 180) / Math.PI;
+    ok("xformui.rot.session-alive", !!v.gesture.xf, "session");
+    ok("xformui.rot.preview-alive", !!v.gesture.xf && (v.gesture.xf.cells || []).length > 0,
+      String(v.gesture.xf ? (v.gesture.xf.cells || []).length : -1));
+    if (v.gesture.xf) {
+      const deg = (v.gesture.xf.tp!.angle * 180) / Math.PI;
       // 吸附开着时角度必须**正好等于表里的某个干净角**（0 / 26.565 / 45 / 63.435 / 90 …）：
       // 直接跟 `CLEAN_ANGLES_DEG` 逐项比，误差小于 1e-9 —— `snapCleanAngle()` 是
       // 精确吸附到刻度（不是「大致靠近」），所以这里用等值断言，不用区间。
@@ -602,8 +606,8 @@ export function testXformUi(): void {
     paint(a.s, 10, 10, 8, 8);
     a.s.setSetting("tools.selXformAngleSnap", true);
     dragRotate(a.v, rotGrabAt(a.v, "tl"), (30 * Math.PI) / 180);
-    ok("xformui.rot.clean-26", !!a.v.xf && (a.v.xf.cells || []).length > 0,
-      a.v.xf ? String((a.v.xf.tp!.angle * 180) / Math.PI) : "no-session");
+    ok("xformui.rot.clean-26", !!a.v.gesture.xf && (a.v.gesture.xf.cells || []).length > 0,
+      a.v.gesture.xf ? String((a.v.gesture.xf.tp!.angle * 180) / Math.PI) : "no-session");
     a.v.revertXf();
 
     const b = mk(true);
@@ -611,8 +615,8 @@ export function testXformUi(): void {
     b.s.setSetting("tools.selXformAngleSnap", false);
     dragRotate(b.v, rotGrabAt(b.v, "tl"), (30 * Math.PI) / 180);
     ok("xformui.rot.free-30",
-      !!b.v.xf && Math.abs(Math.abs((b.v.xf.tp!.angle * 180) / Math.PI)) > 10,
-      b.v.xf ? String((b.v.xf.tp!.angle * 180) / Math.PI) : "no-session");
+      !!b.v.gesture.xf && Math.abs(Math.abs((b.v.gesture.xf.tp!.angle * 180) / Math.PI)) > 10,
+      b.v.gesture.xf ? String((b.v.gesture.xf.tp!.angle * 180) / Math.PI) : "no-session");
     b.v.revertXf();
   }
 
@@ -623,14 +627,14 @@ export function testXformUi(): void {
     const top = anchorScreen(v, "t");
     v.onDown(ev(top.x, top.y - 30, "mouse"));      // 边中点的外圈（22..34px）＝斜切
     dom.flush();
-    eq("xformui.skew.kind", v.xfDrag?.kind, "skew");
-    eq("xformui.skew.anchor", v.xfDrag?.anchor, "t");
+    eq("xformui.skew.kind", v.gesture.xfDrag?.kind, "skew");
+    eq("xformui.skew.anchor", v.gesture.xfDrag?.anchor, "t");
     // 往右拖 8 格：基准线在**对面那条边**（下边 y=9），所以被拖的上边整条跟着走 8 格、
     // 下边一动不动 —— `tan = −Δ / 跨度 = −8 / 9`
     v.onMove(ev(top.x + 32, top.y - 30, "mouse"));
     dom.flush();
-    ok("xformui.skew.tan", Math.abs(v.xf!.tp!.skewX! + 8 / 9) < 1e-9, String(v.xf!.tp!.skewX));
-    ok("xformui.skew.preview-alive", (v.xf!.cells || []).length > 0, String((v.xf!.cells || []).length));
+    ok("xformui.skew.tan", Math.abs(v.gesture.xf!.tp!.skewX! + 8 / 9) < 1e-9, String(v.gesture.xf!.tp!.skewX));
+    ok("xformui.skew.preview-alive", (v.gesture.xf!.cells || []).length > 0, String((v.gesture.xf!.cells || []).length));
     v.onUp(ev(top.x + 32, top.y - 30, "mouse"));
     v.commitXf();
     eq("xformui.skew.history", s.history.list().labels, ["sel.skew"]);
@@ -641,15 +645,15 @@ export function testXformUi(): void {
     paint(a.s, 10, 10, 9, 9);
     dragBy(a.v, { x: anchorScreen(a.v, "t").x, y: anchorScreen(a.v, "t").y - 30 }, 100000, 0, true);
     ok("xformui.skew.clamp-pos",
-      a.v.xf ? Math.abs(a.v.xf.tp!.skewX! + Math.tan((85 * Math.PI) / 180)) < 1e-9 : false,
-      a.v.xf ? String(a.v.xf.tp!.skewX) : "no-session");
+      a.v.gesture.xf ? Math.abs(a.v.gesture.xf.tp!.skewX! + Math.tan((85 * Math.PI) / 180)) < 1e-9 : false,
+      a.v.gesture.xf ? String(a.v.gesture.xf.tp!.skewX) : "no-session");
     a.v.revertXf();
     const b = mk(true);
     paint(b.s, 10, 10, 9, 9);
     dragBy(b.v, { x: anchorScreen(b.v, "t").x, y: anchorScreen(b.v, "t").y - 30 }, -100000, 0, true);
     ok("xformui.skew.clamp-neg",
-      b.v.xf ? Math.abs(b.v.xf.tp!.skewX! - Math.tan((85 * Math.PI) / 180)) < 1e-9 : false,
-      b.v.xf ? String(b.v.xf.tp!.skewX) : "no-session");
+      b.v.gesture.xf ? Math.abs(b.v.gesture.xf.tp!.skewX! - Math.tan((85 * Math.PI) / 180)) < 1e-9 : false,
+      b.v.gesture.xf ? String(b.v.gesture.xf.tp!.skewX) : "no-session");
     b.v.revertXf();
 
     // 左右边中点的外圈走纵轴（skewY）：不动线＝对面那条边（右/左侧），力臂＝整宽 9
@@ -657,8 +661,8 @@ export function testXformUi(): void {
     paint(c.s, 10, 10, 9, 9);
     dragBy(c.v, { x: anchorScreen(c.v, "l").x - 30, y: anchorScreen(c.v, "l").y }, 0, 32, true);
     ok("xformui.skew.y-axis",
-      !!c.v.xf && Math.abs(c.v.xf.tp!.skewY! + 8 / 9) < 1e-9 && c.v.xf.tp!.skewX === 0,
-      c.v.xf ? JSON.stringify([c.v.xf.tp!.skewY, c.v.xf.tp!.skewX]) : "no-session");
+      !!c.v.gesture.xf && Math.abs(c.v.gesture.xf.tp!.skewY! + 8 / 9) < 1e-9 && c.v.gesture.xf.tp!.skewX === 0,
+      c.v.gesture.xf ? JSON.stringify([c.v.gesture.xf.tp!.skewY, c.v.gesture.xf.tp!.skewX]) : "no-session");
     c.v.revertXf();
   }
 
@@ -674,18 +678,18 @@ export function testXformUi(): void {
     eq("xformui.pivot.default-centre", v.pivotPreset(), "cc");
     // 枢轴是**内容外框坐标**（内容左上角＝`st.ox`）：9×9 的内容外框是 `0..9`，
     // 所以中心＝ (4.5, 4.5)（＝屏幕上的内容正中，也就是「外框中心」预设）
-    eq("xformui.pivot.default-at", [v.xf!.tp!.pivot.x, v.xf!.tp!.pivot.y], [4.5, 4.5]);
+    eq("xformui.pivot.default-at", [v.gesture.xf!.tp!.pivot.x, v.gesture.xf!.tp!.pivot.y], [4.5, 4.5]);
     const before = new Uint8ClampedArray(celData(s));
     v.onDown(ev(pv.x, pv.y, "mouse"));
     dom.flush();
-    eq("xformui.pivot.kind", v.xfDrag?.kind, "pivot");
+    eq("xformui.pivot.kind", v.gesture.xfDrag?.kind, "pivot");
     v.onMove(ev(sc(0, 0).x, sc(0, 0).y, "mouse"));
     dom.flush();
     // 指针拖到屏幕 (8,8)：枢轴按指针位移累计移动，被钳在框外 2 格（不会被拖丢），
     // 所以观测落点是 (-2,-2)；屏幕坐标与枢轴坐标的换算是 `(p + st.ox)·zoom + ox`
-    eq("xformui.pivot.moved-to", [v.xf!.tp!.pivot.x, v.xf!.tp!.pivot.y], [-2, -2]);
+    eq("xformui.pivot.moved-to", [v.gesture.xf!.tp!.pivot.x, v.gesture.xf!.tp!.pivot.y], [-2, -2]);
     eq("xformui.pivot.picture-still", diffBytes(celData(s), before), 0);
-    eq("xformui.pivot.touched", v.xf!.pivotTouched, true);
+    eq("xformui.pivot.touched", v.gesture.xf!.pivotTouched, true);
     v.onUp(ev(sc(0, 0).x, sc(0, 0).y, "mouse"));
     dom.flush();
     eq("xformui.pivot.preset-tl", v.pivotPreset(), "tl");
@@ -758,7 +762,7 @@ export function testXformUi(): void {
       ok("xformui.pivot.follows-move",
         near(Math.round(pv1.x - pv0.x), Math.round(step)) && near(Math.round(pv1.y - pv0.y), 0),
         JSON.stringify([pv0, pv1, step]));
-      eq("xformui.pivot.move-shift", [d.v.xf!.tp!.shift?.x, d.v.xf!.tp!.shift?.y], [4, 0]);
+      eq("xformui.pivot.move-shift", [d.v.gesture.xf!.tp!.shift?.x, d.v.gesture.xf!.tp!.shift?.y], [4, 0]);
       // 框也要一起走（锚点跟着内容）
       const f1 = d.v.xfScreenFrame()!;
       ok("xformui.frame.follows-move",
@@ -772,12 +776,12 @@ export function testXformUi(): void {
       paint(e.s, 10, 10, 8, 6);
       const brE = anchorScreen(e.v, "br");
       dragBy(e.v, { x: brE.x, y: brE.y }, 32, 16, true);      // 先放大：sx/sy > 1
-      ok("xformui.pivot.drag-needs-scale", e.v.xf!.tp!.sx > 1.2, String(e.v.xf!.tp!.sx));
+      ok("xformui.pivot.drag-needs-scale", e.v.gesture.xf!.tp!.sx > 1.2, String(e.v.gesture.xf!.tp!.sx));
       const pv2 = e.v.xfPivotScreen()!;
       const ddx = 20, ddy = -12;
       e.v.onDown(ev(pv2.x, pv2.y, "mouse"));
       dom.flush();
-      eq("xformui.pivot.drag-kind", e.v.xfDrag?.kind, "pivot");
+      eq("xformui.pivot.drag-kind", e.v.gesture.xfDrag?.kind, "pivot");
       e.v.onMove(ev(pv2.x + ddx, pv2.y + ddy, "mouse"));
       e.v.onUp(ev(pv2.x + ddx, pv2.y + ddy, "mouse"));
       dom.flush();
@@ -826,7 +830,7 @@ export function testXformUi(): void {
       a.v.onUp(ev(c.x + 6, c.y + 6, "mouse"));
       // 小选区上枢轴被内外圈抓手压住（点不到），用显式入口把它钉到框中点偏一点
       ok("xformui.pivot.dragged", a.v.setXfPivotAt(2, 3), "pivot 移到 (2,3)");
-      const keep = [a.v.xf!.tp!.pivot.x, a.v.xf!.tp!.pivot.y];
+      const keep = [a.v.gesture.xf!.tp!.pivot.x, a.v.gesture.xf!.tp!.pivot.y];
       // 会话已经开着：直接抓「右上角的外圈」（内圈 22px 外、外圈 34px 内）
       const tr = anchorScreen(a.v, "tr");
       const pv = a.v.xfPivotScreen()!;
@@ -841,8 +845,8 @@ export function testXformUi(): void {
       a.v.onUp(ev(to.x, to.y, "mouse"));
       dom.flush();
       ok("xformui.pivot.rotate-keeps",
-        !!a.v.xf && a.v.xf.tp!.pivot.x === keep[0] && a.v.xf.tp!.pivot.y === keep[1],
-        a.v.xf ? JSON.stringify([a.v.xf.tp!.pivot.x, a.v.xf.tp!.pivot.y, keep]) : "no-session");
+        !!a.v.gesture.xf && a.v.gesture.xf.tp!.pivot.x === keep[0] && a.v.gesture.xf.tp!.pivot.y === keep[1],
+        a.v.gesture.xf ? JSON.stringify([a.v.gesture.xf.tp!.pivot.x, a.v.gesture.xf.tp!.pivot.y, keep]) : "no-session");
     }
     // 9 档循环 ＋ 与引擎侧的档位表一致
     eq("xformui.pivot.order-matches-engine", [...PIVOT_ORDER], [...PIVOT_PRESETS]);
@@ -856,7 +860,7 @@ export function testXformUi(): void {
       eq("xformui.pivot.cycle-2", b.v.cyclePivot(), "bl");
       ok("xformui.pivot.cycle-sets", b.v.setPivotPreset("br"));
       // 外框口径：9×9 的内容外框是 `0..9`，右下角＝ (9,9)
-      eq("xformui.pivot.cycle-br", [b.v.xf!.tp!.pivot.x, b.v.xf!.tp!.pivot.y], [9, 9]);
+      eq("xformui.pivot.cycle-br", [b.v.gesture.xf!.tp!.pivot.x, b.v.gesture.xf!.tp!.pivot.y], [9, 9]);
       const c = mk(true);
       eq("xformui.pivot.no-session", c.v.pivotPreset(), null);
       eq("xformui.pivot.no-session-set", c.v.setPivotPreset("tl"), false);
@@ -876,11 +880,11 @@ export function testXformUi(): void {
     v.onMove(ev(start.x + 16, start.y + 12, "mouse"));
     v.onUp(ev(start.x + 16, start.y + 12, "mouse"));
     dom.flush();
-    if (v.xf) {
+    if (v.gesture.xf) {
       // 纯整数平移一定走像素精确通道（dx / dy 与拖动格数一致）
-      eq("xformui.exact.move-shift", [v.xf.tp!.shift?.x, v.xf.tp!.shift?.y], [4, 3]);
-      ok("xformui.exact.move-path", !!v.xf.exact && Number.isInteger(v.xf.exact.dx)
-        && Number.isInteger(v.xf.exact.dy), JSON.stringify(v.xf.exact));
+      eq("xformui.exact.move-shift", [v.gesture.xf.tp!.shift?.x, v.gesture.xf.tp!.shift?.y], [4, 3]);
+      ok("xformui.exact.move-path", !!v.gesture.xf.exact && Number.isInteger(v.gesture.xf.exact.dx)
+        && Number.isInteger(v.gesture.xf.exact.dy), JSON.stringify(v.gesture.xf.exact));
       // 逐字节精确：源像素原样出现在新位置（不重采样、不插值）
       const bi = beginMove(s.doc, s.curLayer(), s.curFrame())!;
       const content = bi.content;
@@ -890,7 +894,7 @@ export function testXformUi(): void {
           const si = content.idx(x, y);
           if (content.data[si + 3] === 0) continue;
           const o = ((10 + 3 + y) * s.doc.w + (10 + 4 + x)) * 4;
-          if (v.xf.buf![o] !== content.data[si] || v.xf.buf![o + 1] !== content.data[si + 1]) wrong++;
+          if (v.gesture.xf.buf![o] !== content.data[si] || v.gesture.xf.buf![o + 1] !== content.data[si + 1]) wrong++;
         }
       }
       eq("xformui.exact.move-bytes", wrong, 0);
@@ -933,7 +937,7 @@ export function testXformUi(): void {
     dragBy(a.v, { x: brA.x + 6, y: brA.y + 6 }, 12, 8, true);
     ok("xformui.revert.moved", diffBytes(celData(a.s), pristineA) > 0, "should have changed");
     a.v.revertXf();
-    eq("xformui.revert.finished", a.v.xf, null);
+    eq("xformui.revert.finished", a.v.gesture.xf, null);
     eq("xformui.revert.pixels", diffBytes(celData(a.s), pristineA), 0);
     eq("xformui.revert.mask", diffBytes(a.s.doc.sel!.mask, maskA), 0);
     eq("xformui.revert.no-history", a.s.history.list().labels.length, 0);
@@ -945,7 +949,7 @@ export function testXformUi(): void {
     dragBy(b.v, { x: brB.x + 6, y: brB.y + 6 }, 12, 8, true);
     b.s.setTool("pencil");
     dom.flush();
-    ok("xformui.toolswitch.ends-session", b.v.xf === null || !b.v.transforming,
+    ok("xformui.toolswitch.ends-session", b.v.gesture.xf === null || !b.v.transforming,
       "会话落定由 Session.setTool → view.flushStroke 保证（工具已切：" + b.s.tool + "）");
 
     const c = mk(true);
@@ -954,7 +958,7 @@ export function testXformUi(): void {
     dragBy(c.v, { x: brC.x + 6, y: brC.y + 6 }, 12, 8, true);
     c.s.frameAdd();
     dom.flush();
-    ok("xformui.frameswitch.ends-session", c.v.xf === null || !c.v.transforming,
+    ok("xformui.frameswitch.ends-session", c.v.gesture.xf === null || !c.v.transforming,
       "会话落定由 Session.frameAdd → view.flushStroke 保证（帧数：" + c.s.doc.frames.length + "）");
 
     // 没拖过就退出：零改动零历史
@@ -981,7 +985,7 @@ export function testXformUi(): void {
     }
     const pristineE = new Uint8ClampedArray(cel.data);
     drag(e.v, { x: sc(20, 10).x, y: sc(20, 10).y }, { x: sc(24, 10).x, y: sc(24, 10).y }, true);
-    eq("xformui.thin.no-session", e.v.xf, null);
+    eq("xformui.thin.no-session", e.v.gesture.xf, null);
     ok("xformui.thin.reason", e.v.lastWarpError === "tooThin" || e.v.lastWarpError === null,
       String(e.v.lastWarpError));
     eq("xformui.thin.pixels", diffBytes(cel.data, pristineE), 0);
@@ -997,7 +1001,7 @@ export function testXformUi(): void {
     drag(v, onEdge, { x: onEdge.x + 8, y: onEdge.y }, true);
     dom.flush();
     eq("xformui.band.pixels-untouched", diffBytes(celData(s), pristine), 0);
-    eq("xformui.band.no-session", v.xf, null);
+    eq("xformui.band.no-session", v.gesture.xf, null);
     eq("xformui.band.no-history", s.history.list().labels.length, 0);
     eq("xformui.band.mask-moved", s.doc.sel!.get(12, 10), 1);       // 选区整体挪了 2 格
     eq("xformui.band.mask-old-gone", s.doc.sel!.get(10, 10), 0);
@@ -1008,18 +1012,18 @@ export function testXformUi(): void {
     const { s, v } = mk(true);
     paint(s, 10, 10, 10, 8);
     ok("xformui.warp.enter", v.beginWarp("quad"));
-    eq("xformui.warp.mode", v.xf!.mode, "warp");
+    eq("xformui.warp.mode", v.gesture.xf!.mode, "warp");
     eq("xformui.warp.no-grabs", v.xfGrabs(), []);
     v.onDown(ev(sc(14, 13).x, sc(14, 13).y, "mouse"));
     dom.flush();
-    ok("xformui.warp.stays-warp", v.xf!.mode === "warp");
-    eq("xformui.warp.no-affine", v.xfDrag, null);
+    ok("xformui.warp.stays-warp", v.gesture.xf!.mode === "warp");
+    eq("xformui.warp.no-affine", v.gesture.xfDrag, null);
     v.finishWarp(true);
-    eq("xformui.warp.exited", v.xf, null);
+    eq("xformui.warp.exited", v.gesture.xf, null);
     const br = anchorScreen(v, "br");
     dragBy(v, { x: br.x + 6, y: br.y + 6 }, 8, 8, true);
-    eq("xformui.warp.drag-cleared", v.xfDrag, null);
-    ok("xformui.warp.affine-after", !!v.xf && v.xf.mode !== "warp");
+    eq("xformui.warp.drag-cleared", v.gesture.xfDrag, null);
+    ok("xformui.warp.affine-after", !!v.gesture.xf && v.gesture.xf.mode !== "warp");
     v.revertXf();
   }
 
@@ -1037,7 +1041,7 @@ export function testXformUi(): void {
       drag(v, c1, { x: c1.x + 12, y: c1.y + 8 }, true);
     }
     dom.flush();
-    const g = v.xf!;
+    const g = v.gesture.xf!;
     const st = beginMove(s.doc, s.curLayer(), s.curFrame())!;
     const m = affineFrom({
       pivot: g.tp!.pivot, angle: g.tp!.angle, sx: g.tp!.sx, sy: g.tp!.sy,
@@ -1080,7 +1084,7 @@ export function testXformUi(): void {
       drag(v, c1, { x: c1.x + 32, y: c1.y + 16 }, true);   // 往右下挪 8×4 格
     }
     dom.flush();
-    ok("xformui.copy.flag", !!v.xf, String(v.xf?.st.copy));
+    ok("xformui.copy.flag", !!v.gesture.xf, String(v.gesture.xf?.st.copy));
     ok("xformui.copy.original-kept", true, "复制模式不挖原内容（见 moved 的 st.copy）");
     v.commitXf();
     ok("xformui.copy.history", s.history.list().labels.length <= 1, JSON.stringify(s.history.list().labels));
@@ -1097,7 +1101,7 @@ export function testXformUi(): void {
     s.doc.layers[s.curLayer()].locked = true;
     const br = anchorScreen(v, "br");
     dragBy(v, { x: br.x + 6, y: br.y + 6 }, 12, 8, true);
-    eq("xformui.locked.no-session", v.xf, null);
+    eq("xformui.locked.no-session", v.gesture.xf, null);
     eq("xformui.locked.pixels", diffBytes(celData(s), pristine), 0);
     ok("xformui.locked.error", v.lastWarpError === "locked" || v.lastWarpError === null,
       String(v.lastWarpError));
@@ -1122,7 +1126,7 @@ export function testXformUi(): void {
     const tl = v.xfGrabs().find((g) => g.kind === "scale" && g.anchor === "tl")!;
     v.onDown(ev(tl.x, tl.y, "mouse"));
     dom.flush();
-    ok("xformui.frame.session-alive", !!v.xf, "会话");
+    ok("xformui.frame.session-alive", !!v.gesture.xf, "会话");
     eq("xformui.frame.no-handle-jump", grabsOf(v), before);
     v.revertXf();
   }
@@ -1140,7 +1144,7 @@ export function testXformUi(): void {
     v.onMove(ev(to.x, to.y, "mouse"));
     v.onUp(ev(to.x, to.y, "mouse"));
     dom.flush();
-    eq("xformui.rotate.quarter-turn", Math.round(((v.xf!.tp!.angle || 0) * 180) / Math.PI), 90);
+    eq("xformui.rotate.quarter-turn", Math.round(((v.gesture.xf!.tp!.angle || 0) * 180) / Math.PI), 90);
     // 像素跟着框走：浮动预览的屏幕包围盒应当与旋转后的框重合（早先这里一格都没转）
     const f = v.xfScreenFrame()!;
     const bx = previewBox(v)!;
@@ -1183,12 +1187,12 @@ export function testXformUi(): void {
     paint(s, 10, 10, 8, 8);
     const b1 = v.xfGrabs().find((g) => g.kind === "scale" && g.anchor === "br")!;
     dragBy(v, { x: b1.x, y: b1.y }, 16, 16, true);
-    const sx1 = v.xf!.tp!.sx;
+    const sx1 = v.gesture.xf!.tp!.sx;
     ok("xformui.scale.first-drag-grew", sx1 > 1.2, String(sx1));
     const b2 = v.xfGrabs().find((g) => g.kind === "scale" && g.anchor === "br")!;
     dragBy(v, { x: b2.x, y: b2.y }, 16, 16, true);
-    ok("xformui.scale.repeat-grows", v.xf!.tp!.sx > sx1 + 0.05,
-      JSON.stringify([sx1, v.xf!.tp!.sx]));
+    ok("xformui.scale.repeat-grows", v.gesture.xf!.tp!.sx > sx1 + 0.05,
+      JSON.stringify([sx1, v.gesture.xf!.tp!.sx]));
 
     const deg = (rad: number): number => (rad * 180) / Math.PI;
     const rotOnce = (): void => {
@@ -1199,11 +1203,11 @@ export function testXformUi(): void {
       const to = { x: pv.x + Math.cos(a0 + Math.PI / 4) * r, y: pv.y + Math.sin(a0 + Math.PI / 4) * r };
       drag(v, { x: g.x, y: g.y }, to, true);
     };
-    const a0 = deg(v.xf!.tp!.angle || 0);
+    const a0 = deg(v.gesture.xf!.tp!.angle || 0);
     rotOnce();
-    const a1 = deg(v.xf!.tp!.angle || 0);
+    const a1 = deg(v.gesture.xf!.tp!.angle || 0);
     rotOnce();
-    const a2 = deg(v.xf!.tp!.angle || 0);
+    const a2 = deg(v.gesture.xf!.tp!.angle || 0);
     ok("xformui.rotate.repeat-adds", a1 - a0 > 40 && a2 - a1 > 40, JSON.stringify([a0, a1, a2]));
     v.revertXf();
   }
@@ -1218,14 +1222,14 @@ export function testXformUi(): void {
     const rot = v.xfGrabs().find((g) => g.kind === "rotate" && g.anchor === "tl")!;
     const asPixel = { x: (rot.x - v.ox) / v.zoom, y: (rot.y - v.oy) / v.zoom };
     ok("xformui.outside.icon-is-outside-doc", asPixel.x < 0 || asPixel.y < 0, JSON.stringify(asPixel));
-    const panOf = (): unknown => (v as unknown as { panLast: unknown }).panLast;
+    const panOf = (): unknown => (v.gesture as unknown as { panLast: unknown }).panLast;
     v.onDown(ev(rot.x, rot.y, "mouse"));
     dom.flush();
-    ok("xformui.outside.grab-wins", v.xfDrag?.kind === "rotate", JSON.stringify(v.xfDrag));
+    ok("xformui.outside.grab-wins", v.gesture.xfDrag?.kind === "rotate", JSON.stringify(v.gesture.xfDrag));
     eq("xformui.outside.no-pan", panOf(), null);
     v.onMove(ev(rot.x + 6, rot.y + 4, "mouse"));
     dom.flush();
-    ok("xformui.outside.rotated", Math.abs(v.xf!.tp!.angle) > 0.005, String(v.xf!.tp!.angle));
+    ok("xformui.outside.rotated", Math.abs(v.gesture.xf!.tp!.angle) > 0.005, String(v.gesture.xf!.tp!.angle));
     v.onUp(ev(rot.x + 6, rot.y + 4, "mouse"));
     v.revertXf();
     // 空白处（画布外、离所有抓手都远）仍然要能拖动视图平移

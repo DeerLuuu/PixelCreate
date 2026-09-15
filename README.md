@@ -87,7 +87,7 @@ toolchain/       开发辅助脚本（devserver 静态服务、make-icon 图标�
 ### 架构要点
 
 - **引擎层零 DOM**：`engine/`、`app/`、`tools/`、`servers/` 全部可在 Node 下测试（4085 条断言跑在纯数据上，含 UI 控件与令牌契约；`npm test` 末尾会打印条数）。
-- **服务层**：合成与缓存归 `RenderServer`、视图数学归 `ViewportServer`（`docs/API.md` §15b），手势策略归 `input.ts`、轻点序列与四个指针入口归 `gesture.ts`（§15c / §15c2 / §15c3），`render/view.ts` 只做 blit、覆盖层与各工具的动作体 —— 这是 `docs/ARCHITECTURE.md` 里 Server 化的落地进度。
+- **服务层**：合成与缓存归 `RenderServer`、视图数学归 `ViewportServer`（`docs/API.md` §15b），手势策略归 `input.ts`、轻点序列 + 四个指针入口 + 触点会话状态归 `gesture.ts`（§15c / §15c2 / §15c3），`render/view.ts` 只做 blit、覆盖层与各工具的动作体 —— 这是 `docs/ARCHITECTURE.md` 里 Server 化的落地进度。
 - **声明式注册表**：设置项写在 `src/app/settings.ts`，引导步骤写在 `src/app/guide.ts`；新增功能 = 一条声明 + i18n 文案，界面自动生成。
 - **增量渲染**：笔迹只重合成/重绘改动区域（`Rect` + `composeRectInto` + `celToCanvasRect`），一帧一次绘制（rAF 合并）。
 - **撤销栈**：`history.pushPixels`（像素）/ `pushStruct`（结构快照）/ `record`（标量前后值）三类，所有破坏性操作都可单步撤销。

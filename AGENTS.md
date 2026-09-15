@@ -94,14 +94,16 @@ java -jar /root/pk/apksigner.jar verify --print-certs /sdcard/Download/PixelCraf
   别把这两件事搬回去 —— 细节与"不要改回去"清单见 `docs/API.md` §15b。
 
 **工具与手势**
-- **手势判定全在两个 `src/servers/` 文件里（三片搬完）**：
+- **手势判定与触点会话状态全在两个 `src/servers/` 文件里（四片搬完，P5 收尾）**：
   · `input.ts`（`InputServer` 第一片）= 策略与算术的**纯函数**：鼠标按键意图、pinch 解算（中点不动点）、
     四指划动判定、长按策略、点击容差 —— 口径见 `docs/API.md` §15c。
   · `gesture.ts`（第二、三片）= **轻点序列状态机** `TapMachine`（单击 / 双击边距·画布·换画布 / 三击 /
     双指双击，容差 480ms·64px·80px，`up()` 返回 `TapOutcome`；口径与**一个已知问题（画布内三击够不到）**
     见 `docs/API.md` §15c2，`tests/gesture.test.ts` 钉住现状）+ **指针事件入口** `GestureController`
-    （`onDown` / `onMove` / `onUp` / `onCancel` 整体搬来，约 850 行；`View` 只留一行转发、
-    覆盖层绘制与各工具动作体，接口契约见 §15c3，假 host 回归见 `tests/gesture-host.test.ts`）。
+    （`onDown` / `onMove` / `onUp` / `onCancel` 整体搬来，约 850 行；**触点会话状态也是控制器的字段**
+    —— `pointers` / `pinchBase` / `selDrag` / `xf` / `stroke` … 共 37 个，`View` 只读它们画覆盖层，
+    写入只有控制器能做；`View` 只留一行转发、覆盖层绘制与各工具动作体，接口契约见 §15c3，
+    假 host 回归见 `tests/gesture-host.test.ts`）。
   `render/view.ts` 里**不要再写手势判定** —— 判定进 `gesture.ts`，动作体留在 `View` / `tools`。
 - `View`（`src/render/view.ts`）接管画布手势：画布边距双击 = undo、双指双击 = redo、三击 = 2× 放大；手势 → 动作映射在 `src/app/gestures.ts`，设置里可改。
 - 震动统一走 `Session.hapticTick(tag, scale)`（受 `gesture.haptic` 开关与 `prefs.hapticLen` 控制）。
@@ -299,7 +301,7 @@ java -jar /root/pk/apksigner.jar verify --print-certs /sdcard/Download/PixelCraf
 - `AndroidManifest.xml` 版本号与 changelog 的 `APP_VERSION` 已由 `tests/changelog.test.ts` 静态校验（不一致会测试失败）；
   改版本号仍然要手动改两处 + 加一条更新日志（见 §6.1）。
 - `view.ts` / `session.ts` / `App.tsx` 仍偏大：渲染覆盖层、会话、UI 可继续拆
-  （手势判定已经搬完：`view.ts` 4668 → 3765 行，见 §8）。
+  （手势判定与触点会话状态已经搬完：`view.ts` 4668 → 3693 行，见 §8）。
 - **三击（`gTripleTap` ＝ 2× 放大）在默认设置下够不到**：单指第二下只要落在画布上，就会被
   「双击画布（映射了动作）」或「聚焦适配（没映射）」吃掉并清零连点计数，所以攒不到第三下；
   只有 `canvasIndex < 0` 才保留计数。现状由 `tests/gesture.test.ts` 的 `gesture.triple.shadowed.*`
@@ -402,8 +404,14 @@ stamp 从 `-T/2` 起画，早先的锚点比顶点偏左 `T/2`，栅格 / 足迹
 手势控制器（同日第三节）：`GestureController` 接管 `onDown/onMove/onUp/onCancel` 约 850 行，
 `View` 以 `GestureHost`（93 个成员）交出触点会话状态与各动作体；会话状态的结构体
 （`XfSession` / `SelDragState` / `HoldState` …）从 `view.ts` 的字段声明里搬进 `servers/gesture.ts`；
-`view.ts` 4668 → **3765 行**，新增 22 条假 host 断言（共 4085），`warpui.order.has-draw-overlay`
+`view.ts` 4668 → **3693 行**，新增 22 条假 host 断言（共 4085），`warpui.order.has-draw-overlay`
 的静态扫描锚点随 `drawOverlay` 变公开而改成整行签名。
+触点会话**所有权**迁移（同日第四片）：37 个会话字段（`pointers` / `fourSeen` / `pinchBase` / `hold` /
+`longT` / `panLast` / `stroke` / `selDrag` / `xf` / `xfDrag` / `outline` / `path` / `isoDrag` /
+`resizeDrag` / `cursor` / `mag` …）从 `View` 搬进 `GestureController`，`GestureHost` 从 93 个成员
+瘦到 **54 个**（只剩方法 + `session` / `host` / 视口三元组 / `onFramePreview`）；
+`View` 侧一律 `this.gesture.<字段>`（162 处），测试里的窥视改走 `v.gesture.*`（`warpui` / `xformui` /
+`view` 三个白盒测试的 `VX` 类型同步扩了 `gesture`）。
 
 ---
 

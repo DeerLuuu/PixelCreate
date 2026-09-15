@@ -18,9 +18,13 @@ import { eq, ok } from "./common";
 
 interface VX {
   ox: number; oy: number; zoom: number;
-  xf: null | {
-    mode: string; moved: boolean; cut?: boolean; cells?: number[]; buf?: Uint8ClampedArray; pts?: Pt[];
-    warpKind?: string; drag?: number; grab?: Pt; move?: { x0: number; y0: number; pts: Pt[] }; st: MoveState; li: number; fi: number;
+  /** 手势控制器：触点会话状态（`xf` / `xfDrag` / `selDrag` / `path` …）由它持有 */
+  gesture: {
+    xf: null | {
+      mode: string; moved: boolean; cut?: boolean; cells?: number[]; buf?: Uint8ClampedArray; pts?: Pt[];
+      warpKind?: string; drag?: number; grab?: Pt; move?: { x0: number; y0: number; pts: Pt[] }; st: MoveState; li: number; fi: number;
+    };
+    xfDrag: unknown; selDrag: unknown;
   };
   lastWarpError: "noSel" | "tooThin" | "locked" | null;
   onDown(e: PointerEvent): void; onMove(e: PointerEvent): void; onUp(e: PointerEvent): void;
@@ -93,12 +97,12 @@ export function testWarpUi(): void {
     const pristine = new Uint8ClampedArray(celData(s));
     const mask0 = new Uint8Array(s.doc.sel!.mask);
     ok("warpui.enter.quad", warp(v, "quad"));
-    eq("warpui.enter.mode", v.xf!.mode, "warp");
-    eq("warpui.enter.cells-empty", v.xf!.cells === undefined, true);
+    eq("warpui.enter.mode", v.gesture.xf!.mode, "warp");
+    eq("warpui.enter.cells-empty", v.gesture.xf!.cells === undefined, true);
     eq("warpui.enter.layer-untouched", diffBytes(celData(s), pristine), 0);
     eq("warpui.enter.mask-untouched", diffBytes(s.doc.sel!.mask, mask0), 0);
     eq("warpui.enter.no-history", s.history.list().labels.length, 0);
-    eq("warpui.enter.not-moved", v.xf!.moved, false);
+    eq("warpui.enter.not-moved", v.gesture.xf!.moved, false);
     ok("warpui.enter.handles-4", v.warpHandles().length === 4);
     eq("warpui.enter.alpha-intact", alpha(s, 10, 10), 255);
   }
@@ -109,24 +113,24 @@ export function testWarpUi(): void {
     paint(s, 10, 10, 20, 14);
     const pristine = new Uint8ClampedArray(celData(s));
     ok("warpui.stray.enter", warp(v, "quad"));
-    const pts0 = JSON.stringify(v.xf!.pts);
-    const cells0 = JSON.stringify(v.xf!.cells ?? null);
+    const pts0 = JSON.stringify(v.gesture.xf!.pts);
+    const cells0 = JSON.stringify(v.gesture.xf!.cells ?? null);
     const hover = sc(v, 19, 17);                 // 选区内部，离四个角都 > 22 屏幕像素
     v.onMove(ev(hover.x, hover.y));
     dom.flush();
-    ok("warpui.stray.keeps-mode", !!v.xf && v.xf.mode === "warp");
-    eq("warpui.stray.keeps-points", JSON.stringify(v.xf!.pts), pts0);
-    eq("warpui.stray.keeps-cells", JSON.stringify(v.xf!.cells ?? null), cells0);
-    eq("warpui.stray.not-moved", v.xf!.moved, false);
+    ok("warpui.stray.keeps-mode", !!v.gesture.xf && v.gesture.xf.mode === "warp");
+    eq("warpui.stray.keeps-points", JSON.stringify(v.gesture.xf!.pts), pts0);
+    eq("warpui.stray.keeps-cells", JSON.stringify(v.gesture.xf!.cells ?? null), cells0);
+    eq("warpui.stray.not-moved", v.gesture.xf!.moved, false);
     eq("warpui.stray.no-cut", alpha(s, 12, 12), 255);
     eq("warpui.stray.pixels", diffBytes(celData(s), pristine), 0);
     eq("warpui.stray.no-history", s.history.list().labels.length, 0);
     // 网格模式同样：9 个控制点、悬停不动
     eq("warpui.stray.mesh-mismatch", warp(v, "mesh"), true);
-    ok("warpui.stray.mesh-9-points", (v.xf!.pts || []).length === 9);
+    ok("warpui.stray.mesh-9-points", (v.gesture.xf!.pts || []).length === 9);
     v.onMove(ev(sc(v, 29, 19).x, sc(v, 29, 19).y));
     dom.flush();
-    ok("warpui.stray.mesh-keeps-mode", !!v.xf && v.xf.mode === "warp" && v.xf!.warpKind === "mesh");
+    ok("warpui.stray.mesh-keeps-mode", !!v.gesture.xf && v.gesture.xf.mode === "warp" && v.gesture.xf!.warpKind === "mesh");
     eq("warpui.stray.mesh-no-cut", alpha(s, 12, 12), 255);
   }
 
@@ -144,7 +148,7 @@ export function testWarpUi(): void {
     dom.flush();
     // 半像素吸附（默认开）：`(7,7)` 的像素中心反解回连续下标是 6.5 → 落点 6.5
     // （半点吸附是幂等的：抓住控制点不动不会跳位）
-    eq("warpui.hold.drag1-applied", [v.xf!.pts![0].x, v.xf!.pts![0].y], [6.5, 6.5]);
+    eq("warpui.hold.drag1-applied", [v.gesture.xf!.pts![0].x, v.gesture.xf!.pts![0].y], [6.5, 6.5]);
     // 再往外拖一格：连续下标落在 (7, 7) 与 (8, 8) 之间 → 半像素模式停在 `x.5`
     {
       const h = v.warpHandles()[0];
@@ -153,12 +157,12 @@ export function testWarpUi(): void {
       v.onMove(ev(dest.x, dest.y));
       v.onUp(ev(dest.x, dest.y));
       dom.flush();
-      eq("warpui.hold.drag1-half", [v.xf!.pts![0].x, v.xf!.pts![0].y], [7.5, 7.5]);
+      eq("warpui.hold.drag1-half", [v.gesture.xf!.pts![0].x, v.gesture.xf!.pts![0].y], [7.5, 7.5]);
     }
     v.onUp(ev(d1.x, d1.y));
     dom.flush();
-    ok("warpui.hold.mode-after-up", !!v.xf && v.xf.mode === "warp");
-    eq("warpui.hold.drag-cleared", v.xf!.drag === undefined, true);
+    ok("warpui.hold.mode-after-up", !!v.gesture.xf && v.gesture.xf.mode === "warp");
+    eq("warpui.hold.drag-cleared", v.gesture.xf!.drag === undefined, true);
     eq("warpui.hold.handles-alive", v.warpHandles().length, 4);
     eq("warpui.hold.no-history-yet", s.history.list().labels.length, 0);
     // 第二个控制点：把右下角往外拉
@@ -167,15 +171,15 @@ export function testWarpUi(): void {
     const d2 = sc(v, 19, 17);
     v.onMove(ev(d2.x, d2.y));
     dom.flush();
-    eq("warpui.hold.drag2-applied", [v.xf!.pts![2].x, v.xf!.pts![2].y], [18.5, 16.5]);
+    eq("warpui.hold.drag2-applied", [v.gesture.xf!.pts![2].x, v.gesture.xf!.pts![2].y], [18.5, 16.5]);
     // 两个控制点各自落在自己那一格：一个半点、一个整点（互不干扰）
-    eq("warpui.hold.two-points-changed", [v.xf!.pts![0].x, v.xf!.pts![2].x], [7.5, 18.5]);
+    eq("warpui.hold.two-points-changed", [v.gesture.xf!.pts![0].x, v.gesture.xf!.pts![2].x], [7.5, 18.5]);
     v.onUp(ev(d2.x, d2.y));
     dom.flush();
-    ok("warpui.hold.still-warp", !!v.xf && v.xf.mode === "warp");
+    ok("warpui.hold.still-warp", !!v.gesture.xf && v.gesture.xf.mode === "warp");
     // 还原（此时还没落笔）→ 像素与掩码都逐字节回到进入前
     finish(v, true);
-    eq("warpui.hold.revert-exits", v.xf === null, true);
+    eq("warpui.hold.revert-exits", v.gesture.xf === null, true);
     eq("warpui.hold.revert-pixels", diffBytes(celData(s), pristine), 0);
     eq("warpui.hold.revert-mask", diffBytes(s.doc.sel!.mask, mask0), 0);
     eq("warpui.hold.revert-no-history", s.history.list().labels.length, 0);
@@ -193,14 +197,14 @@ export function testWarpUi(): void {
     dom.flush();
     eq("warpui.idle.tap-keeps-layer", alpha(s, 12, 12), 255);
     // 变形期间按下选区内部不得再起一次选区拖动
-    eq("warpui.idle.no-sel-drag", (v as unknown as { selDrag: unknown }).selDrag, null);
+    eq("warpui.idle.no-sel-drag", (v.gesture as unknown as { selDrag: unknown }).selDrag, null);
     v.onUp(ev(tap.x, tap.y));
     dom.flush();
-    ok("warpui.idle.tap-keeps-mode", !!v.xf && v.xf.mode === "warp");
+    ok("warpui.idle.tap-keeps-mode", !!v.gesture.xf && v.gesture.xf.mode === "warp");
     eq("warpui.idle.tap-pixels", diffBytes(celData(s), pristine), 0);
     eq("warpui.idle.tap-no-history", s.history.list().labels.length, 0);
     finish(v, false);                            // 「完成」：没拖过＝什么都不做
-    eq("warpui.idle.done-exits", v.xf === null, true);
+    eq("warpui.idle.done-exits", v.gesture.xf === null, true);
     eq("warpui.idle.done-pixels", diffBytes(celData(s), pristine), 0);
     eq("warpui.idle.done-no-history", s.history.list().labels.length, 0);
   }
@@ -223,7 +227,7 @@ export function testWarpUi(): void {
       const tag = vertical ? "col" : "row";
       eq("warpui.thin." + tag + ".refused", warp(v, "quad"), false);
       eq("warpui.thin." + tag + ".reason", v.lastWarpError, "tooThin");
-      eq("warpui.thin." + tag + ".no-xf", v.xf === null, true);
+      eq("warpui.thin." + tag + ".no-xf", v.gesture.xf === null, true);
       eq("warpui.thin." + tag + ".pixels", diffBytes(cel.data, before), 0);
       eq("warpui.thin." + tag + ".mask", diffBytes(doc.sel.mask, mask0), 0);
       // 网格入口同样拒绝
@@ -251,7 +255,7 @@ export function testWarpUi(): void {
     const dest = sc(v, 7, 7);
     v.onMove(ev(dest.x, dest.y));
     dom.flush();
-    const g = v.xf!;
+    const g = v.gesture.xf!;
     eq("warpui.commit.first-drag-cuts", alpha(s, 10, 10), 0);
     eq("warpui.commit.moved", g.moved, true);
     // 预览＝warpFloating 的结果（重叠区也一致）
@@ -260,9 +264,9 @@ export function testWarpUi(): void {
     eq("warpui.commit.preview-matches", JSON.stringify(g.cells), JSON.stringify(expCells));
     v.onUp(ev(dest.x, dest.y));
     dom.flush();
-    ok("warpui.commit.mode-after-up", !!v.xf && v.xf.mode === "warp");
+    ok("warpui.commit.mode-after-up", !!v.gesture.xf && v.gesture.xf.mode === "warp");
     finish(v, false);
-    eq("warpui.commit.exits", v.xf === null, true);
+    eq("warpui.commit.exits", v.gesture.xf === null, true);
     // 落下来的像素＝预览的像素
     let wrong = 0;
     const data = celData(s);
@@ -302,9 +306,9 @@ export function testWarpUi(): void {
     v.onMove(ev(onto3.x, onto3.y));
     v.onUp(ev(onto3.x, onto3.y));
     dom.flush();
-    eq("warpui.empty.preview-empty", (v.xf!.cells || []).length, 0);
+    eq("warpui.empty.preview-empty", (v.gesture.xf!.cells || []).length, 0);
     finish(v, false);
-    eq("warpui.empty.exits", v.xf === null, true);
+    eq("warpui.empty.exits", v.gesture.xf === null, true);
     eq("warpui.empty.pixels-kept", diffBytes(celData(s), pristine), 0);
     eq("warpui.empty.no-history", s.history.list().labels.length, 0);
   }
@@ -322,8 +326,8 @@ export function testWarpUi(): void {
       v.onMove(ev(dest.x, dest.y));
       v.onUp(ev(dest.x, dest.y));
       dom.flush();
-      ok("warpui.flush." + how + ".pending", !!v.xf && v.xf.mode === "warp");
-      const g = v.xf!;
+      ok("warpui.flush." + how + ".pending", !!v.gesture.xf && v.gesture.xf.mode === "warp");
+      const g = v.gesture.xf!;
       const cells = (g.cells || []).slice();
       const buf = g.buf!;
       ok("warpui.flush." + how + ".has-float", cells.length > 0 && alpha(s, 10, 10) === 0);
@@ -331,7 +335,7 @@ export function testWarpUi(): void {
       else if (how === "layer") s.setLayer(0);
       else s.undo();
       dom.flush();
-      eq("warpui.flush." + how + ".no-pending", v.xf, null);
+      eq("warpui.flush." + how + ".no-pending", v.gesture.xf, null);
       if (how === "undo") {
         // 先落下（一条历史）再撤销 -> 逐字节回到进入前
         eq("warpui.flush.undo.pixels", diffBytes(celData(s), pristine), 0);
@@ -387,11 +391,11 @@ export function testWarpUi(): void {
     const cornerPts = [[b.x, b.y], [b.x + b.w - 1, b.y], [b.x + b.w - 1, b.y + b.h - 1], [b.x, b.y + b.h - 1]];
     const hs = v.warpHandles();
     eq("warpui.corners.count", hs.length, 4);
-    eq("warpui.corners.pixel-index", v.xf!.pts!.map((p) => [p.x, p.y]), cornerPts);
+    eq("warpui.corners.pixel-index", v.gesture.xf!.pts!.map((p) => [p.x, p.y]), cornerPts);
     // 绘制位置＝像素中心，容差 1e-6（screenToPixel 的反函数）
     let offCentre = 0;
     for (let i = 0; i < 4; i++) {
-      const p = v.xf!.pts![i];
+      const p = v.gesture.xf!.pts![i];
       if (Math.abs(hs[i].x - ((p.x + 0.5) * v.zoom + v.ox)) > 1e-6) offCentre++;
       if (Math.abs(hs[i].y - ((p.y + 0.5) * v.zoom + v.oy)) > 1e-6) offCentre++;
       // 反解回下标也必须是整数（半点偏移只活在绘制里）
@@ -403,21 +407,21 @@ export function testWarpUi(): void {
     ok("warpui.corners.mesh-enter", warp(v, "mesh"));
     const mh = v.warpHandles();
     eq("warpui.corners.mesh-count", mh.length, 9);
-    eq("warpui.corners.mesh-pixel-index", [v.xf!.pts![0], v.xf!.pts![2], v.xf!.pts![8]],
+    eq("warpui.corners.mesh-pixel-index", [v.gesture.xf!.pts![0], v.gesture.xf!.pts![2], v.gesture.xf!.pts![8]],
       [{ x: b.x, y: b.y }, { x: b.x + b.w - 1, y: b.y }, { x: b.x + b.w - 1, y: b.y + b.h - 1 }]);
-    eq("warpui.corners.mesh-integers", v.xf!.pts!.filter((p) => !Number.isInteger(p.x) || !Number.isInteger(p.y)).length, 0);
+    eq("warpui.corners.mesh-integers", v.gesture.xf!.pts!.filter((p) => !Number.isInteger(p.x) || !Number.isInteger(p.y)).length, 0);
     // 恒等（把左上角拖回它自己画出来的那个屏幕点、不挪位置）：预览里选区每一个像素都还在（含最右 / 最下一列）
     const h0 = v.warpHandles()[0];
     v.onDown(ev(h0.x, h0.y));
     v.onMove(ev(h0.x, h0.y));
     v.onUp(ev(h0.x, h0.y));
     dom.flush();
-    eq("warpui.corners.identity-point", [v.xf!.pts![0].x, v.xf!.pts![0].y], [b.x, b.y]);
+    eq("warpui.corners.identity-point", [v.gesture.xf!.pts![0].x, v.gesture.xf!.pts![0].y], [b.x, b.y]);
     let lost = 0;
     for (let y = 10; y < 14; y++) for (let x = 10; x < 16; x++) if (alpha(s, x, y) !== 255) lost++;
     eq("warpui.corners.identity-covers-all", lost, 0);
     finish(v, true);
-    eq("warpui.corners.revert-exits", v.xf, null);
+    eq("warpui.corners.revert-exits", v.gesture.xf, null);
   }
 
   // ---- 拖到任意小数屏幕坐标：落点粒度跟随设置（半像素＝整数或 x.5 / 整像素＝只有整数） ----
@@ -454,7 +458,7 @@ export function testWarpUi(): void {
     for (const [fx, fy] of fracs) {
       dragCorner(fx, fy);
       const want = land(fx, fy, true);
-      const p = v.xf!.pts![1];
+      const p = v.gesture.xf!.pts![1];
       if (p.x !== want.x || p.y !== want.y) halfWrong++;
       if (Math.abs(p.x * 2 - Math.round(p.x * 2)) > 1e-9 || Math.abs(p.y * 2 - Math.round(p.y * 2)) > 1e-9) offGranule++;
     }
@@ -463,7 +467,7 @@ export function testWarpUi(): void {
     // 至少有一次真的落在 `x.5` 上（不然「半像素」只是个说法）——
     // 落在「中心与下一条边界线之间」的位置，两种取整都不会把它抹成整数
     dragCorner(13.8, 11.2);
-    eq("warpui.drag-half.has-half", [v.xf!.pts![1].x, v.xf!.pts![1].y], [13.5, 10.5]);
+    eq("warpui.drag-half.has-half", [v.gesture.xf!.pts![1].x, v.gesture.xf!.pts![1].y], [13.5, 10.5]);
 
     // 网格模式：中心点也能落在 `x.5`（9 个点同一个粒度）
     ok("warpui.drag-half.mesh-enter", warp(v, "mesh"));
@@ -473,9 +477,9 @@ export function testWarpUi(): void {
     v.onMove(ev(mdest.x, mdest.y));
     v.onUp(ev(mdest.x, mdest.y));
     dom.flush();
-    eq("warpui.drag-half.mesh-point", [v.xf!.pts![4].x, v.xf!.pts![4].y], [land(14.63, 12.21, true).x, land(14.63, 12.21, true).y]);
+    eq("warpui.drag-half.mesh-point", [v.gesture.xf!.pts![4].x, v.gesture.xf!.pts![4].y], [land(14.63, 12.21, true).x, land(14.63, 12.21, true).y]);
     eq("warpui.drag-half.mesh-granule",
-      v.xf!.pts!.filter((p) => Math.abs(p.x * 2 - Math.round(p.x * 2)) > 1e-9 || Math.abs(p.y * 2 - Math.round(p.y * 2)) > 1e-9).length, 0);
+      v.gesture.xf!.pts!.filter((p) => Math.abs(p.x * 2 - Math.round(p.x * 2)) > 1e-9 || Math.abs(p.y * 2 - Math.round(p.y * 2)) > 1e-9).length, 0);
 
     // 关掉半像素吸附（设置项 tools.selWarpHalfSnap 的 Session setter）：同一次拖动只落整数
     s.setSelWarpHalfSnap(false);
@@ -485,7 +489,7 @@ export function testWarpUi(): void {
     for (const [fx, fy] of fracs) {
       dragCorner(fx, fy);
       const want = land(fx, fy, false);
-      const p = v.xf!.pts![1];
+      const p = v.gesture.xf!.pts![1];
       if (p.x !== want.x || p.y !== want.y) intWrong++;
       if (!Number.isInteger(p.x) || !Number.isInteger(p.y)) nonInteger++;
     }
@@ -493,7 +497,7 @@ export function testWarpUi(): void {
     eq("warpui.drag-int.integers", nonInteger, 0);
     // 整像素模式下拖到「像素中心之间」的位置：不再出现 x.5，而是吸到最近整数
     dragCorner(13.5, 11.5);
-    eq("warpui.drag-int.no-half", [v.xf!.pts![1].x, v.xf!.pts![1].y], [13, 11]);
+    eq("warpui.drag-int.no-half", [v.gesture.xf!.pts![1].x, v.gesture.xf!.pts![1].y], [13, 11]);
     // 网格也一样：整像素模式下落点全是整数
     ok("warpui.drag-int.mesh-enter", warp(v, "mesh"));
     const mh2 = v.warpHandles()[4];
@@ -502,13 +506,13 @@ export function testWarpUi(): void {
     v.onMove(ev(md2.x, md2.y));
     v.onUp(ev(md2.x, md2.y));
     dom.flush();
-    eq("warpui.drag-int.mesh-point", [v.xf!.pts![4].x, v.xf!.pts![4].y], [land(14.63, 12.21, false).x, land(14.63, 12.21, false).y]);
-    eq("warpui.drag-int.mesh-integers", v.xf!.pts!.filter((p) => !Number.isInteger(p.x) || !Number.isInteger(p.y)).length, 0);
+    eq("warpui.drag-int.mesh-point", [v.gesture.xf!.pts![4].x, v.gesture.xf!.pts![4].y], [land(14.63, 12.21, false).x, land(14.63, 12.21, false).y]);
+    eq("warpui.drag-int.mesh-integers", v.gesture.xf!.pts!.filter((p) => !Number.isInteger(p.x) || !Number.isInteger(p.y)).length, 0);
     // 切回半像素：粒度立刻跟着回来（同一个拖动重新落 `x.5`）
     s.setSelWarpHalfSnap(true);
     ok("warpui.drag-int.back-enter", warp(v, "quad"));
     dragCorner(13.5, 11.5);
-    eq("warpui.drag-int.back-to-half", [v.xf!.pts![1].x, v.xf!.pts![1].y], [land(13.5, 11.5, true).x, land(13.5, 11.5, true).y]);
+    eq("warpui.drag-int.back-to-half", [v.gesture.xf!.pts![1].x, v.gesture.xf!.pts![1].y], [land(13.5, 11.5, true).x, land(13.5, 11.5, true).y]);
     eq("warpui.drag-int.back-prefs", s.prefs.selWarpHalfSnap, true);
     finish(v, true);
   }
@@ -523,7 +527,7 @@ export function testWarpUi(): void {
     v.onDown(ev(h.x, h.y));
     v.onMove(ev(dest.x, dest.y));
     dom.flush();
-    const p = v.xf!.pts![1];
+    const p = v.gesture.xf!.pts![1];
     eq("warpui.label.half", warpCoordLabel(p, true), p.x.toFixed(1) + ", " + p.y.toFixed(1));
     eq("warpui.label.whole", warpCoordLabel(p, false), Math.round(p.x) + ", " + Math.round(p.y));
     v.onUp(ev(dest.x, dest.y));
@@ -543,25 +547,25 @@ export function testWarpUi(): void {
     };
     ok("warpui.grab.mesh-enter", warp(v, "mesh"));
     const h = v.warpHandles()[4];
-    const p0 = { x: v.xf!.pts![4].x, y: v.xf!.pts![4].y };
-    const others = JSON.stringify(v.xf!.pts!.filter((_, i) => i !== 4).map((p) => [p.x, p.y]));
+    const p0 = { x: v.gesture.xf!.pts![4].x, y: v.gesture.xf!.pts![4].y };
+    const others = JSON.stringify(v.gesture.xf!.pts!.filter((_, i) => i !== 4).map((p) => [p.x, p.y]));
     // 按在离手柄中心 (3, -2)px 处（命中半径内）：还没移动，控制点不许动
     const off = { x: 3, y: -2 };
     v.onDown(ev(h.x + off.x, h.y + off.y));
     dom.flush();
-    eq("warpui.grab.point-still", [v.xf!.pts![4].x, v.xf!.pts![4].y], [p0.x, p0.y]);
-    eq("warpui.grab.held", v.xf!.drag, 4);
+    eq("warpui.grab.point-still", [v.gesture.xf!.pts![4].x, v.gesture.xf!.pts![4].y], [p0.x, p0.y]);
+    eq("warpui.grab.held", v.gesture.xf!.drag, 4);
     // 拖 2 格（＝2·zoom 屏幕像素）：控制点**跟着指针**落在指针那一点上（不是平行偏移）
     const step = 2 * v.zoom;
     const to = { x: h.x + off.x + step, y: h.y + off.y };
     v.onMove(ev(to.x, to.y));
     dom.flush();
     const want = landTo(to.x, to.y);
-    eq("warpui.grab.follows-pointer", [v.xf!.pts![4].x, v.xf!.pts![4].y], [want.x, want.y]);
+    eq("warpui.grab.follows-pointer", [v.gesture.xf!.pts![4].x, v.gesture.xf!.pts![4].y], [want.x, want.y]);
     v.onUp(ev(to.x, to.y));
     dom.flush();
     eq("warpui.grab.others-untouched",
-      JSON.stringify(v.xf!.pts!.filter((_, i) => i !== 4).map((p) => [p.x, p.y])), others);
+      JSON.stringify(v.gesture.xf!.pts!.filter((_, i) => i !== 4).map((p) => [p.x, p.y])), others);
     finish(v, true);
   }
 
@@ -570,7 +574,7 @@ export function testWarpUi(): void {
     const { s, v } = mk();
     paint(s, 10, 10, 8, 6);
     ok("warpui.move.enter", warp(v, "mesh"));
-    const before = v.xf!.pts!.map((p) => [p.x, p.y]);
+    const before = v.gesture.xf!.pts!.map((p) => [p.x, p.y]);
     const hs = v.warpHandles();
     // 按在一个**网格格子的中心**（离四个角都最远，不会命中任何控制点）
     const cell = {
@@ -579,14 +583,14 @@ export function testWarpUi(): void {
     };
     v.onDown(ev(cell.x, cell.y));
     dom.flush();
-    ok("warpui.move.started", !!v.xf!.move, JSON.stringify(v.xf!.move));
-    eq("warpui.move.no-handle", v.xf!.drag === undefined, true);
+    ok("warpui.move.started", !!v.gesture.xf!.move, JSON.stringify(v.gesture.xf!.move));
+    eq("warpui.move.no-handle", v.gesture.xf!.drag === undefined, true);
     const step = 2 * v.zoom;                       // 2 格
     v.onMove(ev(cell.x + step, cell.y + step * 0));
     v.onUp(ev(cell.x + step, cell.y));
     dom.flush();
     eq("warpui.move.all-shifted",
-      v.xf!.pts!.map((p) => [p.x, p.y]),
+      v.gesture.xf!.pts!.map((p) => [p.x, p.y]),
       before.map(([x, y]) => [x + 2, y]));
     eq("warpui.move.layer-cut", alpha(s, 12, 12), 0);   // 已经切成浮动内容
     // 完成 → 一条历史；撤销回原样
@@ -607,15 +611,15 @@ export function testWarpUi(): void {
     v.onMove(ev(c.x + step, c.y));
     v.onUp(ev(c.x + step, c.y));
     dom.flush();
-    const moved = (v.xf as unknown as { cells?: number[] }).cells ?? [];
+    const moved = (v.gesture.xf as unknown as { cells?: number[] }).cells ?? [];
     ok("warpui.bake.moved-preview", moved.length > 0, String(moved.length));
     ok("warpui.bake.enter", warp(v, "mesh"));
     // 控制点应当落在**移动后**的位置（内容 10..17 → 14..21）
-    eq("warpui.bake.points-follow", v.xf!.pts![0].x, 14);
-    eq("warpui.bake.layer-origin", v.xf!.st.ox, 14);
+    eq("warpui.bake.points-follow", v.gesture.xf!.pts![0].x, 14);
+    eq("warpui.bake.layer-origin", v.gesture.xf!.st.ox, 14);
     // 预览没有跳回原位：画布上亮的像素仍在右移后的那一块
     const seen = new Set<number>();
-    for (const di of (v.xf!.cells ?? [])) seen.add(di % s.doc.w);
+    for (const di of (v.gesture.xf!.cells ?? [])) seen.add(di % s.doc.w);
     const xs = [...seen].sort((a, b) => a - b);
     eq("warpui.bake.preview-not-reset", [xs[0], xs[xs.length - 1]], [14, 21]);
     // 撤销仍然回到会话开始那一刻（烘焙只改浮动内容，`st.before` 不动）

@@ -177,7 +177,7 @@ Godot 4 的 server（`RenderingServer` / `DisplayServer` / `PhysicsServer2D` / `
 | 2 | **HistoryServer** | 撤销栈与"回合"合并 | `History` 栈、cap、模式 | DocumentServer（回滚时） | 不知道谁调它 |
 | 3 | **RenderServer** ✅ 已抽出 `src/servers/render.ts` | 合成与缓存：图层合成、脏矩形、洋葱皮、导出位图 | 离屏 canvas 池、缓存版本 | `engine/compositor·rect·onion` | 不下发输入、不管视图变换 |
 | 4 | **ViewportServer** ✅ 已抽出 `src/servers/viewport.ts`（算术已搬，状态暂留 `View`） | 视图数学：scale/offset、适配、聚焦、屏幕↔文档坐标 | 视口参数 | — | 不画东西 |
-| 5 | **InputServer** 🟡 三片已抽出：`servers/input.ts`（策略与算术）+ `servers/gesture.ts`（`TapMachine` 轻点序列 + `GestureController` 指针事件入口，`View` 以 `GestureHost` 交出接触面）；触点会话字段所有权待搬 | 手势状态机：指针生命周期、双指、长按、PC 修饰键 | 当前手势会话 | Tool/Selection/Viewport、`app/gestures` | 不碰像素 |
+| 5 | **InputServer** 🟡 四片已抽出：`servers/input.ts`（策略与算术）+ `servers/gesture.ts`（`TapMachine` 轻点序列 + `GestureController` 四个指针入口 + **触点会话状态的所有权**，37 个字段；`GestureHost` 仅剩 54 个方法 / 视口成员） | 手势状态机：指针生命周期、双指、长按、PC 修饰键 | 当前手势会话 | Tool/Selection/Viewport、`app/gestures` | 不碰像素 |
 | 6 | **ToolServer** | 工具与笔刷参数；"落点序列 → 像素命令"的纯计算 | 当前工具/笔刷/对称/图案 | `tools/stroke`、`engine/symmetry`、`data/patterns` | 不写 doc（产出命令） |
 | 7 | **SelectionServer** | 掩膜 + 浮动选区 + 变换/变形/缩放 | `Sel`、浮动会话 | `tools/select·xform·warp`、`engine/resample` | 不画抓手（View 的事） |
 | 8 | **PaletteServer** | 调色板/色卡/索引色/色彩明暗/颜色分析 | 调色板与预设 | `data/palettes`、`engine/adjust·color-analysis·shading` | 不画笔迹 |
@@ -500,7 +500,7 @@ modules.config.json ──> scripts/modules.mjs ──> src/modules/_generated.t
 | **P4** | `RenderServer` + `ViewportServer` | 拆 `view.ts`（4,820） | 同一文档合成结果**逐字节一致**；脏矩形面积不退化 |
 | ↳ | **状态：🟡 部分完成**（2026-09-14）：`RenderServer`（含**平铺重绘区域**与**渲染调试记录**）/ `ViewportServer` 已落地（`src/servers/`）；继续拆的是手势状态机（P5）与 `View` 持有的视口字段 | — | 全量测试 4085 条 ALL PASS；`check-bundle` 通过 |
 | **P5** | `InputServer` | 手势状态机真正搬出 View | 手势 / PC 模式 / 多球互斥用例全绿 |
-| ↳ | **状态：🟡 三片完成**（2026-09-14）：①`servers/input.ts` 策略与算术（+47 断言）；②`TapMachine` 轻点序列（+44 断言，并**发现画布内三击够不到**的既有问题）；③`GestureController` 接管 `onDown/onMove/onUp/onCancel`（约 850 行，`View` 以 `GestureHost` 接口交出 93 个成员，+22 条假 host 断言）—— `view.ts` 4668 → 3765 行；待搬：触点会话字段的所有权（要先拆覆盖层绘制） | — | 全量测试 4085 条 ALL PASS |
+| ↳ | **状态：🟡 三片完成**（2026-09-14）：①`servers/input.ts` 策略与算术（+47 断言）；②`TapMachine` 轻点序列（+44 断言，并**发现画布内三击够不到**的既有问题）；③`GestureController` 接管 `onDown/onMove/onUp/onCancel`（约 850 行，`View` 以 `GestureHost` 接口交出 93 个成员，+22 条假 host 断言）—— `view.ts` 4668 → 3765 行；待搬：无（P5 收尾已完成） | — | 全量测试 4085 条 ALL PASS |
 | **P6** | `DocumentServer` | **最后动**（所有人依赖它） | "cel 与画布等大"等不变量由类型与断言守住 |
 | **P7** | `SignalHub` | 分域订阅替换全量 `changed()` | React 重渲染次数下降；UI 无视觉回归 |
 | **P8** | `AiServer` | 纯增量，前七期完成后自然长出 | 按 `docs/PLAN-ai.md` 的 C1 验收 |
@@ -601,7 +601,7 @@ Server 化： P0 ─ P1 ─ P2 ─ P3 ─ P4 ─ P5 ─ P6 ─ P7 ────�
 | P2 AnimationServer | ⬜ |
 | P3 SelectionServer | ⬜ |
 | P4 RenderServer + ViewportServer | ⬜ |
-| P5 InputServer | 🟡 三片完成（`servers/input.ts` 策略与算术 + 47 断言；`servers/gesture.ts` 的 `TapMachine` + 44 断言、`GestureController`（四个指针入口）+ 22 断言；触点会话字段所有权待搬） |
+| P5 InputServer | 🟢 四片完成（`servers/input.ts` 策略与算术 + 47 断言；`servers/gesture.ts`：`TapMachine` + 44 断言、`GestureController` 四个入口 + 22 断言、触点会话 37 个字段的所有权；`GestureHost` 93 → 54 个成员） |
 | P6 DocumentServer | ⬜ |
 | P7 SignalHub | ⬜ |
 | P8 AiServer | ⬜ |

@@ -254,9 +254,9 @@ export function testView(): void {
     };
     const steps0 = s.history.list().labels.length;
     tap(2, 2); tap(12, 2); tap(12, 12);
-    ok("view.path.pending", !!(view as unknown as { path: unknown }).path);
+    ok("view.path.pending", !!(view.gesture as unknown as { path: unknown }).path);
     tap(12, 12); // tap the last point again = finish
-    ok("view.path.finished", !(view as unknown as { path: unknown }).path);
+    ok("view.path.finished", !(view.gesture as unknown as { path: unknown }).path);
     eq("view.path.one-step", s.history.list().labels.length, steps0 + 1);
     const pcel = s.doc.celAt(0, 0)!;
     ok("view.path.painted", pcel.data[pcel.idx(2, 2) + 3] === 255 && pcel.data[pcel.idx(12, 2) + 3] === 255 &&
@@ -428,11 +428,11 @@ export function testView(): void {
       // 空格按住时在画布内按下＝绘制（背景色），绝不会变成平移
       const spaceOx = v3.ox, spaceOy = v3.oy;
       const inDoc = { clientX: v3.ox + 3.5 * v3.zoom, clientY: v3.oy + 3.5 * v3.zoom };
-      (v3 as unknown as { spaceDown: boolean }).spaceDown = true;
+      (v3.gesture as unknown as { spaceDown: boolean }).spaceDown = true;
       fire("pointerdown", ev({ button: 0, buttons: 1, ...inDoc }));
       fire("pointermove", ev({ button: 0, buttons: 1, clientX: inDoc.clientX + 12, clientY: inDoc.clientY }));
       fire("pointerup", ev({ button: 0, clientX: inDoc.clientX + 12, clientY: inDoc.clientY }));
-      (v3 as unknown as { spaceDown: boolean }).spaceDown = false;
+      (v3.gesture as unknown as { spaceDown: boolean }).spaceDown = false;
       ok("view.pc.space-is-not-pan", v3.ox === spaceOx && v3.oy === spaceOy, "d=" + (v3.ox - spaceOx) + "," + (v3.oy - spaceOy));
 
       // Ctrl+滚轮＝快速改笔刷大小（一格一步，不缩放画布）
@@ -477,8 +477,8 @@ export function testView(): void {
       {
         type ModPriv = {
           onSpaceKey(e: KeyboardEvent): void;
-          spaceDown: boolean;
-          altDown: boolean;
+          /** 触点会话状态由手势控制器持有（PC 修饰键也在那儿） */
+          gesture: { spaceDown: boolean; altDown: boolean };
           syncCursor(): void;
         };
         const sp = v3 as unknown as ModPriv;
@@ -490,7 +490,7 @@ export function testView(): void {
         s3.setFgColor([10, 20, 30, 255]);
         s3.bg = [200, 100, 50, 255];
         sp.onSpaceKey(key(" ", "keydown"));
-        ok("view.pc.space-held", sp.spaceDown === true);
+        ok("view.pc.space-held", sp.gesture.spaceDown === true);
         const spot = { clientX: v3.ox + 9.5 * v3.zoom, clientY: v3.oy + 9.5 * v3.zoom };
         fire("pointerdown", ev({ button: 0, buttons: 1, ...spot }));
         fire("pointerup", ev({ button: 0, ...spot }));
@@ -500,7 +500,7 @@ export function testView(): void {
           eq("view.pc.space-paints-bg", cel ? [cel.data[o], cel.data[o + 1], cel.data[o + 2]] : null, [200, 100, 50]);
         }
         sp.onSpaceKey(key(" ", "keyup"));
-        ok("view.pc.space-released", sp.spaceDown === false);
+        ok("view.pc.space-released", sp.gesture.spaceDown === false);
         // 松开后回到前景色（换一个远处的像素，避免被判成双击）
         const spot2 = { clientX: v3.ox + 24.5 * v3.zoom, clientY: v3.oy + 24.5 * v3.zoom };
         fire("pointerdown", ev({ button: 0, buttons: 1, ...spot2 }));

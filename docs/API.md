@@ -1572,20 +1572,34 @@ class TapMachine {
 
 ## 15c3. 手势控制器 `src/servers/gesture.ts`（指针事件入口）
 
-P5 第三片：`View` 的四个指针事件入口（`onDown` / `onMove` / `onUp` / `onCancel`）**整体搬进来**
-（约 850 行），`View` 侧只剩四行转发 + 覆盖层绘制 + 各工具的动作体。
+P5 第三、四片：`View` 的四个指针事件入口（`onDown` / `onMove` / `onUp` / `onCancel`，
+约 850 行）**整体搬进来**，触点会话**状态**（37 个字段）也一并归它所有 ——
+`View` 侧只剩四行转发 + 覆盖层绘制 + 各工具的动作体。
 
 ```ts
-interface GestureHost {           // 控制器操作 View 的唯一接触面（93 个成员，编译器强制）
-  session; host;                  // 公共依赖（host = 画布宿主元素）
-  pointers; fourStart; fourSeen; fourArmed; fourView0; pinchBase; pinchZoomed;
-  hold; holdFired; panLast; lastPt;                      // 触点会话
-  spaceDown; altDown; altPaint; mousePan;                // PC 输入
-  ox; oy; zoom;                                          // 视口
-  stroke; strokeRedirected; gestureMoved; gestureStartPx; cursor;
-  longT; pickAnchor; pickMode; pickLast; mag; magCenter;  // 长按取色 / loupe
-  resizeDrag; isoDrag; outline; path; selDrag; symTarget; // 各工具自己的拖动会话
-  xfDrag; xf; xfHover; xfHint; warpDragOn; onFramePreview;
+/** 控制器持有的触点会话状态（View 只读它们来画覆盖层；写入只有控制器能做） */
+class GestureController {
+  // 触点：     pointers / fourStart / fourSeen / fourArmed / fourView0
+  // 双指：     pinchBase / pinchZoomed
+  // 长按：     hold / holdFired / longT / pickAnchor / pickMode / pickLast
+  // PC 输入：  spaceDown / altDown / altPaint / mousePan
+  // 手势进度：gestureMoved / gestureStartPx / panLast / lastPt / strokeRedirected / cursor
+  // loupe：    mag / magCenter
+  // 各工具的拖动会话：resizeDrag / isoDrag / outline / path / selDrag / symTarget
+  //                   xfDrag / xf / xfHover / xfHint / warpDragOn / stroke
+  private tap: TapMachine;                 // 轻点序列（§15c2）
+  constructor(host: GestureHost)
+  onDown(e: PointerEvent): void            // 绑定入口：View.onDown 只转发到这里
+  onMove(e: PointerEvent): void
+  onUp(e: PointerEvent): void
+  onCancel(e: PointerEvent): void
+}
+
+/** 控制器操作 View 的接触面：54 个成员（P5 第四片后只剩方法 + 视口 + 两个依赖） */
+interface GestureHost {
+  session; host;                           // 公共依赖（host = 画布宿主元素）
+  ox; oy; zoom;                            // 视口（所有权仍归 View：视图变换是渲染的事）
+  onFramePreview;                          // 四指手势成功后回调的帧预览
   // 方法：坐标与渲染（evPt / screenToPixel / canvasAtScreen / clampView / refresh /
   //   drawOverlay / repaintStroke / drawPathPreview / syncCursor / labelFor / toolNow /
   //   isPathTool / preciseDrag / vpW / vpH）、长按（cancelHold / holdMoved / armHold /
@@ -1593,15 +1607,16 @@ interface GestureHost {           // 控制器操作 View 的唯一接触面（9
   //   （outlineDown / pathDown / selDown / startSelMove / endSelDrag / isoDragTo /
   //    resizeHit / symHit / tryStartXf / xfMove / warpStartMove / wireRedirect …）
 }
-
-class GestureController {
-  constructor(host: GestureHost)
-  onDown(e: PointerEvent): void      // 绑定入口：View.onDown 只转发到这里
-  onMove(e: PointerEvent): void
-  onUp(e: PointerEvent): void
-  onCancel(e: PointerEvent): void
-}
 ```
+
+**所有权口径（P5 第四片，2026-09-14）**：
+
+- 触点会话状态是**控制器的字段**，不是 `View` 的：`view.gesture.xf` / `view.gesture.selDrag` 这样的
+  读取是「渲染层读输入层的会话状态」（覆盖层每帧都要画它，直接读字段比造一套信号便宜）；
+  **写入只允许控制器自己做**，别处要改状态就给它加方法。
+- 这样 `GestureHost` 从 93 个成员瘦到 **54 个**（剩下的是 `session` / `host` / 视口三元组 /
+  `onFramePreview` + 各动作体方法）—— 接口小到能一眼看完，也就真的成了「契约」而不是「字段清单」。
+- 结构体类型（`XfSession` / `SelDragState` / …）与状态放在同一个文件里，改状态机时不用来回跳。
 
 口径（**逐字搬迁，不是重写**；分支顺序、阈值、副作用顺序与搬家前一致）：
 

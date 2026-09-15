@@ -34,11 +34,7 @@ import { isPc } from "../io/pcmode";
 import * as Vp from "../servers/viewport";
 import { RenderServer, onionKeyOf, onionSpecOf, type RenderReason } from "../servers/render";
 import { FOUR_MOVE_PX_DEFAULT } from "../servers/input";
-import {
-  GestureController, type GestureHost,
-  type HoldState, type IsoDragState, type OutlineState, type PathState,
-  type ResizeDragState, type SelDragState, type XfDragState, type XfSession,
-} from "../servers/gesture";
+import { GestureController, type GestureHost, type XfSession } from "../servers/gesture";
 import { hexToRgba } from "../engine/color";
 
 interface PxPoint {
@@ -79,7 +75,7 @@ export const PIVOT_ORDER = ["tl", "tc", "tr", "cl", "cc", "cr", "bl", "bc", "br"
  * `cw` 是右下角 —— 于是「枢轴预设的左上」＝「框的左上」＝「角抓手的位置」，
  * 与命中判定 / 抓手绘制用的是同一套坐标（不会有半格偏差）。
  */
-function pivotBoxOf(g: NonNullable<View["xf"]>): XfBox {
+function pivotBoxOf(g: NonNullable<XfSession>): XfBox {
   return contentBox(g.st.content.w, g.st.content.h);
 }
 
@@ -291,14 +287,8 @@ export class View implements GestureHost {
   private lastView = { ox: NaN, oy: NaN, zoom: NaN, w: 0, h: 0 };
   /** first layout handled: later resizes (orientation/panels) preserve pan+zoom */
   private firstFit = false;
-  cursor: { x: number; y: number; size: number } | null = null;
-  /** pixel loupe (magnifier) shown only while picking a colour */
-  mag = false;
-  magCenter: PxPoint | null = null;
   private isoCache: HTMLCanvasElement | null = null;
   private isoKey = "";
-  /** what the adjust gesture is currently holding (set while unlocked) */
-  symTarget: "mv" | "rot" | null = null;
   private ants = 0;
   /** running view animation (fit / double-tap zoom) */
   private anim = 0;
@@ -330,43 +320,14 @@ export class View implements GestureHost {
     }
   }
 
-  pointers = new Map<number, PxPoint>();
-  pinchBase: { mx: number; my: number; dist: number; ox: number; oy: number; zoom: number } | null = null;
-  stroke: Stroke | null = null;
-  panLast: PxPoint | null = null;
-  /** PC 输入：空格键按住＝临时用另一个色槽（背景色）绘制 */
-  spaceDown = false;
-  /** PC 输入：Alt 按住＝下一次单击取色（光标也变成吸管） */
-  altDown = false;
   /** PC：Shift＝等比缩放 / 干净角吸附；Ctrl＝拖动＝复制（触屏用选区球里的 sticky 开关） */
   private shiftDown = false;
   private ctrlDown = false;
-  /** PC 输入：中键拖动平移中 */
-  mousePan = false;
-  /** PC 输入：这一笔用另一个颜色槽（右键绘制） */
-  altPaint = false;
-  /** last logical pointer position (the cross-canvas drop preview needs it) */
-  lastPt: PxPoint | null = null;
   /** Ctrl+滚轮改笔刷大小的滚轮累计（一格 = 一步） */
   private wheelBrushAcc = 0;
-  /** ⑦ 画布调整模式的拖动状态（ax/ay = 固定的那一侧）—— 类型在 `servers/gesture.ts` */
-  resizeDrag: ResizeDragState | null = null;
   /** 浮动选区内容的离屏缓存（拖动时一次 drawImage 代替逐像素 fillRect） */
   private floatCv: HTMLCanvasElement | null = null;
   private floatKey = "";
-  selDrag: SelDragState | null = null;
-  longT: number | null = null;
-  /** freehand outline tool: collected path, filled with the current colour on release */
-  outline: OutlineState | null = null;
-  /** pending multi-point path (polyline / curve): tap adds a point, tapping
-   *  the last point finishes, tapping the one before removes it */
-  path: PathState | null = null;
-  /** multi-finger long press (2 or 3 fingers held still): pending timer */
-  hold: HoldState | null = null;
-  /** set when a hold fired, so the following lifts cannot count as taps */
-  holdFired = false;
-  /** the open stroke was redirected to a referenced canvas (no auto-select) */
-  strokeRedirected = false;
   /** airbrush: interval that keeps spraying while the finger is held down */
   private sprayT: number | null = null;
   /** fractional specks owed to the next spray tick */
@@ -374,50 +335,18 @@ export class View implements GestureHost {
   /** layer-switch flash: layer index + start time, drawn in the overlay */
   private flash: { li: number; t0: number } | null = null;
   private flashRaf = 0;
-  pickAnchor: [number, number] | null = null;
-  pickMode = false;
-  pickLast: [number, number] | null = null;
-  /** has the current stroke left its starting cell? (false = pure tap) */
-  gestureMoved = false;
-  gestureStartPx: PxPoint | null = null;
-  /** 等距图形模式：正在拖的抓手 / 整块（含按下那一刻的形状尺寸与原点） */
-  isoDrag: IsoDragState | null = null;
   /** 预览离屏画布的缓存（键 = 参数签名） */
   private isoPrevCv: HTMLCanvasElement | null = null;
   private isoPrevKey = "";
   /** 上一次「按在枢轴上」的时间与位置：双击枢轴＝把它复位到内容正中 */
   private pivotTapT = 0;
   private pivotTapPt: PxPoint | null = null;
-  /** four-finger gesture tracking (opens the all-frames preview) */
-  fourSeen = false;
-  /** each finger's screen position at its own touchdown. Whether a finger is
-   *  "sliding" is measured from ITS own start, so fingers that land at
-   *  different times — or lift mid-gesture — never skew the result. */
-  fourStart = new Map<number, { x: number; y: number }>();
-  /** latched as soon as four fingers are down and at least two of them are
-   *  sliding (each past FOUR_MOVE_PX in any direction): the preview fires on
-   *  the last lift even if the hand slid back or stopped before lifting */
-  fourArmed = false;
-  /** viewport state when the first finger landed. Restored the instant a
-   *  four-finger contact is confirmed so jitter while fingers 2-4 land can
-   *  never zoom/pan the canvas underneath the gesture. */
-  fourView0: { ox: number; oy: number; zoom: number } | null = null;
   /** invoked after a clean four-finger gesture (wired up by the app shell) */
   onFramePreview: (() => void) | null = null;
   /** invoked whenever the view transform changed (canvas title bars follow it) */
   onViewChanged: (() => void) | null = null;
-  /** the pinch actually zoomed (else it was a two-finger tap) */
-  pinchZoomed = false;
-  /** 旋转 / 缩放 / 斜切 / 移动 / 枢轴拖动（`xf` 槽里的交互，自由变换见 xf.mode === "warp"） */
-  xfDrag: XfDragState | null = null;
-  /** 选区自由变换的会话状态（口径见 `servers/gesture.ts` 的 `XfSession`） */
-  xf: XfSession | null;
   /** 上一次 `beginWarp` 被拒的原因（UI 据此给不同提示；"locked" 已由 paintBlockedNote 说过） */
   lastWarpError: "noSel" | "tooThin" | "locked" | null = null;
-  /** PC 鼠标悬停在哪个抓手 / 圈上（画圈提示与光标形状用；`anchor` 用于点亮那一个图标） */
-  xfHover: { kind: XfKind; anchor?: AnchorId; x: number; y: number } | null = null;
-  /** 正在拖变形控制点：画布上跟手显示当前坐标（`x, y`；半像素模式带一位小数） */
-  warpDragOn = false;
 
   constructor(host: HTMLElement, session: Session) {
     this.host = host;
@@ -434,8 +363,8 @@ export class View implements GestureHost {
     host.appendChild(this.pix);
     host.appendChild(this.ov);
     this.dpr = Math.min(2.5, window.devicePixelRatio || 1);
-    this.xf = null;              // 显式初始化（可选字段声明只给类型、不给默认值）
-    this.xfDrag = null;
+    this.gesture.xf = null;              // 显式初始化（可选字段声明只给类型、不给默认值）
+    this.gesture.xfDrag = null;
     this.bind();
   }
 
@@ -455,7 +384,7 @@ export class View implements GestureHost {
 
   /** 滚轮：缩放（以光标为锚点）/ Shift 横向 / Alt 纵向；只在 PC 模式生效 */
   private onWheel(e: WheelEvent): void {
-    if (!isPc() || this.pointers.size > 0) return;
+    if (!isPc() || this.gesture.pointers.size > 0) return;
     if (this.session.uiEdit) return;   // 编辑界面时不缩放画布
     e.preventDefault();
     const r = this.host.getBoundingClientRect();
@@ -495,9 +424,9 @@ export class View implements GestureHost {
     const id = cursorFor({
       tool: this.session.tool,
       locked: this.session.layerLocked(),
-      panning: this.mousePan,
-      altPick: this.altDown,
-      picking: this.pickMode,
+      panning: this.gesture.mousePan,
+      altPick: this.gesture.altDown,
+      picking: this.gesture.pickMode,
     });
     // 测试环境里的 host 是精简桩，dataset / style 可能不存在
     const ds = (host as unknown as { dataset?: Record<string, string> }).dataset;
@@ -515,10 +444,10 @@ export class View implements GestureHost {
     const typing = !!t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable);
     const down = e.type === "keydown";
     if (e.key === "Alt" || e.code === "AltLeft" || e.code === "AltRight") {
-      if (this.altDown === down) return;
-      this.altDown = down;
+      if (this.gesture.altDown === down) return;
+      this.gesture.altDown = down;
       if (down) e.preventDefault();              // 别让浏览器把焦点抢到菜单栏
-      if (this.pointers.size === 0) this.syncCursor();
+      if (this.gesture.pointers.size === 0) this.syncCursor();
       return;
     }
     // Shift：等比缩放 / 干净角吸附（触屏上是选区球里的 sticky 开关）；Ctrl：拖动＝复制
@@ -533,8 +462,8 @@ export class View implements GestureHost {
     if (e.code !== "Space" && e.key !== " ") return;
     if (typing) return;
     if (down && t && t.tagName === "BUTTON") return;   // 空格仍然激活聚焦的按钮
-    if (this.spaceDown === down) return;
-    this.spaceDown = down;
+    if (this.gesture.spaceDown === down) return;
+    this.gesture.spaceDown = down;
     if (down) e.preventDefault();
   };
 
@@ -740,7 +669,7 @@ export class View implements GestureHost {
     if (!this.host || this.tempTool) return false;
     this.tempTool = tool;
     this.dispatchPointer("pointerdown", clientX, clientY);
-    if (!this.stroke) {         // 没画出笔画（画布外 / 图层锁定）：干脆别接管
+    if (!this.gesture.stroke) {         // 没画出笔画（画布外 / 图层锁定）：干脆别接管
       this.tempTool = null;
       return false;
     }
@@ -754,7 +683,7 @@ export class View implements GestureHost {
   /** 结束临时笔画：落下一条历史步，并**不改**当前工具 */
   endTempStroke(): void {
     if (!this.tempTool) return;
-    this.dispatchPointer("pointerup", this.lastPt.x, this.lastPt.y);
+    this.dispatchPointer("pointerup", this.gesture.lastPt.x, this.gesture.lastPt.y);
     this.tempTool = null;
   }
 
@@ -782,14 +711,14 @@ export class View implements GestureHost {
    *  changes pixels in ANOTHER document, so the dirty rect cannot be mapped —
    *  repaint everything instead (otherwise the preview only appears on release) */
   repaintStroke(): void {
-    const st = this.stroke;
+    const st = this.gesture.stroke;
     if (!st) return;
     const d = st.takeDirty();
     if (!d) return;
     // a redirected stroke painted into ANOTHER canvas: mirror it into the
     // reference layer's own cel and repaint the whole canvas (the dirty rect
     // lives in the other document's coordinates, so it cannot be mapped)
-    if (this.strokeRedirected) this.session.repaint();
+    if (this.gesture.strokeRedirected) this.session.repaint();
     else this.session.repaintRect(d);
   }
 
@@ -799,12 +728,12 @@ export class View implements GestureHost {
     // 否则浮动内容只活在内存里、而图层已经被 floatCut 清空（自动保存会存成缺内容的样子）。
     // **两种模式都要落**：`warp`（四点 / 网格）与「移动 + 缩放 + 旋转 + 斜切」那套
     // （`mode` 是 `"scale"` / `"rot"`）—— 只判 `warp` 会让后者跨工具 / 跨帧漏掉（实现 bug）。
-    if (this.xf) this.endXf();
-    if (this.path) this.endPath(true);
-    if (!this.stroke) return false;
+    if (this.gesture.xf) this.endXf();
+    if (this.gesture.path) this.endPath(true);
+    if (!this.gesture.stroke) return false;
     this.stopSpray();
-    const rec = this.stroke.commit(this.session.history, this.labelFor(this.stroke.kind));
-    this.stroke = null;
+    const rec = this.gesture.stroke.commit(this.session.history, this.labelFor(this.gesture.stroke.kind));
+    this.gesture.stroke = null;
     this.session.repaint();
     if (rec) this.session.changedUI();
     return rec;
@@ -1017,7 +946,7 @@ export class View implements GestureHost {
       }
     }
     // in-progress lasso trajectory
-    const lasso = this.selDrag;
+    const lasso = this.gesture.selDrag;
     if (lasso && lasso.kind === "lasso" && lasso.pts && lasso.pts.length > 0) {
       ctx.save();
       ctx.strokeStyle = "#63f5c5";
@@ -1047,7 +976,7 @@ export class View implements GestureHost {
     // ⑦ 画布调整模式：四条边 + 四个角的把手，拖动时显示新尺寸
     if (this.session.resizeModeOn) {
       const doc = this.session.doc;
-      const g = this.resizeDrag;
+      const g = this.gesture.resizeDrag;
       const pvW = (g ? g.w : doc.w) * z, pvH = (g ? g.h : doc.h) * z;
       ctx.save();
       // 边框 + 四角
@@ -1081,7 +1010,7 @@ export class View implements GestureHost {
     this.drawOutlinePreview(ctx);
     this.drawGradPreview(ctx);
     // floating selection content: pixels held above the layer during a drag
-    const fg = this.selDrag;
+    const fg = this.gesture.selDrag;
     if (fg && fg.kind === "move" && fg.mv && fg.cut && fg.moved) {
       const mv = fg.mv, content = mv.content;
       const gox = mv.ox + (fg.dx || 0), goy = mv.oy + (fg.dy || 0);
@@ -1160,7 +1089,7 @@ export class View implements GestureHost {
       }
     }
     // floating rotate/scale content: pixels rasterised off-layer during a transform
-    const xfg = this.xf;
+    const xfg = this.gesture.xf;
     if (xfg && xfg.cut && xfg.buf && xfg.cells && xfg.cells.length) {
       const wdoc = this.session.doc.w;
       const buf = xfg.buf;
@@ -1188,7 +1117,7 @@ export class View implements GestureHost {
     // **必须带上当前笔尖形状**：落笔走的是 `brushStamp(size, brushShape)`（见 tools/stroke.ts），
     // 预览早先写死默认的圆笔尖 —— 换成方笔尖后，白色轮廓还是圆的，跟画出来的方块对不上，
     // 而且偶数尺寸下两种笔尖的偏移范围差一格，看起来就是"预览位置跑偏"（真机反馈）。
-    const cu = this.cursor;
+    const cu = this.gesture.cursor;
     if (cu) {
       const tool = this.session.tool;
       if (tool === "pencil" || tool === "eraser") {
@@ -1216,12 +1145,12 @@ export class View implements GestureHost {
 
   /** pixel loupe: magnified square around the brush while drawing */
   private drawMag(ctx: CanvasRenderingContext2D): void {
-    if (!this.mag || !this.magCenter) return;
+    if (!this.gesture.mag || !this.gesture.magCenter) return;
     const doc = this.session.doc;
     const CELL = Math.max(8, Math.round(this.session.prefs.magZoom));
     const L = 132;
     const half = Math.floor(L / CELL / 2);
-    const cx = this.magCenter.x, cy = this.magCenter.y;
+    const cx = this.gesture.magCenter.x, cy = this.gesture.magCenter.y;
     const sx0 = Math.round(cx - half), sy0 = Math.round(cy - half);
     // fixed at the bottom-left corner of the viewport
     const x = 10, y = this.vpH() - L - 10;
@@ -1666,7 +1595,7 @@ export class View implements GestureHost {
   /** gradient drag indicator: a line from the anchor to the finger plus the
    *  two end ticks, so the direction/length of the ramp is obvious */
   private drawGradPreview(ctx: CanvasRenderingContext2D): void {
-    const st = this.stroke;
+    const st = this.gesture.stroke;
     if (!st || st.kind !== "bucket") return;
     const line = st.gradLine();
     if (!line) return;
@@ -1700,7 +1629,7 @@ export class View implements GestureHost {
   }
 
   private drawOutlinePreview(ctx: CanvasRenderingContext2D): void {
-    const o = this.outline;
+    const o = this.gesture.outline;
     if (!o || o.pts.length < 2) return;
     const z = this.zoom;
     const sx = (x: number) => this.ox + x * z;
@@ -1809,8 +1738,8 @@ export class View implements GestureHost {
     host.addEventListener("pointerup", (e) => this.onUp(e));
     host.addEventListener("pointercancel", (e) => this.onCancel(e));
     host.addEventListener("pointerleave", () => {
-      if (this.pointers.size === 0) {
-        this.cursor = null;
+      if (this.gesture.pointers.size === 0) {
+        this.gesture.cursor = null;
         this.drawOverlay();
       }
     });
@@ -1828,24 +1757,24 @@ export class View implements GestureHost {
 
   // ----- long-press eyedropper mode (0.3s stationary inside one pixel) -----
   cancelPickTimer(): void {
-    if (this.longT !== null) {
-      window.clearTimeout(this.longT);
-      this.longT = null;
+    if (this.gesture.longT !== null) {
+      window.clearTimeout(this.gesture.longT);
+      this.gesture.longT = null;
     }
-    this.pickAnchor = null;
+    this.gesture.pickAnchor = null;
   }
   cancelHold(): void {
-    if (this.hold) {
-      window.clearTimeout(this.hold.t);
-      this.hold = null;
+    if (this.gesture.hold) {
+      window.clearTimeout(this.gesture.hold.t);
+      this.gesture.hold = null;
     }
   }
   /** true when any finger of the pending hold moved past the jitter threshold */
   holdMoved(): boolean {
-    const h = this.hold;
+    const h = this.gesture.hold;
     if (!h) return false;
     const tol = Math.max(8, this.session.prefs.fourFingerPx || FOUR_MOVE_PX_DEFAULT);
-    for (const [pid, p] of this.pointers) {
+    for (const [pid, p] of this.gesture.pointers) {
       const st = h.starts.get(pid);
       if (st && Math.hypot(p.x - st.x, p.y - st.y) > tol) return true;
     }
@@ -1854,51 +1783,51 @@ export class View implements GestureHost {
   /** arm the n-finger long press (the action is read when it fires) */
   armHold(n: number, action: GestureActionId, tag: string): void {
     this.cancelHold();
-    if (this.pointers.size !== n) return;
-    const pts = [...this.pointers.entries()];
+    if (this.gesture.pointers.size !== n) return;
+    const pts = [...this.gesture.pointers.entries()];
     let mx = 0, my = 0;
     const starts = new Map<number, { x: number; y: number }>();
     for (const [pid, p] of pts) {
       mx += p.x; my += p.y;
       starts.set(pid, { x: p.x, y: p.y });
     }
-    this.holdFired = false;
+    this.gesture.holdFired = false;
     const t = window.setTimeout(() => {
-      const h = this.hold;
+      const h = this.gesture.hold;
       if (!h) return;
-      this.hold = null;
+      this.gesture.hold = null;
       // every finger still down, and nobody slid in the meantime
-      if (this.pointers.size !== h.n || this.pinchZoomed) return;
-      this.holdFired = true;
+      if (this.gesture.pointers.size !== h.n || this.gesture.pinchZoomed) return;
+      this.gesture.holdFired = true;
       this.session.hapticTick(tag);
       this.session.runGestureAction(action, { x: h.mid.x, y: h.mid.y });
     }, this.session.prefs.longPressMs);
-    this.hold = { n, mid: { x: mx / n, y: my / n }, starts, t };
+    this.gesture.hold = { n, mid: { x: mx / n, y: my / n }, starts, t };
   }
 
   samplePickCell(x: number, y: number, strong: boolean): void {
     const c = this.session.sampleComposite(x, y);
     if (c) {
-      const changed = this.pickLast == null || this.pickLast[0] !== x || this.pickLast[1] !== y;
+      const changed = this.gesture.pickLast == null || this.gesture.pickLast[0] !== x || this.gesture.pickLast[1] !== y;
       if (changed) {
         this.session.setFgColor(c);
         this.session.hapticTick("取色", strong ? 1.2 : 0.5);
         this.session.repaint();
       }
     }
-    this.pickLast = [x, y];
+    this.gesture.pickLast = [x, y];
   }
   enterPickMode(x: number, y: number): void {
-    this.pickMode = true;
-    this.pickLast = null;
-    this.pickAnchor = null;
+    this.gesture.pickMode = true;
+    this.gesture.pickLast = null;
+    this.gesture.pickAnchor = null;
     // drop any in-progress stroke / pan / selection drag
-    if (this.stroke) {
-      this.stroke.cancel();
-      this.stroke = null;
+    if (this.gesture.stroke) {
+      this.gesture.stroke.cancel();
+      this.gesture.stroke = null;
     }
-    this.panLast = null;
-    this.selDrag = null;
+    this.gesture.panLast = null;
+    this.gesture.selDrag = null;
     this.samplePickCell(x, y, true);
   }
 
@@ -1983,7 +1912,7 @@ export class View implements GestureHost {
   /** iso 拖动的每一步：把屏幕增量换算成格数 / 像素，写回 Session（预览实时跟手） */
   isoDragTo(pt: PxPoint): void {
     const s = this.session;
-    const g = this.isoDrag;
+    const g = this.gesture.isoDrag;
     if (!g) return;
     const T = s.prefs.iso.tile;
     const z = Math.max(0.01, this.zoom);
@@ -2137,7 +2066,8 @@ export class View implements GestureHost {
   // （可用假 host 单测），`View` 这边只留覆盖层绘制与各工具的动作体。
   // 触点会话状态仍然在 `View` 上（覆盖层要画它），通过 `GestureHost` 接口交给控制器 ——
   // 想在控制器里多碰一个字段，先在 `GestureHost` 里声明（编译器会拦住漏声明的访问）。
-  private gesture = new GestureController(this);
+  /** 手势控制器（触点会话状态的**唯一写者**；下面这些绘制 / 动作体只读它的字段） */
+  readonly gesture = new GestureController(this);
 
   /** 指针按下：转发给手势控制器（判定与顺序见 `servers/gesture.ts`） */
   onDown(e: PointerEvent): void { this.gesture.onDown(e); }
@@ -2167,7 +2097,7 @@ export class View implements GestureHost {
 
   /** 变换会话是不是「移动 + 缩放 + 旋转 + 斜切」模式（`warp` 是另一套） */
   inXform(): boolean {
-    return !!this.xf && this.xf.mode !== "warp";
+    return !!this.gesture.xf && this.gesture.xf.mode !== "warp";
   }
 
   /**
@@ -2180,20 +2110,20 @@ export class View implements GestureHost {
    * 「移动内容」不算精调：它本来就是「把内容拖到别处」，边缘自动平移正是要的能力。
    */
   preciseDrag(): boolean {
-    const g = this.xf;
+    const g = this.gesture.xf;
     if (!g) return false;
     if (g.mode === "warp") return g.drag !== undefined;
-    if (!this.xfDrag) return false;
-    return this.xfDrag.kind !== "move";
+    if (!this.gesture.xfDrag) return false;
+    return this.gesture.xfDrag.kind !== "move";
   }
 
   /** 变换矩阵（枢轴拖动 / 斜切基准线的补偿都折在 `affineFrom()` 里） */
-  private xfMat(g: NonNullable<View["xf"]>): Mat3 {
+  private xfMat(g: NonNullable<XfSession>): Mat3 {
     return affineFrom(this.xfParams(g));
   }
 
   /** 会话的变换参数（`View` 内部与预览共用一处组装，避免两处口径漂移） */
-  private xfParams(g: NonNullable<View["xf"]>): XfParams {
+  private xfParams(g: NonNullable<XfSession>): XfParams {
     const tp = g.tp!;
     return {
       pivot: tp.pivot,
@@ -2220,7 +2150,7 @@ export class View implements GestureHost {
     if (!doc.sel || !doc.sel.hasAny()) return null;
     const b = doc.sel.bounds();
     if (!b) return null;
-    const g = this.xf;
+    const g = this.gesture.xf;
     const z = this.zoom;
     // 会话中：按当前矩阵变换后的框（含旋转 / 缩放 / 斜切）；否则：轴对齐的选区矩形。
     // 两种情况的**画法口径一致**：选区占下标 `b.x .. b.x+b.w-1`，屏幕上是
@@ -2252,7 +2182,7 @@ export class View implements GestureHost {
   /** 屏幕上要摆的**固定图标抓手**（16 个：8 缩放 + 4 旋转 + 4 斜切；两平台同一套） */
   private xfGrabs(): Grab[] {
     // 四点 / 网格自由变形（warp）是**另一套控制点**，不摆常规变换框的图标
-    if (this.xf && this.xf.mode === "warp") return [];
+    if (this.gesture.xf && this.gesture.xf.mode === "warp") return [];
     const f = this.xfScreenFrame();
     if (!f) return [];
     return transformGrabs(f);
@@ -2267,7 +2197,7 @@ export class View implements GestureHost {
    * 枢轴会呆在原地不动（用户报的「拖动选取内容时锚点应该跟随」）。
    */
   private xfPivotScreen(): PxPoint | null {
-    const g = this.xf;
+    const g = this.gesture.xf;
     if (!g || g.mode === "warp" || !g.tp) return null;
     const p = applyAffine(this.xfMat(g), g.tp.pivot);
     return {
@@ -2305,7 +2235,7 @@ export class View implements GestureHost {
     // 枢轴：可拖，但**只在比抓手更贴手时**才赢（拖动中不再抢，交给本次拖拽）
     const pivotR = pc ? 14 : 26;
     const pv = this.xfPivotScreen();
-    if (pv && !this.xfDrag) {
+    if (pv && !this.gesture.xfDrag) {
       const pd = Math.hypot(pt.x - pv.x, pt.y - pv.y);
       if (pd <= pivotR && pd <= hd) return { kind: "pivot" };
     }
@@ -2323,8 +2253,6 @@ export class View implements GestureHost {
     return g ? { x: g.x, y: g.y } : pt;
   }
 
-  /** 最近一次命中的语义描述（测试与状态栏共用） */
-  xfHint: string | null = null;
 
   /** 命中半径（屏幕像素常量；导出给测试与文档） */
   hitRadii(): HitRadii {
@@ -2349,9 +2277,9 @@ export class View implements GestureHost {
     // 已经在会话里：**复用**同一次会话，只把「这次拖的是哪个抓手」记下来。
     // 一次会话一条 undo 靠的就是这里 —— 换个抓手（缩放 → 旋转 → 斜切）不该重开会话，
     // 更不该把已经调好的枢轴 / 缩放 / 角度丢掉。
-    const live = this.xf;
+    const live = this.gesture.xf;
     if (live && live.mode !== "warp" && live.tp) {
-      this.xfDrag = { kind, anchor, start: pt, pivot0: { ...live.tp.pivot }, tp0: tp0Of(live.tp), h0: this.grabIconAt(kind, anchor, pt) };
+      this.gesture.xfDrag = { kind, anchor, start: pt, pivot0: { ...live.tp.pivot }, tp0: tp0Of(live.tp), h0: this.grabIconAt(kind, anchor, pt) };
       s.hapticTick("变换", 0.4);
       this.drawOverlay();
       return true;
@@ -2372,8 +2300,8 @@ export class View implements GestureHost {
     const center = boxCenter(box);
     const screenBox = screenFrameOf(affineFrom({ pivot: center, angle: 0, sx: 1, sy: 1 }), st.content.w, st.content.h, this.zoom, this.ox, this.oy);
     const px = (pt.x - this.ox) / this.zoom - 0.5, py = (pt.y - this.oy) / this.zoom - 0.5;
-    this.xf = {
-      mode: kind === "rotate" ? "rot" : "scale",   // 兼容字段；真正的语义看 this.xfDrag
+    this.gesture.xf = {
+      mode: kind === "rotate" ? "rot" : "scale",   // 兼容字段；真正的语义看 this.gesture.xfDrag
       axis: "xy", li, fi, st,
       cx: center.x, cy: center.y, ax: center.x, ay: center.y,
       p0x: px, p0y: py, ang0: Math.atan2(py - center.y, px - center.x),
@@ -2383,7 +2311,7 @@ export class View implements GestureHost {
       pivotTouched: false,
       kinds: { move: false, scale: false, rotate: false, skew: false },
     };
-    this.xfDrag = { kind, anchor, start: pt, pivot0: { x: center.x, y: center.y }, tp0: tp0Of(this.xf.tp), h0: this.grabIconAt(kind, anchor, pt) };
+    this.gesture.xfDrag = { kind, anchor, start: pt, pivot0: { x: center.x, y: center.y }, tp0: tp0Of(this.gesture.xf.tp), h0: this.grabIconAt(kind, anchor, pt) };
     s.hapticTick("变换", 0.5);
     this.drawOverlay();
     return true;
@@ -2399,8 +2327,8 @@ export class View implements GestureHost {
    *  · 缩放 / 斜切用**当前框的旋转角**把拖动量投影到框自身的轴上（框转过也跟手）。
    */
   xfMove(pt: PxPoint): void {
-    const g = this.xf;
-    const d = this.xfDrag;
+    const g = this.gesture.xf;
+    const d = this.gesture.xfDrag;
     if (!g || g.mode === "warp" || !d || !g.tp || !g.screen0 || !g.box0) return;
     const z = this.zoom || 1;
     const tp = g.tp;
@@ -2487,7 +2415,7 @@ export class View implements GestureHost {
       // 「网格吸附」chip：PC 上 Alt 取反。**必须用 `!!` 归一化**：`altDown` 在没按过
       // Alt 键时是 `undefined`，`false !== undefined` 会把吸附**意外打开**，
       // 于是缩放被吸到整数倍（拖 400px 也只放大 3 倍）—— 看起来就是「缩放坏了」。
-      if (!!prefs.selXformGridSnap !== !!this.altDown) {
+      if (!!prefs.selXformGridSnap !== !!this.gesture.altDown) {
         nx = Math.round(nx) || (nx < 0 ? -1 : 1);
         ny = Math.round(ny) || (ny < 0 ? -1 : 1);
       }
@@ -2553,7 +2481,7 @@ export class View implements GestureHost {
    * 把框 `b` 绕 `a` 缩放 `sx` / `sy` 之后的框（负倍率＝翻转，两端重新排序）。
    * 与 `scaleAnchor()` 用的是同一套**外框**算法（视图侧枢轴跟位用）。
    */
-  private pivotKeepPicture(g: NonNullable<View["xf"]>, next: Pt): void {
+  private pivotKeepPicture(g: NonNullable<XfSession>, next: Pt): void {
     const tp = g.tp;
     if (!tp) return;
     if (tp.pivot.x === next.x && tp.pivot.y === next.y) return;
@@ -2569,7 +2497,7 @@ export class View implements GestureHost {
    * 第一次调用才 `floatCut()`（把浮动内容从图层上切下来）—— 所以「只进来看看」不改图层。
    */
   private xfApply(): void {
-    const g = this.xf;
+    const g = this.gesture.xf;
     if (!g || g.mode === "warp" || !g.tp) return;
     const s = this.session;
     const doc = s.doc;
@@ -2600,7 +2528,7 @@ export class View implements GestureHost {
    * 「变形不正确」）。现在一律交给最近邻重采样 —— 90° 倍数旋转在格点上是一一对应的，
    * 重采样本身就是无损的（`tests/xformui.test.ts` 有断言钉住）。
    */
-  private xfExactOf(g: NonNullable<View["xf"]>): { dx: number; dy: number; steps: number } | undefined {
+  private xfExactOf(g: NonNullable<XfSession>): { dx: number; dy: number; steps: number } | undefined {
     const tp = g.tp!;
     const params = this.xfParams(g);
     if (!isExactTransform(params)) return undefined;
@@ -2615,7 +2543,7 @@ export class View implements GestureHost {
    * 结果左上角＝内容原点 + 整数位移（90° 旋转时 `exactMove()` 已经把宽高换过来）。
    */
   private xfApplyExact(_m: Mat3, _cw: number, _ch: number): void {
-    const g = this.xf!;
+    const g = this.gesture.xf!;
     const doc = this.session.doc;
     const ex = g.exact!;
     const em = exactMove(g.st.content, ex.steps);
@@ -2649,7 +2577,7 @@ export class View implements GestureHost {
    *  于是整数下标画在像素中心、半像素下标（`x.5`，见 `snapWarpCoord()`）正好画在
    *  两个像素之间的**边界线**上：用户要的「点显示在像素上方」就是这个口径。 */
   private warpHandles(): Array<{ x: number; y: number }> {
-    const g = this.xf;
+    const g = this.gesture.xf;
     if (!g || g.mode !== "warp" || !g.pts) return [];
     const z = this.zoom;
     return g.pts.map((p) => ({ x: (p.x + 0.5) * z + this.ox, y: (p.y + 0.5) * z + this.oy }));
@@ -2682,7 +2610,7 @@ export class View implements GestureHost {
   /** 按当前控制点重算浮动预览（每次都从手势起点抓下来的原图重算，不累积误差）。
    *  第一次调用时才把浮动内容从图层上切下来（`floatCut`）——进入变形本身不改图层。 */
   private applyWarp(): void {
-    const g = this.xf;
+    const g = this.gesture.xf;
     if (!g || g.mode !== "warp" || !g.pts) return;
     const s = this.session;
     const doc = s.doc;
@@ -2701,7 +2629,7 @@ export class View implements GestureHost {
     this.lastWarpError = null;
     if (!doc.sel || !doc.sel.hasAny()) { this.lastWarpError = "noSel"; return false; }
     if (s.layerLocked()) { this.lastWarpError = "locked"; s.paintBlockedNote(); return false; }
-    let g = this.xf;
+    let g = this.gesture.xf;
     if (!g) {
       const li = s.curLayer(), fi = s.curFrame();
       const st = beginMove(doc, li, fi);
@@ -2712,7 +2640,7 @@ export class View implements GestureHost {
       const b = doc.sel.bounds();
       const cx = b ? b.x + b.w / 2 : 0, cy = b ? b.y + b.h / 2 : 0;
       g = { mode: "warp", axis: "xy", li, fi, st, cx, cy, ax: cx, ay: cy, p0x: cx, p0y: cy, ang0: 0, moved: false };
-      this.xf = g;
+      this.gesture.xf = g;
     }
     g.mode = "warp";
     g.warpKind = kind;
@@ -2738,7 +2666,7 @@ export class View implements GestureHost {
    * （会话起点的图层字节）与 `st.mask` 都**不动**，所以撤销与「还原」照旧回到会话开始那一刻。
    * 没有浮动结果（没真拖过）时什么都不做。
    */
-  private bakeXfIntoContent(g: NonNullable<View["xf"]>): void {
+  private bakeXfIntoContent(g: NonNullable<XfSession>): void {
     const doc = this.session.doc;
     const buf = g.buf, cells = g.cells;
     if (!g.cut || !buf || !cells || !cells.length) return;
@@ -2783,12 +2711,12 @@ export class View implements GestureHost {
    *  `x.5`，整像素模式落在整数。落点**就是指针所在的那一点**（不记偏移），所以「拖到哪就是哪」，
    *  想精确移动控制点时手感与指针完全一致。 */
   warpMove(pt: PxPoint): void {
-    const g = this.xf;
+    const g = this.gesture.xf;
     if (!g || g.mode !== "warp" || !g.pts || g.drag === undefined) return;
     const half = this.session.selWarpHalfSnap;
     const p = warpPointFromScreen(pt.x, pt.y, this.zoom, this.ox, this.oy, half);
     const q = g.pts[g.drag];
-    this.warpDragOn = true;        // 拖动中：浮标显示当前坐标（见 drawWarpHandles）
+    this.gesture.warpDragOn = true;        // 拖动中：浮标显示当前坐标（见 drawWarpHandles）
     if (q.x === p.x && q.y === p.y) return;
     q.x = Math.max(-4096, Math.min(4096, p.x));
     q.y = Math.max(-4096, Math.min(4096, p.y));
@@ -2804,7 +2732,7 @@ export class View implements GestureHost {
    * 于是整像素 / 半像素两种粒度下拖出来的位移都是干净的。
    */
   warpStartMove(pt: PxPoint): boolean {
-    const g = this.xf;
+    const g = this.gesture.xf;
     if (!g || g.mode !== "warp" || !g.pts) return false;
     const bb = warpBounds(g.pts);
     if (!bb) return false;
@@ -2818,7 +2746,7 @@ export class View implements GestureHost {
 
   /** 拖动内容中：把所有控制点按（吸附后的）位移整体搬走 */
   warpMoveContent(pt: PxPoint): void {
-    const g = this.xf;
+    const g = this.gesture.xf;
     if (!g || g.mode !== "warp" || !g.pts || !g.move) return;
     const step = this.session.selWarpHalfSnap ? 0.5 : 1;
     const raw = warpPointRaw(pt.x, pt.y, this.zoom, this.ox, this.oy);
@@ -2835,14 +2763,14 @@ export class View implements GestureHost {
       g.pts[i].y = ny;
     }
     if (!changed) return;
-    this.warpDragOn = false;      // 拖内容不显示坐标浮标
+    this.gesture.warpDragOn = false;      // 拖内容不显示坐标浮标
     g.moved = true;
     this.applyWarp();
   }
 
   /** 退出自由变换：把当前结果落下（一条历史），`revert = true` 时还原原像素 */
   finishWarp(revert = false): void {
-    const g = this.xf;
+    const g = this.gesture.xf;
     if (!g || g.mode !== "warp") return;
     if (revert) { this.abortXf(); return; }
     this.endXf();
@@ -2853,13 +2781,13 @@ export class View implements GestureHost {
    * **不进历史**（与「完成」相对）—— 自由变换的「还原」与 Esc 是同一条路。
    */
   revertXf(): void {
-    if (!this.xf) return;
+    if (!this.gesture.xf) return;
     this.abortXf();
   }
 
   /** 「完成」：把会话落成一条历史并结束（没有会话时什么都不做） */
   commitXf(): void {
-    if (!this.xf) return;
+    if (!this.gesture.xf) return;
     this.endXf();
   }
 
@@ -2876,7 +2804,7 @@ export class View implements GestureHost {
    * 用屏幕坐标精确点中它；交互侧不受影响（拖动枢轴走的还是 `xfHitAt()` 那条路）。
    */
   setXfPivotAt(lx: number, ly: number): boolean {
-    const g = this.xf;
+    const g = this.gesture.xf;
     if (!g || g.mode === "warp" || !g.tp) return false;
     if (g.tp.pivot.x === lx && g.tp.pivot.y === ly) return false;
     this.pivotKeepPicture(g, { x: lx, y: ly });
@@ -2906,7 +2834,7 @@ export class View implements GestureHost {
    * 所以复位枢轴**画面逐像素不动** —— 它只改「绕哪里转」。
    */
   resetXfPivot(): boolean {
-    const g = this.xf;
+    const g = this.gesture.xf;
     if (!g || g.mode === "warp" || !g.tp) return false;
     const p = pivotPresetPoint(pivotBoxOf(g), "cc");
     if (g.tp.pivot.x === p.x && g.tp.pivot.y === p.y) return false;
@@ -2919,7 +2847,7 @@ export class View implements GestureHost {
 
   /** 当前枢轴落在哪一档预设（9 档循环 / 高亮用；没有会话返回 null） */
   pivotPreset(): PivotPreset | null {
-    const g = this.xf;
+    const g = this.gesture.xf;
     if (!g || g.mode === "warp" || !g.tp) return null;
     const b = pivotBoxOf(g);
     let best: PivotPreset = "cc", bd = Infinity;
@@ -2938,7 +2866,7 @@ export class View implements GestureHost {
    * 没在会话里时返回 false（此时没有枢轴可言）。
    */
   setPivotPreset(k: PivotPreset): boolean {
-    const g = this.xf;
+    const g = this.gesture.xf;
     if (!g || g.mode === "warp" || !g.tp) return false;
     const b = pivotBoxOf(g);
     const p = pivotPresetPoint(b, k);
@@ -2960,7 +2888,7 @@ export class View implements GestureHost {
 
   /** 退出等距模式时清掉进行中的拖动（Session 调它，免得抓手状态留在下一次会话里） */
   isoCancelDrag(): void {
-    this.isoDrag = null;
+    this.gesture.isoDrag = null;
     this.isoPrevCv = null;
     this.isoPrevKey = "";
   }
@@ -2977,7 +2905,7 @@ export class View implements GestureHost {
     const s = this.session;
     const tool = s.tool;
     if (tool !== "select" && tool !== "lasso" && tool !== "wand") return false;
-    if (this.selDrag || this.xfDrag) return false;
+    if (this.gesture.selDrag || this.gesture.xfDrag) return false;
     const doc = s.doc;
     if (!doc.sel || !doc.sel.hasAny()) return false;
     const f = this.xfScreenFrame();
@@ -2988,7 +2916,7 @@ export class View implements GestureHost {
     if (band && inside && !this.inXform()) {
       const pp = this.screenToPixel(pt.x, pt.y);
       this.startSelMove(pp);
-      if (this.selDrag) { this.selDrag.frameOnly = true; return true; }
+      if (this.gesture.selDrag) { this.gesture.selDrag.frameOnly = true; return true; }
     }
     const hit = this.xfHitAt(pt);
     if (hit) {
@@ -3021,7 +2949,7 @@ export class View implements GestureHost {
     if (!inside && !band) return false;
     const pp = this.screenToPixel(pt.x, pt.y);
     if (!this.startSelMove(pp)) return false;
-    if (band && inside && this.selDrag) this.selDrag.frameOnly = true;
+    if (band && inside && this.gesture.selDrag) this.gesture.selDrag.frameOnly = true;
     return true;
   }
 
@@ -3030,9 +2958,9 @@ export class View implements GestureHost {
    * 「一次会话一条 undo」靠它成立。落历史在 `endXf()`（完成 / 切工具 / 切帧时）。
    */
   xfEndDrag(): void {
-    const g = this.xf;
-    const d = this.xfDrag;
-    this.xfDrag = null;
+    const g = this.gesture.xf;
+    const d = this.gesture.xfDrag;
+    this.gesture.xfDrag = null;
     if (!g || g.mode === "warp" || !d || !g.tp) return;
     // 双击枢轴的「第一次点击」在这里登记：只有**按下去没拖动**（枢轴还在按下处）
     // 才算一次点击，真正拖过枢轴的不算 —— 否则「拖完再点一下」会被当成双击复位。
@@ -3054,16 +2982,16 @@ export class View implements GestureHost {
 
   /** 中断拖拽但不结束会话（第二根手指落下 / 指针丢失）：画面保持现状，等下一次拖 */
   xfBreakDrag(): void {
-    this.xfDrag = null;
-    if (this.xf) this.drawOverlay();
+    this.gesture.xfDrag = null;
+    if (this.gesture.xf) this.drawOverlay();
   }
 
   /** transform ended: commit one undo step (or nothing when it never moved) */
   endXf(): void {
-    this.warpDragOn = false;
-    this.xfDrag = null;
-    const g = this.xf;
-    this.xf = null;
+    this.gesture.warpDragOn = false;
+    this.gesture.xfDrag = null;
+    const g = this.gesture.xf;
+    this.gesture.xf = null;
     if (!g) return;
     const s = this.session;
     const doc = s.doc;
@@ -3107,7 +3035,7 @@ export class View implements GestureHost {
   }
 
   /** 这次会话该记成哪一条历史（多种语义混着用时取优先级最高的那个） */
-  private xfLabel(g: NonNullable<View["xf"]>): string {
+  private xfLabel(g: NonNullable<XfSession>): string {
     if (g.mode === "warp") return "sel.warp";
     const k = g.kinds;
     if (!k) return "sel.transform";
@@ -3121,10 +3049,10 @@ export class View implements GestureHost {
 
   /** gesture cancelled (pointercancel / lost): roll the layer back to drag start */
   abortXf(): void {
-    const g = this.xf;
-    this.xf = null;
-    this.xfDrag = null;
-    this.warpDragOn = false;
+    const g = this.gesture.xf;
+    this.gesture.xf = null;
+    this.gesture.xfDrag = null;
+    this.gesture.warpDragOn = false;
     if (!g) return;
     const doc = this.session.doc;
     const cel = doc.celAt(g.li, g.fi);
@@ -3138,7 +3066,7 @@ export class View implements GestureHost {
     const ctx = this.ov.getContext("2d");
     const hs = this.warpHandles();
     if (!ctx || !hs.length) return;
-    const mesh = this.xf?.warpKind === "mesh";
+    const mesh = this.gesture.xf?.warpKind === "mesh";
     const n = mesh ? 3 : 2;
     ctx.save();
     ctx.lineWidth = 1.5;
@@ -3162,10 +3090,10 @@ export class View implements GestureHost {
     }
     // 拖动中的坐标浮标：`x, y`（半像素模式显示一位小数，如 `12.5`）。
     // 贴着被拖的那个控制点画，松手即消失（onUp / 退出变形都会清 warpDragOn）。
-    const drag = this.xf?.drag;
-    const q = drag !== undefined ? this.xf?.pts?.[drag] : undefined;
+    const drag = this.gesture.xf?.drag;
+    const q = drag !== undefined ? this.gesture.xf?.pts?.[drag] : undefined;
     const dragH = drag !== undefined ? hs[drag] : undefined;
-    if (this.warpDragOn && q && dragH) {
+    if (this.gesture.warpDragOn && q && dragH) {
       const label = warpCoordLabel(q, this.session.selWarpHalfSnap);
       const h = dragH;
       ctx.font = "600 13px system-ui, sans-serif";
@@ -3194,10 +3122,10 @@ export class View implements GestureHost {
 
   /** dashed selection frame + white handles + rotate dot above the top edge */
   private drawSelTransform(): void {
-    if (this.selDrag) return;
+    if (this.gesture.selDrag) return;
     const tool = this.session.tool;
-    if (this.xf && this.xf.mode === "warp") { this.drawWarpHandles(); return; }
-    if (!this.xf && tool !== "select" && tool !== "lasso" && tool !== "wand") return;
+    if (this.gesture.xf && this.gesture.xf.mode === "warp") { this.drawWarpHandles(); return; }
+    if (!this.gesture.xf && tool !== "select" && tool !== "lasso" && tool !== "wand") return;
     const f = this.xfScreenFrame();
     if (!f) return;
     const ctx = this.ov.getContext("2d")!;
@@ -3221,7 +3149,7 @@ export class View implements GestureHost {
     // 圆形箭头＝旋转，边中点外侧法线方向的双向斜线＝斜切）。三种图标形状不同、位置固定，
     // 靠形状一眼区分语义，不再依赖「离框多远」；框变小只是把旋转 / 斜切收窄，**不会整类消失**。
     const grabs = this.xfGrabs();
-    const hover = this.xfHover;
+    const hover = this.gesture.xfHover;
     for (const g of grabs) {
       const hot = !!hover && hover.kind === g.kind && hover.anchor === g.anchor;
       // 角图标（方块 / 圆）无方向；边中点图标要顺着那条边摆（扁矩形）或沿法线偏（双向斜线）
@@ -3242,7 +3170,7 @@ export class View implements GestureHost {
     // 枢轴：小圆点 + 十字（可拖；只有会话里才有意义）
     const pv = this.xfPivotScreen();
     if (pv && active) {
-      const hot = this.xfHover?.kind === "pivot";
+      const hot = this.gesture.xfHover?.kind === "pivot";
       ctx.beginPath();
       ctx.strokeStyle = hot ? "#ffd166" : "rgba(255,255,255,.9)";
       ctx.lineWidth = 1.4;
@@ -3267,7 +3195,7 @@ export class View implements GestureHost {
     const rate = Math.max(5, Math.min(60, this.session.prefs.airbrushRate));
     const period = 50;
     this.sprayT = window.setInterval(() => {
-      const st = this.stroke;
+      const st = this.gesture.stroke;
       if (!st) { this.stopSpray(); return; }
       this.sprayAcc += (rate * period) / 1000;
       const n = Math.floor(this.sprayAcc);
@@ -3276,7 +3204,7 @@ export class View implements GestureHost {
       st.sprayBurst(n);
       const d = st.takeDirty();
       if (d) {
-        if (this.strokeRedirected) this.session.repaint();
+        if (this.gesture.strokeRedirected) this.session.repaint();
         else this.session.repaintRect(d);
       }
     }, period);
@@ -3308,16 +3236,16 @@ export class View implements GestureHost {
     const li = tgt ? tgt.li : s.curLayer();
     const fi = tgt ? tgt.fi : s.curFrame();
     const cel = doc.celAt(li, fi);
-    this.outline = {
+    this.gesture.outline = {
       pts: [[pp.x, pp.y]], li, fi,
       before: cel ? new Uint8ClampedArray(cel.data) : null,
       dx: tgt ? tgt.dx : 0, dy: tgt ? tgt.dy : 0,
     };
-    this.cursor = null;
+    this.gesture.cursor = null;
     this.drawOverlay();
   }
   outlineMove(pp: { x: number; y: number }): void {
-    const o = this.outline;
+    const o = this.gesture.outline;
     if (!o) return;
     const last = o.pts[o.pts.length - 1];
     if (last[0] === pp.x && last[1] === pp.y) return;
@@ -3360,8 +3288,8 @@ export class View implements GestureHost {
   }
   /** commit (or drop) the pending path */
   private endPath(commit: boolean): void {
-    const p = this.path;
-    this.path = null;
+    const p = this.gesture.path;
+    this.gesture.path = null;
     if (!p) return;
     if (commit) {
       const rec = p.st.commit(this.session.history, this.labelFor(p.st.kind));
@@ -3374,7 +3302,7 @@ export class View implements GestureHost {
   }
   /** repaint the pending path into the cel (with the rubber band if any) */
   drawPathPreview(): void {
-    const p = this.path;
+    const p = this.gesture.path;
     if (!p) return;
     const pts = p.cur ? [...p.pts, p.cur] : p.pts;
     p.st.drawPath(pts, p.smooth);
@@ -3388,12 +3316,12 @@ export class View implements GestureHost {
     const tool = s.tool;
     if (s.layerLocked()) { s.paintBlockedNote(); return; }
     const tgt = this.pathTarget();
-    if (this.path) {
-      const p = this.path;
+    if (this.gesture.path) {
+      const p = this.gesture.path;
       // a different tool / layer / frame: finish what we have first
       if (p.st.kind !== tool || p.st.doc !== tgt.doc || p.st.li !== tgt.li || p.st.fi !== tgt.fi) this.endPath(true);
     }
-    if (!this.path) {
+    if (!this.gesture.path) {
       let st: Stroke;
       try {
         st = new Stroke(tgt.doc, tgt.li, tgt.fi, tool as never, s.brush(), s.layerLocked(), s.sym,
@@ -3409,11 +3337,11 @@ export class View implements GestureHost {
       st.wrapX = tm === "row" || tm === "grid";
       st.wrapY = tm === "col" || tm === "grid";
       st.startAt(pp.x, pp.y);
-      this.path = { st, pts: [[pp.x, pp.y]], smooth: tool === "curve", cur: null };
+      this.gesture.path = { st, pts: [[pp.x, pp.y]], smooth: tool === "curve", cur: null };
       this.drawPathPreview();
       return;
     }
-    const p = this.path;
+    const p = this.gesture.path;
     const last = p.pts[p.pts.length - 1];
     const prev = p.pts.length >= 2 ? p.pts[p.pts.length - 2] : null;
     if (last[0] === pp.x && last[1] === pp.y) { this.endPath(true); return; } // tap the last point = finish
@@ -3428,8 +3356,8 @@ export class View implements GestureHost {
 
   /** release: close the path and fill the enclosed region in one history step */
   endOutline(commit: boolean): void {
-    const o = this.outline;
-    this.outline = null;
+    const o = this.gesture.outline;
+    this.gesture.outline = null;
     if (!o) return;
     const s = this.session;
     // the outline was collected for the layer it will fill: resolve it again so
@@ -3492,7 +3420,7 @@ export class View implements GestureHost {
     const mv = beginMove(doc, li, fi);
     const b = doc.sel.bounds();
     if (!mv || !b) return false;
-    this.selDrag = {
+    this.gesture.selDrag = {
       kind: "move", x0: pp.x, y0: pp.y, x1: pp.x, y1: pp.y,
       before: mv.before, b, moved: false, sx: pp.x, sy: pp.y, mv,
     };
@@ -3510,7 +3438,7 @@ export class View implements GestureHost {
       const b = doc.sel!.bounds();
       if (b) {
         const mv = beginMove(doc, li, s.curFrame());
-        this.selDrag = {
+        this.gesture.selDrag = {
           kind: "move", x0: pp.x, y0: pp.y, x1: pp.x, y1: pp.y,
           before: new Uint8ClampedArray(cel.data),
           b, moved: false, sx: pp.x, sy: pp.y, mv,
@@ -3522,7 +3450,7 @@ export class View implements GestureHost {
       const b = doc.sel!.bounds();
       if (b) {
         const mv = beginMove(doc, li, s.curFrame());
-        this.selDrag = {
+        this.gesture.selDrag = {
           kind: "move", x0: pp.x, y0: pp.y, x1: pp.x, y1: pp.y,
           before: cel ? new Uint8ClampedArray(cel.data) : null,
           b, moved: false, sx: pp.x, sy: pp.y, mv,
@@ -3530,11 +3458,11 @@ export class View implements GestureHost {
         return;
       }
     }
-    this.selDrag = { kind: "rect", x0: pp.x, y0: pp.y, x1: pp.x, y1: pp.y, before: null, b: { x: 0, y: 0, w: 0, h: 0 }, moved: false, sx: pp.x, sy: pp.y };
+    this.gesture.selDrag = { kind: "rect", x0: pp.x, y0: pp.y, x1: pp.x, y1: pp.y, before: null, b: { x: 0, y: 0, w: 0, h: 0 }, moved: false, sx: pp.x, sy: pp.y };
   }
 
   selMove(pp: { x: number; y: number }): void {
-    const g = this.selDrag;
+    const g = this.gesture.selDrag;
     if (!g) return;
     if (g.kind === "lasso") {
       if (!g.pts || g.pts.length === 0) { g.pts = [[pp.x, pp.y]]; g.sx = pp.x; g.sy = pp.y; return; }
@@ -3621,7 +3549,7 @@ export class View implements GestureHost {
    */
   private dropTargetOf(g: { mv: MoveState; dx?: number; dy?: number }): { index: number; x: number; y: number } | null {
     const s = this.session;
-    const pt = this.lastPt;
+    const pt = this.gesture.lastPt;
     if (!pt) return null;
     const hit = screenToCanvas(this.spaceRects(), s.docIdx, this.ox, this.oy, this.zoom, pt.x, pt.y);
     if (!hit || hit.index === s.docIdx) return null;
@@ -3645,7 +3573,7 @@ export class View implements GestureHost {
    * @returns true when the drop was handled (the caller must skip endSelDrag)
    */
   dropSelDragToCanvas(sx: number, sy: number): boolean {
-    const g = this.selDrag;
+    const g = this.gesture.selDrag;
     if (!g || g.kind !== "move" || !g.mv || !g.cut || !g.moved) return false;
     const s = this.session;
     const hit = screenToCanvas(this.spaceRects(), s.docIdx, this.ox, this.oy, this.zoom, sx, sy);
@@ -3661,7 +3589,7 @@ export class View implements GestureHost {
       s.note("目标画布的该图层已锁定", "That layer is locked in the target canvas");
       return true;
     }
-    this.selDrag = null; // drops the floating overlay of the source canvas
+    this.gesture.selDrag = null; // drops the floating overlay of the source canvas
     const li = s.curLayer(), fi = s.curFrame();
     const cel = s.doc.celAt(li, fi);
     // the source keeps the hole (floatCut already removed the pixels)
@@ -3701,8 +3629,8 @@ export class View implements GestureHost {
   }
 
   endSelDrag(commit = true): void {
-    const g = this.selDrag;
-    this.selDrag = null;
+    const g = this.gesture.selDrag;
+    this.gesture.selDrag = null;
     const s = this.session;
     const doc = s.doc;
     if (!g) return;

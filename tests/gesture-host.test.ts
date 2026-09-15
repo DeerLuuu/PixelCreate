@@ -12,7 +12,7 @@ import { GestureController, type GestureHost } from "../src/servers/gesture";
 import { eq, ok } from "./common";
 
 /** 假 host：字段用普通对象，方法用记名字的桩；没实现到的成员会在**调用时**报错（比静默更重要） */
-function fakeHost(over: Record<string, unknown> = {}): { host: GestureHost; calls: string[] } {
+function fakeHost(over: Record<string, unknown> = {}): { host: GestureHost; gc: GestureController; calls: string[] } {
   const calls: string[] = [];
   let o = 0;
   const stub = (name: string) => (..._a: unknown[]): unknown => { calls.push(name); void o; return undefined; };
@@ -31,19 +31,10 @@ function fakeHost(over: Record<string, unknown> = {}): { host: GestureHost; call
       uiEdit: true,
     },
     host: { setPointerCapture: stub("setPointerCapture") },
-    pointers: new Map<number, { x: number; y: number }>(),
-    fourStart: new Map<number, { x: number; y: number }>(),
-    fourSeen: false, fourArmed: false, fourView0: null,
-    pinchBase: null, pinchZoomed: false, hold: null, holdFired: false,
-    panLast: null, lastPt: null,
-    spaceDown: false, altDown: false, altPaint: false, mousePan: false,
     ox: 0, oy: 0, zoom: 4,
-    stroke: null, strokeRedirected: false, gestureMoved: false, gestureStartPx: null,
-    cursor: null, longT: null, pickAnchor: null, pickMode: false, pickLast: null,
-    mag: false, magCenter: null,
-    resizeDrag: null, isoDrag: null, outline: null, path: null, selDrag: null,
-    symTarget: null, xfDrag: null, xf: null, xfHover: null, xfHint: null, warpDragOn: false,
     onFramePreview: null,
+    // 触点会话状态（pointers / fourSeen / pinchBase / panLast …）**不在这里**：
+    // 它们由 GestureController 自己持有，断言直接读 gc.*
     evPt: (e: { clientX: number; clientY: number }) => ({ x: e.clientX, y: e.clientY }),
     vpW: () => 400, vpH: () => 800,
     screenToPixel: (sx: number, sy: number) => ({ x: Math.floor(sx / 4), y: Math.floor(sy / 4) }),
@@ -80,7 +71,15 @@ function fakeHost(over: Record<string, unknown> = {}): { host: GestureHost; call
     warpMove: stub("warpMove"), warpMoveContent: stub("warpMoveContent"),
   };
   Object.assign(base, over);
-  return { host: base as unknown as GestureHost, calls };
+  const host = base as unknown as GestureHost;
+  // 触点会话状态由控制器持有（P5 收尾），所以断言读 `gc.*`；`host.ox/oy/zoom` 仍是 View 的视口。
+  // `over` 里除视口三元组以外的键按名字落到控制器上（测试要预置 panLast / mousePan 这类会话状态）。
+  const gc = new GestureController(host);
+  for (const [k, v] of Object.entries(over)) {
+    if (k === "ox" || k === "oy" || k === "zoom") continue;
+    (gc as unknown as Record<string, unknown>)[k] = v;
+  }
+  return { host, gc, calls };
 }
 
 /** 合成一个触摸 pointer 事件（只带手势用到的字段） */
@@ -95,31 +94,29 @@ function ev(pointerId: number, clientX: number, clientY: number, type = "touch")
 export function testGestureHost(): void {
   // ------------------------------------------------- 1. 四指成立＝还原视口
   {
-    const { host, calls } = fakeHost();
-    const gc = new GestureController(host);
+    const { host, gc, calls } = fakeHost();
     gc.onDown(ev(1, 100, 100));
-    eq("ghost.first.down", host.pointers.size, 1);
-    eq("ghost.first.view0", host.fourView0, { ox: 0, oy: 0, zoom: 4 });
+    eq("ghost.first.down", gc.pointers.size, 1);
+    eq("ghost.first.view0", gc.fourView0, { ox: 0, oy: 0, zoom: 4 });
     gc.onDown(ev(2, 160, 100));
-    eq("ghost.pinch.base-set", !!host.pinchBase, true);
+    eq("ghost.pinch.base-set", !!gc.pinchBase, true);
     // 手指落地的抖动把视口挪走（模拟 pinch）
     host.ox = 99;
     host.oy = -12;
     host.zoom = 9;
     gc.onDown(ev(3, 100, 160));
     gc.onDown(ev(4, 160, 160));
-    eq("ghost.four.seen", host.fourSeen, true);
+    eq("ghost.four.seen", gc.fourSeen, true);
     ok("ghost.four.view-restored", host.ox === 0 && host.oy === 0 && host.zoom === 4,
       `${host.ox},${host.oy},${host.zoom}`);
     ok("ghost.four.clamped", calls.includes("clampView") && calls.includes("refresh"));
-    eq("ghost.four.pinch-cleared", host.pinchBase, null);
+    eq("ghost.four.pinch-cleared", gc.pinchBase, null);
     ok("ghost.four.armed-hold", calls.includes("armHold"));   // 第 3 指落下时挂了「三指长按」
   }
 
   // ------------------------------------- 2. 四指手势期间不 pinch / 不 pan
   {
-    const { host } = fakeHost();
-    const gc = new GestureController(host);
+    const { host, gc } = fakeHost();
     gc.onDown(ev(1, 100, 100));
     gc.onDown(ev(2, 160, 100));
     gc.onDown(ev(3, 100, 160));
@@ -128,15 +125,14 @@ export function testGestureHost(): void {
     // 四指都在，且两根各自离开落点 > 15px：只置位 fourArmed，画面一动不动
     gc.onMove(ev(1, 140, 140));
     gc.onMove(ev(2, 200, 100));
-    eq("ghost.four.armed", host.fourArmed, true);
+    eq("ghost.four.armed", gc.fourArmed, true);
     eq("ghost.four.no-pan", [host.ox, host.oy], [0, 0]);
     eq("ghost.four.zoom-untouched", host.zoom, 4);
   }
 
   // ------------------------------------------------------- 3. 双指 pinch
   {
-    const { host } = fakeHost();
-    const gc = new GestureController(host);
+    const { host, gc } = fakeHost();
     gc.onDown(ev(1, 100, 100));
     host.ox = 10; host.oy = 20;      // 第二根手指落下时冻结的基准（中点 150,100 / 距离 100 / zoom 4）
     gc.onDown(ev(2, 200, 100));
@@ -147,7 +143,7 @@ export function testGestureHost(): void {
     eq("ghost.pinch.zoom", host.zoom, 8);
     eq("ghost.pinch.anchor", [host.ox, host.oy],
       [150 - (150 - 10) * 2, 100 - (100 - 20) * 2]);
-    eq("ghost.pinch.zoomed-flag", host.pinchZoomed, true);
+    eq("ghost.pinch.zoomed-flag", gc.pinchZoomed, true);
     // 缩放夹在上限：继续拉开也只到 zoomMax
     gc.onMove(ev(1, -500, 100));
     gc.onMove(ev(2, 900, 100));
@@ -156,19 +152,17 @@ export function testGestureHost(): void {
 
   // --------------------------------------------------------- 4. 单指平移
   {
-    const { host, calls } = fakeHost({ ox: 5, oy: 7, panLast: { x: 100, y: 100 } });
-    const gc = new GestureController(host);
+    const { host, gc, calls } = fakeHost({ ox: 5, oy: 7, panLast: { x: 100, y: 100 } });
     gc.onMove(ev(1, 130, 90));
     eq("ghost.pan.delta", [host.ox, host.oy], [35, -3]);
-    eq("ghost.pan.last", host.panLast, { x: 130, y: 90 });
+    eq("ghost.pan.last", gc.panLast, { x: 130, y: 90 });
     ok("ghost.pan.clamped", calls.includes("clampView"));
   }
   {
     // PC 中键：第一次移动之后交还给普通拖动（mousePan 复位、panLast 清空）
-    const { host } = fakeHost({ ox: 5, oy: 7, panLast: { x: 100, y: 100 }, mousePan: true });
-    const gc = new GestureController(host);
+    const { host, gc } = fakeHost({ ox: 5, oy: 7, panLast: { x: 100, y: 100 }, mousePan: true });
     gc.onMove(ev(1, 130, 90));
-    eq("ghost.mouse-pan.released", [host.mousePan, host.panLast], [false, null]);
+    eq("ghost.mouse-pan.released", [gc.mousePan, gc.panLast], [false, null]);
     eq("ghost.mouse-pan.delta", [host.ox, host.oy], [35, -3]);
   }
 
@@ -177,11 +171,10 @@ export function testGestureHost(): void {
   // 这里**不**走 `onDown`：单指按下会一路落到工具动作体（`session.setDelTarget` / 长按计时器 /
   // 起笔迹），假 host 只有多指与视口那几条契约。手势状态直接铺好再抬手，测的是「抬手要清干净」。
   {
-    const { host } = fakeHost({ panLast: { x: 100, y: 100 } });
-    host.pointers.set(1, { x: 100, y: 100 });
-    const gc = new GestureController(host);
+    const { host, gc } = fakeHost({ panLast: { x: 100, y: 100 } });
+    gc.pointers.set(1, { x: 100, y: 100 });
     gc.onUp(ev(1, 100, 100));
-    eq("ghost.up.cleared", host.pointers.size, 0);
-    eq("ghost.up.pan-last", host.panLast, null);
+    eq("ghost.up.cleared", gc.pointers.size, 0);
+    eq("ghost.up.pan-last", gc.panLast, null);
   }
 }
