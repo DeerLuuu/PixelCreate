@@ -3,8 +3,12 @@ const http = require("http");
 const fs = require("fs");
 const path = require("path");
 
-const WWW = "/storage/emulated/0/Download/ds文件夹/pixelcraft/app2/www";
-const LOGF = "/storage/emulated/0/Download/ds文件夹/pixelcraft/web.log";
+// 站点根与日志按**本脚本位置**推导：容器/手机上是 <repo>/app2/www，Windows 上同样成立。
+// 早先这里写死了 /storage/emulated/0/Download/ds文件夹/pixelcraft/... —— 换到别的机器
+// （比如 Windows 工作区）时每个请求都会被下面的 startsWith(WWW) 判成越界，整站 403。
+const ROOT = path.join(__dirname, "..");
+const WWW = path.join(ROOT, "app2", "www");
+const LOGF = path.join(ROOT, "web.log");
 const PORT = 8090;
 const MIME = {
   ".html": "text/html; charset=utf-8", ".js": "application/javascript; charset=utf-8",
