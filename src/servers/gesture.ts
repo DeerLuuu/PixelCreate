@@ -1,14 +1,18 @@
 // GestureServer（手势状态机）—— 见 docs/ARCHITECTURE.md §3.3 第 5 项。
 //
-// P5 第二片：**轻点序列状态机**（单击 / 双击 / 三击 / 双指双击）。搬出来的是一个
-// **有状态、但无 DOM、无 Session** 的小机器：它只按「按下/抬起的时间、落点、当时的开关」
-// 决定这次抬手算什么，动作体（取消笔迹、发手势动作、撤销）留在 View 里执行。
+// 这里是 `View` 的**手势状态机**，分两层：
+//   · `TapMachine` —— 轻点序列（单击 / 双击边距·画布·换画布 / 三击 / 双指双击）的判定。
+//     无 DOM、无 Session，`up()` 只返回一个 `TapOutcome`，动作体由调用方执行。
+//   · `GestureController` —— P5 第三片：`View` 的四个指针事件入口（`onDown` / `onMove` /
+//     `onUp` / `onCancel`）整体搬到这里。它通过 `GestureHost` 接口操作 `View`
+//     （触点会话状态与「笔迹 / 变换 / 选区」的动作体都还在 View 上），所以这一片是
+//     **搬迁而非重写**：分支顺序、阈值、副作用顺序逐字保留。
 //
-// 为什么单拎这一块：这四个手势的**优先级与容差**以前埋在 `view.ts` 的 `onUp` 里
-// （480ms / 64px / 80px / 三击回滚那一个点），既没法单测也不好看 —— 现在有了
-// `tests/gesture.test.ts`，改容差或调优先级会直接撞测试。
+// 为什么这么切：`GetureController` 的判定与状态迁移可以脱离 DOM 单测（`tests/gesture-host.test.ts`
+// 用假 host 驱四个入口），而 `View` 只剩覆盖层绘制与各动作体。
+// `GestureHost` 的成员表就是两边的**唯一接触面** —— 想让控制器多碰一个字段，就得先在接口里声明。
 //
-// 口径（与 `view.ts` 的 onUp 逐个分支对齐，改之前先读这一段）：
+// TabMachine 的口径（与搬家前的 `onUp` 逐个分支对齐，改之前先读这一段）：
 //   · 第二次点击**落在画布内且「双击画布」没映射动作**时，这一下被吞掉但不清零计数，
 //     留给三击（三击＝放大，会顺手把前一下画上去的那个点撤销掉）。
 //   · 双击**边距**＝用户映射的动作；双击**另一个画布**＝聚焦并适配（与映射无关）。
@@ -16,7 +20,24 @@
 //   · 双指轻点序列（两指都抬起、且中途没缩放）＝两下之内算「双指双击」；
 //     **中点落在画布内不算**（画画时太容易碰到）；缩放过的双指抬手不算轻点。
 //   · 多指介入（第 3、4 根手指落下）与 pointercancel 都会清掉双指序列 —— 见 `clearTwoTapSeq()`。
-import type { Pt } from "./input";
+//   · ⚠ 已知问题：单指第二下只要落在画布上就会被「双击画布 / 聚焦适配」吃掉并清零计数，
+//     于是画布内攒不到第三下（`gTripleTap` 默认够不到）—— 现状由测试钉住，见 `docs/API.md` §15c2。
+import type { Session } from "../app/session";
+import type { GestureActionId } from "../app/gesture-ids";
+import type { MoveState } from "../tools/select";
+import type { ToolId } from "../tools/registry";
+import type {
+  AnchorId, ScreenFrame, XfBox, XfKind, XfParams,
+} from "../tools/xform";
+import { Sel } from "../engine/doc";
+import { Stroke } from "../tools/stroke";
+import { SYM_ANGLES, isSymTool } from "../tools/registry";
+import { clamp } from "../engine/types";
+import { isPc } from "../io/pcmode";
+import {
+  FOUR_MOVE_PX_DEFAULT, fourFingerArmed, longPressAllowed, mouseButtonIntent, outsideDoc,
+  pinchAround, pinchBaseOf, pinchNow, type Pt,
+} from "./input";
 
 /** 单指连点的时限（ms）：超时就从「第一下」重新数 */
 export const TAP_SEQ_MS = 480;
@@ -193,5 +214,1125 @@ export class TapMachine {
       return { kind: "skip" };
     }
     return { kind: "plain" };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 手势会话状态：这些 type 以前内联在 `view.ts` 的字段声明里（占了大半屏），
+// 现在跟着状态机一起放这儿；`View` 的字段改成引用这些别名。
+// ---------------------------------------------------------------------------
+
+/** ⑦ 画布调整模式的拖动状态（`ax` / `ay` = 固定的那一侧） */
+export interface ResizeDragState {
+  ax: -1 | 0 | 1;
+  ay: -1 | 0 | 1;
+  x0: number; y0: number; w0: number; h0: number;
+  w: number; h: number; moved: boolean;
+}
+
+/** 选区拖动（框选 / 套索 / 移动内容）的进行中状态 */
+export interface SelDragState {
+  kind: "rect" | "move" | "lasso";
+  x0: number; y0: number; x1: number; y1: number;
+  before: Uint8ClampedArray | null;
+  b: { x: number; y: number; w: number; h: number };
+  moved: boolean;
+  sx: number; sy: number;
+  mv?: MoveState | null;
+  pts?: [number, number][];
+  dx?: number; dy?: number;
+  cut?: boolean;
+  /** 只移动**选区边框**（贴着边线的环带起拖）：内容留在原地不动 */
+  frameOnly?: boolean;
+}
+
+/** ⑧ 等距图形模式：正在拖的抓手 / 整块（含按下那一刻的形状尺寸与原点） */
+export interface IsoDragState {
+  kind: "move" | "top" | "right" | "bottom" | "left" | "height";
+  x0: number; y0: number;
+  origin0: { x: number; y: number };
+  w0: number; d0: number; h0: number;
+}
+
+/** 轮廓填充：收集中的路径，松手时用当前色填充 */
+export interface OutlineState {
+  pts: Array<[number, number]>;
+  li: number;
+  fi: number;
+  before: Uint8ClampedArray | null;
+  dx: number; dy: number;
+}
+
+/** 多点路径（折线 / 曲线）：轻点加点，点最后一点完成、点前一点删掉它 */
+export interface PathState {
+  st: Stroke;
+  pts: Array<[number, number]>;
+  smooth: boolean;
+  cur: [number, number] | null;
+}
+
+/** 多指长按（2 或 3 指按住不动）：待触发的计时器状态 */
+export interface HoldState {
+  n: number;
+  mid: { x: number; y: number };
+  starts: Map<number, { x: number; y: number }>;
+  t: number;
+}
+
+/** 变换抓手的一次拖动（`xf` 槽里的交互；自由变换看 `xf.mode === "warp"`） */
+export interface XfDragState {
+  kind: XfKind;
+  anchor?: AnchorId;
+  start: Pt;
+  pivot0?: Pt;
+  /**
+   * 按下那一刻**被抓的那个图标自己**的屏幕位置（缩放 / 旋转 / 枢轴用；`move` 时等于 `start`）。
+   *
+   * 解算以它为参照，而不是手指按下的那一点：命中半径有 38px（触屏），按偏的时候
+   * 「手指 ↔ 图标」那一截会被冻结在整个拖动里 —— 图标只是平行跟着手指走，永远隔着那 40px
+   * （用户报的「离鼠标位置估计有 40px」）。以图标为参照＝图标先贴到指针上、再 1:1 跟手。
+   */
+  h0?: Pt;
+  /**
+   * 按下那一刻的变换参数快照（`sx` / `sy` / `angle` / `skewX` / `skewY`）。
+   *
+   * 拖动中的解算量都是**这一次拖拽**的增量（缩放是相对倍率、旋转是增量角、斜切是增量 tan），
+   * 累加必须以此为基准 —— 每次 `pointermove` 都从它重算，于是「同一次拖拽里挪几下」
+   * 不会把倍率连乘（那会让内容越拖越小 / 越拖越扁），而「松手后再拖一次」才继续累加。
+   */
+  tp0?: { sx: number; sy: number; angle: number; skewX: number; skewY: number };
+}
+
+/**
+ * 选区自由变换（移动 + 缩放 + 旋转 + 斜切 / 四点斜切透视 + 网格）的会话状态。
+ * **一次会话 = 一条 undo**：松手只结束这次拖拽，事务一直开着，
+ * 直到「完成」（提交）/「还原」（丢弃）/ 切工具 / 切帧 / 切图层。
+ */
+export interface XfSession {
+  mode: "rot" | "scale" | "warp";
+  axis: "xy" | "x" | "y";
+  li: number; fi: number;
+  st: MoveState;
+  cx: number; cy: number; ax: number; ay: number;
+  p0x: number; p0y: number; ang0: number;
+  moved: boolean;
+  cut?: boolean;
+  buf?: Uint8ClampedArray;
+  cells?: number[];
+  /** 自由变换（斜切/透视/网格）用的控制点（画布坐标）与正在拖的那一个 */
+  warpKind?: "quad" | "mesh";
+  pts?: Pt[];
+  drag?: number;
+  /** 抓住控制点那一刻「手指 ↔ 控制点」的偏移（下标空间）。旧实现遗留字段，保留以免旧状态读到 undefined */
+  grab?: Pt;
+  /**
+   * 「拖动整块内容」的起点：记下按下时指针的**连续**下标与该时刻的全部控制点，
+   * 每次移动都从它重算位移（不累加、不漂），所有控制点一起走 —— 锚点因此跟着内容走。
+   */
+  move?: { x0: number; y0: number; pts: Pt[] };
+  /** 变换参数（枢轴 / 角度 / 缩放 / 斜切），**绕枢轴**组成矩阵（见 xform.ts） */
+  tp?: XfParams;
+  /** 会话开始时的内容框（**外框口径**）/ 枢轴；`box0` 是拖动解算的固定参照 */
+  box0?: XfBox;
+  pivot0?: Pt;
+  /** 会话开始时的屏幕框（拖动解算的固定参照：拖动过程中框会转，参照不能跟着动） */
+  screen0?: ScreenFrame;
+  /** 枢轴 / 锚点是不是被用户拖过（「缩放后跟位、旋转后不动」只跟用户拖过的枢轴有关） */
+  pivotTouched?: boolean;
+  /** 斜切的**基准点**（不动的那条线，＝被拖那条边的对面中点；`affineFrom` 的 `skewPivot`） */
+  skewAnchor?: Pt;
+  /** 这次会话里各语义各出现过没有（history 标签与「有没有真改过」用） */
+  kinds?: { move: boolean; scale: boolean; rotate: boolean; skew: boolean };
+  /** 走「像素精确通道」的落点（整数平移 / 90° 倍数旋转）：{dx, dy, steps} */
+  exact?: { dx: number; dy: number; steps: number };
+}
+
+/**
+ * `GestureController` 操作 `View` 的**唯一接触面**：想让控制器多碰一个字段 / 方法，
+ * 就得先在这里声明（编译器会拦住漏声明的访问）。
+ *
+ * 这里只列「手势要用」的部分；`View` 的其余公开面（适配 / 缩放 / 渲染入口）不在此列。
+ */
+export interface GestureHost {
+  // ---- 公共依赖 ----
+  session: Session;
+  /** 画布宿主元素（`View` 的字段名就叫 `host`） */
+  host: HTMLElement;
+
+  // ---- 触点会话 ----
+  pointers: Map<number, Pt>;
+  fourStart: Map<number, { x: number; y: number }>;
+  fourSeen: boolean;
+  fourArmed: boolean;
+  fourView0: { ox: number; oy: number; zoom: number } | null;
+  pinchBase: { mx: number; my: number; dist: number; ox: number; oy: number; zoom: number } | null;
+  pinchZoomed: boolean;
+  /** 多指长按的待触发计时器 */
+  hold: HoldState | null;
+  holdFired: boolean;
+  panLast: Pt | null;
+  lastPt: Pt | null;
+
+  // ---- PC 输入 ----
+  spaceDown: boolean;
+  altDown: boolean;
+  altPaint: boolean;
+  mousePan: boolean;
+
+  // ---- 视口 ----
+  ox: number; oy: number; zoom: number;
+
+  // ---- 手势期间的工具 / 笔迹状态 ----
+  stroke: Stroke | null;
+  strokeRedirected: boolean;
+  gestureMoved: boolean;
+  gestureStartPx: Pt | null;
+  cursor: { x: number; y: number; size: number } | null;
+  /** 长按取色：待触发的计时器与落点 */
+  longT: number | null;
+  pickAnchor: [number, number] | null;
+  pickMode: boolean;
+  pickLast: [number, number] | null;
+  mag: boolean;
+  magCenter: Pt | null;
+
+  // ---- 各工具自己的拖动会话 ----
+  resizeDrag: ResizeDragState | null;
+  isoDrag: IsoDragState | null;
+  outline: OutlineState | null;
+  path: PathState | null;
+  selDrag: SelDragState | null;
+  symTarget: "mv" | "rot" | null;
+  xfDrag: XfDragState | null;
+  xf: XfSession | null;
+  xfHover: { kind: XfKind; anchor?: AnchorId; x: number; y: number } | null;
+  xfHint: string | null;
+  warpDragOn: boolean;
+  /** 四指手势成立后要回调的开场（App 里接的帧预览） */
+  onFramePreview: (() => void) | null;
+
+  // ---- 坐标与渲染 ----
+  evPt(e: PointerEvent): Pt;
+  vpW(): number;
+  vpH(): number;
+  screenToPixel(sx: number, sy: number): { x: number; y: number };
+  canvasAtScreen(sx: number, sy: number): number;
+  clampView(): void;
+  refresh(force: boolean): void;
+  drawOverlay(rebuildTint?: boolean): void;
+  repaintStroke(): void;
+  drawPathPreview(): void;
+  syncCursor(): void;
+  labelFor(kind: string): string;
+  toolNow(): ToolId;
+  isPathTool(t: string): boolean;
+  preciseDrag(): boolean;
+
+  // ---- 长按 / 取色 ----
+  cancelHold(): void;
+  holdMoved(): boolean;
+  armHold(n: number, action: GestureActionId, tag: string): void;
+  cancelPickTimer(): void;
+  enterPickMode(x: number, y: number): void;
+  samplePickCell(x: number, y: number, strong: boolean): void;
+
+  // ---- 喷枪 ----
+  startSpray(): void;
+  stopSpray(): void;
+
+  // ---- 工具动作体 ----
+  outlineDown(pp: { x: number; y: number }): void;
+  outlineMove(pp: { x: number; y: number }): void;
+  endOutline(commit: boolean): void;
+  pathDown(pp: { x: number; y: number }): void;
+  selDown(pp: { x: number; y: number }, pt: Pt, e: PointerEvent): void;
+  selMove(pp: { x: number; y: number }): void;
+  startSelMove(pp: { x: number; y: number }): boolean;
+  endSelDrag(commit?: boolean): void;
+  dropSelDragToCanvas(sx: number, sy: number): boolean;
+  wireRedirect(st: Stroke, tgt: { dx: number; dy: number } | null): void;
+
+  // ---- 等距 / 画布调整 ----
+  isoHitAt(pt: Pt): "top" | "right" | "bottom" | "left" | "height" | "move" | null;
+  isoDragTo(pt: Pt): void;
+  resizeHit(pt: Pt): { ax: -1 | 0 | 1; ay: -1 | 0 | 1 } | null;
+
+  // ---- 对称轴 ----
+  symLockBtn(): [number, number] | null;
+  symHit(pt: Pt): "mv" | "rot" | null;
+
+  // ---- 选区自由变换 ----
+  inXform(): boolean;
+  tryStartXf(pt: Pt): boolean;
+  xfHitAt(pt: Pt): { kind: XfKind; anchor?: AnchorId } | null;
+  xfMove(pt: Pt): void;
+  xfEndDrag(): void;
+  xfBreakDrag(): void;
+  endXf(): void;
+  abortXf(): void;
+  warpHandleAt(pt: Pt): number;
+  warpStartMove(pt: Pt): boolean;
+  warpMove(pt: Pt): void;
+  warpMoveContent(pt: Pt): void;
+}
+
+/**
+ * 指针事件入口。`View` 只做三件事：绑事件、把 `this` 交给控制器、在 `destroy()` 时解绑。
+ * 四个方法都是**搬迁过来的原样逻辑**（`this.` 换成 `host.`），分支顺序与副作用顺序未改。
+ */
+export class GestureController {
+  /** 轻点序列状态机（本控制器私有；`View` 不再持有） */
+  private tap = new TapMachine();
+
+  constructor(private host: GestureHost) {}
+
+  /** 只被 `onUp` 用到的两个笔迹助手（搬过来当自己的私有方法，不再占 `View` 的接触面） */
+  private isShapeKind(k: string): boolean {
+    return k === "line" || k === "rect" || k === "rectfill" || k === "ellipse" || k === "ellipsefill" || k === "circle" || k === "polygon";
+  }
+
+  onDown(e: PointerEvent): void {
+    const host = this.host;   // 接触面（见 GestureHost）
+    e.preventDefault();
+    host.lastPt = host.evPt(e);
+    try {
+      host.host.setPointerCapture && host.host.setPointerCapture(e.pointerId);
+    } catch { /* ignore */ }
+    const pt = host.evPt(e);
+    // ---- PC 鼠标：中键＝聚焦适配，右键 / 空格+左键＝用另一个色槽绘制
+    host.altPaint = false;
+    if (e.pointerType === "mouse") {
+      const intent = mouseButtonIntent(e.button, host.spaceDown);
+      // 中键：等价于触屏的双击画布（聚焦并适配），不再用于平移
+      if (intent === "focus-fit") {
+        const hitIdx = host.canvasAtScreen(pt.x, pt.y);
+        if (hitIdx >= 0) {
+          if (hitIdx !== host.session.docIdx) host.session.focusCanvas(hitIdx);
+          host.session.fitCanvas();
+          host.session.hapticTick("聚焦", 0.7);
+        }
+        return;
+      }
+      host.mousePan = false;
+      // 右键，或按住空格＋左键：用另一个色槽（默认背景色）绘制
+      host.altPaint = intent === "secondary";
+      if (intent === "secondary") host.pointers.set(e.pointerId, pt);
+    }
+    host.pointers.set(e.pointerId, pt);
+    // remember each finger's touchdown point — a finger counts as "sliding"
+    // from its OWN start — and freeze the view state as soon as the first
+    // finger lands so a confirmed 4-finger gesture can restore it
+    if (!host.fourStart.has(e.pointerId)) host.fourStart.set(e.pointerId, { x: pt.x, y: pt.y });
+    if (host.pointers.size === 1) host.fourView0 = { ox: host.ox, oy: host.oy, zoom: host.zoom };
+    host.cancelPickTimer();
+    host.pickMode = false;
+    if (host.pointers.size >= 4) {
+      // a four-finger gesture is never a two-finger tap sequence. Reset any
+      // pinch/pan state built up while fingers 2-4 were landing: setup jitter
+      // must never latch pinchZoomed (it would silently block the preview).
+      host.fourSeen = true;
+      host.fourArmed = false;
+      host.cancelHold();
+      host.pinchBase = null;
+      host.pinchZoomed = false;
+      this.tap.clearTwoTapSeq();
+      host.panLast = null;
+      if (host.outline) host.endOutline(false);
+      host.stopSpray();
+      if (host.stroke) { host.stroke.cancel(); host.stroke = null; }
+      if (host.selDrag) {
+        if (host.selDrag.kind === "move" && host.selDrag.cut) host.endSelDrag(false);
+        else host.selDrag = null;
+      }
+      host.gestureMoved = false;
+      // undo any zoom/pan the first fingers caused while landing: from the
+      // 4th finger down the canvas must stay perfectly still mid-swipe
+      if (host.fourView0 &&
+        (host.fourView0.ox !== host.ox || host.fourView0.oy !== host.oy || host.fourView0.zoom !== host.zoom)) {
+        host.ox = host.fourView0.ox;
+        host.oy = host.fourView0.oy;
+        host.zoom = host.fourView0.zoom;
+        host.clampView();
+        host.refresh(false);
+      }
+      return;
+    }
+    // a third contact is no longer a two-finger pinch: in practice it means
+    // the hand is going for the 4-finger swipe, so anything the first two
+    // fingers started is dropped and the gesture waits quietly for the 4th
+    if (host.pointers.size >= 3) {
+      if (host.outline) host.endOutline(false);
+      host.stopSpray();
+      if (host.stroke) { host.stroke.cancel(); host.stroke = null; }
+      if (host.selDrag) {
+        if (host.selDrag.kind === "move" && host.selDrag.cut) host.endSelDrag(false);
+        else host.selDrag = null;
+      }
+      host.panLast = null;
+      host.gestureMoved = false;
+      host.cancelHold();
+      host.pinchBase = null;
+      host.pinchZoomed = false;
+      this.tap.clearTwoTapSeq();
+      // three fingers held still = three-finger long press (no system conflict)
+      host.armHold(3, host.session.prefs.gThreeFingerLongPress, "三指长按");
+      return;
+    }
+    if (host.pointers.size >= 2) {
+      if (host.outline) host.endOutline(false); // 2nd finger = navigation, not a fill
+      host.stopSpray();
+      if (host.stroke) {
+        // a second contact means navigation (pinch / multi-finger gesture),
+        // never drawing: roll the half-drawn stroke back entirely instead of
+        // committing it, or every pinch / 4-finger swipe would leave the
+        // stroke started by the first finger behind as stray pixels
+        host.stroke.cancel();
+        host.session.repaint();
+        host.stroke = null;
+        host.gestureMoved = false;
+      }
+      if (host.xf && host.xf.mode === "warp" && host.xf.drag !== undefined) host.xf.drag = undefined;
+      else if (host.inXform()) host.xfBreakDrag();
+      else if (host.xf) host.endXf();
+      const [a, b] = [...host.pointers.values()];
+      host.pinchBase = pinchBaseOf(a, b, { zoom: host.zoom, ox: host.ox, oy: host.oy });
+      host.pinchZoomed = false;
+      this.tap.noteSecondFinger(a, b);
+      // two fingers held still = two-finger long press (some phones map this
+      // to the system screen-recognition gesture — 三指长按 is the alternative)
+      host.armHold(2, host.session.prefs.gTwoFingerLongPress, "双指长按");
+      return;
+    }
+    // flush an unfinished gesture left by a lost pointerup (e.g. rapid bucket taps)
+    if (host.stroke) {
+      const rec = host.stroke.commit(host.session.history, host.labelFor(host.stroke.kind));
+      host.stroke = null;
+      host.session.repaint();
+      if (rec) host.session.changedUI();
+    }
+    // symmetry axis (brush tools): the lock button is always tappable, and
+    // while unlocked the dashed line/knob are directly draggable
+    if (host.session.sym !== "off" && isSymTool(host.session.tool)) {
+      const lb = host.symLockBtn();
+      if (lb && Math.hypot(pt.x - lb[0], pt.y - lb[1]) <= 24) {
+        host.session.setSymLocked(!host.session.symLocked);
+        return;
+      }
+      if (!host.session.symLocked) {
+        const t = host.symHit(pt);
+        if (t) {
+          host.cursor = null;
+          host.symTarget = t;
+          host.drawOverlay();
+          return;
+        }
+      }
+      // unlocked but off the line, or locked: painting / panning proceed normally
+    }
+    const s = host.session;
+    const tool = host.toolNow();   // 临时工具（拖动橡皮小项）优先
+    const pp = host.screenToPixel(pt.x, pt.y);
+    const doc = s.doc;
+    // 点画布＝Delete 键重新作用于选区内容（而不是上次点的标题 / 图层 / 帧）
+    s.setDelTarget("selection");
+    // 「编辑界面」模式：画布完全不接受操作（拖动排序时不会误画）
+    if (s.uiEdit) return;
+    // ⑦ 画布调整模式：按下即接管，拖动四条边/四个角改尺寸（不绘制、不选择）
+    if (s.resizeModeOn) {
+      const hit = host.resizeHit(pt);
+      if (hit) {
+        host.resizeDrag = {
+          ...hit, x0: pt.x, y0: pt.y,
+          w0: doc.w, h0: doc.h, w: doc.w, h: doc.h, moved: false,
+        };
+      }
+      return;
+    }
+    // ⑧ 等距图形模式：按下即接管 —— 抓手改尺寸/高度，其它地方拖动＝整块移动（都吸附栅格）
+    if (s.isoOn) {
+      const kind = host.isoHitAt(pt) ?? "move";
+      const p = s.prefs.iso;
+      host.isoDrag = {
+        kind, x0: pt.x, y0: pt.y,
+        origin0: { ...(s.isoOrigin ?? { x: 0, y: 0 }) },
+        w0: p.w, d0: p.d, h0: p.h,
+      };
+      s.hapticTick("等距", 0.35);
+      host.drawOverlay();
+      return;
+    }
+    // Alt+单击：快速取色（与触屏长按取色等价，PC 上更顺手）
+    if (e.altKey && e.pointerType === "mouse" && e.button === 0) {
+      const c = s.sampleComposite(pp.x, pp.y);
+      if (c) { s.setFgColor(c); s.hapticTick("取色", 0.8); s.repaint(); }
+      return;
+    }
+    // ① 选区类工具（框选 / 套索 / 魔棒 / 轮廓填充）在画布外的空白处按下＝平移视图，
+    //    与画笔工具一致：不用先切工具就能拖着看画布。
+    //    **但抓手优先**：旋转 / 斜切的图标画在选区框**外** 30px（缩放 6px），选区贴着画布边时
+    //    它们必然落在画布外 —— 早先这里无条件平移，等于这些图标一跑到画布外就按不到
+    //    （用户报的「按钮不在画布内时触发拖动相机」）。变形模式的控制点同理。
+    const outside = outsideDoc(pp, doc.w, doc.h);
+    const blankPan = isPc() && e.pointerType === "mouse" &&
+      (tool === "select" || tool === "lasso" || tool === "wand" || tool === "outline");
+    const onGrab = blankPan && outside && (host.warpHandleAt(pt) >= 0 || !!host.xfHitAt(pt));
+    if (blankPan && outside && !onGrab) {
+      host.panLast = pt;
+      host.gestureMoved = false;
+      host.syncCursor();
+      return;
+    }
+    if (tool === "outline") {
+      host.outlineDown(pp);
+      return;
+    }
+    const selOn = !!doc.sel && doc.sel.hasAny();
+    // long-press eyedropper: disabled while a selection is shown or a selection
+    // tool is active (holds there mean marquee/transform, not colour picking)
+    const pickAllowed = !selOn && tool !== "select" && tool !== "lasso" && tool !== "wand";
+    const longAction = host.session.prefs.gLongPress;
+    const insideDoc = !outsideDoc;
+    if (longPressAllowed({ isPc: isPc(), action: longAction, pickAllowed, insideDoc })) {
+      host.pickAnchor = [pp.x, pp.y];
+      host.longT = window.setTimeout(() => {
+        host.longT = null;
+        if (longAction === "pickColor") host.enterPickMode(pp.x, pp.y);
+        else if (longAction !== "none") host.session.runGestureAction(longAction, { x: pt.x, y: pt.y });
+      }, host.session.prefs.longPressMs);
+    }
+    // 自由变换（四点 / 网格）：控制点命中即开始拖；命中时顺手取消待触发的长按取色，
+    // 免得慢速的精细拖动被长按抢走。
+    // 抓住之后控制点**跟着指针走**（每次 `pointermove` 直接落在指针那一点上，不记偏移）——
+    // 像素画里要的是「点被我拖到哪就是哪」，记偏移会让它只是平行跟着手指、落点算不准。
+    if (host.xf && host.xf.mode === "warp") {
+      const h = host.warpHandleAt(pt);
+      if (h >= 0) {
+        host.cancelPickTimer();
+        host.xf.drag = h;
+        host.xf.move = undefined;
+        return;
+      }
+    }
+    // 自由变换（四点 / 网格）是常驻模式：画布上除了控制点没有别的手势
+    if (host.xf && host.xf.mode === "warp") {
+      // 没抓到控制点、但按在内容上＝**拖动整块内容**：所有控制点一起平移，
+      // 于是锚点跟着内容走；按在内容之外才是平移视图。
+      if (host.warpStartMove(pt)) { host.cancelPickTimer(); return; }
+      if (outside) host.panLast = pt;
+      host.cancelPickTimer();   // 这次按下属于变形，别让它顺带起一次长按取色
+      return;
+    }
+    // 自由变换的**会话中**：画布上除了抓手没有别的手势 —— 工具的按下分支
+    // （selDown 的选区拖动 / 套索 / 重新框选 / 直接绘制）都会和「浮动内容」叠加，
+    // 提交时历史 before 也会对不上，所以只留「拖到画布外＝平移视图」。
+    // 变换会话里的「移动」仍然算抓手（点框内任何地方拖动＝移动内容）。
+    if (host.inXform()) {
+      // 会话里每一次按下都**重新判抓手**：再抓一次缩放 / 旋转 / 斜切 / 枢轴都要能用，
+      // 只有「命中不了任何抓手、但落在框内」才算移动内容
+      host.xfHover = null;
+      if (host.tryStartXf(pt)) { host.cancelPickTimer(); return; }
+      if (outside) host.panLast = pt;
+      host.cancelPickTimer();
+      return;
+    }
+    // 常规自由变换（Aseprite 那套：贴着框的固定图标抓手 / 枢轴 / 移动；PC 另有双层圈兜底）：
+    // 先让变换框抢命中（它压在选区上面），命中不了才落到选区手势
+    if (!host.xfDrag && selOn && host.tryStartXf(pt)) { host.cancelPickTimer(); return; }
+    // pressing inside an existing selection moves its content directly;
+    // it never restarts a marquee / reselects (empty area still does)
+    if (!host.xf && selOn && (tool === "select" || tool === "lasso" || tool === "wand") && host.startSelMove(pp)) return;
+    if (tool === "select") {
+      host.selDown(pp, pt, e);
+      return;
+    }
+    if (tool === "lasso") {
+      host.selDrag = {
+        kind: "lasso", x0: pp.x, y0: pp.y, x1: pp.x, y1: pp.y,
+        before: null, b: { x: 0, y: 0, w: 0, h: 0 }, moved: false,
+        sx: pp.x, sy: pp.y, pts: [[pp.x, pp.y]],
+      };
+      return;
+    }
+    // drawing tools: outside doc -> pan
+    if (pp.x < 0 || pp.y < 0 || pp.x >= doc.w || pp.y >= doc.h) {
+      host.panLast = pt;
+      return;
+    }
+    if (tool === "picker") {
+      host.mag = host.session.prefs.loupe;
+      host.magCenter = { x: pp.x, y: pp.y };
+      const c = s.sampleComposite(pp.x, pp.y);
+      if (c) s.setFgColor(c);
+      host.drawOverlay();
+      return;
+    }
+    if (tool === "wand") {
+      s.wandAt(pp.x, pp.y);
+      return;
+    }
+    host.gestureMoved = false;
+    host.gestureStartPx = pp;
+    if (host.isPathTool(tool)) {
+      host.pathDown(pp);
+      return;
+    }
+    try {
+      // a reference layer is not painted in place: the stroke is redirected to
+      // the referenced canvas' own current layer/frame (and recorded in THIS
+      // canvas' history, so undo works right here)
+      const tgt = s.strokeTarget(s.curLayer());
+      host.strokeRedirected = !!tgt;
+      // 右键＝另一个颜色槽（默认就是背景色），其余工具行为完全一致
+      const brush = host.altPaint ? { ...s.brush(), color: s.secondaryColor() } : s.brush();
+      host.stroke = new Stroke(tgt ? tgt.doc : doc, tgt ? tgt.li : s.curLayer(), tgt ? tgt.fi : s.curFrame(),
+        tool as never, brush, s.layerLocked(), s.sym, s.shapeSides, s.shapeFill,
+        s.symOx, s.symOy, s.symAng, s.symFour, s.prefs.bucketGlobal, s.brushShape, s.shapeFromCenter);
+      host.stroke.pixelPerfect = s.pixelPerfect;
+      host.wireRedirect(host.stroke, tgt);
+      // the bucket's colour tolerance / gap closing (similar-colour mode)
+      host.stroke.fillTolerance = s.prefs.fillSimilar ? s.prefs.fillTolerance : 0;
+      host.stroke.fillGaps = s.prefs.fillGaps;
+      // indexed colour mode: paint colours snap to the palette
+      host.stroke.snapColor = (c) => s.paletteSnap(c);
+      // tiled preview: strokes wrap around the edges (seamless tiles)
+      const tm = s.prefs.tileMode;
+      host.stroke.wrapX = tm === "row" || tm === "grid";
+      host.stroke.wrapY = tm === "col" || tm === "grid";
+    } catch {
+      // the layer is locked (or a reference whose source layer is locked/gone)
+      host.stroke = null;
+      s.paintBlockedNote();
+      return;
+    }
+    if (tool === "bucket" && s.prefs.bucketGrad) {
+      host.stroke.gradEnd = [s.bg[0], s.bg[1], s.bg[2], s.bg[3]];
+      host.stroke.gradBlock = s.prefs.bucketGradMode === "2" ? 2 : s.prefs.bucketGradMode === "4" ? 4 : s.prefs.bucketGradMode === "8" ? 8 : 1;
+    }
+    if (tool === "airbrush") {
+      host.stroke.sprayMin = s.prefs.airbrushMin;
+      host.stroke.sprayMax = s.prefs.airbrushMax;
+      host.startSpray();
+    }
+    host.stroke.startAt(pp.x, pp.y);
+    host.repaintStroke();
+  }
+
+  onMove(e: PointerEvent): void {
+    const host = this.host;   // 接触面（见 GestureHost）
+    const pt = host.evPt(e);
+    host.lastPt = pt;
+    const wasDown = host.pointers.has(e.pointerId);
+    if (wasDown) host.pointers.set(e.pointerId, pt);
+    // ⑦ 画布调整模式拖动中：换算成画布像素后预览新尺寸
+    if (host.resizeDrag) {
+      const g = host.resizeDrag;
+      const z = Math.max(0.01, host.zoom);
+      const dx = (pt.x - g.x0) / z, dy = (pt.y - g.y0) / z;
+      const nw = Math.max(1, Math.min(1024, Math.round(g.w0 + (g.ax === 1 ? -dx : g.ax === -1 ? dx : 0))));
+      const nh = Math.max(1, Math.min(1024, Math.round(g.h0 + (g.ay === 1 ? -dy : g.ay === -1 ? dy : 0))));
+      if (nw !== g.w || nh !== g.h) { g.w = nw; g.h = nh; g.moved = true; }
+      host.drawOverlay();
+      return;
+    }
+    // ⑧ 等距图形模式拖动中：抓手改尺寸 / 高度，其它地方拖动＝整块移动（都按栅格吸附）
+    if (host.isoDrag) {
+      host.isoDragTo(pt);
+      host.drawOverlay();
+      return;
+    }
+    // Alt 按住＝取色模式：光标跟着换成吸管（鼠标没有别的提示手段）
+    if (e.pointerType === "mouse" && host.altDown !== e.altKey) {
+      host.altDown = e.altKey;
+      host.syncCursor();
+    }
+    // a pending multi-finger long press dies the moment a finger slides
+    if (host.hold && host.holdMoved()) host.cancelHold();
+    // auto-pan the viewport while a draw/transform/selection drag nears the edge.
+    // Speed scales with how deep into the edge zone the pointer is, but is capped
+    // per event so the scroll stays slow, smooth and controllable.
+    //
+    // **精调拖动期间不自动平移**（旋转 / 缩放 / 斜切 / 枢轴 / 变形控制点）：视口一动，
+    // 解算用的参考点（枢轴屏幕位、按下时的起点）就跟着动 —— 角度会跳、抓手会从手指下面
+    // 滑走，用户看到的就是「锚点乱飞」。笔迹与普通选区/内容拖动照旧。
+    if (host.session.prefs.autoPan && wasDown && host.pointers.size === 1 && !host.preciseDrag() &&
+      (host.stroke || host.xf || host.selDrag)) {
+      const M = host.session.prefs.autoPanMargin, w = host.vpW(), h = host.vpH();
+      const MAX = host.session.prefs.autoPanSpeed; // px per event, 1..6
+      const SPEED = 0.28 * (MAX / 3);
+      let panx = 0, pany = 0;
+      if (pt.x < M) panx = (pt.x - M) * SPEED; else if (pt.x > w - M) panx = (pt.x - (w - M)) * SPEED;
+      if (pt.y < M) pany = (pt.y - M) * SPEED; else if (pt.y > h - M) pany = (pt.y - (h - M)) * SPEED;
+      panx = clamp(panx, -MAX, MAX);
+      pany = clamp(pany, -MAX, MAX);
+      if (panx || pany) { host.ox -= panx; host.oy -= pany; host.clampView(); }
+    }
+    const ppx = host.screenToPixel(pt.x, pt.y);
+    // pending pick: cancels only when the finger moves to another pixel cell
+    if (wasDown && host.longT !== null && host.pickAnchor) {
+      if (ppx.x !== host.pickAnchor[0] || ppx.y !== host.pickAnchor[1]) host.cancelPickTimer();
+    }
+    // pick mode: sample whatever cell the finger is over until release
+    if (host.pickMode && wasDown && host.pointers.size === 1) {
+      host.mag = host.session.prefs.loupe;
+      host.magCenter = { x: ppx.x, y: ppx.y };
+      host.samplePickCell(ppx.x, ppx.y, false);
+      host.drawOverlay();
+      return;
+    }
+    // four-finger gesture: once a contact ever reached 4 fingers it stays a
+    // frame-preview gesture until every finger lifts — never pan/zoom. It
+    // keeps watching while >=2 fingers stay down, so losing one finger
+    // mid-gesture no longer aborts it. It arms as soon as at least TWO of the
+    // fingers are sliding (each moved > FOUR_MOVE_PX from its own touchdown,
+    // in ANY direction — no upward swipe required): the preview fires on the
+    // last lift. Per-finger travel means fingers that land late or lift early
+    // never weaken the detection.
+    if (host.fourSeen && host.pointers.size >= 2) {
+      if (fourFingerArmed(host.pointers, host.fourStart, host.session.prefs.fourFingerPx || FOUR_MOVE_PX_DEFAULT)) {
+        host.fourArmed = true;
+      }
+      return;
+    }
+    // pinch
+    if (host.pointers.size >= 2 && host.pinchBase) {
+      const [a, b] = [...host.pointers.values()];
+      // (a pending multi-finger long press was already cancelled in onMove)
+      // 解算口径（中点是不动点、缩放夹取）都在 InputServer 里，见 servers/input.ts
+      const r = pinchAround(host.pinchBase, pinchNow(a, b), host.session.prefs.zoomMin, host.session.prefs.zoomMax);
+      host.ox = r.ox;
+      host.oy = r.oy;
+      host.zoom = r.zoom;
+      if (r.zoomed) host.pinchZoomed = true;
+      host.refresh(false);
+      return;
+    }
+    // axis-adjust drag: translate the axis (grab the line) or rotate it (grab the knob)
+    if (host.symTarget) {
+      const doc = host.session.doc;
+      const s = host.session;
+      if (host.symTarget === "rot") {
+        const cx = host.ox + (doc.w / 2 + s.symOx) * host.zoom;
+        const cy = host.oy + (doc.h / 2 + s.symOy) * host.zoom;
+        let deg = (Math.atan2(pt.y - cy, pt.x - cx) * 180) / Math.PI;
+        deg = ((deg % 180) + 180) % 180; // lines are 180-periodic
+        // snap to the nearest of 0/45/90/135
+        let best = 0, bd = Infinity;
+        for (const a of SYM_ANGLES) {
+          const d2 = Math.abs(deg - a);
+          if (d2 < bd) { bd = d2; best = a; }
+        }
+        s.symAng = best;
+        s.symTweaked = true;
+        s.rememberSym();
+      } else {
+        // the axis passes through the finger; clamp to the visible viewport
+        // (so it follows into the margins) and snap to the half-cell grid so
+        // it moves in whole pixels instead of drifting continuously
+        const vx0 = Math.min(-host.ox, host.vpW() - host.ox) / host.zoom;
+        const vx1 = Math.max(-host.ox, host.vpW() - host.ox) / host.zoom;
+        const vy0 = Math.min(-host.oy, host.vpH() - host.oy) / host.zoom;
+        const vy1 = Math.max(-host.oy, host.vpH() - host.oy) / host.zoom;
+        const pxa = Math.round(clamp((pt.x - host.ox) / host.zoom, vx0, vx1) * 2) / 2;
+        const pya = Math.round(clamp((pt.y - host.oy) / host.zoom, vy0, vy1) * 2) / 2;
+        s.symOx = pxa - doc.w / 2;
+        s.symOy = pya - doc.h / 2;
+        s.symTweaked = true;
+        s.rememberSym();
+      }
+      host.drawOverlay();
+      return;
+    }
+    if (host.panLast) {
+      host.ox += pt.x - host.panLast.x;
+      host.oy += pt.y - host.panLast.y;
+      host.clampView();
+      host.panLast = pt;
+      host.refresh(false);
+      if (host.mousePan) { host.mousePan = false; host.panLast = null; host.syncCursor(); }
+      return;
+    }
+    // 自由变换是常驻模式：没抓住控制点时指针移动什么都不做，
+    // 绝不能落到下面的 xfMove（那是旋转 / 缩放，会把变形预览顶成缩放结果）
+    if (host.xf && host.xf.mode === "warp") {
+      if (host.xf.move) host.warpMoveContent(pt);
+      else if (host.xf.drag !== undefined) host.warpMove(pt);
+      return;
+    }
+    // 变换中：抓住抓手就拖；没抓住时在 PC 上发布悬停提示（点亮那个固定图标 + 外圈提示）
+    if (host.inXform()) {
+      if (host.xfDrag) { host.xfMove(pt); return; }
+      if (isPc() && e.pointerType === "mouse") {
+        const h = host.xfHitAt(pt);
+        const next = h && h.kind !== "move" ? { kind: h.kind, anchor: h.anchor, x: pt.x, y: pt.y } : null;
+        // 换了抓手（或换了锚点）才重画：同 kind 的不同锚点也要重画，否则高亮留在上一个图标上
+        const same = (host.xfHover?.kind ?? null) === (next?.kind ?? null)
+          && (host.xfHover?.anchor ?? null) === (next?.anchor ?? null);
+        host.xfHover = next;
+        if (!same) {
+          host.xfHint = h ? h.kind + (h.anchor ? ":" + h.anchor : "") : null;
+          host.drawOverlay();
+        }
+        return;
+      }
+      host.xfHint = null;
+      return;
+    }
+    // PC 上没进会话时也发布一次悬停提示（点亮图标 / 外圈），但不要拦着下面的选区手势
+    if (isPc() && e.pointerType === "mouse") {
+      const h = host.xfHitAt(pt);
+      host.xfHover = h && h.kind !== "move" ? { kind: h.kind, anchor: h.anchor, x: pt.x, y: pt.y } : null;
+      host.xfHint = h ? h.kind + (h.anchor ? ":" + h.anchor : "") : null;
+    }
+    if (host.xf) {
+      host.xfMove(pt);
+      return;
+    }
+    if (host.path) {
+      // rubber band from the last committed point to the finger
+      if (wasDown && host.pointers.size === 1) {
+        const p = host.path;
+        if (!p.cur || p.cur[0] !== ppx.x || p.cur[1] !== ppx.y) {
+          p.cur = [ppx.x, ppx.y];
+          host.drawPathPreview();
+        }
+      }
+      return;
+    }
+    if (host.stroke) {
+      const pp = ppx;
+      if (!host.gestureMoved && host.gestureStartPx && (pp.x !== host.gestureStartPx.x || pp.y !== host.gestureStartPx.y)) host.gestureMoved = true;
+      // keep the erase/draw footprint marker glued to the finger while stroking;
+      // it follows the pointer even past the image border (marks are clipped to
+      // the canvas), so it never freezes at the edge while the hand keeps moving
+      const inView = pt.x >= 0 && pt.y >= 0 && pt.x <= host.vpW() && pt.y <= host.vpH();
+      host.cursor = inView ? { x: pp.x, y: pp.y, size: host.session.brushSize } : null;
+      host.stroke.moveTo(pp.x, pp.y, e.pointerType === "pen" ? e.pressure : 1);
+      // only the pixels this move touched need recompositing and repainting
+      host.repaintStroke();
+      return;
+    }
+    if (host.outline) {
+      host.outlineMove(host.screenToPixel(pt.x, pt.y));
+      return;
+    }
+    if (host.selDrag) {
+      const pp = host.screenToPixel(pt.x, pt.y);
+      host.selMove(pp);
+      return;
+    }
+    // hover: footprint marker follows the pointer across the whole drawing
+    // area too (marks still clip to the canvas); it hides only off the view or
+    // while the axis-adjust mode is on (painting is suspended there)
+    const drawing = ["pencil", "eraser", "bucket", "line", "rect", "ellipse", "circle", "polygon", "polyline", "curve"].includes(host.session.tool);
+    const inView = pt.x >= 0 && pt.y >= 0 && pt.x <= host.vpW() && pt.y <= host.vpH();
+    host.cursor = drawing && inView
+      ? { x: ppx.x, y: ppx.y, size: host.session.brushSize }
+      : null;
+    if (e.pointerType === "mouse") host.syncCursor();
+    // PC：把光标下的像素与颜色发布给状态栏读数（只在真正换像素时更新）
+    if (isPc()) {
+      const inside = ppx.x >= 0 && ppx.y >= 0 && ppx.x < host.session.doc.w && ppx.y < host.session.doc.h;
+      const h = host.session.hover;
+      if (!inside) {
+        if (h) host.session.setHover(null);
+      } else if (!h || h.x !== ppx.x || h.y !== ppx.y) {
+        const c = host.session.sampleComposite(ppx.x, ppx.y);
+        host.session.setHover({ x: ppx.x, y: ppx.y, color: c ? [c[0], c[1], c[2], c[3]] : null });
+      }
+    }
+    host.drawOverlay();
+  }
+
+  onUp(e: PointerEvent): void {
+    const host = this.host;   // 接触面（见 GestureHost）
+    host.pointers.delete(e.pointerId);
+    if (host.pointers.size === 0) host.stopSpray();
+    if (host.symTarget) {
+      host.symTarget = null;
+      host.session.changedUI(); // refresh the angle readout in the UI chips
+      host.drawOverlay();
+    }
+    if (host.pointers.size < 2) host.pinchBase = null;
+    if (host.hold && host.pointers.size < host.hold.n) host.cancelHold();
+    if (host.pointers.size === 0 && host.isoDrag) {
+      host.isoDrag = null;
+      host.session.changedUI();   // 参数条上的读数刷新
+      host.drawOverlay();
+      return;
+    }
+    if (host.pointers.size === 0 && host.resizeDrag) {
+      const g = host.resizeDrag;
+      host.resizeDrag = null;
+      if (g.moved) {
+        // 一条历史：canvasSize 用「固定哪一侧」的锚点语义
+        host.session.canvasSize(g.w, g.h, g.ax, g.ay);
+        host.session.hapticTick("画布尺寸", 0.7);
+      }
+      host.session.repaintAll();
+      return;
+    }
+    if (host.pointers.size === 0 && host.path) {
+      // a tap added a point: drop the rubber band, keep the path pending
+      host.path.cur = null;
+      host.gestureMoved = false;
+      host.drawPathPreview();
+      return;
+    }
+    if (host.pointers.size === 0 && host.outline) {
+      host.endOutline(true);
+      return;
+    }
+    if (host.pointers.size === 0) {
+      if (host.longT !== null) {
+        window.clearTimeout(host.longT);
+        host.longT = null;
+      }
+      host.pickMode = false;
+      host.pickAnchor = null;
+      host.pickLast = null;
+      host.mag = false;
+      host.magCenter = null;
+      // 旋转 / 缩放 / 斜切 / 移动：松手只结束这次拖拽，会话继续开着
+      // （一次会话一条 undo，靠「完成 / 还原 / 切工具」结束）。
+      // 自由变换（四点 / 网格）是常驻模式：松手同样只结束这一次拖拽。
+      if (host.xf && host.xf.mode === "warp") { host.xf.drag = undefined; host.xf.grab = undefined; host.warpDragOn = false; }
+      else if (host.inXform()) host.xfEndDrag();
+      else if (host.xf) host.endXf();
+      const pt = host.evPt(e);
+      const now = Date.now();
+      // 抬手时先取走「这次手势的两指状态」与「双指长按是否已经触发过」：下面两个拦截分支
+      // 都要据此吞掉这次抬手，而它们在结束前就会把状态清零。
+      const firedTwoLong = host.holdFired;
+      const pinchZoomed = host.pinchZoomed;
+      host.pinchZoomed = false;
+      host.holdFired = false;
+      if (host.fourSeen) {
+        // four-finger gesture: it opened the all-frames preview as soon as
+        // four fingers were down with >=2 of them sliding; the preview opens
+        // when the last finger lifts. Anything else is swallowed so it can
+        // never redo/tap/paint.
+        host.fourSeen = false;
+        host.pinchBase = null;
+        this.tap.clearTwoTapSeq();   // 四指手势绝不是双指轻点序列
+        const armed = host.fourArmed;
+        host.fourArmed = false;
+        host.fourStart.clear();
+        host.fourView0 = null;
+        if (host.stroke) { host.stroke.cancel(); host.stroke = null; }
+        if (host.selDrag) {
+          if (host.selDrag.kind === "move" && host.selDrag.cut) host.endSelDrag(false);
+          else host.selDrag = null;
+        }
+        host.panLast = null;
+        host.gestureMoved = false;
+        host.session.repaint();
+        if (armed) {
+          const fourAct = host.session.prefs.gFourFinger;
+          host.session.hapticTick("四指"); // tactile confirmation before it fires
+          if (fourAct === "framePreview" && host.onFramePreview) host.onFramePreview();
+          else host.session.runGestureAction(fourAct, { x: pt.x, y: pt.y });
+        }
+        return;
+      }
+      if (firedTwoLong) {
+        // the two-finger long press already ran its action while the fingers
+        // were down: swallow the lifts so they can never count as a tap / redo
+        this.tap.clearTwoTapSeq();
+        host.panLast = null;
+        host.gestureMoved = false;
+        host.cancelHold();
+        return;
+      }
+      // 这一次抬手算什么：**轻点序列状态机在 servers/gesture.ts**（单指连点的 480ms / 64px、
+      // 双指双击的 80px、以及「双击边距 / 双击画布 / 三击」的优先级都在那儿，
+      // 单测见 tests/gesture.test.ts）。这里只按它给出的结果执行副作用。
+      const docW = host.session.doc.w, docH = host.session.doc.h;
+      const inDoc = (p: Pt) => !outsideDoc(p, docW, docH);
+      const ppc = host.screenToPixel(pt.x, pt.y);
+      const mid = this.tap.twoMidPoint();
+      const mpp = mid ? host.screenToPixel(mid.x, mid.y) : null;
+      const out = this.tap.up({
+        now, pt,
+        overDoc: inDoc(ppc),
+        canvasIndex: host.canvasAtScreen(pt.x, pt.y),
+        docIndex: host.session.docIdx,
+        moved: host.stroke ? host.gestureMoved : false,   // 拖动过就断掉连点串
+        hasStroke: !!host.stroke, hasSelDrag: !!host.selDrag, hasXf: !!host.xf,
+        pinchZoomed, isPc: isPc(),
+        doubleTapMs: host.session.prefs.doubleTapMs,
+        canvasDoubleMapped: host.session.prefs.gDoubleTapCanvas !== "none",
+        midOverDoc: !!mpp && inDoc(mpp),
+      });
+      // 被手势吃掉的那一下：笔迹作废（绝不提交，免得留下一个孤点）
+      const dropStroke = () => { if (host.stroke) { host.stroke.cancel(); host.stroke = null; } };
+      switch (out.kind) {
+        case "two-finger-redo":
+          // the redo shortcut only fires outside the canvas: two-finger double
+          // taps over the artwork must never redo (too easy to hit while drawing)
+          host.gestureMoved = false;
+          host.panLast = null;
+          host.session.runGestureAction(host.session.prefs.gTwoFingerDoubleTap, { x: out.mid.x, y: out.mid.y });
+          host.session.repaint();
+          return;
+        case "two-finger-skip":
+        case "two-finger-first":
+          host.gestureMoved = false;
+          host.panLast = null;
+          return;
+        case "focus-canvas":
+          // double-tap ON a canvas: focus it (when it is not the focused one) and
+          // smoothly zoom it to fit
+          dropStroke();
+          if (host.selDrag) host.endSelDrag();
+          host.panLast = null; host.gestureMoved = false;
+          host.session.hapticTick("双击画布", 0.8);
+          if (out.index !== host.session.docIdx) host.session.focusCanvas(out.index);
+          host.session.fitCanvas();
+          return;
+        case "margin-double":
+          // double-tap on the canvas margin -> whatever the user mapped
+          dropStroke();
+          if (host.selDrag) host.endSelDrag();
+          host.panLast = null; host.gestureMoved = false;
+          host.session.runGestureAction(host.session.prefs.gDoubleTapMargin, { x: pt.x, y: pt.y });
+          host.session.repaint();
+          return;
+        case "canvas-double":
+          // double-tap on the canvas itself（状态机只在「映射了动作」时报这个，
+          // 没映射时第二下被吞掉，留给三击）
+          dropStroke();
+          host.panLast = null; host.gestureMoved = false;
+          host.session.runGestureAction(host.session.prefs.gDoubleTapCanvas, { x: pt.x, y: pt.y });
+          host.session.repaint();
+          return;
+        case "triple":
+          // triple-tap on the doc -> zoom. Roll back the single swallowed tap
+          // dot (if there was one) so zooming leaves no stray pixel — but never
+          // undo anything the user painted before this gesture.
+          dropStroke();
+          if (host.selDrag) host.endSelDrag();
+          host.panLast = null; host.gestureMoved = false;
+          if (out.overDoc) {
+            if (out.undoSingleDot && host.session.history.canUndo()) host.session.undo();
+            host.session.repaint();
+            host.session.runGestureAction(host.session.prefs.gTripleTap, { x: pt.x, y: pt.y });
+          } else host.session.repaint();
+          return;
+        case "skip":
+          // second tap over the doc: swallow it and wait for a possible third
+          // tap (zoom). No undo here — undo belongs to the canvas margin only.
+          dropStroke();
+          host.gestureMoved = false; host.panLast = null;
+          host.session.repaint();
+          return;
+        case "plain":
+          // 没被手势接管：落到下面照常提交这一笔（单点）
+          break;
+      }
+      if (host.stroke) {
+        const doneStroke = host.stroke;
+        const doneMoved = host.gestureMoved;
+        const rec = host.stroke.commit(host.session.history, host.labelFor(host.stroke.kind));
+        host.stroke = null;
+        host.session.repaint();
+        if (rec) host.session.changedUI();
+        // shapes become an immediate selection of EXACTLY the pixels this stroke
+        // painted (a pixel mask, not a rectangle) so only the shape moves;
+        // neighbouring artwork that falls under the marquee stays untouched
+        if (doneMoved && doneStroke.start && doneStroke.last && this.isShapeKind(doneStroke.kind)) {
+          this.selectStrokePixels(doneStroke);
+          host.session.setTool("select");
+        }
+        // 记下这一下单击「是不是没动过就落了一个点、且真的进了历史」——
+        // 三击放大时要把那个孤点撤销掉（判定在 TapMachine 里）
+        this.tap.noteSingleTap(!host.gestureMoved, !!rec);
+      } else {
+        this.tap.noteSingleTap(false, false);
+      }
+      host.gestureMoved = false;
+      host.panLast = null;
+      // a floating selection dropped on another canvas moves there (see
+      // dropSelDragToCanvas); everything else drops in place
+      if (host.selDrag && !host.dropSelDragToCanvas(pt.x, pt.y)) host.endSelDrag();
+    }
+  }
+
+  /** true for the freehand shape tools that auto-select after drawing */
+  private selectStrokePixels(st: Stroke): void {
+    const host = this.host;   // 接触面（见 GestureHost）
+    const doc = host.session.doc;
+    const w = doc.w, h = doc.h;
+    // the stroke may have been redirected into a referenced canvas: read the
+    // cel it really painted into and map its pixels back into this canvas
+    // (reference layers are mirrored 1:1, centred when the sizes differ)
+    const cel = st.doc.celAt(st.li, st.fi);
+    if (!cel) return;
+    const sw = st.doc.w;
+    const ox = st.doc === doc ? 0 : Math.round((w - sw) / 2);
+    const oy = st.doc === doc ? 0 : Math.round((h - st.doc.h) / 2);
+    const before = st.before ? st.before : new Uint8ClampedArray(cel.data.length);
+    const d = cel.data;
+    if (!doc.sel) doc.sel = new Sel(w, h);
+    const sel = doc.sel;
+    sel.clear();
+    const n = Math.min(before.length, d.length);
+    for (let i = 0; i < n; i += 4) {
+      if (before[i] === d[i] && before[i + 1] === d[i + 1] && before[i + 2] === d[i + 2] && before[i + 3] === d[i + 3]) continue;
+      const p = i >> 2;
+      const x = (p % sw) + ox, y = Math.floor(p / sw) + oy;
+      if (x < 0 || y < 0 || x >= w || y >= h) continue;
+      sel.set(x, y, 1);
+    }
+    host.session.repaint();
+    host.session.changedUI();
+  }
+
+  onCancel(e: PointerEvent): void {
+    const host = this.host;   // 接触面（见 GestureHost）
+    host.pointers.delete(e.pointerId);
+    if (host.resizeDrag) { host.resizeDrag = null; host.drawOverlay(); }
+    if (host.outline) host.endOutline(false);
+    // a stationary two-finger hold cancelled by the OS usually means the phone
+    // claimed the gesture for its own screen recognition: tell the user once
+    if (host.hold && host.hold.n === 2 && host.pointers.size < 2) {
+      host.session.hintOnce("twoFingerLongPress",
+        "双指长按被系统的「识屏」抢走了：在系统设置里搜索「识屏」并关闭它，或改用三指长按",
+        "The system's screen recognition grabbed the two-finger long press. Search for 'screen recognition' in the system settings and turn it off, or use the three-finger long press.");
+    }
+    host.cancelHold();
+    host.stopSpray();
+    host.holdFired = false;
+    host.pinchZoomed = false;
+    // 双指轻点序列作废（单指连点计数不动，与多指落下时同一口径）
+    this.tap.clearTwoTapSeq();
+    host.fourSeen = false;
+    host.fourArmed = false;
+    host.fourView0 = null;
+    host.fourStart.clear();
+    host.mag = false;
+    host.magCenter = null;
+    if (host.symTarget) host.symTarget = null;
+    if (host.stroke) {
+      if (host.gestureMoved) {
+        const rec = host.stroke.commit(host.session.history, host.labelFor(host.stroke.kind));
+        if (rec) host.session.changedUI();
+      } else {
+        host.stroke.cancel();
+      }
+      host.stroke = null;
+      host.gestureMoved = false;
+      host.session.repaint();
+    }
+    if (host.xf) host.abortXf();
+    // a cancelled floating drag puts the cut pixels back untouched
+    if (host.selDrag) {
+      if (host.selDrag.kind === "move" && host.selDrag.cut) host.endSelDrag(false);
+      else host.selDrag = null;
+    }
+    host.panLast = null;
+    host.pinchBase = null;
+    host.pickMode = false;
+    host.pickAnchor = null;
+    host.cancelPickTimer();
   }
 }

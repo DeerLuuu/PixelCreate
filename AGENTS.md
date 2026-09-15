@@ -25,11 +25,11 @@ src/app/       Session、设置注册表、引导注册表、手势映射、历�
 src/engine/    文档模型、历史栈、像素操作、调色/对称/导出编码、重采样（resample）、颜色分析（color-analysis）
 src/render/    视口、合成器、脏矩形、洋葱皮
 src/servers/   服务层：RenderServer（合成与缓存）、ViewportServer（视图数学）、
-               InputServer / TapMachine（手势策略与轻点序列）—— 见 docs/ARCHITECTURE.md
+               InputServer / GestureController（手势策略 · 轻点序列 · 指针事件入口）—— 见 docs/ARCHITECTURE.md
 src/io/        原生桥接、工程文件（.pxc）、Aseprite 读写（aseread/asewrite/zlib）、自动保存、参考图、安全区、base64
 src/ui/        React 外壳、弹窗、时间线、浮动球、i18n、样式
 android/       MainActivity（Java 层）+ AndroidManifest
-tests/         无 DOM 的引擎/逻辑回归（**4063 条断言**，`node .ts-out/tests/run-tests.js` 末尾会打印条数）
+tests/         无 DOM 的引擎/逻辑回归（**4085 条断言**，`node .ts-out/tests/run-tests.js` 末尾会打印条数）
 docs/          API.md / COMPARISON.md
 ```
 
@@ -94,13 +94,15 @@ java -jar /root/pk/apksigner.jar verify --print-certs /sdcard/Download/PixelCraf
   别把这两件事搬回去 —— 细节与"不要改回去"清单见 `docs/API.md` §15b。
 
 **工具与手势**
-- **手势判定分两片，都在 `src/servers/` 里**：
+- **手势判定全在两个 `src/servers/` 文件里（三片搬完）**：
   · `input.ts`（`InputServer` 第一片）= 策略与算术的**纯函数**：鼠标按键意图、pinch 解算（中点不动点）、
     四指划动判定、长按策略、点击容差 —— 口径见 `docs/API.md` §15c。
-  · `gesture.ts`（第二片）= **轻点序列状态机** `TapMachine`：单击 / 双击（边距·画布·换画布）/ 三击 /
-    双指双击，容差 480ms·64px·80px，`up()` 返回 `TapOutcome`，动作体仍由 `view.ts` 执行 ——
-    口径与**一个已知问题（画布内三击够不到）**见 `docs/API.md` §15c2，`tests/gesture.test.ts` 钉住现状。
-  `render/view.ts` 只留触点会话状态（`pointers` / `pinchBase` / `fourSeen` …）与各分支的动作体。
+  · `gesture.ts`（第二、三片）= **轻点序列状态机** `TapMachine`（单击 / 双击边距·画布·换画布 / 三击 /
+    双指双击，容差 480ms·64px·80px，`up()` 返回 `TapOutcome`；口径与**一个已知问题（画布内三击够不到）**
+    见 `docs/API.md` §15c2，`tests/gesture.test.ts` 钉住现状）+ **指针事件入口** `GestureController`
+    （`onDown` / `onMove` / `onUp` / `onCancel` 整体搬来，约 850 行；`View` 只留一行转发、
+    覆盖层绘制与各工具动作体，接口契约见 §15c3，假 host 回归见 `tests/gesture-host.test.ts`）。
+  `render/view.ts` 里**不要再写手势判定** —— 判定进 `gesture.ts`，动作体留在 `View` / `tools`。
 - `View`（`src/render/view.ts`）接管画布手势：画布边距双击 = undo、双指双击 = redo、三击 = 2× 放大；手势 → 动作映射在 `src/app/gestures.ts`，设置里可改。
 - 震动统一走 `Session.hapticTick(tag, scale)`（受 `gesture.haptic` 开关与 `prefs.hapticLen` 控制）。
 - 形状：统一栅格 inside+border（实心/空心），Zingl 椭圆，笔刷 `brushStamp` 镜像对称（Aseprite 移植）。
@@ -296,7 +298,8 @@ java -jar /root/pk/apksigner.jar verify --print-certs /sdcard/Download/PixelCraf
 
 - `AndroidManifest.xml` 版本号与 changelog 的 `APP_VERSION` 已由 `tests/changelog.test.ts` 静态校验（不一致会测试失败）；
   改版本号仍然要手动改两处 + 加一条更新日志（见 §6.1）。
-- `view.ts` / `session.ts` / `App.tsx` 仍偏大：手势/渲染、会话、UI 可继续拆。
+- `view.ts` / `session.ts` / `App.tsx` 仍偏大：渲染覆盖层、会话、UI 可继续拆
+  （手势判定已经搬完：`view.ts` 4668 → 3765 行，见 §8）。
 - **三击（`gTripleTap` ＝ 2× 放大）在默认设置下够不到**：单指第二下只要落在画布上，就会被
   「双击画布（映射了动作）」或「聚焦适配（没映射）」吃掉并清零连点计数，所以攒不到第三下；
   只有 `canvasIndex < 0` 才保留计数。现状由 `tests/gesture.test.ts` 的 `gesture.triple.shadowed.*`
@@ -395,7 +398,12 @@ stamp 从 `-T/2` 起画，早先的锚点比顶点偏左 `T/2`，栅格 / 足迹
 手势状态机分片搬出（P5，同日）：`src/servers/input.ts`（策略与算术的纯函数，+47 断言）与
 `src/servers/gesture.ts` 的 `TapMachine`（轻点序列：单击 / 双击边距·画布·换画布 / 三击 / 双指双击，
 容差 480ms·64px·80px，`up()` 返回 `TapOutcome`，动作体仍在 `view.ts`，+44 断言）；
-口径见 docs/API.md §15c / §15c2；搬的过程中发现**画布内三击够不到**（见 §7）。
+口径见 docs/API.md §15c / §15c2 / §15c3；搬的过程中发现**画布内三击够不到**（见 §7）。
+手势控制器（同日第三节）：`GestureController` 接管 `onDown/onMove/onUp/onCancel` 约 850 行，
+`View` 以 `GestureHost`（93 个成员）交出触点会话状态与各动作体；会话状态的结构体
+（`XfSession` / `SelDragState` / `HoldState` …）从 `view.ts` 的字段声明里搬进 `servers/gesture.ts`；
+`view.ts` 4668 → **3765 行**，新增 22 条假 host 断言（共 4085），`warpui.order.has-draw-overlay`
+的静态扫描锚点随 `drawOverlay` 变公开而改成整行签名。
 
 ---
 

@@ -48,6 +48,7 @@ import { testViewport } from "./viewport.test";
 import { testRenderServer } from "./render-server.test";
 import { testInput } from "./input.test";
 import { testGesture } from "./gesture.test";
+import { testGestureHost } from "./gesture-host.test";
 
 async function main(): Promise<void> {
   console.log("--- history ---");
@@ -84,6 +85,8 @@ async function main(): Promise<void> {
   testInput();
   console.log("--- gesture machine (taps) ---");
   testGesture();
+  console.log("--- gesture controller (fake host) ---");
+  testGestureHost();
   console.log("--- export ---");
   testExport();
   console.log("--- back ---");

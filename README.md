@@ -74,7 +74,7 @@ src/
 ├─ app/         应用层：session（状态中枢）、settings（设置注册表）、guide（引导注册表）、playback（循环模式）、gestures（手势映射）、history-io（标量历史载荷）
 ├─ render/      view（视口 / 手势 / 渲染）、compositor（合成）、rect（脏矩形工具）、onion（洋葱皮布局）
 ├─ servers/     服务层：render（RenderServer：合成缓冲 / 合成键 / 失效区域 / 多画布缓存）、viewport（缩放平移与坐标数学，纯函数）、
-│               input（手势策略与算术）、gesture（TapMachine：单击 / 双击 / 三击 / 双指双击的轻点序列）
+│               input（手势策略与算术）、gesture（TapMachine 轻点序列 + GestureController 指针事件入口）
 ├─ io/          bridge（原生桥接）、exporters、gifread、project（.pxc）、aseread/asewrite（Aseprite .ase/.aseprite）、zlib（自写 inflate + CompressionStream 压缩）、autosave、clipboard
 └─ ui/          React 界面：App、timeline、modals、changelog、guide(+demo/layout)、hold、preview、i18n、style.css
    └─ ui/kit/    UI 控件库：Dialog、Form（Row/ChipGroup/Segmented/Switch/NumberField/ColorField）、primitives、scrub、令牌与演示页
@@ -86,8 +86,8 @@ toolchain/       开发辅助脚本（devserver 静态服务、make-icon 图标�
 
 ### 架构要点
 
-- **引擎层零 DOM**：`engine/`、`app/`、`tools/`、`servers/` 全部可在 Node 下测试（4063 条断言跑在纯数据上，含 UI 控件与令牌契约；`npm test` 末尾会打印条数）。
-- **服务层**：合成与缓存归 `RenderServer`、视图数学归 `ViewportServer`（`docs/API.md` §15b），手势策略归 `input.ts`、轻点序列归 `gesture.ts` 的 `TapMachine`（§15c / §15c2），`render/view.ts` 只做 blit、覆盖层与各分支的动作体 —— 这是 `docs/ARCHITECTURE.md` 里 Server 化的落地进度。
+- **引擎层零 DOM**：`engine/`、`app/`、`tools/`、`servers/` 全部可在 Node 下测试（4085 条断言跑在纯数据上，含 UI 控件与令牌契约；`npm test` 末尾会打印条数）。
+- **服务层**：合成与缓存归 `RenderServer`、视图数学归 `ViewportServer`（`docs/API.md` §15b），手势策略归 `input.ts`、轻点序列与四个指针入口归 `gesture.ts`（§15c / §15c2 / §15c3），`render/view.ts` 只做 blit、覆盖层与各工具的动作体 —— 这是 `docs/ARCHITECTURE.md` 里 Server 化的落地进度。
 - **声明式注册表**：设置项写在 `src/app/settings.ts`，引导步骤写在 `src/app/guide.ts`；新增功能 = 一条声明 + i18n 文案，界面自动生成。
 - **增量渲染**：笔迹只重合成/重绘改动区域（`Rect` + `composeRectInto` + `celToCanvasRect`），一帧一次绘制（rAF 合并）。
 - **撤销栈**：`history.pushPixels`（像素）/ `pushStruct`（结构快照）/ `record`（标量前后值）三类，所有破坏性操作都可单步撤销。

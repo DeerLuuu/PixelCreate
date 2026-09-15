@@ -28,6 +28,7 @@
 15b. [服务层 `servers/`（RenderServer / ViewportServer）](#15b-服务层-serversrenderserver--viewportserver)
 15c. [输入服务 `servers/input.ts`（手势策略与算术）](#15c-输入服务-srcserversinputts手势策略与算术)
 15c2. [手势状态机 `servers/gesture.ts`（轻点序列）](#15c2-手势状态机-srcserversgesturets轻点序列)
+15c3. [手势控制器 `servers/gesture.ts`（指针事件入口）](#15c3-手势控制器-srcserversgesturets指针事件入口)
 16. [IO `io/`](#16-io)
 17. [UI 层与事件契约 `ui/`](#17-ui-层与事件契约)
 18. [多画布空间 / 新工具与特效（1.0.7.11 追加）](#18-多画布空间--新工具与特效)
@@ -1569,9 +1570,59 @@ class TapMachine {
   `gesture.triple.shadowed.*` 记录了这个现状，**要么改判定顺序、要么承认三击只在边距外有效**，
   两种改法都会改用户可见行为，改之前先确认。
 
-**还没搬的（P5 第三片）**：手势**会话状态**（`pointers` / `pinchBase` / `fourSeen` / `fourArmed` /
-`panLast` / `gestureMoved` …）与 `onDown/onMove/onUp` 里各分支的**动作体**
-（要碰 `stroke` / `xf` / 选区 / 会话，得连着真机回归一起做）。
+## 15c3. 手势控制器 `src/servers/gesture.ts`（指针事件入口）
+
+P5 第三片：`View` 的四个指针事件入口（`onDown` / `onMove` / `onUp` / `onCancel`）**整体搬进来**
+（约 850 行），`View` 侧只剩四行转发 + 覆盖层绘制 + 各工具的动作体。
+
+```ts
+interface GestureHost {           // 控制器操作 View 的唯一接触面（93 个成员，编译器强制）
+  session; host;                  // 公共依赖（host = 画布宿主元素）
+  pointers; fourStart; fourSeen; fourArmed; fourView0; pinchBase; pinchZoomed;
+  hold; holdFired; panLast; lastPt;                      // 触点会话
+  spaceDown; altDown; altPaint; mousePan;                // PC 输入
+  ox; oy; zoom;                                          // 视口
+  stroke; strokeRedirected; gestureMoved; gestureStartPx; cursor;
+  longT; pickAnchor; pickMode; pickLast; mag; magCenter;  // 长按取色 / loupe
+  resizeDrag; isoDrag; outline; path; selDrag; symTarget; // 各工具自己的拖动会话
+  xfDrag; xf; xfHover; xfHint; warpDragOn; onFramePreview;
+  // 方法：坐标与渲染（evPt / screenToPixel / canvasAtScreen / clampView / refresh /
+  //   drawOverlay / repaintStroke / drawPathPreview / syncCursor / labelFor / toolNow /
+  //   isPathTool / preciseDrag / vpW / vpH）、长按（cancelHold / holdMoved / armHold /
+  //   cancelPickTimer / enterPickMode / samplePickCell）、喷枪、各工具动作体
+  //   （outlineDown / pathDown / selDown / startSelMove / endSelDrag / isoDragTo /
+  //    resizeHit / symHit / tryStartXf / xfMove / warpStartMove / wireRedirect …）
+}
+
+class GestureController {
+  constructor(host: GestureHost)
+  onDown(e: PointerEvent): void      // 绑定入口：View.onDown 只转发到这里
+  onMove(e: PointerEvent): void
+  onUp(e: PointerEvent): void
+  onCancel(e: PointerEvent): void
+}
+```
+
+口径（**逐字搬迁，不是重写**；分支顺序、阈值、副作用顺序与搬家前一致）：
+
+- `View` 的四个公开入口（`onDown` / `onMove` / `onUp` / `onCancel`）保留为**一行转发** ——
+  `bind()` 与 `dispatchPointer()`（临时工具笔画的合成事件）都走它们，`tests/view.test.ts` 那套
+  DOM 桩驱动的回归也照旧可用。
+- 触点会话**状态仍留在 `View`**（覆盖层要读 `stroke` / `selDrag` / `xf` / `outline` 等来画），
+  控制器通过 `GestureHost` 读写它们；**想让控制器多碰一个成员，先在接口里声明**。
+- 各工具的动作体（起笔迹、开始选区拖动、变换抓手解算、等距抓手、画布调整）仍然在 `View`/`tools`，
+  控制器只负责"什么时候轮到谁"。
+- 会话状态的结构体（`ResizeDragState` / `SelDragState` / `IsoDragState` / `OutlineState` /
+  `PathState` / `HoldState` / `XfDragState` / `XfSession`）也一并搬进本文件 —— 以前它们内联在
+  `view.ts` 的字段声明里，占掉近百行。
+- 假 host 回归（`tests/gesture-host.test.ts`，22 条断言）只驱动多指与视口几条契约：
+  四指成立**还原视口**（第 5 片手指落下时恢复第一根手指落下那一刻的 `ox/oy/zoom`）、
+  四指期间 `onMove` 不 pinch 不 pan、`fourArmed` 需要两根手指各自离开落点超过阈值、
+  pinch 以中点不动点缩放并夹在 `zoomMin..zoomMax`、单指平移与 PC `mousePan` 交还。
+
+**还没搬的（P5 收尾）**：触点会话状态本身（`pointers` / `pinchBase` / `fourSeen` …）与
+`xfDrag` / `selDrag` / `outline` / `path` / `resizeDrag` / `isoDrag` 这些**状态字段的所有权**——
+它们被覆盖层绘制读着，要先把 `View` 的绘制也拆出去才能一起挪走（见 `docs/ARCHITECTURE.md` P4/P5）。
 
 ---
 

@@ -628,7 +628,9 @@ export function testWarpUi(): void {
   // ---- 覆盖层顺序：选区框 / 抓手 / 变形控制点必须画在浮动内容**之后**（＝图像之上） ----
   {
     const src = fs.readFileSync(path.resolve(__dirname, "../../../src/render/view.ts"), "utf8");
-    const i = src.indexOf("private drawOverlay(");
+    // 声明锚点用整行签名（`drawOverlay` 现在是 `GestureHost` 的接触面之一，不再带 `private`；
+    // 只搜 "drawOverlay(" 会命中 `refresh()` 里的调用点，所以锚到声明那一段）
+    const i = src.indexOf("  drawOverlay(rebuildTint = false): void {");
     ok("warpui.order.has-draw-overlay", i > 0, "drawOverlay()");
     const body = src.slice(i, src.indexOf("\n  }", i));
     const floatAt = body.indexOf("if (xfg && xfg.cut && xfg.buf && xfg.cells");
