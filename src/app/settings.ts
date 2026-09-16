@@ -15,6 +15,8 @@ import { applyPcMode, pcModeOf, pcModeOn } from "../io/pcmode";
 import { AUTOSAVE_KEEP_DEFAULT, AUTOSAVE_KEEP_MAX } from "../io/autosave";
 import { AI_RPC_DEFAULT_PORT, AI_RPC_DEFAULT_TIER, AI_SERVICE_TIERS, AI_TURN_IDLE_SEC_DEFAULT } from "./ai-rpc";
 import type { AiServiceTier } from "./ai-rpc";
+import { AI_CHAT_DEFAULT_PRESET, AI_CHAT_PRESETS, aiChatPresetOf, normalizePresetId } from "./ai-presets";
+import type { AiChatPreset, AiChatPresetId } from "./ai-presets";
 
 export type SettingValue = boolean | number | string;
 /** 控件的取值形态。**不要新增字面量**：`tests/ai-rpc.test.ts` 静态钉住这一行只有四个值，
@@ -246,19 +248,77 @@ export function onAiServeSettingsChange(cb: (v: AiServeSettings) => void): () =>
 export const AI_CHAT_SETTINGS_KEY = "pc.aichat";
 /** 三项文本的最大长度（端点 URL / 模型名 / key；够长 JWT 用） */
 export const AI_CHAT_MAX_TEXT = 2048;
-/** 默认端点：留空 —— 不替用户预设任何厂商（§3.6：线上 PWA 绝不内置任何凭据） */
-export const AI_CHAT_DEFAULT_ENDPOINT = "";
-export const AI_CHAT_DEFAULT_MODEL = "";
+/**
+ * 默认端点 / 默认模型 = **DeepSeek 预设**（§3.7.7「开箱即用」）。
+ * 两个常量与 `AI_CHAT_PRESETS` 同源（不是抄一遍字符串），所以改预设表就同时改了默认值。
+ * 这里只有公开的 base URL 与公开的模型名，**没有任何凭据**（§3.6 的红线针对的是 key）。
+ */
+export const AI_CHAT_DEFAULT_ENDPOINT = aiChatPresetOf(AI_CHAT_DEFAULT_PRESET).baseUrl;
+export const AI_CHAT_DEFAULT_MODEL = aiChatPresetOf(AI_CHAT_DEFAULT_PRESET).defaultModel;
+
+/** 预设表与 id 的对外出口（§3.7.7 的 schema：预设就是「一组默认值 + 一个可切模型清单」） */
+export { AI_CHAT_PRESETS, AI_CHAT_DEFAULT_PRESET };
+export type { AiChatPreset, AiChatPresetId };
+
+/** `ai.chatMaxRounds` 的取值区间（与 `ai-chat.ts` 的 `AI_CHAT_MAX_ROUNDS` 同一口径） */
+export const AI_CHAT_MAX_ROUNDS_MIN = 1;
+export const AI_CHAT_MAX_ROUNDS_MAX = 24;
+export const AI_CHAT_MAX_ROUNDS_DEFAULT = 12;
+/** `ai.chatTemp`：**整数档位**，发的 `temperature` = 值 × 0.1（0 = 不发这个字段，用端点默认） */
+export const AI_CHAT_TEMP_MIN = 0;
+export const AI_CHAT_TEMP_MAX = 20;
+export const AI_CHAT_TEMP_DEFAULT = 0;
+/** `ai.chatTemp` 一档 = 0.1（UI 与请求体共用同一个换算，别在别处再写一遍） */
+export const AI_CHAT_TEMP_STEP = 0.1;
 
 export interface AiChatSettings {
   /** `ai.chatOn`：应用内助手总开关（默认 false） */
   on: boolean;
+  /** `ai.chatPreset`：当前选中的厂商预设（默认 `deepseek`；**切预设不碰 key**） */
+  preset: AiChatPresetId;
   /** `ai.chatEndpoint`：OpenAI 兼容的基地址，例如 https://api.openai.com/v1 */
   endpoint: string;
   /** `ai.chatModel`：模型名 */
   model: string;
-  /** `ai.chatKey`：API key。**只存本机**，不进设置导出 / 导入、不进诊断文本、不进 toast */
+  /**
+   * `ai.chatKey`：用户**手填**的 API key。**只存本机**，不进设置导出 / 导入、不进诊断文本、不进 toast。
+   * 诚实边界（§3.7.4）：它就在本机页面的 `localStorage` 里，「key 不进页面」这条**只对
+   * 「宿主环境变量提供的那把 key」成立** —— 环境 key 由壳持有并同源转发，页面只拿一个布尔。
+   */
   key: string;
+  /** `ai.providerBase`：手填 key 时的**直连地址**；留空 = 用 `ai.chatEndpoint`（§3.7.7） */
+  providerBase: string;
+  /** `ai.chatMaxRounds`：一整轮最多问几次模型（1..24，默认 12） */
+  maxRounds: number;
+  /** `ai.chatTemp`：温度档位 0..20（× 0.1 = 请求里的 temperature；0 = 不发这个字段） */
+  temp: number;
+  /** `ai.chatSystemPrompt`：非空则追加在内置提示词之后 */
+  systemPrompt: string;
+  /** `ai.chatStream`：本轮**固定 false**（代理对 `stream:true` 回 400）；留着是给以后流式一个口径位 */
+  stream: boolean;
+  /**
+   * `ai.protectKey`：**诊断 / 提示文本里不折叠 key 相关信息**的开关（默认 `true`）。
+   *
+   * 语义要写准（别让它变成一个危险开关）：置 `false` 只允许关掉「额外那一道诊断折叠」，
+   * **绝不意味着 key 可以进任何文本** —— key 不进导出、不进 toast、不进错误文案这几条
+   * 与它无关（那是由 `SETTING_SECRET_PATHS` 与「状态文本只拼有无」两处代码保证的）。
+   */
+  protectKey: boolean;
+  // ---- 浮窗与小球的状态（docs/PLAN-ai.md §3.7.6）----
+  //
+  // 这三条是**状态**不是「用户要调的值」，所以两件事要一起说清：
+  //   · 落在这里（而不是 `Session.prefs`）：`prefs` 会随工程 / 设置导出走，
+  //     而「这个窗口开在屏幕哪个角落」是**这台机器这个屏幕**的事，与 `pc.aichat`、
+  //     `pc.orb.pos` 同一类；
+  //   · **不写进设置页界面**（下面对应的三条声明 `visible` 恒为 false）：它们不是可选项，
+  //     给用户一个「窗口开着吗」的开关没有意义。真正的几何（x/y/w/h/min）走
+  //     `localStorage["pc.aichat.win"]`（键与归一化在 `src/app/uibar.ts`），这里只存三件「有没有」的布尔。
+  /** `ai.chatWinOpen`：浮窗当前是否打开（默认 false；进程内状态） */
+  winOpen: boolean;
+  /** `ai.chatWinMin`：是否已最小化成小球（默认 false） */
+  winMin: boolean;
+  /** `ai.chatBall`：是否允许显示助手小球（默认 true；关掉 = 只能用菜单打开窗口）。**这一条是可见开关** */
+  ball: boolean;
 }
 
 function clipSettingText(v: string): string {
@@ -266,30 +326,125 @@ function clipSettingText(v: string): string {
   return s.length > AI_CHAT_MAX_TEXT ? s.slice(0, AI_CHAT_MAX_TEXT) : s;
 }
 
-/** 归一化：三项都只认字符串（其余一律空串）、`on` 只认真 true（与 `normalizeAiServeSettings` 同口径） */
+function clampInt(v: unknown, lo: number, hi: number, fallback: number): number {
+  const n = Math.round(Number(v));
+  return Number.isFinite(n) ? Math.max(lo, Math.min(hi, n)) : fallback;
+}
+
+/**
+ * 归一化：字符串只认字符串、四个开关只认真 true、两个整数夹进区间
+ * （与 `normalizeAiServeSettings` 同口径）；`ball` 是唯一的「默认 true」，所以单独判。
+ *
+ * `endpoint` / `model` 的空串**不填默认值**：空串是「用户主动清空」的意思（§3.7.7 第 5 条），
+ * 只有第一次打开助手（`pc.aichat` 这个键还不存在）时才会落预设默认值 —— 那一步由
+ * `AI_CHAT_DEFAULT_ENDPOINT` / `AI_CHAT_DEFAULT_MODEL` 两个声明值完成。
+ */
 export function normalizeAiChatSettings(raw: unknown): AiChatSettings {
   const o = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+  // 文本字段一律「只认字符串，其余空串」。`endpoint` / `model` 的**空串不填默认值**：
+  // 空串是「用户主动清空」的意思（§3.7.7 第 5 条）；第一次打开助手时落预设默认值那一步，
+  // 由上面两个**声明默认值**（`AI_CHAT_DEFAULT_ENDPOINT` / `AI_CHAT_DEFAULT_MODEL`）完成。
   const str = (v: unknown): string => (typeof v === "string" ? clipSettingText(v) : "");
-  return { on: o.on === true, endpoint: str(o.endpoint), model: str(o.model), key: str(o.key) };
+  return {
+    on: o.on === true,
+    preset: normalizePresetId(o.preset),
+    endpoint: str(o.endpoint),
+    model: str(o.model),
+    key: str(o.key),
+    providerBase: str(o.providerBase),
+    maxRounds: clampInt(o.maxRounds, AI_CHAT_MAX_ROUNDS_MIN, AI_CHAT_MAX_ROUNDS_MAX, AI_CHAT_MAX_ROUNDS_DEFAULT),
+    temp: clampInt(o.temp, AI_CHAT_TEMP_MIN, AI_CHAT_TEMP_MAX, AI_CHAT_TEMP_DEFAULT),
+    systemPrompt: str(o.systemPrompt),
+    stream: o.stream === true,
+    protectKey: o.protectKey !== false,
+    winOpen: o.winOpen === true, winMin: o.winMin === true, ball: o.ball !== false,
+  };
+}
+
+/**
+ * **切预设**（§3.7.7 的七条语义里的第 2–4 条）：写 `endpoint` + `model` 两个值，并记住 `preset`。
+ *
+ *   1. **绝不碰 `ai.chatKey`**：这个函数只写三个字段，key 连读都不读（结构保证，不是「记得别写」）；
+ *   2. **切到 `custom` 一个字段都不写**：custom 的 baseUrl / defaultModel 是空串，直接写会把用户
+ *      已经填好的端点 / 模型抹掉 —— custom 的语义就是「别动这两个值，我去手填」；
+ *   3. 端点 / 模型仍是自由文本行，预设只是把它们**填成一组默认值**，之后用户随便改。
+ *
+ * @returns 写回后的完整设置（`custom` 时只写 `preset` 这一项）
+ */
+export function applyAiChatPreset(id: string): AiChatSettings {
+  const wanted = normalizePresetId(id);
+  const p = aiChatPresetOf(wanted);
+  if (p.id === "custom") return saveAiChatSettings({ preset: wanted });
+  return saveAiChatSettings({ preset: wanted, endpoint: p.baseUrl, model: p.defaultModel });
 }
 
 let aiChatCache: AiChatSettings | null = null;
 const aiChatListeners: Array<(v: AiChatSettings) => void> = [];
 
+/**
+ * 读一次 `pc.aichat`。**首次加载就是 DeepSeek 默认值**（P8 修掉的 F3）：
+ *
+ * 「键不存在 = 从没配过」→ 用**声明默认值**（`AI_CHAT_DEFAULT_ENDPOINT` / `_MODEL`，
+ * 与 DeepSeek 预设同源）兜底，并**当场落一次盘**。早先这里 `normalizeAiChatSettings(null)`
+ * 给出的是**空串**端点 / 模型（因为 normalize 把「空串」当「用户主动清空」，见它自己的注释），
+ * 于是设置页两行是空的 —— 默认值要等 `AiPanel` 探通代理后才补写，**代理一坏就永远补不上**
+ * （F1/F2 同时坏掉时，用户看到的就是「端点 / 模型都空着」，开箱即用当场变成一句空话）。
+ *
+ * 三条边界（别把它们改回空串）：
+ *   · 键**存在**但两个字段都是空串 = 用户主动清空 → **一个字都不写**（§3.7.7 第 5 条）；
+ *   · 键存在且有值 → 原样归一化返回；
+ *   · 没有 localStorage（Node / 隐私模式 / 坏 JSON）→ 内存里给出默认值，**不抛异常**（写盘失败不算错）。
+ */
 function loadAiChatSettings(): AiChatSettings {
+  let raw: string | null = null;
+  let readable = false;
   try {
     const store = aiStore();
-    const raw = store ? store.getItem(AI_CHAT_SETTINGS_KEY) : null;
-    if (raw) return normalizeAiChatSettings(JSON.parse(raw));
+    if (store) { readable = true; raw = store.getItem(AI_CHAT_SETTINGS_KEY); }
   } catch {
-    /* 坏数据 / 没有 localStorage：都用默认值 */
+    readable = false;
   }
-  return normalizeAiChatSettings(null);
+  if (raw) {
+    try {
+      return normalizeAiChatSettings(JSON.parse(raw));
+    } catch {
+      /* 坏 JSON：当没配过，走下面的默认值 */
+    }
+  }
+  if (readable && raw === null) {
+    // 从没配过：落一次默认（这就是「开箱即用」那一行；之后不再重复写，用户改了就是改了）
+    const fresh = normalizeAiChatSettings({
+      preset: AI_CHAT_DEFAULT_PRESET, endpoint: AI_CHAT_DEFAULT_ENDPOINT, model: AI_CHAT_DEFAULT_MODEL,
+    });
+    try {
+      const store = aiStore();
+      if (store) store.setItem(AI_CHAT_SETTINGS_KEY, JSON.stringify(fresh));
+    } catch {
+      /* 存不下不算错：本次会话里照样按默认值跑 */
+    }
+    return fresh;
+  }
+  // 没有可读的存储：给默认值，但**不假装写过盘**
+  return normalizeAiChatSettings({
+    preset: AI_CHAT_DEFAULT_PRESET, endpoint: AI_CHAT_DEFAULT_ENDPOINT, model: AI_CHAT_DEFAULT_MODEL,
+  });
 }
 
 /** 当前值（返回副本；缓存一次，之后由 `saveAiChatSettings` 维护） */
 export function aiChatSettings(): AiChatSettings {
   if (!aiChatCache) aiChatCache = loadAiChatSettings();
+  return { ...aiChatCache };
+}
+
+/**
+ * **丢掉内存缓存、重新从存储里读一次**（测试与将来的「切机器 / 重启」诊断用）。
+ *
+ * 与 `aiChatSettings()` 的缓存是同一份状态，所以调用它之后拿到的是**刚读出来的真值**：
+ * 这是「全新配置首次加载就落默认值」这条口径唯一可测的入口 —— 不这么做，模块级缓存会让
+ * 「第一次读」只发生一次，测试没法重放「全新安装」。
+ */
+export function reloadAiChatSettings(): AiChatSettings {
+  aiChatCache = loadAiChatSettings();
   return { ...aiChatCache };
 }
 
@@ -355,6 +510,16 @@ export const CHAT_SETTINGS: SettingDef[] = [
     set: (_s, v) => { saveAiChatSettings({ on: v === true }); },
   },
   {
+    // 厂商预设（§3.7.7）：切它 = 一次 `applyAiChatPreset()`（写 endpoint + model，**绝不碰 key**）。
+    // 三个选项所以默认按 chips 渲染（`control` 不写），顺序与 `AI_CHAT_PRESETS` 一致。
+    path: "ai.chatPreset", kind: "enum", group: "chat",
+    label: "aiChatPresetLabel", desc: "aiChatPresetDesc", default: AI_CHAT_DEFAULT_PRESET, refresh: "none",
+    options: AI_CHAT_PRESETS.map((p) => ({ value: p.id, label: p.label })),
+    visible: () => chatRowsVisible() && aiChatSettings().on,
+    get: () => aiChatSettings().preset,
+    set: (_s, v) => { applyAiChatPreset(String(v)); },
+  },
+  {
     path: "ai.chatEndpoint", text: "plain", group: "chat",
     label: "aiChatEndpointLabel", desc: "aiChatEndpointDesc", default: AI_CHAT_DEFAULT_ENDPOINT, refresh: "none",
     visible: () => chatRowsVisible() && aiChatSettings().on,
@@ -374,11 +539,97 @@ export const CHAT_SETTINGS: SettingDef[] = [
     visible: () => chatRowsVisible() && aiChatSettings().on,
     get: () => aiChatSettings().key,
     set: (_s, v) => { saveAiChatSettings({ key: String(v) }); },
-    // §3.6「key 要能一键清除」：清完通知 UI 刷新（输入框里那串字要跟着消失）
+    // §3.6「key 要能一键清除」：清完通知 UI 刷新（输入框里那串字要跟着消失）。
+    // §3.7.4：**清空 = 落回宿主环境变量那把 key**（有代理时），文案里必须写明这一点
     action: {
       label: "aiChatKeyClear",
       run: (sess) => { clearAiChatKey(); sess.changedUI(); bridge.toast("aiChatKeyCleared"); },
     },
+  },
+  {
+    // 直连地址的另一份（§3.7.7）：给「key 走网关、基地址又和预设不一样」的场景。
+    // 留空 = 用 `ai.chatEndpoint`（预设填的那个），所以它默认空串、不影响开箱即用
+    path: "ai.providerBase", text: "plain", group: "chat",
+    label: "aiProviderBaseLabel", desc: "aiProviderBaseDesc", default: "", refresh: "none",
+    visible: () => chatRowsVisible() && aiChatSettings().on,
+    get: () => aiChatSettings().providerBase,
+    set: (_s, v) => { saveAiChatSettings({ providerBase: String(v) }); },
+  },
+  {
+    path: "ai.chatMaxRounds", kind: "int", group: "chat",
+    label: "aiChatMaxRoundsLabel", desc: "aiChatMaxRoundsDesc",
+    default: AI_CHAT_MAX_ROUNDS_DEFAULT, min: AI_CHAT_MAX_ROUNDS_MIN, max: AI_CHAT_MAX_ROUNDS_MAX,
+    reset: AI_CHAT_MAX_ROUNDS_DEFAULT, unit: "×", refresh: "none",
+    visible: () => chatRowsVisible() && aiChatSettings().on,
+    get: () => aiChatSettings().maxRounds,
+    set: (_s, v) => { saveAiChatSettings({ maxRounds: Number(v) }); },
+  },
+  {
+    path: "ai.chatTemp", kind: "int", group: "chat",
+    label: "aiChatTempLabel", desc: "aiChatTempDesc",
+    default: AI_CHAT_TEMP_DEFAULT, min: AI_CHAT_TEMP_MIN, max: AI_CHAT_TEMP_MAX,
+    reset: AI_CHAT_TEMP_DEFAULT, unit: "%", refresh: "none",
+    visible: () => chatRowsVisible() && aiChatSettings().on,
+    get: () => aiChatSettings().temp,
+    set: (_s, v) => { saveAiChatSettings({ temp: Number(v) }); },
+  },
+  {
+    path: "ai.chatSystemPrompt", text: "plain", group: "chat",
+    label: "aiChatSystemPromptLabel", desc: "aiChatSystemPromptDesc", default: "", refresh: "none",
+    visible: () => chatRowsVisible() && aiChatSettings().on,
+    get: () => aiChatSettings().systemPrompt,
+    set: (_s, v) => { saveAiChatSettings({ systemPrompt: String(v) }); },
+  },
+  {
+    // 流式：本轮**固定 false**（壳的代理对 `stream:true` 直接回 400）。留着是给「以后做流式」一个口径位，
+    // 所以它照旧渲染出来（用户改了也只是把请求体的 `stream` 字段显式写成 true，壳会回 400 并说明原因）
+    path: "ai.chatStream", kind: "bool", group: "chat",
+    label: "aiChatStreamLabel", desc: "aiChatStreamDesc", default: false, refresh: "none",
+    visible: () => chatRowsVisible() && aiChatSettings().on,
+    get: () => aiChatSettings().stream,
+    set: (_s, v) => { saveAiChatSettings({ stream: v === true }); },
+  },
+  {
+    // 「诊断 / 提示文本里不许出现 key」这条**已经由代码保证**（状态文本只拼「有无」，见
+    // `ai-chat.ts` 的 `aiChatStatusText()`；key 也从不进导出 / toast）。这个开关是给用户
+    // 一份**显式的安心**：默认开，关掉只关掉「额外的诊断折叠」，绝不等于允许把 key 打进任何文本
+    // —— 那句话写在 desc 里，别让用户以为关掉就"能显示 key 了"。
+    path: "ai.protectKey", kind: "bool", group: "chat",
+    label: "aiProtectKeyLabel", desc: "aiProtectKeyDesc", default: true, refresh: "none",
+    visible: () => chatRowsVisible() && aiChatSettings().on,
+    get: () => aiChatSettings().protectKey,
+    set: (_s, v) => { saveAiChatSettings({ protectKey: v !== false }); },
+  },
+  // ---- 浮窗与小球的状态（docs/PLAN-ai.md §3.7.6）----
+  //
+  // 前两条是**状态**不是「用户要调的值」，所以 `visible` 恒为 false：设置页里一条都不显示
+  // （给用户一个「窗口开着吗」的开关没有意义）。它们落在这里而不是 `Session.prefs`，
+  // 是因为「这台机器这个屏幕上的窗口」不该跟着工程 / 设置导出走；真正的几何（x/y/w/h/min）
+  // 走 `localStorage["pc.aichat.win"]`，键与归一化在 `src/app/uibar.ts`。
+  //
+  // 第三条（`ai.chatBall`）是**可见开关**：它决定「最小化后的那个球还画不画」，
+  // 是一个用户真的要调的值，所以它跟别的 chat 行一样在 `ai.chatOn` 打开后露出来
+  // （`aichat.setting.visible-on` 因此把它列了进去，见 §3.7.7 / §3.7.8）。
+  {
+    path: "ai.chatWinOpen", kind: "bool", group: "chat",
+    label: "aiChatTitle", desc: "aiChatOpen", default: false, refresh: "none",
+    visible: () => false,
+    get: () => aiChatSettings().winOpen,
+    set: (_s, v) => { saveAiChatSettings({ winOpen: v === true }); },
+  },
+  {
+    path: "ai.chatWinMin", kind: "bool", group: "chat",
+    label: "aiChatMinimize", desc: "aiChatMinimize", default: false, refresh: "none",
+    visible: () => false,
+    get: () => aiChatSettings().winMin,
+    set: (_s, v) => { saveAiChatSettings({ winMin: v === true }); },
+  },
+  {
+    path: "ai.chatBall", kind: "bool", group: "chat",
+    label: "aiChatBallLabel", desc: "aiChatBallDesc", default: true, refresh: "none",
+    visible: () => chatRowsVisible() && aiChatSettings().on,
+    get: () => aiChatSettings().ball,
+    set: (_s, v) => { saveAiChatSettings({ ball: v !== false }); },
   },
 ];
 
