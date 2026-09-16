@@ -53,6 +53,7 @@
 
 import fs from "node:fs";
 import http from "node:http";
+import https from "node:https";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
@@ -67,6 +68,18 @@ const MAX_BODY_BYTES = 1024 * 1024;
 /** 默认调用超时：与 MainActivity.AI_CALL_TIMEOUT_MS 一致 */
 const DEFAULT_TIMEOUT_MS = 10000;
 const HEARTBEAT_MS = 20000;
+/**
+ * provider 转发（`/provider/*`）的默认值与上限。**key 只在这一个进程里**（§3.7.2/§3.7.4）：
+ * 页面从头到尾拿不到它 —— 页面只拿到 `GET /provider/config` 的一个布尔与两个公开字符串。
+ */
+const DEFAULT_PROVIDER_BASE = "https://api.deepseek.com";
+const DEFAULT_PROVIDER_MODEL = "deepseek-v4-pro";
+/** provider key 的环境变量优先级（第一个非空即用；§3.7.4 的定稿顺序） */
+const PROVIDER_KEY_ENV = ["DEEPSEEK_API_KEY", "OPENAI_API_KEY", "PC_AI_KEY"];
+/** 上游响应体上限（8 MiB）：比它大就截断并记日志，绝不把整个响应无限读进内存 */
+const MAX_PROVIDER_BYTES = 8 * 1024 * 1024;
+/** 只有这些主机能收到**环境变量那把 key**（§3.7 的安全红线：环境 key 只能发往已知 provider） */
+const ENV_KEY_HOSTS = new Set(["api.deepseek.com", "api.openai.com"]);
 /** 注入脚本的锚点：优先插在应用 bundle 之前（桥必须在 ai-serve 之前就位） */
 const APP_SCRIPT_TAG = '<script src="js/app.js"></script>';
 const INJECT_ID = "pc-shell-bridge";
@@ -98,11 +111,95 @@ const opts = {
   browser: "",
   verbose: false,
   help: false,
+  // ---- provider 转发（`/provider/*`，P8/W1：docs/PLAN-ai.md §3.7.2）----
+  /** 显式给的转发 key（**最高优先级**，argv 覆盖 env）；绝不写进 banner 全文，只打印尾 4 位 */
+  providerKey: "",
+  providerBase: DEFAULT_PROVIDER_BASE,
+  providerModel: DEFAULT_PROVIDER_MODEL,
+  providerProxy: true,
+  /** 环境变量里那把 key 的名字（`""` = 没有）：由 `resolveProviderKey` 填，只用于诊断文案 */
+  providerKeyEnvName: "",
 };
+
+/**
+ * provider key 的来源与优先级（§3.7.4 的定稿）：
+ *   ① `--provider-key`（CLI，最高）；
+ *   ② 环境变量 `DEEPSEEK_API_KEY` → `OPENAI_API_KEY` → `PC_AI_KEY`（第一个非空即用）。
+ *
+ * 注意与**已有**的 `AI_TOKEN` 区分：`AI_TOKEN` 是**壳 ↔ 页面的通道 token**，不是 provider 的 key，
+ * 两者**不得混用**（所以这里不把 `AI_TOKEN` 当别名，`--provider-key` 也不接受它）。
+ *
+ * 判定时机：**壳启动时读一次**，之后不再重读 —— 改了环境变量要重启壳（这句也写进 `--help`）。
+ */
+function resolveProviderKey(cliKey) {
+  const given = String(cliKey ?? "").trim();
+  if (given) return { key: given, envName: "" };
+  for (const name of PROVIDER_KEY_ENV) {
+    const v = String(process.env[name] ?? "").trim();
+    if (v) return { key: v, envName: name };
+  }
+  return { key: "", envName: "" };
+}
+
+/** key 的脱敏尾巴（**唯一**允许出现在日志 / banner 里的形态）；没有 key 时回空串 */
+function providerKeyTail() {
+  return opts.providerKey ? "…" + opts.providerKey.slice(-4) : "";
+}
+
+/** 诊断用的一句话（绝不含 key 明文） */
+function providerKeySource() {
+  if (!opts.providerKey) return "none";
+  if (opts.providerKeyEnvName) return "env:" + opts.providerKeyEnvName;
+  return "cli";
+}
+
+/** `keySource` 的三档（§3.7.2 的响应契约）：`env` / `cli` / `none` */
+function providerKeySourceKind() {
+  if (!opts.providerKey) return "none";
+  return opts.providerKeyEnvName ? "env" : "cli";
+}
+
+/**
+ * **把自己那把 key 从任何要写回页面的文本里擦掉**（P15 第 2 项，评审的对抗实测）。
+ *
+ * 为什么必须有：壳对 provider 响应是**原样透传**（§3.7.2），而 provider 完全可能在错误体里
+ * 把收到的 `Authorization` 回显出来（评审的假 provider 就是这么干的）；页面又会把 4xx body
+ * 前 120 字拼进错误行 → 环境 key 明文进了页面 DOM，直接打破本轮核心承诺「key 不进页面」。
+ *
+ * 覆盖三种形态（都大小写不敏感、容忍空格 / 冒号周围空白）：
+ *   ① `Bearer <key>`；② `"authorization":"Bearer <key>"` 这类 JSON 里的（由 ① 覆盖）；
+ *   ③ 裸 key（不带前缀也会被回显，例如 `api key: <key> is invalid`）。
+ * 打码成 `…` + 尾 4 位 —— 与 banner / 诊断里的 `providerKeyTail()` **同一形态**，
+ * 所以「页面看到的内容」与「日志能看到的」严格一致，不多泄漏一位。
+ *
+ * 只动 key 相关的那几个字节，其它字段（`choices` / `error.message` …）一字不改，
+ * 所以 §3.7.2 的「透传」承诺在除「key 不回显」之外的部分完全保留。
+ */
+function scrubProviderKey(text) {
+  const key = String(opts.providerKey || "");
+  if (!key) return text;
+  const mask = "…" + key.slice(-4);
+  const esc = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return String(text)
+    .replace(new RegExp("\\bbearer\\s+" + esc, "gi"), "Bearer " + mask)
+    .replace(new RegExp(esc, "gi"), mask);
+}
 
 function toInt(v, fallback) {
   const n = Number(v);
   return Number.isFinite(n) ? Math.trunc(n) : fallback;
+}
+
+/** provider 基地址只允许 http(s)，且**不带查询 / 片段**（转发时我们自己拼路径） */
+function validProviderBase(raw) {
+  try {
+    const u = new URL(String(raw));
+    if (u.protocol !== "https:" && u.protocol !== "http:") return false;
+    if (u.search || u.hash) return false;
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function parseArgs(argv) {
@@ -112,6 +209,13 @@ function parseArgs(argv) {
   if (process.env.PC_SHELL_TIMEOUT) opts.timeoutMs = toInt(process.env.PC_SHELL_TIMEOUT, DEFAULT_TIMEOUT_MS);
   if (process.env.PC_SHELL_NO_OPEN) opts.open = false;
   if (process.env.PC_SHELL_BROWSER) opts.browser = String(process.env.PC_SHELL_BROWSER);
+  // provider 侧：环境变量先读，下面的 argv 覆盖
+  if (process.env.PC_SHELL_PROVIDER_BASE) opts.providerBase = String(process.env.PC_SHELL_PROVIDER_BASE).trim();
+  if (process.env.PC_SHELL_PROVIDER_MODEL) opts.providerModel = String(process.env.PC_SHELL_PROVIDER_MODEL).trim();
+  if (process.env.PC_SHELL_NO_PROVIDER_PROXY) opts.providerProxy = false;
+  const envKey = resolveProviderKey("");
+  opts.providerKey = envKey.key;
+  opts.providerKeyEnvName = envKey.envName;
 
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -121,6 +225,10 @@ function parseArgs(argv) {
     else if (a === "--timeout") opts.timeoutMs = toInt(next(), NaN);
     else if (a === "--no-open" || a === "--no-browser") opts.open = false;
     else if (a === "--browser") opts.browser = next();
+    else if (a === "--provider-key") { const k = resolveProviderKey(next()); opts.providerKey = k.key; opts.providerKeyEnvName = k.envName; }
+    else if (a === "--provider-base") opts.providerBase = next().trim();
+    else if (a === "--provider-model") opts.providerModel = next().trim();
+    else if (a === "--no-provider-proxy") opts.providerProxy = false;
     else if (a === "--verbose" || a === "-v") opts.verbose = true;
     else if (a === "--help" || a === "-h") opts.help = true;
     else {
@@ -128,18 +236,57 @@ function parseArgs(argv) {
       opts.help = true;
     }
   }
+  // 基地址不合法（不是 http(s) / 带查询串）就回默认：宁可指回官方地址，也不要转发到一个奇怪的 URL
+  if (!validProviderBase(opts.providerBase)) {
+    console.log("⚠ --provider-base 不合法（要 http(s) 且不带查询串）：" + opts.providerBase + " → 回默认 " + DEFAULT_PROVIDER_BASE);
+    opts.providerBase = DEFAULT_PROVIDER_BASE;
+  }
+  // 安全红线（§3.7）：**环境变量里那把 key 只发往已知 provider 主机，且必须是 https**。
+  // 显式 `--provider-key` 是用户自己敲的、他自己担责的转发行（本机假 provider / 自建网关的自测都靠它），
+  // 所以它不受这道闸门限制 —— 这道闸门护的是「用户设了一次 DEEPSEEK_API_KEY，结果被转发到自己不认识的
+  // 主机上 / 被明文发出去」这种他最不可能预料到的情况。没有 key 时转发本来也只会回 409，不必额外关掉。
+  //
+  // 为什么协议也要查（P15 第 4 项，评审探针实测）：只查 hostname 的话
+  // `--provider-base http://api.deepseek.com:8080` 会**通过**闸门，然后把环境 key 明文
+  // 发到那个明文端口上。所以 env 来源额外要求 `https:`（与主机不匹配的情形**同构**地关掉转发，
+  // 并在 banner 讲明原因）。
+  if (opts.providerProxy && opts.providerKey && opts.providerKeyEnvName) {
+    const base = new URL(opts.providerBase);
+    const hostOk = ENV_KEY_HOSTS.has(base.hostname);
+    const protoOk = base.protocol === "https:";
+    if (!hostOk || !protoOk) {
+      console.log("⚠ 环境变量里的 provider key（" + opts.providerKeyEnvName + "）只发往已知 provider（" +
+        [...ENV_KEY_HOSTS].join(" / ") + "）且必须是 https，而 --provider-base 是 " + opts.providerBase +
+        (hostOk ? "（协议不是 https，key 会明文出网）" : "（主机不在白名单）") +
+        "：为安全起见**关掉** /provider/* 转发");
+      console.log("   要在本机假 provider / 自建网关上自测，用显式 --provider-key <k>（它不受这道闸门限制），" +
+        "或者干脆 --no-provider-proxy 并在页面里手填 key");
+      opts.providerProxy = false;
+    }
+  }
 }
 
 function usage() {
   console.log([
     "用法：node toolchain/pc-shell.mjs [--port 8787] [--token <hex>] [--timeout 10000] [--no-open] [--browser <exe>] [--verbose]",
+    "      [--provider-key <k>] [--provider-base <url>] [--provider-model <m>] [--no-provider-proxy]",
     "环境变量：AI_PORT / AI_TOKEN / PC_SHELL_TIMEOUT / PC_SHELL_NO_OPEN / PC_SHELL_BROWSER（命令行参数优先）",
+    "          provider key：--provider-key 优先，其次 DEEPSEEK_API_KEY / OPENAI_API_KEY / PC_AI_KEY",
+    "          /provider/* 转发：PC_SHELL_PROVIDER_BASE / PC_SHELL_PROVIDER_MODEL / PC_SHELL_NO_PROVIDER_PROXY",
     "",
     "一个进程同时给：静态站点（app2/www）+ AI 工具服务入口（GET /ai/health · POST /ai）+ 把请求",
-    "转发进窗口页面的通道。只绑 127.0.0.1；token 未指定时才随机生成并打印（--token / AI_TOKEN 可以固定）。",
+    "转发进窗口页面的通道 + 应用内助手的**同源模型代理**（GET /provider/config · POST /provider/chat）。",
+    "只绑 127.0.0.1；token 未指定时才随机生成并打印（--token / AI_TOKEN 可以固定）。",
     "",
     "AI 入口默认是关的（与 APK 一致）：在窗口里 设置 → AI → 打开「本地服务」才会开始受理请求；",
     "档位 read 只能读，要改画面得选 draw（可在设置里关）或 all。",
+    "",
+    "/provider/* 是「应用内助手」用的那一条（与上面的 AI 工具入口是两件事）：壳从**环境变量**",
+    "读一把 provider key（DEEPSEEK_API_KEY 优先），页面只拿一个 hasEnvKey 布尔 + 公开的端点/模型名，",
+    "key 一个字节都不进页面。**读一次就定住**：改了环境变量要重启壳才生效。",
+    "  · key 只发往已知 provider（api.deepseek.com / api.openai.com）；换了 --provider-base 会自动关掉转发；",
+    "  · 日志与 banner 只打 key 的尾 4 位，绝不打印明文；",
+    "  · 页面手填了 key 时不走这条（页面直连，与从前完全一致）。",
     "",
     "MCP 宿主（Claude Desktop 等）指到**同一个端口**（详见 toolchain/pc-mcp.mjs）：",
     '{ "mcpServers": { "pixelcraft": { "command": "node",',
@@ -149,6 +296,7 @@ function usage() {
     "自测（无头）：node toolchain/pc-shell.mjs --port 8901 --no-open",
     "           msedge --headless=new --remote-debugging-port=9222 http://127.0.0.1:8901/",
     "           curl.exe -s -H \"Authorization: Bearer <token>\" http://127.0.0.1:8901/ai/health",
+    "           curl.exe -s http://127.0.0.1:8901/provider/config",
     "",
     "关掉壳：Ctrl+C（会先请页面收尾回合再释放端口）；脚本里也可以 POST /shell/shutdown（同样带 token）。",
   ].join("\n"));
@@ -185,6 +333,10 @@ const stats = {
   handshakes: 0,
   staticFiles: 0,
   startedAt: Date.now(),
+  providerCalls: 0,
+  providerRefused: 0,
+  providerErrors: 0,
+  providerTimeouts: 0,
 };
 
 function log(msg) {
@@ -872,6 +1024,14 @@ async function routeStatus(req, res, url) {
       pending: pending.size,
       timeoutMs: opts.timeoutMs,
       uptimeSec: Math.round((Date.now() - stats.startedAt) / 1000),
+      // provider 转发：**只报尾 4 位与来源名**，绝不回 key 明文（诊断文本也是「不进 key」的地方）
+      provider: {
+        proxy: !!opts.providerProxy,
+        baseUrl: opts.providerProxy ? opts.providerBase : "",
+        defaultModel: opts.providerProxy ? opts.providerModel : "",
+        keyTail: providerKeyTail(),
+        keySource: providerKeySource(),
+      },
       ...stats,
     },
   });
@@ -907,6 +1067,225 @@ async function routeNoHandler(req, res) {  if (req.method !== "POST") {
   json(res, 200, { ok: false, error: "js-not-ready: 页面里还没有 __pc_ai_call（应用没装 ai-serve）" });
 }
 
+// ------------------------------------------------------------------ provider 同源代理（§3.7.2，P8/W1）
+//
+// 为什么这一层在**壳体**而不是页面里（§3.7.2 的定稿）：
+//   · 现有 `POST /ai` 通道的协议是 `ai-rpc`（9 个 call、状态码口径、tier 门禁都在 docs/API.md §24），
+//     往里塞一个「转发模型请求」的 call 会把两件事糅在一起；转发**纯传输**，与壳现在把 `/ai`
+//     转发进页面是同一类工作，放这里不需要动页面里的业务层。
+//
+// ❗**不要**把「修 CORS」当成本节的目标：§3.7.1 的实测已经证明 DeepSeek 会回 CORS 头、
+// `file://` 源也被放行 —— 页面直连是**能**通到 DeepSeek 的。代理的四条真理由是：
+//   ① 环境变量那把 key 一个字节都不进页面；② 用户不用手填 key；③ 错误能翻成一句人话；
+//   ④ 不再依赖对端 CORS 配置。
+// 所以页面里**既有**的直连能力照样保留（手填 key / 非 DeepSeek 端点走它）。
+//
+// 安全口径（§3.7 的红线，逐条可核）：
+//   · **key 只发往已知 provider**：`ENV_KEY_HOSTS` 之外的目标在有 key 时直接关掉转发（见 parseArgs）；
+//   · **不接受任意 URL 转发**：目标由 CLI / 环境变量定（`opts.providerBase`），**请求体里没有 URL** 这个字段；
+//   · **不跟随重定向**：上游 3xx 原样透传（带上 location），绝不替页面去追；
+//   · 只绑 `127.0.0.1`（HOST）+ 沿用既有通道 token 鉴权；body 上限复用 `MAX_BODY_BYTES`，超时复用 `opts.timeoutMs`；
+//   · 任何日志 / 错误文案 / 诊断文本里**都没有 key 明文**（只有 `providerKeyTail()` 的尾 4 位）。
+
+/** 转发端点允许的 CORS：只在壳端口上，供同源 / `file://` 双端（APK 侧将来照抄这一段） */
+function providerCors(req) {
+  const origin = String(req.headers.origin || "").trim();
+  return {
+    "access-control-allow-origin": origin || "*",
+    "access-control-allow-headers": "authorization,content-type,x-shell-token",
+    "access-control-allow-methods": "GET,POST,OPTIONS",
+    "cache-control": "no-store",
+    vary: "origin",
+  };
+}
+
+/** 页面 → 壳的鉴权：优先 `Authorization: Bearer <通道token>`，兼容 `X-Shell-Token`（§3.7.2） */
+function providerAuthOk(req, url) {
+  if (authOk(req, url)) return true;
+  return constEq(String(req.headers["x-shell-token"] || "").trim(), TOKEN);
+}
+
+/** 壳回给页面的错误体（`detail` 里**绝不放 key**） */
+function providerError(res, req, status, code, detail) {
+  json(res, status, { ok: false, error: code, detail: String(detail ?? "") }, providerCors(req));
+}
+
+/** 当前转发配置（**绝不含 key 片段**，连尾 4 位都不给；§3.7.2 的响应契约） */
+function providerConfigBody() {
+  return {
+    ok: true,
+    proxy: !!opts.providerProxy,
+    baseUrl: opts.providerBase,
+    defaultModel: opts.providerModel,
+    models: [DEFAULT_PROVIDER_MODEL, "deepseek-flash"],
+    hasEnvKey: !!opts.providerKey,
+    keySource: providerKeySourceKind(),
+  };
+}
+
+/**
+ * `GET /provider/config`：页面探测用。**不要 token**（它不泄漏任何机密，见上），
+ * 拿它就当「这个壳有没有代理」的探测点。`--no-provider-proxy` 时回 `proxy:false`（仍是 200），
+ * 页面据此回落直连 —— 老壳没有这个端点时是 404，两条路页面都当「没有代理」处理。
+ */
+async function routeProviderConfig(req, res) {
+  if (req.method === "OPTIONS") {
+    if (res.headersSent) return;
+    res.writeHead(204, providerCors(req));
+    res.end();
+    return;
+  }
+  if (req.method !== "GET") {
+    json(res, 405, { ok: false, error: "method-not-allowed" }, { allow: "GET", ...providerCors(req) });
+    return;
+  }
+  json(res, 200, providerConfigBody(), providerCors(req));
+}
+
+/**
+ * 转发一次到 provider（**不改任何字段**，只补 `Authorization`）。用 Node 内置 `https` ——
+ * 这个脚本的口径是「零依赖，只用 Node 内置模块」，所以不用全局 fetch。
+ *
+ * 三件事写死在这里：① `Accept-Encoding: identity`（免去 gzip 解码，透传才是原样）；
+ * ② 响应体上限 `MAX_PROVIDER_BYTES`；③ 超时用 `AbortController` 掐断。
+ */
+function forwardToProvider(payload) {
+  return new Promise((resolve) => {
+    let target;
+    try {
+      target = new URL(opts.providerBase);
+    } catch {
+      resolve({ ok: false, kind: "unreachable", detail: "provider 基地址不合法" });
+      return;
+    }
+    const isHttps = target.protocol === "https:";
+    const mod = isHttps ? https : http;
+    const basePath = target.pathname.replace(/\/+$/, "");
+    const full = target.origin + basePath + "/chat/completions";
+    const data = Buffer.from(payload, "utf8");
+    const req = mod.request(full, {
+      method: "POST",
+      timeout: opts.timeoutMs,
+      headers: {
+        "content-type": "application/json",
+        "content-length": data.length,
+        authorization: "Bearer " + opts.providerKey,
+        "user-agent": "pixelcraft-pc-shell",
+        accept: "application/json",
+        "accept-encoding": "identity",
+      },
+    }, (up) => {
+      const chunks = [];
+      let size = 0;
+      let truncated = false;
+      up.on("data", (c) => {
+        size += c.length;
+        if (size > MAX_PROVIDER_BYTES) {
+          truncated = true;
+          up.destroy();
+          return;
+        }
+        chunks.push(c);
+      });
+      const done = () => resolve({
+        ok: true,
+        status: up.statusCode || 502,
+        headers: up.headers,
+        body: Buffer.concat(chunks).toString("utf8"),
+        truncated,
+      });
+      up.on("end", done);
+      up.on("close", done);      // truncated 时 destroy 走 close 而不是 end
+      up.on("error", (e) => resolve({ ok: false, kind: "unreachable", detail: String(e && e.message ? e.message : e) }));
+    });
+    req.on("timeout", () => {
+      stats.providerTimeouts++;
+      try {
+        req.destroy(new Error("timeout"));
+      } catch {
+        /* ignore */
+      }
+      resolve({ ok: false, kind: "timeout", detail: opts.timeoutMs + "ms" });
+    });
+    req.on("error", (e) => resolve({ ok: false, kind: "unreachable", detail: String(e && e.message ? e.message : e) }));
+    req.end(data);
+  });
+}
+
+/**
+ * `POST /provider/chat`：页面 → 壳 → provider，**把 provider 的状态码与 body 原样透传**。
+ *
+ * 为什么原样透传（§3.7.2）：页面侧的 `httpError()` 按状态分档的文案一行都不用改；
+ * `{"error":{"message":…}}` 那条分支也照旧命中。壳只在**自己**这一层出错时（没 key / 连不上 /
+ * 超时 / 太大 / token 不对）才换成自己的码，那几档由页面的 `hostError()` 翻成人话。
+ *
+ * 请求体：OpenAI 兼容原样转发（`{model, messages, tools?, …}`）。**没有 URL 字段** ——
+ * 目标地址只由壳的启动参数决定，这从结构上堵死了「拿代理当任意 URL 转发器」。
+ */
+async function routeProviderChat(req, res, url) {
+  if (req.method === "OPTIONS") {
+    if (res.headersSent) return;
+    res.writeHead(204, providerCors(req));
+    res.end();
+    return;
+  }
+  if (req.method !== "POST") {
+    json(res, 405, { ok: false, error: "method-not-allowed" }, { allow: "POST", ...providerCors(req) });
+    return;
+  }
+  if (!opts.providerProxy) {
+    stats.providerRefused++;
+    providerError(res, req, 403, "proxy-off", "--no-provider-proxy（或目标不是已知 provider）");
+    return;
+  }
+  if (!providerAuthOk(req, url)) {
+    stats.providerRefused++;
+    unauthorized(res);
+    return;
+  }
+  const raw = await readBody(req, res);   // 上限复用 MAX_BODY_BYTES（1 MiB），超了这里已经回 413
+  if (raw === null) return;
+  if (!opts.providerKey) {
+    stats.providerRefused++;
+    providerError(res, req, 409, "no-key",
+      "本机壳里没有可用的 provider key（设 DEEPSEEK_API_KEY / OPENAI_API_KEY / PC_AI_KEY，或用 --provider-key）");
+    return;
+  }
+  const body = tryJson(raw);
+  if (!body) {
+    providerError(res, req, 400, "bad-request", "请求体不是 JSON 对象");
+    return;
+  }
+  if (body.stream === true) {
+    providerError(res, req, 400, "bad-request", "本轮不支持 stream:true（流式还没做）");
+    return;
+  }
+  // 页面没给 model 时用壳的默认模型（§3.7.2 的「壳补充的字段」）
+  const out = { ...body };
+  if (typeof out.model !== "string" || !out.model.trim()) out.model = opts.providerModel;
+  stats.providerCalls++;
+  vlog("转发一次模型请求 → " + new URL(opts.providerBase).origin + "（model=" + out.model + "，key " + providerKeyTail() + "）");
+  const r = await forwardToProvider(JSON.stringify(out));
+  if (!r.ok) {
+    stats.providerErrors++;
+    if (r.kind === "timeout") {
+      providerError(res, req, 504, "provider-timeout", r.detail);
+    } else {
+      providerError(res, req, 502, "provider-unreachable", r.detail);
+    }
+    return;
+  }
+  // **原样透传**状态码与 body（3xx 也照透，不跟随重定向）——**唯一**的例外是把 key 擦掉：
+  // provider 可能把收到的 Authorization 回显在 body 里，而页面会把 4xx body 前 120 字拼进错误行，
+  // 那样环境 key 就进页面了（P15 第 2 项）。擦完按**新字节长度**回写 content-length。
+  if (res.headersSent) return;
+  const safe = scrubProviderKey(r.body);
+  const buf = Buffer.from(safe, "utf8");
+  const head = { ...providerCors(req), "content-type": "application/json; charset=utf-8", "content-length": buf.length };
+  res.writeHead(r.status, head);
+  res.end(buf);
+}
+
 // ------------------------------------------------------------------ 总路由
 
 function handler(req, res) {
@@ -919,6 +1298,13 @@ function handler(req, res) {
   }
   const p = url.pathname;
   if (p === "/ai" || p === "/ai/health") return void routeAi(req, res, p);
+  if (p === "/provider/config") return void routeProviderConfig(req, res);
+  if (p === "/provider/chat") return void routeProviderChat(req, res, url);
+  if (p === "/provider" || p === "/provider/") {
+    // 基址本身没有内容：给一眼能看懂的提示（页面不会调它）
+    json(res, 200, providerConfigBody(), providerCors(req));
+    return;
+  }
   if (p === "/shell/events") return routeEvents(req, res, url);
   if (p === "/shell/handshake") return void routeHandshake(req, res);
   if (p === "/shell/reply") return void routeReply(req, res);
@@ -927,9 +1313,9 @@ function handler(req, res) {
   if (p === "/shell/status") return void routeStatus(req, res, url);
   if (p === "/shell/shutdown") return void routeShutdown(req, res);
   if (p === "/shell/no-handler") return void routeNoHandler(req, res);
-  if (p.startsWith("/ai/") || p.startsWith("/shell/")) {
+  if (p.startsWith("/ai/") || p.startsWith("/shell/") || p.startsWith("/provider/")) {
     // 与 AiServer.java 同口径：路径不认识就 404（不是静态文件）
-    json(res, 404, { ok: false, error: "not-found" });
+    json(res, 404, { ok: false, error: "not-found" }, providerCors(req));
     return;
   }
   routeStatic(req, res, p);
@@ -1062,6 +1448,14 @@ function banner() {
   console.log("  静态站点  " + WWW);
   console.log("  AI 入口   GET /ai/health · POST /ai（Authorization: Bearer " + TOKEN + "）");
   console.log("  token     " + TOKEN + "     ← 未指定 --token / AI_TOKEN 时才随机生成；别外传");
+  // provider 转发：**只打尾 4 位**（key 明文绝不进 banner / 日志 / 任何文本；§3.7 红线）
+  if (opts.providerProxy) {
+    console.log("  模型代理  GET /provider/config · POST /provider/chat（应用内助手用；页面拿不到 key）");
+    console.log("            目标 " + opts.providerBase + " · 默认模型 " + opts.providerModel + " · key " +
+      (opts.providerKey ? providerKeyTail() + "（来源 " + providerKeySource() + "）" : "没有（设 DEEPSEEK_API_KEY 后重启壳）"));
+  } else {
+    console.log("  模型代理  已关闭（--no-provider-proxy 或目标不是已知 provider）：/provider/config 回 proxy:false");
+  }
   console.log("  启用 AI   窗口里 设置 → AI → 打开「本地服务」（默认关闭，与 APK 同口径）；");
   console.log("            档位 read 只能读，draw 能改画面，all 连 destructive 也放行（仍需确认）");
   console.log("  MCP 接法  宿主指向**同一个端口**（token 填上面那串）：");

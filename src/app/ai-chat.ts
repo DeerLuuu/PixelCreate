@@ -27,10 +27,12 @@ import { AI_ARG_CURRENT, callTool, listTools } from "./ai-tools";
 import type { AiParamType, AiTier, AiTool, AiToolCtx, AiToolParam, AiToolResult } from "./ai-tools";
 import { beginAiTurn, isTurnOpen, rollbackTurn, runAiTurn, turnHandle } from "./ai-turn";
 
-/** 默认最多几轮「模型 → 工具 → 模型」（§3.5 C5 的口径：12） */
+/** 默认最多几轮「模型 → 工具 → 模型」（§3.5 C5 的口径：12；设置项 `ai.chatMaxRounds` 覆盖它） */
 export const AI_CHAT_DEFAULT_MAX_ROUNDS = 12;
 /** 硬上限：调用方给再大也不会超过它（每一轮都在花 token，失控的循环必须挡住） */
 export const AI_CHAT_MAX_ROUNDS = 24;
+/** `ai.chatTemp` 的档位步长：设置项存整数 0..20，发的 `temperature` = 值 × 0.1（0 = 不发这个字段） */
+export const AI_CHAT_TEMP_STEP = 0.1;
 /** 一整轮里最多真的执行多少次工具调用（模型一轮塞 100 个 tool_calls 时别把界面卡死） */
 export const AI_CHAT_MAX_CALLS = 80;
 /** 默认给模型的档位：`ui` 档默认不暴露（与 `listTools()` 同一条口径） */
@@ -41,8 +43,33 @@ export const AI_CHAT_MAX_RESULT_CHARS = 4000;
 export const AI_CHAT_COMPLETIONS_PATH = "/chat/completions";
 /** 系统提示词里那份画布摘要的最大字符数 */
 export const AI_CHAT_MAX_DIGEST_CHARS = 6000;
+/** 用户补充提示词（`ai.chatSystemPrompt`）的最大字符数 */
+export const AI_CHAT_MAX_TEXT_EXTRA = 2048;
 /** 空标签时的兜底（历史面板里显示成 `ai: 对话`） */
 export const AI_CHAT_LABEL_FALLBACK = "对话";
+
+/**
+ * **代理模式哨兵**（docs/PLAN-ai.md §3.7.3，W1）：key 由本机壳持有，页面不拿。
+ *
+ * 传它 = `requestModel()` **不发** `Authorization`，改发 `X-Provider-Key: host`
+ * （一个没有机密的标记头），真 key 由壳在转发时补上。非哨兵路径（用户手填 key 的直连）
+ * 一个字节都没变 —— 既有断言 `aichat.http.auth` 钉的正是那一条。
+ *
+ * 诚实边界（§3.7.4）：**只有环境变量来源的 key 才真的不进页面**。用户手填的那把
+ * `ai.chatKey` 今天就在本机页面的 `localStorage` 里（同源脚本读得到），这是既有存储模型，
+ * 本轮不改；所以 UI 文案不许说成「任何 key 都不在页面里」。
+ */
+export const AI_CHAT_HOST_KEY_SENTINEL = "__pc-host-key__";
+
+/**
+ * 同源代理的两个地址（壳侧实现见 `toolchain/pc-shell.mjs` 的 `/provider/*`）：
+ *   · 探测点 `GET /provider/config`（**不需要 token**，只回 baseUrl / defaultModel / models / hasEnvKey，
+ *     绝不含 key 的任何片段 —— 连尾 4 位都不给）；
+ *   · 转发点 `POST /provider/chat`（要壳的**通道** token，与 provider 的 key 是两回事）。
+ * 两者都是**同源相对路径**，所以在壳里怎么换端口都不用改这两行。
+ */
+export const AI_CHAT_PROXY_CONFIG_PATH = "/provider/config";
+export const AI_CHAT_PROXY_CHAT_PATH = "/provider/chat";
 /** 从用户消息里取标签时截断到多少字 */
 export const AI_CHAT_LABEL_MAX = 40;
 
@@ -142,7 +169,12 @@ export interface ChatTurnResult {
 export interface ChatFetchInit {
   method: string;
   headers: Record<string, string>;
-  body: string;
+  /**
+   * 请求体。**GET / HEAD 一律不传这个字段**（省略而不是空串）：真浏览器对
+   * `GET` + body 直接抛 `TypeError: Request with GET/HEAD method cannot have body`。
+   * 假 fetch 也必须按这条校验（见 tests 的 `strictFetch`），否则这类缺陷会在全绿的单测里溜过去。
+   */
+  body?: string;
 }
 export interface ChatFetchResponse {
   ok: boolean;
@@ -163,6 +195,12 @@ export interface ChatTurnOpts {
   /** 省略 = `listTools({ tiers: AI_CHAT_TOOL_TIERS })` */
   tools?: readonly AiTool[];
   maxRounds?: number;
+  /** `ai.chatTemp` × 0.1 = 发给端点的 `temperature`；0 / 省略 = **不发这个字段**（用端点默认） */
+  temperature?: number;
+  /** `ai.chatStream`：本轮**固定 false**（壳的代理对 `stream:true` 直接回 400）；省略 = 不发这个字段 */
+  stream?: boolean;
+  /** `ai.chatSystemPrompt`：非空则**追加**在内置提示词之后（不改内置那份） */
+  systemPrompt?: string;
   /** 历史标签正文（`ai: ` 前缀由 ai-turn 加）；省略 = 取最后一条用户消息 */
   label?: string;
   /** true（默认）= 整轮直接落一条历史；false = 预览模式，回合留给 UI 收尾 */
@@ -391,13 +429,17 @@ export function appendToolResult(
 }
 
 /** 系统提示词 + 可选的画布摘要（摘要超长就截断，别一开口就把预算吃光） */
-export function buildSystemPrompt(opts: { digest?: string } = {}): string {
+export function buildSystemPrompt(opts: { digest?: string; extra?: string } = {}): string {
   const d = opts.digest ? clip(opts.digest, AI_CHAT_MAX_DIGEST_CHARS) : "";
-  return d ? AI_CHAT_SYSTEM_PROMPT + "\n\n当前工程摘要（doc_digest 的结果）：\n" + d : AI_CHAT_SYSTEM_PROMPT;
+  // 用户自己那句（设置项 `ai.chatSystemPrompt`）**追加**在内置提示词之后，且排在摘要之前 ——
+  // 内置那份是硬口径（工具是唯一写入通道 / 预览后应用），不能被用户文本顶掉
+  const x = opts.extra ? clip(String(opts.extra).trim(), AI_CHAT_MAX_TEXT_EXTRA) : "";
+  return AI_CHAT_SYSTEM_PROMPT + (x ? "\n\n用户补充的要求：\n" + x : "") +
+    (d ? "\n\n当前工程摘要（doc_digest 的结果）：\n" + d : "");
 }
 
 /** `{role:"system"}` 消息 */
-export function systemMessage(opts: { digest?: string } = {}): ChatMessage {
+export function systemMessage(opts: { digest?: string; extra?: string } = {}): ChatMessage {
   return { role: "system", content: buildSystemPrompt(opts) };
 }
 
@@ -425,6 +467,198 @@ export function chatConfigError(cfg: { endpoint: string; model: string; key: str
   return null;
 }
 
+// ------------------------------------------------------------------ 通路：直连 / 同源代理（§3.7.3）
+
+/** 壳的 `/provider/config` 里页面**只**读这四个字段（§3.7.2；其余字段一概不看） */
+export interface HostProviderConfig {
+  proxy: boolean;
+  baseUrl: string;
+  defaultModel: string;
+  models: string[];
+  /** 壳进程里有没有可用的 provider key（**布尔**；响应体里没有 key 的任何片段） */
+  hasEnvKey: boolean;
+}
+
+/**
+ * 解析壳的探测响应。**宁可当「没有代理」也不要瞎猜**：缺 `baseUrl` 或 `defaultModel`
+ * （老壳 / 半个响应）就回 null → 调用方回落直连，绝不会出现「模式切错了」。
+ */
+export function readHostProviderConfig(raw: unknown): HostProviderConfig | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const o = raw as Record<string, unknown>;
+  if (o.proxy !== true) return null;
+  const baseUrl = typeof o.baseUrl === "string" ? o.baseUrl.trim() : "";
+  const defaultModel = typeof o.defaultModel === "string" ? o.defaultModel.trim() : "";
+  if (!baseUrl || !defaultModel) return null;
+  const models = Array.isArray(o.models) ? o.models.filter((m): m is string => typeof m === "string" && m.trim() !== "") : [];
+  return { proxy: true, baseUrl, defaultModel, models, hasEnvKey: o.hasEnvKey === true };
+}
+
+/**
+ * 同源代理的转发地址。**恒为同源相对路径**（`/provider/chat`），一个字都不拼调用方的 base ——
+ * 这一点是 P8 修掉的真缺陷：早先写成 `<base>/provider/chat`，而 `base` 是**壳报回来的 provider
+ * 基地址**（`https://api.deepseek.com`），于是请求被发到 `https://api.deepseek.com/provider/chat`
+ * （生产）或 `http://127.0.0.1:8910/provider/chat`（本机假 provider），全是**跨源**、必然
+ * `Failed to fetch`。契约（docs/PLAN-ai.md §3.7.1）要的一直是**同源**代理。
+ *
+ * 参数保留是为了**兼容既有调用点与断言**（`chatProxyFetch(base, token, inner)`），但它已经不参与
+ * URL 拼装；`proxyChatFetch` 因此不再需要知道 provider 地址。
+ */
+export function chatProxyUrl(base?: string): string {
+  void base; // 显式忽略：代理地址与 provider 地址无关（见上面的注释）
+  return AI_CHAT_PROXY_CHAT_PATH;
+}
+
+/**
+ * 探测一次同源代理。**任何失败都回 null**（壳不在 / 老壳没有这个端点 / 页面是 `file://`）——
+ * 调用方据此回落直连，与今天的行为完全一致（不会出现「点了没反应」，§3.7.5）。
+ *
+ * 为什么 `GET /provider/config` 不要 token：它不泄漏任何机密（§3.7.2），拿它当
+ * 「这个壳有没有代理」的探测点最省事；`POST /provider/chat` 那边照旧要壳的通道 token。
+ *
+ * ⚠️ **GET 不能带 body**（P8 修掉的阻塞缺陷）：早先这里写了 `body: ""`，真浏览器直接抛
+ * `TypeError: Request with GET/HEAD method cannot have body`，而 `catch { return null }` 把它
+ * 静静吞成「这台机器没有代理」—— 于是整条同源代理在真浏览器里从来没通过，而**单测的假 fetch
+ * 不校验 method/body 组合，7527 条照样全绿**。所以：这里不发 body，测试那边配了一个「按真浏览器
+ * 规则校验」的假 fetch（见 tests/ai-chat.test.ts 的 `strictFetch`）。
+ */
+export async function detectChatProxy(
+  fetchFn: ChatFetch,
+  base?: string,
+): Promise<HostProviderConfig | null> {
+  // 只探测**同源**配置：相对路径（`/provider/config`）在真浏览器里按页面自己的源解析，
+  // `base` 只允许传「明确的源」用于测试 / 非浏览器环境（生产不传）。
+  const origin = base !== undefined ? String(base) : browserOrigin();
+  let res: ChatFetchResponse;
+  try {
+    res = await fetchFn(origin + AI_CHAT_PROXY_CONFIG_PATH, {
+      method: "GET",
+      headers: { Accept: "application/json" },
+    });
+  } catch {
+    return null;
+  }
+  if (!res.ok) return null; // 404（老壳）/ 其它：一律当没有代理
+  let text = "";
+  try {
+    text = await res.text();
+  } catch {
+    return null;
+  }
+  let raw: unknown;
+  try {
+    raw = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  return readHostProviderConfig(raw);
+}
+
+/** 页面自己的源（同源相对路径要用它；非浏览器环境回空串 = 相对路径，调用方自己兜底） */
+function browserOrigin(): string {
+  try {
+    const loc = (globalThis as { location?: { origin?: string } }).location;
+    return typeof loc?.origin === "string" && loc.origin !== "null" ? loc.origin : "";
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * `proxyChatFetch()` 拿到的**原始**响应体（按响应对象记）。
+ *
+ * 为什么要有它：`ChatFetchResponse.text()` 在这个模块里会被读**两次** ——
+ * 一次在包装层（包装层要把 body 换成可读文本），一次在 `requestModel()`（`hostError()` 要拿
+ * **壳的原文**去分辨「壳发的」还是「provider 透传的」）。如果不留底，第二次读到的是**已经加工过的文本**，
+ * 再解析一次就会 JSON 解析失败：壳的 `detail` 会变成空串（用户只看到「（forbidden）」这种空括号），
+ * provider 的 403 也会被误判成「不是壳的形状」而拿到一句没有信息量的话。
+ */
+const hostErrorBodies = new WeakMap<object, string>();
+
+/**
+ * 把 `ChatFetch` 包一层，指向壳的**同源**代理：URL 恒为相对路径 `/provider/chat`
+ * （见 `chatProxyUrl()` 的注释 —— 早先拿 provider base 拼前缀是 P8 修掉的真缺陷），
+ * 头里带上壳的**通道** token（与 provider 的 key 是两回事，§3.7.4），并**去掉** `Authorization`
+ * 与哨兵头 —— 真 key 由壳补，页面一个字节都不持有。
+ *
+ * 第一个参数（`base`）只为兼容既有调用点保留，**已经不参与 URL 拼装**（`noUnusedParameters` 关着，
+ * 所以留着参数不会报未用）。
+ *
+ * 失败响应：`text()` 仍旧回**壳的原文**（错误码翻译只做一次，由 `requestModel()` 那边做，
+ * 见 `hostErrorBodies` 的注释），所以 409/502/504 的 `detail` 会完整地出现在用户看到的文本里。
+ */
+export function proxyChatFetch(base: string, shellToken: string, inner: ChatFetch): ChatFetch {
+  const url = chatProxyUrl(base);   // 恒为同源相对路径
+  return async (requestUrl, init) => {
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    for (const k of Object.keys(init.headers || {})) {
+      const lk = k.toLowerCase();
+      if (lk === "authorization" || lk === "x-provider-key") continue; // 真 key / 哨兵都不出页面
+      headers[k] = init.headers[k];
+    }
+    headers["X-Shell-Token"] = String(shellToken ?? "");
+    // 代理这条路只发 POST（模型请求）；这里照旧把 method 原样转下去，**GET/HEAD 一律不带 body**
+    // （真浏览器对 GET/HEAD 带 body 是直接抛 TypeError，见 `detectChatProxy()` 的注释）
+    const method = String(init.method || "POST").toUpperCase();
+    const noBody = method === "GET" || method === "HEAD";
+    let res: ChatFetchResponse;
+    try {
+      res = await inner(url, noBody ? { method, headers } : { method, headers, body: init.body });
+    } catch (e) {
+      throw new Error("连不上本机壳（" + message(e) + "）：窗口是不是已经关了？");
+    }
+    if (res.ok) return res;
+    let text = "";
+    try {
+      text = await res.text();
+    } catch {
+      text = "";
+    }
+    const out: ChatFetchResponse = { ok: false, status: res.status, text: async () => text };
+    hostErrorBodies.set(out, text);
+    return out;
+  };
+}
+
+/**
+ * 面板顶部那行状态文本（§3.7.4 的三态）。**它只拼「有无」**：
+ * 手填 / 环境提供 / 两个都没有，key 的值本身一个字符都不进这段文本 —— 这是硬口径，
+ * 与 `ai.protectKey` 那个开关**无关**（那个开关只决定要不要附一句「与 key 有关的说明」，
+ * 不允许把 key 放进任何文本）。
+ *
+ * `protectKey`（第 4 个参数，默认 `true`）= 设置项 `ai.protectKey`。P15 之前它是个
+ * 「可见可改但零效果」的摆设，现在**真的接在这里**：开 = 附一句操作说明（去哪儿查 / 怎么换）；
+ * 关 = 只留 key 来源本身。两种取值产出**不同文本**，所以这个开关是可测的
+ * （`proxy.status.protect-key.changes-text` / `...keeps-no-key-text`）。
+ */
+export function aiChatStatusText(
+  cfg: { endpoint: string; model: string; key: string },
+  hostKey: boolean,
+  t: (key: string) => string,
+  protectKey = true,
+): string {
+  const model = String(cfg.model ?? "").trim();
+  const endpoint = String(cfg.endpoint ?? "").trim();
+  const head = model && endpoint ? model + " · " + endpoint : t("aiChatErrNotReady");
+  const manual = !!String(cfg.key ?? "").trim();
+  const base = manual ? head + " · " + t("aiChatKeyManual")
+    : hostKey ? head + " · " + t("aiChatKeyEnv")
+    : head + " · " + t("aiChatKeyNone");
+  // 这四段里**没有任何 key 材料**（连尾 4 位都没有）：手填的路径用户自己知道，环境那把根本不在页面里
+  if (!protectKey) return base;
+  const help = manual ? AI_CHAT_KEY_HELP_MANUAL
+    : hostKey ? AI_CHAT_KEY_HELP_ENV
+    : AI_CHAT_KEY_HELP_NONE;
+  return base + "（" + help + "）";
+}
+
+/** `ai.protectKey` 打开时附加的那句说明（**三态各一句；都不含 key 材料**）。
+ *  它是常量而不是 i18n 键，是为了让这段唯一的拼接点与 `ai-chat` 的其他文案同源、
+ *  并能在没有 i18n 的 Node 测试里直接断言「两种取值文本不同」。 */
+export const AI_CHAT_KEY_HELP_MANUAL = "这把 key 只存在本机页面存储里，不进设置导出与日志";
+export const AI_CHAT_KEY_HELP_ENV = "由桌面壳从环境变量提供并同源转发，页面拿不到它；换 key 要重启壳";
+export const AI_CHAT_KEY_HELP_NONE = "手填一把，或给桌面壳设 DEEPSEEK_API_KEY 后重启壳";
+
 function httpError(status: number, body: string): string {
   const head = clip(body.replace(/\s+/g, " ").trim(), 120);
   if (status === 401 || status === 403) return "端点拒绝了这个 key（HTTP " + status + "）：" + head;
@@ -433,18 +667,104 @@ function httpError(status: number, body: string): string {
   return "端点返回 HTTP " + status + "：" + head;
 }
 
-/** 发一次请求并解析 JSON；任何失败都抛一句人话（调用方包在回合里，异常即回滚） */
+/** 壳的 `/provider/*` 给的那几个 body（形状见 §3.7.2；`detail` 里绝不会有 key） */
+interface HostErrorBody {
+  ok?: boolean;
+  error?: string;
+  detail?: string;
+}
+
+/**
+ * **这一条错误到底是壳自己发的，还是上游 provider 的？**（P10 修掉的误报根源）
+ *
+ * 判别依据是**壳响应的形状**，不是「看起来像」：`pc-shell.mjs` 自己产生的每一个错误体都是
+ * `{ ok: false, error: "<code>", detail?: "…" }`（见 §3.7.2 的九档表），而 provider 的错误体
+ * 是 OpenAI 形状（`{"error":{"message":…}}`），**没有 `ok` 字段**。所以：
+ *   · `ok === false` → 壳自己发的（`proxy-off` / `unauthorized` / `no-key` / …）；
+ *   · 其它 → provider 的（原样透传过来的状态码与 body）。
+ *
+ * 为什么不能反着判（「有 `error` 字符串就是壳」）：OpenAI 兼容端点也常回
+ * `{"error":"insufficient_quota"}` 这种**字符串** `error` —— 那会把 provider 的拒绝又算回壳头上，
+ * 正是 P10 要修的那类错误。
+ *
+ * 壳的响应里**没有任何机密**（不含 key，连尾 4 位都没有），所以这个判别不需要新的来源标记；
+ * `toolchain/pc-shell.mjs` 因此**不用改**（P10 明确要求：能靠形状判就不加标记）。
+ */
+function isShellError(j: HostErrorBody | null): boolean {
+  return !!j && j.ok === false;
+}
+
+/**
+ * **壳的错误码 → 一句人话**（docs/PLAN-ai.md §3.7.2 的九档映射表）。只在「代理模式」这条路上生效，
+ * 直连路径的文案一个字节都没变（`httpError()` 照旧）。
+ *
+ * 为什么这一段必须由页面写：壳把 provider 的状态码**原样透传**，所以同一个状态码可能是两件完全不同的事
+ * —— 「409 是壳自己没 key」vs「409 是 provider 说的」、「403 是壳关掉了代理」vs「403 是 provider 拒绝了这个 key」。
+ * 前者只有页面能按 `isShellError()` 分辨后翻成人话。**判不出来的一律退回 `httpError()`（provider 档），
+ * 并把 provider 的原话带上 —— 不吞错、也不替 provider 背锅。**
+ */
+function hostError(status: number, body: string): string {
+  let j: HostErrorBody | null = null;
+  try {
+    const parsed = JSON.parse(body) as unknown;
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) j = parsed as HostErrorBody;
+  } catch {
+    j = null;
+  }
+  const code = j && typeof j.error === "string" ? j.error : "";
+  const detail = clip(String(j && j.detail ? j.detail : "").replace(/\s+/g, " ").trim(), 120);
+  const shell = isShellError(j);
+  // ---- 壳自己产生的错误（唯一判据：body 里 `ok === false`）----
+  if (shell && status === 409 && code === "no-key") {
+    return "本机壳里没有可用的 API key：设 DEEPSEEK_API_KEY（或 OPENAI_API_KEY / PC_AI_KEY）后重启桌面壳，或在设置里手填";
+  }
+  if (shell && status === 401 && code === "unauthorized") return "本机壳的通道 token 不对（重启壳后刷新页面）";
+  if (shell && status === 403) return "本机壳拒绝了这次转发（" + (detail || code || "forbidden") + "）";
+  if (shell && status === 413) return "请求太大（上限 1 MiB）：对话太长，清一下会话";
+  if (shell && status === 502) return "连不上端点（" + (detail || "provider-unreachable") + "）：检查这台设备的网络";
+  if (shell && status === 504) return "端点没在超时时间内回：" + (detail || "provider-timeout");
+  if (shell && status === 400 && code === "bad-request") return "端点返回 HTTP 400：" + (detail || "bad-request");
+  // ---- 剩下的都是 provider 透传过来的（含 provider 的 403）----
+  // 403 单独说清「是模型服务商拒绝的」：这正是最需要方向感的一档 ——
+  // 壳拒绝要用户查本机配置 / 端口 / token，provider 拒绝要他去服务商那边查 key 权限 / 余额 / 模型授权。
+  if (status === 403) {
+    const said = clip(body.replace(/\s+/g, " ").trim(), 120);
+    return "模型服务商拒绝了这个请求（HTTP 403）：" + (said || "响应体是空的，去服务商控制台核一下 key 权限 / 余额 / 模型授权");
+  }
+  return httpError(status, body);
+}
+
+/**
+ * 发一次请求并解析 JSON；任何失败都抛一句人话（调用方包在回合里，异常即回滚）。
+ *
+ * **两条头路径**（§3.7.3 的「零改动面口子」）：
+ *   · 非哨兵（默认，用户手填 key 的直连）：`Authorization: Bearer <key>` —— 逐字不变；
+ *   · 哨兵（`AI_CHAT_HOST_KEY_SENTINEL`，走壳的同源代理）：不带 Authorization，改带
+ *     `X-Provider-Key: host`。真 key 由壳在转发时补（页面从头到尾没有它）。
+ */
 async function requestModel(
-  opts: { endpoint: string; model: string; key: string; messages: readonly ChatMessage[]; tools: readonly AiTool[] },
+  opts: {
+    endpoint: string; model: string; key: string; messages: readonly ChatMessage[];
+    tools: readonly AiTool[]; temperature?: number; stream?: boolean;
+  },
   fetchFn: ChatFetch,
 ): Promise<unknown> {
   const body: Record<string, unknown> = { model: opts.model, messages: opts.messages };
   if (opts.tools.length) body.tools = toOpenAiTools(opts.tools);
+  // temperature 只在用户真的填了非 0 档位时才发（0 = 用端点默认，不是「温度 0」）
+  if (typeof opts.temperature === "number" && Number.isFinite(opts.temperature) && opts.temperature !== 0) {
+    body.temperature = opts.temperature;
+  }
+  if (opts.stream === true) body.stream = true;
+  const hostKey = opts.key === AI_CHAT_HOST_KEY_SENTINEL;
+  const headers: Record<string, string> = hostKey
+    ? { "Content-Type": "application/json", "X-Provider-Key": "host" }
+    : { "Content-Type": "application/json", Authorization: "Bearer " + opts.key };
   let res: ChatFetchResponse;
   try {
     res = await fetchFn(chatCompletionsUrl(opts.endpoint), {
       method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: "Bearer " + opts.key },
+      headers,
       body: JSON.stringify(body),
     });
   } catch (e) {
@@ -456,7 +776,11 @@ async function requestModel(
   } catch (e) {
     throw new Error("读端点响应失败：" + message(e));
   }
-  if (!res.ok) throw new Error(httpError(res.status, text));
+  if (!res.ok) {
+    // 代理模式的失败体：优先用包装层留底的**壳原文**（见 `hostErrorBodies` 的注释）
+    const raw = hostErrorBodies.get(res) ?? text;
+    throw new Error(hostKey ? hostError(res.status, raw) : httpError(res.status, raw));
+  }
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
@@ -506,6 +830,18 @@ function clampRounds(n: number | undefined): number {
 }
 
 /**
+ * 把用户补的那句插进一条已经拼好的 system 消息里：先摘掉内置提示词前缀（面板拼消息时用的是
+ * `systemMessage({ digest })`，前缀必然在），再把 extra 接在**内置提示词之后、摘要之前**。
+ * 认不出前缀（调用方自己拼了别的 system 文本）时就在末尾追加 —— 内置口径永远排在最前面。
+ */
+function mergeSystemPrompt(existing: string, extra: string): string {
+  const x = clip(String(extra).trim(), AI_CHAT_MAX_TEXT_EXTRA);
+  if (!x) return existing;
+  const tail = existing.startsWith(AI_CHAT_SYSTEM_PROMPT) ? existing.slice(AI_CHAT_SYSTEM_PROMPT.length) : "\n" + existing;
+  return AI_CHAT_SYSTEM_PROMPT + "\n\n用户补充的要求：\n" + x + tail;
+}
+
+/**
  * 跑完一整轮：请求模型 → 有 `tool_calls` 就按顺序 `callTool` 并把结果回灌 → 再请求，
  * 直到模型只回文本（或到达 `maxRounds` / 调用次数上限）。
  *
@@ -515,6 +851,12 @@ function clampRounds(n: number | undefined): number {
 export async function runChatTurn(opts: ChatTurnOpts): Promise<ChatTurnResult> {
   const commit = opts.commit !== false;
   let messages = opts.messages.slice();
+  // 用户在设置里补的那句（`ai.chatSystemPrompt`）：**原地换掉第一条 system 消息**（改写而不是追加
+  // 一条），让「每次发请求时按当时的画布摘要重拼 system」这条既有口径继续成立 ——
+  // 面板每次都重拼 messages，重拼时把 extra 一起传进来（见 `systemMessage({ digest, extra })`）。
+  if (opts.systemPrompt && opts.systemPrompt.trim() && messages.length && messages[0].role === "system") {
+    messages[0] = { role: "system", content: mergeSystemPrompt(String(messages[0].content ?? ""), opts.systemPrompt) };
+  }
   const calls: ChatCallLog[] = [];
   const ctx: AiToolCtx = { ...opts.ctx, turn: opts.ctx.turn ?? turnHandle() };
   const tools = (opts.tools ?? listTools({ tiers: AI_CHAT_TOOL_TIERS.slice() })).slice();
@@ -543,6 +885,7 @@ export async function runChatTurn(opts: ChatTurnOpts): Promise<ChatTurnResult> {
       rounds = round + 1;
       const response = await requestModel({
         endpoint: opts.endpoint, model: opts.model, key: opts.key ?? "", messages, tools,
+        temperature: opts.temperature, stream: opts.stream,
       }, opts.fetchFn);
       messages.push(assistantMessage(response));
       const parsed = parseToolCalls(response);
