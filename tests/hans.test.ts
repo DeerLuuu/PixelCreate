@@ -16,8 +16,16 @@ const path = require("path");
 const TRADITIONAL = "這時們個為說會來對開關實現產樣種麼幾覺單雙邊間題變寫圖從讀儲節數據網體讓銀檔資後應於過還進點與樂學國語詞誤調認標準總結給線編終統經驗續絕聲聯聽職腦臉舊舉藝處號裝見觀規視計討記註許設訪訊試話詳誌請誰課談論講謝議護豐貝負財責貴買費貼質車較載輸轉輕軟適選遺鄰醫釋鐘鐵長門閉問聞陽隨隱難頁順預領頭願類風飛飯館馬驗髮鬥魚鳥麗黃齊齒龍寬簡內熒盤鍵網絡頻絡訊號碼視標";
 const CHARS = [...new Set([...TRADITIONAL])];
 
-/** 只看受版本管理的文本：产物目录、依赖、临时目录都跳过 */
-const SKIP_DIR = new Set(["node_modules", ".git", ".ts-out", "js", "css", "icons", "build", "_scratch", "toolchain", "img"]);
+/**
+ * 只看**受版本管理**的文本：产物目录、依赖、运行期状态与第三方资源都跳过。
+ *
+ * `.agent-teams` 是**运行期目录**（团队编排的状态与消息，gitignored）：里面装的是各成员的
+ * output 原文——任意文本，可能带乱码、繁体字或旧字形，**不是仓库交付文本**。它进扫描射程的结果是
+ * 「与代码无关的团队状态把整个测试套件染红」（P12 之前真实发生过一次：team.json 里一处 GBK 误读的
+ * 乱码含 `給`）。加进来之后，团队跑多少轮都不会再让 hans 变红；仓库文本本身的简体校验一个字没松
+ * ——`src/` / `tests/` / `docs/` 照旧全扫（有反向断言盯着，见输出里的双向证明）。
+ */
+const SKIP_DIR = new Set(["node_modules", ".git", ".ts-out", "js", "css", "icons", "build", "_scratch", "toolchain", "img", ".agent-teams"]);
 const EXTS = /\.(md|ts|tsx|css|html|json|sh|java|xml|mjs|cjs)$/;
 /** 这个文件自己就写着繁体字表，跳过 */
 const SELF = "hans.test.ts";
