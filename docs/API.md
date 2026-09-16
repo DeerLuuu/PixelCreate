@@ -2453,7 +2453,7 @@ Stroke 侧：`BrushState.pattern` 一填，落笔统一走 `paintOne()`——图
 ### 测试
 
 ```bash
-npm test        # 7376 条断言：引擎 / 选区 / 历史 / 播放 / 设置 / 引导 / 渲染 / 导出 / Aseprite 读写 / 返回手势 / UI 控件与令牌 / AI（ai-doc / tools / draw / turn / rpc / chat）（末尾打印 assertions: N）
+npm test        # 7639 条断言：引擎 / 选区 / 历史 / 播放 / 设置 / 引导 / 渲染 / 导出 / Aseprite 读写 / 返回手势 / UI 控件与令牌 / AI（ai-doc / tools / draw / turn / rpc / chat / presets / 浮窗与球）（末尾打印 assertions: N）
 ```
 
 新增纯逻辑（算法、布局、解析、决策）时，优先抽成无 DOM 依赖的函数再补一条 `tests/*.test.ts` 断言——这是本项目保持可回归的主要手段。
@@ -3282,6 +3282,20 @@ MCP 宿主 / curl ──HTTP(127.0.0.1:8787)──> 壳（只做传输 + 鉴权 
   并打印，给了 `--token` / `AI_TOKEN` **就用给的那个**（两条来源都生效），只在内存里。
 - `node --check toolchain/pc-shell.mjs` 可以；`.cmd` 是批处理，只能 `cmd /c toolchain\pc-shell.cmd --help` 验。
 
+**同一个壳上还有第二条通道：模型请求的同源代理 `/provider/*`**（应用内助手用，与上面 `/ai` 那条是两件事）：
+壳从**环境变量**读一把 provider key（`DEEPSEEK_API_KEY` → `OPENAI_API_KEY` → `PC_AI_KEY`，或显式
+`--provider-key`），页面只拿 `hasEnvKey` 布尔与公开的端点 / 模型名，真 key 一个字节都不进页面。
+
+```sh
+# 电脑侧最省事的起法：环境里给一把 key，壳自动带上转发
+set DEEPSEEK_API_KEY=sk-xxxx            # Windows（PowerShell: $env:DEEPSEEK_API_KEY="sk-xxxx"）
+node toolchain/pc-shell.mjs             # → 应用里「设置 → AI 助手」不用手填 key 就能用
+node toolchain/pc-shell.mjs --provider-key sk-xxxx --provider-base http://127.0.0.1:9000   # 自测 / 自建网关
+curl.exe -s http://127.0.0.1:8787/provider/config
+```
+
+接口形状、错误码九档、安全边界与「key 不进页面」的准确口径见 **§26.6**；环境变量优先级与三态显示见 §26.3。
+
 ### 25.3 工具表 → MCP schema 的映射口径
 
 工具表**不在这层复制**，唯一源是 `src/app/ai-tools.ts`：`tools/list` 现取现映射
@@ -3322,32 +3336,88 @@ MCP 宿主 / curl ──HTTP(127.0.0.1:8787)──> 壳（只做传输 + 鉴权 
 
 ---
 
-## 26. 应用内助手 `src/app/ai-chat.ts` + `src/ui/AiPanel.tsx`
+## 26. 应用内助手 `src/app/ai-chat.ts` + `src/ui/AiWindow.tsx` + `src/ui/AiPanel.tsx`
 
 > C5（A 路线，`docs/PLAN-ai.md` §3.3「一轮 = 一条 undo」/ §3.5 / §3.6 key 与安全模型）：
 > 在应用里说一句话 → 模型 function calling → **预览后应用** → 一轮一条撤销。
 > 逻辑层 `ai-chat.ts` 与平台无关（不 import `window`、不直接调 `fetch`，`fetchFn` 由调用方注入），
 > 所以能在没有 DOM 的测试里用假端点把整轮跑完（`tests/ai-chat.test.ts`）；UI 只负责显示与两个按钮。
+>
+> P8 把助手从「主菜单里的一个整屏子面板」改成 **浮动小窗 + 可最小化为浮动球**，并补上
+> **DeepSeek 默认预设**、**更完善的设置项**与**环境 key 的同源代理**。三个落点：
+>
+> | 文件 | 管什么 |
+> |---|---|
+> | `src/ui/AiWindow.tsx`（**新文件**） | 浮窗容器：`createPortal` 到 `document.body`、标题栏（拖动柄 + 最小化 + 关闭）、右下角缩放抓手、`pc.aichat.win` 的读写 |
+> | `src/ui/AiPanel.tsx` | 对话面板 `AiPanel`（消息流 / 调用摘要 / 应用·放弃 / 输入框）+ 助手小球 `ChatBall` + 跨卸载的会话存储 `aiWinStore` + 通路探测 `chatTransport()` |
+> | `src/app/ai-presets.ts`（**新文件**） | 厂商预设表（DeepSeek / OpenAI / 自定义）与 `normalizePresetId`；**没有 key 字段**（切预设碰不到 key 是结构保证） |
+> | `src/app/uibar.ts` | 浮窗 / 小球的**纯几何与存储归一化**（`AI_CHAT_WIN_KEY` / `AI_CHAT_BALL_KEY` / `clampAiWinLayout` / `normalizeAiWinLayout` / `aiWinDragFrom` / `clampAiBallPos`），有单测 |
+> | `src/app/settings.ts` | `CHAT_SETTINGS`（14 条）+ `SETTINGS` 里的 5 条 AI 高级项 + `applyAiChatPreset()` + `SETTING_SECRET_PATHS` |
+> | `toolchain/pc-shell.mjs` | 同源代理 `GET /provider/config` + `POST /provider/chat`、环境变量 key、key 擦除、错误码九档 |
 
 ### 26.1 平台门与入口
 
 - **只有 `isNativeShell()`（APK / 桌面壳的 `window.PixelBridge`）为真才有助手**：
-  主菜单那一行（`ui/modals.tsx`）与面板自己各判一次；普通浏览器 / GitHub Pages 里
-  **不挂输入框、不连端点、不发任何请求**（只显示一句说明，绝不出现「点了没反应」）。
+  主菜单那一行（`ui/modals.tsx`）、浮窗（`AiWindow`）、助手小球（`ChatBall`）、设置行
+  （`chatRowsVisible()`）四处各判一次；普通浏览器 / GitHub Pages 里
+  **一个 DOM 都不挂、不连端点、不发任何请求**（面板只显示一句说明，绝不出现「点了没反应」）。
   线上 PWA 不背 AI（§3.6 红线）。
-- 入口：主菜单 → 「AI 助手」（图标见 `src/ui/feature-icons.ts`，`i-ai-chat`）；
-  设置页同一门控（`chatRowsVisible()`）。
+- 入口：主菜单 → 「AI 助手」（图标见 `src/ui/feature-icons.ts`，`i-ai-chat`）→ **打开浮窗**
+  （不再是 `MenuModal` 的 `setSub("ai")` 子面板；菜单项锚点 `data-guide="menu-ai-chat"` 不变）。
+  打开动作也接受 `window` 上的 `pc-ai-window` 事件（引导与外部触发用同一个入口）。
+- **窗口状态不是用户在设置页里调的值**：开 / 最小化两条声明 `visible` 恒为 false，只有
+  `ai.chatBall`（最小化后画不画球）在 `ai.chatOn` 打开后露出来。
 
 ### 26.2 设置项（`CHAT_SETTINGS`，`src/app/settings.ts`）
 
-| 路径 | 类型 | 默认 | 说明 |
-|---|---|---|---|
-| `ai.chatOn` | bool | `false` | 助手总开关 |
-| `ai.chatEndpoint` | 文本 | 空 | OpenAI 兼容的**基地址**（如 `https://api.openai.com/v1`）；留空 → 自动补 `/chat/completions` |
-| `ai.chatModel` | 文本 | 空 | 模型名 |
-| `ai.chatKey` | 文本（密文行） | 空 | API key |
+助手那一组是**单独一张声明表**，走同一个设置页渲染器，但**不参与设置文件导出**（原因见下）。
+逐项清单（`ai.chatOn` 关着时，设置页只剩第一条开关）：
 
-两条**不要改回去**的实现口径：
+| 路径 | 类型 | 默认值 | 进设置导出？ | 机密？ | 说明 |
+|---|---|---|---|---|---|
+| `ai.chatOn` | `bool` | `false` | 否 | 否 | 助手总开关；关着时下面各条都不显示 |
+| `ai.chatPreset` | `enum`（3 项 → chips） | `deepseek` | 否 | 否 | 厂商预设：`deepseek` / `openai` / `custom`；切它只写 endpoint + model，**不碰 key** |
+| `ai.chatEndpoint` | `text:"plain"` | `https://api.deepseek.com` | 否 | 否 | OpenAI 兼容基地址；留空会提示，末尾自动补 `/chat/completions` |
+| `ai.chatModel` | `text:"plain"` | `deepseek-v4-pro` | 否 | 否 | 模型名；**永远是自由文本**，预设只提供快捷 chips |
+| `ai.chatKey` | `text:"password"` | `""` | **否**（`SETTING_SECRET_PATHS`） | **是** | 用户手填的 key，只存本机；`action` = 一键清除（清空后自动落回环境 key） |
+| `ai.providerBase` | `text:"plain"` | `""` | 否 | 否 | **手填 key 时**的直连地址；留空 = 用 `ai.chatEndpoint`。代理模式不看它 |
+| `ai.chatMaxRounds` | `int` | `12`（`1..24`） | 否 | 否 | 一轮最多问几次模型 |
+| `ai.chatTemp` | `int` | `0`（`0..20`，单位 `×0.1`） | 否 | 否 | `temperature` = 值 × 0.1；`0` = **不发这个字段**（用端点默认） |
+| `ai.chatSystemPrompt` | `text:"plain"` | `""` | 否 | 否 | 非空则**追加**在内置提示词之后 |
+| `ai.chatStream` | `bool` | `false` | 否 | 否 | 本轮固定关闭：代理对 `stream:true` 直接回 400 |
+| `ai.protectKey` | `bool` | `true` | 否 | 否 | 决定状态行**要不要附那句与 key 有关的说明**（见 26.3） |
+| `ai.chatWinOpen` | `bool` | `false` | 否 | 否 | 浮窗当前是否打开（`visible` 恒 false：这是状态不是可调值） |
+| `ai.chatWinMin` | `bool` | `false` | 否 | 否 | 是否已最小化成球（`visible` 恒 false） |
+| `ai.chatBall` | `bool` | `true` | 否 | 否 | 最小化后画不画助手球；**唯一可见的窗口相关开关** |
+
+**一处实现偏差（P1 §3.7.7 的清单 vs 最终实现）**：设计稿把 `ai.protectKey` / `ai.chatMaxRounds` /
+`ai.chatTemp` / `ai.chatSystemPrompt` / `ai.chatStream` 五条放在 `SETTINGS`（组 `ai`，因此**进导出**），
+实现时**五条全部落在 `CHAT_SETTINGS`（组 `chat`，**不进导出**）**，所以上表那一列全是「否」。
+理由是 `tests/ai-rpc.test.ts:950` 的 `settings.visible.on` 钉死了 `ai` 组的可见路径**恰好四条**
+（`ai.server` / `ai.port` / `ai.tier` / `ai.turnIdleSec`）—— 往 `ai` 组加任何一条都会红，
+而 P1 §3.7.8 只授权改两条既有断言（`aichat.setting.default-endpoint` / `aichat.setting.visible-on`），
+不含这一条。代价：这五条**不进设置文件导出**，跨机器迁移时要重填；理由与代价都记在
+`src/app/settings.ts` 的 `CHAT_SETTINGS` 段注释里。
+
+**预设的权威数据**（`src/app/ai-presets.ts`，2026-09-16 核 `api-docs.deepseek.com`）：
+
+| 预设 | `baseUrl` | `defaultModel` | 可切模型 chips |
+|---|---|---|---|
+| **`deepseek`（默认）** | `https://api.deepseek.com` | `deepseek-v4-pro` | `deepseek-v4-pro` / `deepseek-flash` |
+| `openai` | `https://api.openai.com/v1` | `gpt-4o-mini` | `gpt-4o-mini` / `gpt-4o` |
+| `custom` | `""`（**一个字段都不写**） | `""` | 无（纯自由文本） |
+
+- **默认预设 = `deepseek`**，且 `ai.chatEndpoint` / `ai.chatModel` 的**声明默认值直接从它取**
+  （`aiChatPresetOf(AI_CHAT_DEFAULT_PRESET).baseUrl` / `.defaultModel`，不是抄一遍字符串）：
+  第一次打开助手就已经指着 DeepSeek，用户只需要「有 key」这一件事。
+- 预设里**只有公开的 base URL 与公开的模型名**，没有任何凭据（§3.6 的红线针对的是 key）。
+- **切预设的三条语义**：① 只写 `preset` + `endpoint` + `model` 三个字段，**key 连读都不读**；
+  ② 切到 `custom` **一个字段都不写**（它的 baseUrl / defaultModel 是空串，写下去会把用户手填的抹掉）；
+  ③ 模型清单是**会过期的数据** —— 它只是快捷 chips，`ai.chatModel` 永远是自由文本，
+  改清单是普通代码改动、不涉及设置迁移（旧名 `deepseek-chat` / `deepseek-reasoner` **不写进清单**）。
+- 坏数据一律回默认：`normalizePresetId()` 只认三个字面量。
+
+四条**不要改回去**的实现口径：
 
 1. **`CHAT_SETTINGS` 是单独一张表，不并进 `SETTINGS`**：`tests/session.test.ts` 钉住
    「导出的取值条数 === `SETTINGS.length`」「导入的 applied === `SETTINGS.length`」，
@@ -3357,23 +3427,92 @@ MCP 宿主 / curl ──HTTP(127.0.0.1:8787)──> 壳（只做传输 + 鉴权 
 2. **`SettingKind` 保持四个字面量**，文本行不新增 kind，而是走 `SettingDef.text`
    （`"plain"` / `"password"`，见 `ui/modals.tsx` 的文本行分支）。
    钉子断言：`settings.no-new-kind` / `settings.kind.count`。
-
-四项都**不进 `Session.prefs`**：自带极小存储（内存缓存 + `localStorage["pc.aichat"]`），
-读不到（Node / 隐私模式 / 坏数据）就退回默认值、不抛异常；文本长度上限 `AI_CHAT_MAX_TEXT`（2048）。
+3. **全部不进 `Session.prefs`**：自带极小存储（内存缓存 + `localStorage["pc.aichat"]`，
+   键 `AI_CHAT_SETTINGS_KEY`），读不到（Node / 隐私模式 / 坏 JSON）就退回默认值、不抛异常；
+   文本长度上限 `AI_CHAT_MAX_TEXT`（2048）。
+   `prefs` 会随工程 / 设置导出走，而「这台机器这个屏幕上窗口开在哪」不属于工程。
+4. **归一化是「全量比较」而不是子集**：`normalizeAiChatSettings()` 现在有 **14 个字段**
+   （`on` / `preset` / `endpoint` / `model` / `key` / `providerBase` / `maxRounds` / `temp` /
+   `systemPrompt` / `stream` / `protectKey` / `winOpen` / `winMin` / `ball`），
+   `aichat.setting.normalize-junk` + `aichat.setting.normalize-keys` + `...is-tight` 三条整对象钉死；
+   加新字段忘了同步，断言会红。
+   `endpoint` / `model` 的**空串不填默认值**（空串 = 用户主动清空）；「从没配过」那一步由
+   `loadAiChatSettings()` 落一次声明默认值并写盘 —— 否则代理一坏，设置页两行就永远是空的。
 
 ### 26.3 key 的安全口径（**key 只存本机，线上 PWA 不内置**）
 
+**key 的两个来源与优先级**（判定顺序决定「谁在花钱」，必须按这个顺序）：
+
+```
+① 用户在设置里手填的 ai.chatKey（非空即生效）→ 页面**直连**（走 ai.providerBase ?? ai.chatEndpoint），
+   key 只在本机页面的 localStorage 里
+        ↓（手填为空）
+② 宿主环境变量 / CLI 提供的 key → **同源代理**，key 只在壳进程内存里，页面拿一个哨兵常量
+        ↓（两者都没有）
+③ 无 key → 面板显示提示条，**一个请求都不发**
+```
+
+**环境变量名与优先级**（`toolchain/pc-shell.mjs` 的 `PROVIDER_KEY_ENV`，第一个非空即用）：
+
+| 顺序 | 名字 | 为什么是这个顺序 |
+|---|---|---|
+| 1 | `DEEPSEEK_API_KEY` | DeepSeek 官方文档给的用法就是它，而默认预设也是 DeepSeek |
+| 2 | `OPENAI_API_KEY` | 换 OpenAI / 兼容网关时最通用的名字 |
+| 3 | `PC_AI_KEY` | 本项目自有名：给「不想污染全局环境变量」的场景兜底 |
+
+显式 `--provider-key <k>` **优先级最高**（argv 覆盖 env）。读一次发生在**壳启动时**，之后不再重读
+—— 改了环境变量要**重启壳**（`--help` 与面板提示里都写了）。
+
+> ⚠️ **`AI_TOKEN` 不是 provider 的 key**：它是**壳 ↔ 页面的通道 token**（§25.2 的 `/ai` 那条路），
+> 两者**不得混用**，`--provider-key` 也不接受 `AI_TOKEN` 作别名。页面调 `/provider/chat` 时
+> 用通道 token 做鉴权（`Authorization: Bearer <通道token>` 或 `X-Shell-Token: <通道token>`），
+> 真 provider key 由壳在转发那一刻补上。
+
+**面板顶部状态行的三态**（`aiChatStatusText(cfg, hostKey, t, protectKey)`，**只拼「有无」**，
+key 的值一个字符都不进这段文本）：
+
+| 状态 | 状态行末尾 | 触发条件 |
+|---|---|---|
+| 手填 | `已手填 key` | `ai.chatKey` 非空（输入框本身是 `password`，不回显） |
+| 环境 key | `本机环境变量已提供 key（key 不在页面里）` + 一条 `ai-key-source` 说明行 | 手填空 且 `/provider/config.hasEnvKey` |
+| 无 key | `没有可用的 key` + 一条 `ai-no-key` 警告条（提示设 `DEEPSEEK_API_KEY` 或手填） | 两者都无 |
+
+**`ai.protectKey` 的最终语义（P15 起它真的接上了效果）**：它决定上面那行状态文本**要不要再附一句
+与 key 有关的操作说明**，三态各一句常量（`AI_CHAT_KEY_HELP_MANUAL` / `_ENV` / `_NONE`）：
+
+- 开（默认）= 状态行 + `（这把 key 只存在本机页面存储里，不进设置导出与日志）`（环境态则是
+  `（由桌面壳从环境变量提供并同源转发，页面拿不到它；换 key 要重启壳）`）；关 = 只留状态行本身。
+- 两种取值产出**不同文本**，所以这个开关是可测的（`proxy.status.protect-key.changes-text` /
+  `...prefix` / `...help-text` / `...no-key-text` / `...default-protected`）。
+- **关掉它绝不意味着 key 可以进任何文本**：key 不进导出 / 不进 `.pxc` / 不进 toast / 不进错误文案
+  这几条与它无关，由 `SETTING_SECRET_PATHS` 与「状态文本只拼有无」两处代码保证。
+- 这三句是**中文常量而不是 i18n 键**（同模块的 `httpError()` / `hostError()` / `chatConfigError()`
+  早就是中文常量）⇒ 英文界面下这三句仍显示中文，记在 `AGENTS.md` §7 的缺口里。
+
+其余四条口径不变：
+
 - `SETTING_SECRET_PATHS = ["ai.chatKey"]`：`exportSettings()` / `importSettings()` 显式跳过它 ——
-  key **不进设置文件、不进 `.pxc`、不进诊断文本、不进 toast**，也不出现在面板的任何提示里，
-  只写进请求的 `Authorization: Bearer <key>` 头（`ai-chat.ts` 的 `requestModel`）；
-- 面板只显示**端点与模型名**（`aiChatSettings()` 不把 key 渲染出来）；
-- 设置页提供**一键清除**（`clearAiChatKey()`，设置项的 `action`）；
+  key **不进设置文件、不进 `.pxc`、不进诊断文本、不进 toast**，也不出现在面板的任何提示里；
+- 手填 key 走请求的 `Authorization: Bearer <key>` 头（`ai-chat.ts` 的 `requestModel`）；
+  代理模式**去掉** `Authorization`、改带 `X-Provider-Key: host` 哨兵头（非哨兵路径逐字不变，
+  `aichat.http.auth` 仍钉着它）；
+- 设置页提供**一键清除**（`clearAiChatKey()`，设置项的 `action`；清完落回环境 key）；
 - 端点 / 模型 / key 三项都要求非空才发请求（`chatConfigError()`），缺项时**连回合都不开**。
+
+**诚实边界（不许把它说成「任何 key 都不在页面里」）**：`ai.chatKey` 是**用户自己手填**的，
+按 §3.6 的存储模型它就在本机页面的 `localStorage` 里，同源脚本读得到 —— 这一点本轮**没有改**。
+所以「key 不进页面」这条**只对环境变量来源（②）成立**：那把 key 由壳持有，
+页面内存 / DOM / console / localStorage 四处都搜不到（`GET /provider/config` 的响应里也没有它，
+连尾 4 位都不给）。
 
 ### 26.4 一轮的流程与「预览后应用」
 
 `runChatTurn(opts)`：请求模型 → 有 `tool_calls` 就按数组顺序 `callTool` 并把结果回灌 → 再请求，
 直到模型只回文本（或到 `maxRounds` / `maxCalls` 上限）。
+
+每次发送时 system 消息都**重新拼**一条：`docDigest()` 的当前帧摘要（§21.1 的 `AiDigest`，
+上限 `AI_CHAT_MAX_DIGEST_CHARS = 6000`）+ 用户在 `ai.chatSystemPrompt` 里补的那句
+（追加在内置提示词 `AI_CHAT_SYSTEM_PROMPT` 之后，不改内置那份）。
 
 | 常量 | 值 | 说明 |
 |---|---|---|
@@ -3405,4 +3544,168 @@ MCP 宿主 / curl ──HTTP(127.0.0.1:8787)──> 壳（只做传输 + 鉴权 
 - 相关导出：`chatConfigError` / `formatCallLog` / `changedCount` / `defaultTurnLabel` /
   `buildSystemPrompt` / `systemMessage` / `userMessage` / `assistantMessage` / `toolResultContent` /
   `appendToolResult` / `parseToolCalls` / `responseText` / `toOpenAiTools` /
-  `chatCompletionsUrl` / `message`。
+  `chatCompletionsUrl` / `AI_CHAT_HOST_KEY_SENTINEL` / `chatProxyUrl` / `detectChatProxy` /
+  `readHostProviderConfig` / `proxyChatFetch` / `aiChatStatusText` / `message`。
+
+### 26.5 浮窗与浮动球（`src/ui/AiWindow.tsx` + `src/ui/AiPanel.tsx` 的 `ChatBall`）
+
+**容器**：`AiWindow` 是一个 `createPortal(document.body)` 的浮窗，自带标题栏（拖动柄 + 最小化 + 关闭）、
+正文（`AiPanel`）与**右下角唯一一个缩放抓手**（不做八向：收益低、触屏易误触）。
+`App.tsx` 的挂载条件是 `isNativeShell() && aiChatSettings().winOpen && !winMin`；
+`AiWindow` 自己再判一次 `isNativeShell()`，为假时**一个 DOM 都不渲染**。
+
+**状态机**（落点全在 `App.tsx`，事件表见 `docs/PLAN-ai.md` §3.7.6）：
+
+| 事件 | 状态变化 | 副作用 |
+|---|---|---|
+| 菜单「AI 助手」/ `pc-ai-window` 事件 | 关闭 → 开窗 | `saveAiChatSettings({ winOpen: true, winMin: false })` |
+| 最小化按钮 / **双击标题栏** | 开窗 → 球 | 先把几何（含 `min:true`）落盘，再 `winMin = true` → 浮窗 DOM **真的卸载** |
+| 点球（位移 < 8px） | 球 → 开窗 | `winMin = false`；几何取自 `pc.aichat.win`；对话与 thread 留着 |
+| 拖球（位移 ≥ 8px） | 球 | 只记位置（`pc.aichat.ball`），**不回窗**；触屏下顺带收起别的球的展开环 |
+| 关闭按钮 / 面板的返回键 | 任意 → 关闭 | `saveAiChatSettings({ winOpen: false, winMin: false })` |
+| Android 返回键（`pc-back`） | 开窗 → 球 | 与最小化按钮**同一个入口**（`minimizeAiWin()`），只是最小化、不关窗 |
+| 拖动标题栏 / 拖缩放抓手 | 开窗 | 每一帧跑夹取，**松手那一下才写盘** |
+| 窗口 resize / 旋屏 | 开窗 | 重跑一次夹取并写盘（窗口不许留在屏幕外） |
+
+- **回合不变式（P9 定稿，别改回去）**：**最小化 = 浮窗 DOM 真的卸载**（`display:none` 不算，
+  `AiPanel` 的卸载钩子必须跑），而「卸载时留不留这一轮」只看 **Session 的实况**：
+  `aiPanelDropsTurnOnUnmount(session) = session.aiTurnOpen()` —— 卸载时回合还开着就
+  `SESSION.rollbackAiTurn()` + 在对话里补一行说明（`noteAiWinClosed()`）。
+  最小化按钮 / 双击标题栏 / `pc-back` / 关窗 / 被别处卸掉**五条路径同语义**。
+  早先有一个 `aiWinStore.mode` 标志位，于是「记得在最小化时设它」成了调用点义务，
+  结果窗口按钮那条路径漏了、两边语义相反 —— 现在**没有第二份状态可漂移**。
+- **写入点唯一**：`winMin` / `winOpen` 只由 `App.tsx` 的 `minimizeAiWin()` / `closeAiWin()` /
+  `openAiWin()` / `restoreAiWin()` 四处写。`AiWindow` **自己不碰设置、不碰回合**，它只收
+  `onMinimize` / `onClose` 两个 prop。**不要把浮窗包进 `Keep`**（那会让它不卸载）。
+- **对话跨卸载保留**：模型侧 `thread` / 用户可见的 `entries` / 调用摘要 `logs` / 输入框草稿
+  放在**模块作用域**的 `aiWinStore`（进程内保留、**不落盘**）。而「预览中 → 应用 / 放弃」
+  这套 UI 由 `aiPanelShowsPreview(cfg, session, hasPending)` 判 —— 它同时要求
+  「面板看得见（`winOpen && !winMin`）」与「Session 里真有一轮开着」，所以最小化后
+  不会留一套点了没反应的假预览（`data-guide="ai-pending"`）。
+- **拖动 / 缩放只用指针事件**（`pointerdown/move/up` + capture），不用鼠标专属事件，
+  所以触屏与电脑模式是**同一条**代码路径；拖动**从不累加**（每帧从按下那一刻的几何重算），
+  否则夹取会把位置一点点往回挤。
+
+**几何持久化键**（口径与纯函数在 `src/app/uibar.ts`，有单测；组件只负责接到 DOM 上）：
+
+| 键 | 形状 | 默认 | 坏数据口径 |
+|---|---|---|---|
+| `pc.aichat.win`（`AI_CHAT_WIN_KEY`） | `{ "v": 1, "x": n, "y": n, "w": n, "h": n, "min": bool }` | `w=380 h=460`、贴右下角（`innerWidth - w - 16` / `innerHeight - h - 16`） | `x/y/w/h` 任一不是有限数字、或 `v` 不认识 → **整份丢弃**回默认值（不做逐字段修补）；`min` **只认 `true`** |
+| `pc.aichat.ball`（`AI_CHAT_BALL_KEY`） | `{ "x": n, "y": n }` | 贴右下角、**抬高 32px** 让开底栏 | 坏数据回默认位 |
+
+- 夹取：`x ∈ [8, innerWidth - w - 8]`、`y ∈ [8, innerHeight - h - 8]`；尺寸
+  `min 260×200`、`max 视口 - 16`（视口小于最小尺寸时以最小尺寸为准）。
+- `localStorage` 读写**一律包在 `try` 里**：隐私模式 / 坏 JSON 都不该让窗口打不开。
+- 版本号 `AI_WIN_STORE_V = 1`：**换口径时整份丢弃，不做迁移**。
+
+**与既有 5 个浮动球的关系**：助手球 `ChatBall` 是**独立小球**（`CHAT_BALL_ID = "ai"`，
+`data-orb-ball="ai"` / `data-guide="orb-ai"`），**没有扩 `ORB_IDS`**（仍是 5 个：
+`main` / `sel` / `pal` / `fx` / `canv`）。
+理由与代价：五球那套（dock 拖动 / 展开环 / 饼菜单 / 界面定制顺序）是全仓库回归面最密的一块，
+而助手球**没有任何子项**要被搬运或排序 —— 它就是一个开关按钮。选独立组件换零回归面：
+既有断言 `uibar.orbs`、`guide.orbs.*`、`icons.*` 一条都不用改。
+它与五球系统只共享**一条**规则：触屏下点/拖它会收起别的球已经展开的环
+（`pc-ai-ball-tap` → `closeRadials()`；PC 模式不互斥）。它不参与
+`prefs.dockPos` / `ringSlots` / `pieEquip` / `prefs.orbPrefs`，
+外观**复用 `.orb` 类名与 `orbMetrics(pcMode).orb`** 的尺寸（不新造球样式）。
+
+### 26.6 通路与同源代理（`toolchain/pc-shell.mjs` 的 `/provider/*`）
+
+**四条硬理由**（都写进壳的注释里）：① 环境变量那把 key 一个字节都不进页面；② 用户不用手填 key；
+③ 错误能翻成一句人话；④ 不再依赖对端 CORS 配置。
+**不是**为了绕 CORS —— 实测证明 DeepSeek 会回 CORS 头、`file://` 源也被放行
+（`docs/PLAN-ai.md` §3.7.1 的实测记录），别照着错误假设去「修」一个不存在的 CORS 问题。
+
+**页面判定顺序**（`AiPanel.detectTransport()`，进程级缓存一次）：手填 key → 直连；
+否则探 `GET /provider/config`，`proxy && hasEnvKey` → 代理；否则 → 不发请求。
+
+| 项 | 定稿 |
+|---|---|
+| 路径 / 方法 | `GET /provider/config`（探测，**不要 token**，不泄漏任何机密）；`POST /provider/chat`（模型请求，要壳的通道 token）；`OPTIONS /provider/*` → `204` + CORS 头；其它方法 `405` |
+| 页面 → 壳的地址 | **恒为同源相对路径 `/provider/chat`**（`chatProxyUrl()`）。⚠️ 早先写成 `<壳报的 providerBase>/provider/chat`，于是请求被发去 `https://api.deepseek.com/provider/chat`（生产）或假 provider 的地址（跨源，必然 `Failed to fetch`）—— **P8 修掉的真缺陷**，别改回去 |
+| 页面怎么拿通道 token | 复用 §25.2 的既有桥：`window.PixelBridge.aiServerStatus()` 回的 `{"running","port","token"}`（**不新增桥方法**），只放内存、**绝不写 localStorage**；取不到就按「代理不可用」回落直连 |
+| 探测的 GET | **不能带 body**（真浏览器对 `GET` 带 body 直接抛 `TypeError`，而当时的 `catch { return null }` 把它静默吞成「这台机器没有代理」）—— 这是 **P8 修掉的第二个真缺陷**；测试那边配了一个按真浏览器规则校验的假 fetch（`strictFetch`）盯着它 |
+| 请求体 | OpenAI 兼容**原样转发**：`{ model, messages, tools?, tool_choice?, temperature?, max_tokens? }`。壳**只补** `Authorization`，不改其它字段；`model` 缺省时用壳的默认模型；`stream:true` 直接回 `400`。**请求体里没有 URL 字段** —— 目标地址只由壳的启动参数决定，这从结构上堵死「拿代理当任意 URL 转发器」 |
+| 鉴权（对页面） | `POST /provider/chat`：优先 `Authorization: Bearer <通道token>`，兼容 `X-Shell-Token`；常量时间比较。页面在代理模式下**去掉** `Authorization`、改带 `X-Provider-Key: host`，并把通道 token 放 `X-Shell-Token`（通道 token 只放内存、绝不写 localStorage） |
+| 响应 | 把 provider 的 **HTTP 状态码与 body 原样透传**（3xx 也照透，**不跟随重定向**）。页面侧的 `httpError()` 按状态分档的文案因此一行都不用改 |
+| 超时 / 体积 | 超时复用壳的 `--timeout`（默认 10000ms）→ `504`；上游响应体上限 8 MiB（`MAX_PROVIDER_BYTES`，超了截断）；页面 → 壳的请求体上限 1 MiB（`MAX_BODY_BYTES`）→ `413` |
+
+**`GET /provider/config` 响应**（**绝不含 key 的任何片段，连尾 4 位都不给**）：
+
+```json
+{ "ok": true, "proxy": true, "baseUrl": "https://api.deepseek.com",
+  "defaultModel": "deepseek-v4-pro", "models": ["deepseek-v4-pro", "deepseek-flash"],
+  "hasEnvKey": true, "keySource": "env" }
+```
+
+`keySource` 取 `"env" | "cli" | "none"`；页面**只**读 `proxy` / `baseUrl` / `defaultModel` /
+`models` / `hasEnvKey`（`readHostProviderConfig()`）—— 缺 `baseUrl` 或 `defaultModel` 一律回
+`null`（= 当没有代理，回落直连），**宁可当「没有代理」也不瞎猜**。
+
+**壳自己的错误码 → 页面文案**（九档；壳的 body 形状恒为
+`{"ok":false,"error":"<code>","detail":"…"}`，`detail` 里**绝不放 key**）：
+
+| 状态 | `error` | 页面文案 |
+|---|---|---|
+| `409` | `no-key` | 本机壳里没有可用的 API key：设 `DEEPSEEK_API_KEY`（或 `OPENAI_API_KEY` / `PC_AI_KEY`）后重启桌面壳，或在设置里手填 |
+| `401` | `unauthorized` | 本机壳的通道 token 不对（重启壳后刷新页面） |
+| `403` | `proxy-off` | 本机壳拒绝了这次转发（<detail>，例如 `--no-provider-proxy` / 目标不是已知 provider） |
+| `413` | `body-too-large` | 请求太大（上限 1 MiB）：对话太长，清一下会话 |
+| `502` | `provider-unreachable` | 连不上端点（<detail>）：检查这台设备的网络 |
+| `504` | `provider-timeout` | 端点没在超时时间内回：<detail> |
+| `400` | `bad-request` | 端点返回 HTTP 400：<detail>（体不是 JSON / `stream:true` / `no-model`） |
+| `404` | `not-found` | **页面静默回落直连**（老壳没有这个端点），不弹错 |
+| 其它 4xx/5xx | 原样透传 provider 的 | 走 `httpError()` 四档（401/403、404、429、其它） |
+
+**「这一条到底是壳发的还是 provider 发的」怎么判**（P10 修掉的误报根源）：只看**响应形状** ——
+壳自己产生的每个错误体都有 `ok === false`，provider 的错误体是 OpenAI 形状（没有 `ok` 字段）。
+不能反过来用「有没有 `error` 字符串」判：OpenAI 兼容端点也常回 `{"error":"insufficient_quota"}`。
+分不出来的**一律退回 `httpError()` 并把 provider 原话带上**（不吞错、也不替 provider 背锅）。
+其中 **provider 的 403 单独说清方向**：`模型服务商拒绝了这个请求（HTTP 403）：<provider 原话前 120 字>`
+—— 壳拒绝要用户查本机配置 / 端口 / token，provider 拒绝要他去服务商那边查 key 权限 / 余额 / 模型授权。
+（这一档是 **P10 修掉的误报**：早先 provider 的 403 被算成「本机壳拒绝了这次转发」。）
+
+**安全边界与分档**（逐条可核）：
+
+- **环境 key 只发往已知 provider 主机 + 必须是 https**：白名单是 `ENV_KEY_HOSTS =
+  api.deepseek.com / api.openai.com`；`--provider-base` 落在这两者之外、**或者协议不是 `https:`**，
+  都**直接关掉 `/provider/*` 转发**并在 banner 里讲明原因（`协议不是 https，key 会明文出网` /
+  `主机不在白名单`）。**为什么 env 来源额外要求 https**：只判主机的话
+  `--provider-base http://api.deepseek.com:8080` 会通过主机检查、然后把环境 key 明文发到那个
+  明文端口上，等于白名单形同虚设（P15 第 4 项）。
+- **显式 `--provider-key` 不受这道闸门限制**：那把 key 是用户自己敲的、他自己担责的转发行
+  （本机假 provider / 自建网关的自测都靠它）。
+- **不跟跨主机重定向**：上游 3xx 原样透传（带 `location`），绝不替页面去追。
+- **key 只发往已知 provider**：`ENV_KEY_HOSTS` 之外的目标在有 key 时直接关掉转发（同上）。
+- 只绑 `127.0.0.1`；banner / 日志 / 诊断文本里**只有 `providerKeyTail()` 的尾 4 位**
+  （形态 `…abcd`），没有 key 明文。
+
+**壳回写前会把自己那把 key 擦掉（透传的「唯一例外」）**：`scrubProviderKey()` 在写回页面之前把
+`opts.providerKey` 打成 `…` + 尾 4 位，覆盖三种形态（都大小写不敏感、容忍空格）：
+① `Bearer <key>`；② JSON 同形（`"authorization":"Bearer <key>"` 由 ① 覆盖）；③ 裸 key
+（例如 `api key: <key> is invalid`）。**其余字节一字不改**，并按新字节长度重写 `content-length`。
+为什么必须有：壳原本对 provider 响应是**原样透传**，而 provider 完全可能在错误体里把收到的
+`Authorization` **回显出来**，页面又会把 4xx body 前 120 字拼进错误行 ⇒ 环境 key 明文进了页面 DOM，
+直接打破本轮核心承诺（评审的对抗实测命中过 `Bearer sk-fake-env-7777`）。打码形态与 banner /
+诊断一致，所以「页面能看到的」与「日志能看到的」严格相同，不多泄漏一位。
+（页面在回显场景下看到的是 `…尾4` 掩码 —— 与壳的 banner 惯例一致，判可接受。）
+
+**APK 侧（本轮明确不做）**：Android 上**没有「宿主环境变量」这种给应用进程用的一等机制**
+（`System.getenv` 在应用进程里读不到用户设的 shell 变量），所以「环境 key」这条路在 APK 上不存在；
+APK 今天的行为仍是「手填 key + 直连」（`INTERNET` 权限已在）。**它能不能连上真 provider 存疑**
+（桌面 Edge 的实测表明 `Origin: file://` 对 DeepSeek 放行，但那**不是** Android WebView 的行为：
+`MainActivity` 没有开 `setAllowUniversalAccessFromFileURLs`，WebView 默认对 `file://` 页面的跨源
+请求是拦的，而本机没有 Android 设备可验证）⇒ 记进 `AGENTS.md` §7 的缺口，要做代理就照抄 §26.6 的
+路径与错误码，Java 侧多回一个 `Access-Control-Allow-Origin: file://`。
+
+**自测 / 验证口径**（`toolchain/pc-shell.mjs`）：
+
+```sh
+# env 来源（转发腿）：真 https 上游 + 假 key ⇒ 上游 401 原样透传，页面显示 provider 档文案
+set DEEPSEEK_API_KEY=sk-fake-env-7777 && node toolchain/pc-shell.mjs --port 8911 --no-open
+# 回显 / 擦除：显式 --provider-key（豁免 https 闸门）+ 本机 http 假 provider
+node toolchain/pc-shell.mjs --port 8914 --no-open --provider-key sk-cli-probe-8888 --provider-base http://127.0.0.1:8913
+# env 闸门：白名单主机 + http ⇒ 转发被关（banner 讲明原因）
+node toolchain/pc-shell.mjs --port 8915 --no-open --provider-base http://api.deepseek.com
+```
+

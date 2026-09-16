@@ -24,15 +24,17 @@
 ```
 src/app/       Session、设置注册表、引导注册表、手势映射、历史编解码、AI（ai-doc 文档文本化 / ai-tools 工具表 /
                ai-draw 落笔适配层（笔迹·形状·填充·擦除·特效·变换）/ ai-turn 回合事务 / ai-rpc 协议路由 /
-               ai-serve 本地服务生命周期 / ai-chat 应用内助手的整轮循环）—— 接口见 docs/API.md §21–§26
+               ai-serve 本地服务生命周期 / ai-presets 厂商预设（默认 DeepSeek）/ ai-chat 应用内助手的整轮循环）
+               —— 接口见 docs/API.md §21–§26
 src/engine/    文档模型、历史栈、像素操作、调色/对称/导出编码、重采样（resample）、颜色分析（color-analysis）
 src/render/    视口、合成器、脏矩形、洋葱皮
 src/servers/   服务层：RenderServer（合成与缓存）、ViewportServer（视图数学）、
                InputServer / GestureController（手势策略 · 轻点序列 · 指针事件入口）—— 见 docs/ARCHITECTURE.md
 src/io/        原生桥接、工程文件（.pxc）、Aseprite 读写（aseread/asewrite/zlib）、自动保存、参考图、安全区、base64
-src/ui/        React 外壳、弹窗、时间线、浮动球、i18n、样式、AiPanel（应用内助手面板）
+src/ui/        React 外壳、弹窗、时间线、浮动球、i18n、样式、AiPanel（应用内助手面板 + 助手小球 ChatBall）、
+               AiWindow（助手浮窗，portal 到 body）
 android/       MainActivity（Java 层）+ AiServer（本地 AI 端口服务，纯 JDK）+ AndroidManifest
-tests/         无 DOM 的引擎/逻辑回归（**7376 条断言**，`node .ts-out/tests/run-tests.js` 末尾会打印条数）
+tests/         无 DOM 的引擎/逻辑回归（**7639 条断言**，`node .ts-out/tests/run-tests.js` 末尾会打印条数）
 docs/          API.md / COMPARISON.md / PLAN-ai.md / ARCHITECTURE.md / UI.md / PC.md
 toolchain/     自写开发脚本（devserver / make-icon / check-bundle / stress-stroke / ai-server / pc-mcp / pc-shell+pc-shell.cmd）
 ```
@@ -46,7 +48,21 @@ toolchain/     自写开发脚本（devserver / make-icon / check-bundle / stres
 - `aapt2` 在本容器是 Android/x86 二进制、**跑不起来**，所以打包走「`javac` + `d8` → 往模板 APK 里塞」的路线（见 §6）。
 - 浏览器调试：`node toolchain/devserver.js`（`app2/www`，端口 8090；`app2/www/js/telemetry.js` 会把错误与布局信息 POST 到 `/log`）。
 - `toolchain/` 只保留自写脚本（`devserver.js`、`make-icon.js`、`check-bundle.mjs`、`stress-stroke.mjs`、`ai-server.mjs`；`/toolchain/*` 被忽略，每个脚本各靠 `.gitignore` 里一条 `!` 白名单入库）：`node toolchain/make-icon.js <outdir>` 生成 Android 启动图标，`node toolchain/make-icon.js --pwa app2/www/icons` 生成 manifest 用的 192/512 图标（尺寸必须和 `manifest.webmanifest` 一致，否则 Chrome 报 “Resource size is not correct”），`node toolchain/check-bundle.mjs [bundle]` 把 Web 产物放进最小 DOM 桩里真跑一遍（**esbuild 按「源文件往上最近的 tsconfig.json」决定 JSX 变换：构建目录里多出一份没有 `"jsx": "react-jsx"` 的 tsconfig，就会打出引用全局 React 的白屏包**；`scripts/build-web.sh` 已内置这道自检），`node toolchain/stress-stroke.mjs` 量**笔迹性能基线**（每步同步耗时 + 重合成次数与耗时；改渲染或笔迹相关代码前后各跑一次，基线表在 `docs/COMPARISON.md` §三.1）；`node toolchain/ai-server.mjs` 是**本机开发 / 验证用的 Node 宿主**（本地 AI 工具服务：只绑 `127.0.0.1`，`--port` / `--tier` / `--token` / `--version` 或环境变量 `AI_PORT` / `AI_TIER` / `AI_TOKEN` 可配，`--help` 看用法；启动会打印端口与随机 token，并用 curl 示例提示怎么调）。它**不重写协议** —— 直接 require `tests/.ts-out` 里编译好的 `src/app/ai-rpc.js` / `ai-serve.js` / `session.js`（Session 靠 `tests/session.test.ts` 的 `stubEnv()` 跑起来），所以**先跑一次** `node node_modules/typescript/bin/tsc -p tests/tsconfig.json`，缺产物会打印编译提示并退出；这个宿主没有确认 UI，destructive 工具一律回 `cancelled`（与 APK 默认口径一致），协议表与口径见 `docs/API.md` §24。`.gitignore` 的 `/toolchain/*` + 逐条白名单里也加了 `!/toolchain/ai-server.mjs`（新脚本要入库必须同样加一行）；SDK 下载物已清理。
-- **AI 的电脑侧入口（本轮新增，两个脚本都靠 `.gitignore` 白名单入库）**：`node toolchain/pc-mcp.mjs --port 8787 --token <hex>` 是 **C4 的 MCP 入口**（stdio 换行分隔 JSON-RPC 2.0 ↔ 本机 `POST /ai` 的薄转发，`tools/list` 现取现映射、`tools/call` 不吞错；`AI_PORT` / `AI_TOKEN` / `AI_TIMEOUT` 也可配）。**前置**：先在应用里打开本地 AI 服务（或 `node toolchain/ai-server.mjs --tier draw`）并拿到它启动时打印的 token，再把同一个 token 配给宿主；`--token` / `AI_TOKEN` 现在**真的生效**（修过一处「模块顶层求值先于 `parseArgs`，把传入的 token 静默吞掉」的顺序缺陷），token **未指定时才**随机生成 —— banner / `--help` / 文件头文案已按这条改准。`node toolchain/pc-shell.mjs` 是**P7 的电脑桌面壳**（Windows 双击 `toolchain\pc-shell.cmd`）：伺服 `app2/www` + 在同一个端口提供 `/ai` 两个入口 + 用 SSE 把请求转发进窗口页面里那张真实画布，协议与 APK 的 `AiServer.java` 一致、一行都不重写。用法、宿主配置示例与工具数口径见 `docs/API.md` §25。**`node --check` 只能验 `.mjs`**，`.cmd` 要用 `cmd /c toolchain\pc-shell.cmd --help`。
+- **AI 的电脑侧入口（本轮新增，两个脚本都靠 `.gitignore` 白名单入库）**：`node toolchain/pc-mcp.mjs --port 8787 --token <hex>` 是 **C4 的 MCP 入口**（stdio 换行分隔 JSON-RPC 2.0 ↔ 本机 `POST /ai` 的薄转发，`tools/list` 现取现映射、`tools/call` 不吞错；`AI_PORT` / `AI_TOKEN` / `AI_TIMEOUT` 也可配）。**前置**：先在应用里打开本地 AI 服务（或 `node toolchain/ai-server.mjs --tier draw`）并拿到它启动时打印的 token，再把同一个 token 配给宿主；`--token` / `AI_TOKEN` 现在**真的生效**（修过一处「模块顶层求值先于 `parseArgs`，把传入的 token 静默吞掉」的顺序缺陷），token **未指定时才**随机生成 —— banner / `--help` / 文件头文案已按这条改准。`node toolchain/pc-shell.mjs` 是**电脑桌面壳**（Windows 双击 `toolchain\pc-shell.cmd`）：伺服 `app2/www` + 在同一个端口提供 `/ai` 两个入口 + 用 SSE 把请求转发进窗口页面里那张真实画布，协议与 APK 的 `AiServer.java` 一致、一行都不重写。用法、宿主配置示例与工具数口径见 `docs/API.md` §25。**`node --check` 只能验 `.mjs`**，`.cmd` 要用 `cmd /c toolchain\pc-shell.cmd --help`。
+- **桌面壳的第二条通道：模型请求的同源代理（应用内助手用）**。壳会从**环境变量**读一把 provider key（`DEEPSEEK_API_KEY` → `OPENAI_API_KEY` → `PC_AI_KEY`，第一个非空即用；显式 `--provider-key` 优先级最高），并在同端口提供 `GET /provider/config`（探测，不要 token）与 `POST /provider/chat`（转发，要壳的通道 token）。页面**只**拿 `hasEnvKey` 布尔 + 公开的端点 / 模型名，**真 key 一个字节都不进页面**（内存 / DOM / console / localStorage 四处都搜不到，响应体里连尾 4 位都没有）。用法：
+  ```sh
+  # ① 环境变量（推荐）：设一次，然后照常起壳 —— 应用里「设置 → AI 助手」不用手填 key
+  set DEEPSEEK_API_KEY=sk-xxxx     # PowerShell: $env:DEEPSEEK_API_KEY="sk-xxxx"
+  node toolchain/pc-shell.mjs
+  # ② 自测 / 自建网关：显式给 key（这一条**豁免** https 闸门，可以用本机 http 假 provider）
+  node toolchain/pc-shell.mjs --provider-key sk-xxxx --provider-base http://127.0.0.1:9000
+  node toolchain/pc-shell.mjs --help                                   # 全部参数
+  curl.exe -s http://127.0.0.1:8787/provider/config                    # 看壳自报的代理配置
+  ```
+  · **改了环境变量要重启壳**（key 只在 `parseArgs` 时读一次）；`AI_TOKEN` 是**壳 ↔ 页面的通道 token**，与 provider key 是两件事，不得混用；
+  · **安全分档**：环境变量那把 key **只发往已知 provider 主机（`api.deepseek.com` / `api.openai.com`）且必须是 `https:`**，两者有一个不满足就**直接关掉 `/provider/*` 转发**并在 banner 讲明原因（`--provider-base http://api.deepseek.com:8080` 这种也会被拒）；只有显式 `--provider-key` 才可走非白名单主机 / 明文 http；
+  · 壳把自己那把 key **擦成 `…尾4`** 再写回页面（防上游在错误体里回显 `Authorization`，那会让环境 key 明文进 DOM）；不跟随跨主机重定向；banner / 日志 / 诊断里只有尾 4 位。
+  接口形状、九档错误码与完整安全边界见 `docs/API.md` §26.6；环境变量优先级与「key 不进页面」的准确口径见 §26.3。
 - 大改动可用 git 回滚（仓库已有 90+ 提交）。
 
 ---
@@ -368,6 +384,25 @@ java -jar /root/pk/apksigner.jar verify --print-certs /sdcard/Download/PixelCraf
     **不存在的 `src/ui/settings.ts`**，实际改的是 **`src/app/settings.ts`**（`CHAT_SETTINGS` +
     `SETTING_SECRET_PATHS`）；运行时按 inScope 拒收越界路径，所以那次记录里只有 9 项 + 一行 output 勘误。
     以后写任务 inScope 请对着真实路径抄。
+  · **完成闸门只校验「声明的」`changedPaths`（本轮实测的口子，2026-09-17）**：集成/实现的验收闸门判的是
+    「声明的 changedPaths ⊆ inScope」，**未声明的**新增文件能整个溜过去 —— 本轮的 `src/ui/AiWindow.tsx`
+    就是这样进来的，而当时那份实现报告还把它描述成「零新增文件 / 窗口落在 AiPanel.tsx」。
+    **以后判断「这一轮到底改了哪些文件」一律以 `git status --short` 为准**，不要只信 changedPaths 或成员自述；
+    复核时把 `git status --short` 的每一条与文档/报告里的文件面对一遍。
+  · **「key 不进页面」这条只对环境变量来源成立**（P8/P15，`docs/API.md` §26.3）：手填的 `ai.chatKey`
+    仍在本机页面的 `localStorage` 里（同源脚本读得到），本轮没改这一点。环境 key 那条路是真的一个字节都不进页面
+    （壳转发、响应体里连尾 4 位都不给、回显的 key 由壳擦成 `…尾4`）。
+  · **env key 的转发腿与「上游回显」这个组合没能一起端到端验**（P15/P16）：env 来源现在要过
+    「白名单主机 + `https:`」两道闸，本机没有受信任证书，所以**回显型假 provider 只能配 `--provider-key`
+    （豁免闸门）+ 本机 `http`** 来验擦除。两条路读同一个 `opts.providerKey`、走同一段 `forwardToProvider()` /
+    `scrubProviderKey()`；env 来源的转发腿本身已用真 `https://api.deepseek.com`（假 key，401 原样透传）验过。
+    **要真验这个组合，得给本机假 provider 配一张受信任证书 / 自签 + `rejectUnauthorized:false` 的口子** —— 不做。
+  · **助手的状态行说明是中文常量而不是 i18n 键**（P15 新增的 `AI_CHAT_KEY_HELP_MANUAL` / `_ENV` / `_NONE`）：
+    英文界面下这三句仍显示中文。要 i18n 得把同模块的 `httpError()` / `hostError()` / `chatConfigError()`
+    一起搬进 `i18n.ts`（它们早就是中文常量），不在本轮。
+  · **`/provider/*` 的两处加固备选**（都属「不可利用的加固」，本轮判可接受、不做）：① 壳不校验 `Host` 头
+    （DNS rebinding 类风险，只绑 `127.0.0.1` + 通道 token 已经挡住了实际利用）；② `authOk()` 接受 `?token=`
+    查询串（会进浏览器历史 / 日志，但只在本机 + 用户自己配的前提下）。
   · 若干**弱断言**（例如 `digest.tokens` 用同一个公式反推期望值，只保证自洽、不保证预算真实）。
 
 ---
@@ -525,6 +560,24 @@ JSON-RPC 2.0 ↔ 本机 `POST /ai`，`tools/list` 现取现映射、`tools/call`
 （`ai.chatOn` / `ai.chatEndpoint` / `ai.chatModel` / `ai.chatKey`：**单独一张表不并进 `SETTINGS`**、key 走
 `SETTING_SECRET_PATHS` 不进导出、文本行走 `SettingDef.text` **不新增 `SettingKind`**）+ 主菜单入口与
 `i-ai-chat` 图标。接口见 `docs/API.md` §22.8 / §25 / §26，缺口与取舍见 §7。
+AI 助手浮窗化 + DeepSeek 预设 + 环境 key 同源代理（P8，2026-09-17）：助手从「主菜单里的整屏子面板」
+改成**浮动小窗 + 可最小化为浮动球** —— 新文件 `src/ui/AiWindow.tsx`（`createPortal(document.body)` 的容器：
+标题栏拖动柄 / 最小化 / 关闭 + 右下角缩放抓手），对话面板与助手小球 `ChatBall` 在 `src/ui/AiPanel.tsx`，
+浮窗与小球的**纯几何与归一化**（`pc.aichat.win` / `pc.aichat.ball`、夹取、坏数据回落）在 `src/app/uibar.ts`
+（有单测）；小球是**独立小球**、**没扩 `ORB_IDS`**（仍是 5 个），只与五球系统共享「触屏下收起别人的展开环」
+这一条规则。状态机与 `pc-back` 全在 `src/ui/App.tsx`，**最小化 = 浮窗 DOM 真的卸载**，而「卸载时留不留这一轮」
+只看 Session 实况（`aiPanelDropsTurnOnUnmount()`）—— 最小化按钮 / 双击标题栏 / 返回键 / 关窗**同语义**，
+不再有第二份标志位可漂移。设置面：新文件 `src/app/ai-presets.ts`（**DeepSeek 默认预设**：`https://api.deepseek.com`
++ `deepseek-v4-pro`，可切 `deepseek-flash`；切预设只写 endpoint/model、**绝不碰 key**，切到 `custom` 一个字段都不写），
+`CHAT_SETTINGS` 扩到 **14 条**（预设 / 直连地址 / 轮数 / 温度 / 补充提示词 / 流式 / `ai.protectKey` / 三条窗口状态），
+`ai.chatEndpoint` / `ai.chatModel` 的默认值改成从预设表取（「开箱即用」）。电脑侧壳新增
+**模型请求的同源代理** `GET /provider/config` + `POST /provider/chat`（`toolchain/pc-shell.mjs`）：key 从环境变量
+（`DEEPSEEK_API_KEY` → `OPENAI_API_KEY` → `PC_AI_KEY`，或显式 `--provider-key`）读，页面只拿一个布尔与公开的
+端点 / 模型名，**真 key 一个字节都不进页面**；响应原样透传（唯一例外＝壳把自己那把 key 擦成 `…尾4`），
+错误码九档由页面翻成人话；env 来源只发**白名单主机 + `https:`**。**两条真浏览器缺陷**（`GET` 带 body 被抛
+`TypeError` 又被 `catch` 静默吞掉、代理 URL 拿 provider 基地址拼前缀导致跨源）只有打真壳 + 无头 Edge 才暴露出来
+—— 单测 7500+ 条全绿也照样漏过去，这是"必须端到端跑一次"的现成例子。断言 7527 → **7639**，产物重建后
+`check-bundle` exit 0。接口见 `docs/API.md` §26（26.1–26.6），缺口见 §7。
 
 ---
 
