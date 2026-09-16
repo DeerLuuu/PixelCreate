@@ -19,6 +19,7 @@ import { chordForAction, chordOf } from "../app/keymap";
 import { ReplayOverlay } from "./replay";
 import { RenderDebugHud } from "./renderdebug";
 import * as bridge from "../io/bridge";
+import { isNativeShell } from "../io/bridge";
 import { writeClipboardPng } from "../io/clipboard";
 import { pasteClipboard } from "./paste";
 import { showTip, hideTip } from "./tooltip";
@@ -41,6 +42,9 @@ import { GuideOverlay, simulateTap } from "./guide";
 import type { ModalId, SizeMode, SheetData } from "./modals";
 import { IsoBar } from "./iso";
 import { Dialog, useKitPcMode } from "./kit";
+import { AiWindow } from "./AiWindow";
+import { ChatBall } from "./AiPanel";
+import { aiChatSettings, onAiChatSettingsChange, saveAiChatSettings } from "../app/settings";
 
 type PanelId = "palette" | null;
 
@@ -130,6 +134,70 @@ export function App() {
       window.removeEventListener("pc-shading", onShading);
     };
   }, []);
+
+  // ---- 应用内助手的浮动小窗 + 浮动球（docs/PLAN-ai.md §3.7.6）----
+  //
+  // 三件状态（开 / 已最小化 / 允许小球）落在 `CHAT_SETTINGS`（`pc.aichat`，**不进 prefs**：
+  // 窗口开在哪儿、开着没有是「这台机器这个屏幕」的事，不该跟着工程 / 设置导出走）；
+  // 几何（x/y/w/h/min）由 `AiWindow` 自己读写 `localStorage["pc.aichat.win"]`。
+  //
+  // 状态机（§3.7.6 的六条事件表，落点全在这儿）：
+  //   · 菜单「AI 助手」/ `pc-ai-window` → 打开（`winOpen = true`，`winMin` 归位）
+  //   · 最小化按钮 / 标题栏双击 / Esc / Android 返回键 → **最小化**（`winMin = true`，浮窗 DOM 真的卸载）
+  //   · 点球 → `winMin = false`（浮窗按 `pc.aichat.win` 里那份几何还原；保留的是**对话**）
+  //   · 关闭按钮 → `winOpen = false`
+  //
+  // **最小化与关窗在回合上同语义 = 都放弃还没收尾的那一轮**（§3.7.6 事件表 L465/L467/L469）。
+  // 这条不变式**不靠调用点记标志位**：`AiPanel` 一卸载就问 Session 的实况
+  // （`aiPanelDropsTurnOnUnmount()`），所以任何新增的卸载路径都自动是同一条规则。
+  // 两个动作因此各自只有一个写入点：`minimizeAiWin()` / `closeAiWin()`，
+  // **不要在别处直接写 `winMin`**（P9 的 HIGH 就是「窗口按钮那条路径漏了一步」）。
+  const [aiCfg, setAiCfg] = useState(() => aiChatSettings());
+  useEffect(() => onAiChatSettingsChange(setAiCfg), []);
+  /** 打开浮窗（菜单那一行与引导都用它；平台门在渲染处，这里只管状态） */
+  const openAiWin = (): void => {
+    saveAiChatSettings({ winOpen: true, winMin: false });
+    SESSION.changedUI();
+  };
+  useEffect(() => {
+    const onOpen = () => openAiWin();
+    window.addEventListener("pc-ai-window", onOpen);
+    return () => window.removeEventListener("pc-ai-window", onOpen);
+  }, []);
+  /** 最小化成球（窗口按钮 / 标题栏双击 / Android 返回键共用这一个入口） */
+  const minimizeAiWin = (): void => {
+    // 不在这里动会话存储：面板卸载时自己会收尾（`AiPanel` 的卸载钩子 →
+    // `noteAiWinClosed()`），那一步比这里更晚，所以对话里的收尾说明不会被面板的
+    // 「同步进存储」覆盖掉。这里只写窗口状态。
+    saveAiChatSettings({ winMin: true });
+    SESSION.changedUI();
+    SESSION.hapticTick("AI 助手", 0.6);
+  };
+  // Android 返回键：**只最小化**（不关窗、不丢对话），与 FloatingTools 同做法
+  useEffect(() => {
+    const onBack = (e: Event) => {
+      const d = (e as CustomEvent<{ handled: boolean }>).detail;
+      if (!d || d.handled) return;
+      const cfg = aiChatSettings();
+      if (!isNativeShell() || !cfg.winOpen || cfg.winMin) return;
+      minimizeAiWin();
+      d.handled = true;
+    };
+    window.addEventListener("pc-back", onBack);
+    return () => window.removeEventListener("pc-back", onBack);
+  }, []);
+  /** 关窗：与最小化同为「放弃回合」，只是 `winOpen` 也落下去（收尾同样交给面板的卸载钩子） */
+  const closeAiWin = (): void => {
+    saveAiChatSettings({ winOpen: false, winMin: false });
+    SESSION.changedUI();
+  };
+  /** 点球还原：浮窗按 `pc.aichat.win` 里那份几何回来；对话（含还没点完的说明）留在会话存储里 */
+  const restoreAiWin = (): void => {
+    saveAiChatSettings({ winMin: false });
+    SESSION.changedUI();
+    SESSION.hapticTick("AI 助手", 0.7);
+  };
+  const aiOn = isNativeShell() && aiCfg.winOpen;
 
   // first launch after an update: auto-show the release notes. While they are
   // due (or still open) the tour below waits: the guide is a full-screen
@@ -709,7 +777,7 @@ export function App() {
           <PalettePanel t={t} onClose={() => setPanel(null)} />
         </Overlay>
       ) : null} />
-      <Keep on={modal === "menu"} el={modal === "menu" ? <MenuModal t={t} snap={snap} onClose={() => setModal(null)} onOpen={setModal} onSheet={(d) => { setSheet(d); setModal("sheet"); }} onRef={(d) => SESSION.setRefImage(d)} onGuide={() => { setModal(null); setGuide(GUIDE.slice()); }} /> : null} />
+      <Keep on={modal === "menu"} el={modal === "menu" ? <MenuModal t={t} snap={snap} onClose={() => setModal(null)} onOpen={setModal} onSheet={(d) => { setSheet(d); setModal("sheet"); }} onRef={(d) => SESSION.setRefImage(d)} onGuide={() => { setModal(null); setGuide(GUIDE.slice()); }} onAiWindow={openAiWin} /> : null} />
       <Keep on={modal === "size"} el={modal === "size" ? <SizeModal t={t} snap={snap} initial={sizeMode} onClose={() => setModal(null)} onAdvanced={() => setModal("scaleadv")} /> : null} />
       <Keep on={modal === "scaleadv"} el={modal === "scaleadv" ? <ScaleModal t={t} onClose={() => setModal(null)} /> : null} />
       <Keep on={modal === "sheet" && sheet !== null} el={modal === "sheet" && sheet ? <SheetModal t={t} img={sheet} onClose={() => { setModal(null); setSheet(null); }} /> : null} />
@@ -758,6 +826,14 @@ export function App() {
       )}
       {dropHint && (
         <div className="drop-hint"><span>{t("dropHint")}</span></div>
+      )}
+      {/* 应用内助手：浮窗 + 浮动球（两个都自带平台门，没桥接时连 DOM 都没有）。
+          **不要**把浮窗包进 `Keep`：它靠「卸载」跑回合收尾（§3.7.6 状态机表第 2 行），
+          延迟卸载会让开着的 AI 回合多活 200ms，那不是这里想要的。 */}
+      {aiOn && !aiCfg.winMin && <AiWindow t={t} onMinimize={minimizeAiWin} onClose={closeAiWin} />}
+      {aiOn && aiCfg.winMin && aiCfg.ball && (
+        <ChatBall t={t} onRestore={restoreAiWin}
+          onOtherRings={() => window.dispatchEvent(new Event("pc-ai-ball-tap"))} />
       )}
       <TipHost />
     </div>
@@ -1155,11 +1231,15 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasScaleAdv, o
       const d = (e as CustomEvent<{ handled: boolean }>).detail;
       if (!d || d.handled) return;
       const st = backState.current;
-      const any = st.open || st.sub !== null || st.sel.open || st.pal.open || st.fx.open || st.canv.open;
+      // `sel` 是这一组里**唯一**可能整个为 null 的（pal / fx / canv 都是带默认对象的 state），
+      // 而它下面被读了**两次**：判「有没有浮层要收」一次、收它自己一次。两处都要判空 ——
+      // 只补前一处不够：主球环开着时 `st.open` 会让这一行短路成 true，流程继续走到下面那一次读，
+      // 照样抛 TypeError（真浏览器复现：`orb open` 状态下按返回键崩在第二次读上）。
+      const any = st.open || st.sub !== null || (st.sel !== null && st.sel.open) || st.pal.open || st.fx.open || st.canv.open;
       if (!any) return;
       setOpen(false);
       setSub(null);
-      if (st.sel.open) setSel({ ...st.sel, open: false });
+      if (st.sel !== null && st.sel.open) setSel({ ...st.sel, open: false });
       if (st.pal.open) setPal({ ...st.pal, open: false });
       if (st.fx.open) setFx({ ...st.fx, open: false });
       if (st.canv.open) { setCanv({ ...st.canv, open: false }); setCanvSub(null); }
@@ -1393,6 +1473,19 @@ function FloatingTools({ t, snap, onCanvasNew, onCanvasSize, onCanvasScaleAdv, o
     if (!L.fx) setFx((g) => (g ? { ...g, open: false } : g));
     if (!L.canv) closeCanv();
   };
+  /** 同一个收球动作也要能被窗外触发（助手小球点/拖时互斥），所以存一份最新引用 */
+  const closeRadialsRef = useRef(closeRadials);
+  closeRadialsRef.current = closeRadials;
+
+  // 助手小球被点/被拖时收起别的球已经展开的环（§3.7.6 的「互斥」一条）：
+  // 助手球是**独立组件**（不进 ORB_IDS），但它与五球系统共享这一条规则。
+  // 触屏下与「点别的球」同款效果（`closeRadials` 会跳过锁定的球）；PC 模式不互斥。
+  useEffect(() => {
+    if (pcMode) return;
+    const onAiTap = () => closeRadialsRef.current();
+    window.addEventListener("pc-ai-ball-tap", onAiTap);
+    return () => window.removeEventListener("pc-ai-ball-tap", onAiTap);
+  }, [pcMode]);
 
   // PC 模式没有「点空白处收球」的遮罩（那会拦住画布操作），所以 Esc 负责收球
   useEffect(() => {

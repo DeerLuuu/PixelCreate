@@ -38,6 +38,7 @@
     "../tests/render.test.ts",
     "../tests/export.test.ts",
     "../tests/back.test.ts",
+    "../tests/uiback.test.ts",
     "../tests/expr.test.ts",
     "../tests/effects.test.ts",
     "../tests/view.test.ts",

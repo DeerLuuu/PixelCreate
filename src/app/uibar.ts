@@ -43,6 +43,141 @@ export const CBAR_ACTIONS: UIAction[] = [
 export const ORB_IDS = ["main", "sel", "pal", "fx", "canv"] as const;
 export type OrbKey = typeof ORB_IDS[number];
 
+// ---------------------------------------------------------------- 助手浮窗与助手小球
+//
+// 应用内助手（docs/PLAN-ai.md §3.7.6）有**自己的**浮窗与小球，**不**进 `ORB_IDS`：
+// 五个浮动球那套系统（dock 拖拽 / 展开环 / 饼菜单 / 界面定制 / `orbPrefs` 顺序）是全仓库
+// 回归面最密的一块，而助手球没有任何「子项」要被搬运或排序 —— 它就是一个开关按钮。
+// 所以这里只放**纯几何与存储归一化**（有单测），组件在 `src/ui/AiWindow.tsx`（浮窗）
+// 与 `src/ui/AiPanel.tsx`（对话面板 + 助手小球 `ChatBall`）。
+//
+// 为什么几何归一化放在这里（而不是组件里）：`pc.aichat.win` / `pc.aichat.ball` 里躺的是
+// 用户可写的 localStorage —— 坏数据 / 手改 / 换屏幕尺寸都会碰到。规则必须能单测，
+// 组件只负责调用它（**不许把 `JSON.parse` 的结果直接塞进 style**）。
+
+/** 助手浮窗几何的存储键（`{ v:1, x, y, w, h, min }`） */
+export const AI_CHAT_WIN_KEY = "pc.aichat.win";
+/** 助手小球位置的存储键（`{ x, y }`） */
+export const AI_CHAT_BALL_KEY = "pc.aichat.ball";
+/** 小球的内容 id（data-orb-id / data-guide 用；**不是** `ORB_IDS` 的一员） */
+export const CHAT_BALL_ID = "ai";
+/** 助手浮窗几何存储的版本号（换口径时整份丢弃，不做迁移） */
+export const AI_WIN_STORE_V = 1;
+/** 浮窗默认尺寸（§3.7.6 定稿） */
+export const AI_WIN_W = 380;
+export const AI_WIN_H = 460;
+/** 浮窗的最小 / 最大尺寸；边距 = 与视口边缘的最小间隙 */
+export const AI_WIN_MIN_W = 260;
+export const AI_WIN_MIN_H = 200;
+export const AI_WIN_EDGE = 8;
+export const AI_WIN_MARGIN = 16;
+
+export interface AiWinLayout {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  /** 已最小化成小球 */
+  min: boolean;
+}
+
+const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : NaN);
+
+/** 视口尺寸（拿不到 / 是垃圾 → 0，调用方按「无约束」处理，绝不抛异常） */
+function viewport(): { w: number; h: number } {
+  const g = globalThis as { innerWidth?: unknown; innerHeight?: unknown };
+  const w = num(g.innerWidth), h = num(g.innerHeight);
+  return { w: w > 0 ? w : 0, h: h > 0 ? h : 0 };
+}
+
+/** 默认几何：贴右下角（`w/h` 视口放不下时按最小尺寸让位） */
+export function aiWinDefaultLayout(innerW = 0, innerH = 0): AiWinLayout {
+  const vw = num(innerW) > 0 ? num(innerW) : viewport().w;
+  const vh = num(innerH) > 0 ? num(innerH) : viewport().h;
+  const w = vw > 0 ? Math.max(AI_WIN_MIN_W, Math.min(AI_WIN_W, vw - AI_WIN_MARGIN * 2)) : AI_WIN_W;
+  const h = vh > 0 ? Math.max(AI_WIN_MIN_H, Math.min(AI_WIN_H, vh - AI_WIN_MARGIN * 2)) : AI_WIN_H;
+  return {
+    w, h, min: false,
+    x: vw > 0 ? Math.max(AI_WIN_EDGE, vw - w - AI_WIN_MARGIN) : Math.max(AI_WIN_EDGE, 1024 - w - AI_WIN_MARGIN),
+    y: vh > 0 ? Math.max(AI_WIN_EDGE, vh - h - AI_WIN_MARGIN) : Math.max(AI_WIN_EDGE, 768 - h - AI_WIN_MARGIN),
+  };
+}
+
+/** 把几何夹进视口（拖动 / 缩放 / 旋屏后都要跑一次：窗口不许跑到屏幕外） */
+export function clampAiWinLayout(v: AiWinLayout, innerW = 0, innerH = 0): AiWinLayout {
+  const vw = num(innerW) > 0 ? num(innerW) : viewport().w;
+  const vh = num(innerH) > 0 ? num(innerH) : viewport().h;
+  const maxW = vw > 0 ? Math.max(AI_WIN_MIN_W, vw - AI_WIN_EDGE * 2) : Math.max(AI_WIN_MIN_W, v.w);
+  const maxH = vh > 0 ? Math.max(AI_WIN_MIN_H, vh - AI_WIN_EDGE * 2) : Math.max(AI_WIN_MIN_H, v.h);
+  const w = Math.round(Math.max(AI_WIN_MIN_W, Math.min(maxW, num(v.w) || AI_WIN_W)));
+  const h = Math.round(Math.max(AI_WIN_MIN_H, Math.min(maxH, num(v.h) || AI_WIN_H)));
+  const limX = vw > 0 ? Math.max(AI_WIN_EDGE, vw - w - AI_WIN_EDGE) : Math.max(AI_WIN_EDGE, num(v.x) || AI_WIN_EDGE);
+  const limY = vh > 0 ? Math.max(AI_WIN_EDGE, vh - h - AI_WIN_EDGE) : Math.max(AI_WIN_EDGE, num(v.y) || AI_WIN_EDGE);
+  return {
+    w, h, min: v.min === true,
+    x: Math.round(Math.max(AI_WIN_EDGE, Math.min(limX, num(v.x) || AI_WIN_EDGE))),
+    y: Math.round(Math.max(AI_WIN_EDGE, Math.min(limY, num(v.y) || AI_WIN_EDGE))),
+  };
+}
+
+/**
+ * 存储 → 几何（§3.7.6 的「跨会话恢复口径」，逐条可测）：
+ *   · `x/y/w/h` 任一不是有限数字 → **整份丢弃**，回默认值（不做逐字段修补：半份数据只会让窗口怪模怪样）；
+ *   · `v` 不认识、不是对象、是 `null`/字符串 → 同上；
+ *   · `w/h` 只在有限时才认，超界由 `clampAiWinLayout` 夹取（视口小于最小尺寸时以最小尺寸为准）；
+ *   · `min` **只认 `true`**（其余一律 false）。
+ */
+export function normalizeAiWinLayout(raw: unknown, innerW = 0, innerH = 0): AiWinLayout {
+  if (!raw || typeof raw !== "object") return aiWinDefaultLayout(innerW, innerH);
+  const o = raw as Record<string, unknown>;
+  if (o.v !== undefined && o.v !== AI_WIN_STORE_V) return aiWinDefaultLayout(innerW, innerH);
+  const x = num(o.x), y = num(o.y), w = num(o.w), h = num(o.h);
+  if ([x, y, w, h].some((n) => !Number.isFinite(n))) return aiWinDefaultLayout(innerW, innerH);
+  return clampAiWinLayout({ x, y, w, h, min: o.min === true }, innerW, innerH);
+}
+
+/** 小球默认位置：贴右下角，并**抬高 32px** 让开底栏（§3.7.6） */
+export function aiBallDefaultPos(orb: number, innerW = 0, innerH = 0): { x: number; y: number } {
+  const vw = num(innerW) > 0 ? num(innerW) : viewport().w;
+  const vh = num(innerH) > 0 ? num(innerH) : viewport().h;
+  const fallback = { x: 1024 - orb - AI_WIN_MARGIN, y: 768 - orb - 32 };
+  return {
+    x: Math.max(AI_WIN_EDGE, vw > 0 ? vw - orb - AI_WIN_MARGIN : fallback.x),
+    y: Math.max(AI_WIN_EDGE, vh > 0 ? vh - orb - 32 : fallback.y),
+  };
+}
+
+/** 小球位置夹取（与 `FloatingTools` 的 `clampXY` 同款口径，只是直径由调用方给） */
+export function clampAiBallPos(p: { x: number; y: number }, orb: number, innerW = 0, innerH = 0): { x: number; y: number } {
+  const vw = num(innerW) > 0 ? num(innerW) : viewport().w;
+  const vh = num(innerH) > 0 ? num(innerH) : viewport().h;
+  return {
+    x: Math.round(Math.max(AI_WIN_EDGE, Math.min(vw > 0 ? vw - orb - AI_WIN_EDGE : num(p.x) || AI_WIN_EDGE, num(p.x) || AI_WIN_EDGE))),
+    y: Math.round(Math.max(AI_WIN_EDGE, Math.min(vh > 0 ? vh - orb - AI_WIN_EDGE : num(p.y) || AI_WIN_EDGE, num(p.y) || AI_WIN_EDGE))),
+  };
+}
+
+/** 存储 → 小球位置（坏数据一律回默认位；`orb` 由调用方按当前模式给） */
+export function normalizeAiBallPos(raw: unknown, orb: number, innerW = 0, innerH = 0): { x: number; y: number } {
+  if (raw && typeof raw === "object") {
+    const o = raw as Record<string, unknown>;
+    const x = num(o.x), y = num(o.y);
+    if (Number.isFinite(x) && Number.isFinite(y)) return clampAiBallPos({ x, y }, orb, innerW, innerH);
+  }
+  return clampAiBallPos(aiBallDefaultPos(orb, innerW, innerH), orb, innerW, innerH);
+}
+
+/**
+ * 拖动 / 缩放一次的**纯几何**：从按下那一刻的几何 `l0` 加位移，
+ * **每次从起点重算**而不是逐帧累加 —— 累加会被夹取一点点往回挤（拖到屏幕边缘再拖回来位置就错了）。
+ * 夹取由调用方跑 `clampAiWinLayout`，这里只算。
+ */
+export function aiWinDragFrom(l0: AiWinLayout, kind: "move" | "resize", dx: number, dy: number): AiWinLayout {
+  return kind === "move"
+    ? { ...l0, x: l0.x + dx, y: l0.y + dy }
+    : { ...l0, w: l0.w + dx, h: l0.h + dy };
+}
+
 /** layout regions that can be switched off */
 export const LAYOUT_KEYS = ["top", "bar", "timeline", "dock", "orbs", "titles"] as const;
 export type LayoutKey = typeof LAYOUT_KEYS[number];

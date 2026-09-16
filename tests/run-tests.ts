@@ -14,6 +14,7 @@ import { testGuideAnchors } from "./guide-anchors.test";
 import { testRender } from "./render.test";
 import { testExport } from "./export.test";
 import { testBack } from "./back.test";
+import { testUiBack } from "./uiback.test";
 import { testI18n } from "./i18n.test";
 import { testUiKit } from "./ui-kit.test";
 import { testUiTokens } from "./ui-tokens.test";
@@ -99,6 +100,8 @@ async function main(): Promise<void> {
   testExport();
   console.log("--- back ---");
   testBack();
+  console.log("--- back handler guards (FloatingTools pc-back) ---");
+  testUiBack();
   console.log("--- snap ---");
   testSnap();
   console.log("--- view ---");

@@ -38,8 +38,10 @@ import { REBINDABLE, chordForAction, chordLabel, chordOf, isOverridden, override
 import { CBAR_ACTIONS, LAYOUT_KEYS, ORB_IDS, TOPBAR_ACTIONS, fullOrder } from "../app/uibar";
 import { GROUP_TOLERANCE, type ColourAnalysis, type ColourEntry, type ColourGroup } from "../engine/color-analysis";
 import { FEATURE_ICONS } from "./feature-icons";
-/** C5 应用内助手面板：只有原生桥接环境（APK / 桌面壳）才会真的挂出来，见 AiPanel 文件头 */
-import { AiPanel } from "./AiPanel";
+// 应用内助手（C5）原来是这里的整屏子面板（`sub === "ai"`）。P2 起它是独立浮窗
+// （`src/ui/AiWindow.tsx`，portal 到 body），菜单这一行只负责把它叫出来 ——
+// 所以这个文件**不再** import `AiPanel`（`aichat.panel.mounted` 盯的是「面板真的被挂出来」，
+// 现在挂在 AiWindow 里）。
 
 /** 打开颜色分析面板：App 侧监听这个事件切到 ColorAnalysisModal，
  *  同时把调色板面板收起来（面板与弹窗是两套状态，只有 App 能同时改） */
@@ -378,17 +380,25 @@ function parsePaletteBytes(b: Uint8Array): Array<[number, number, number, number
   }
   return out;
 }
-export function MenuModal({ t, snap, onClose, onOpen, onSheet, onRef, onGuide }: { t: ReturnType<typeof makeT>; snap: Snapshot; onClose: () => void; onOpen: (m: ModalId) => void; onSheet: (d: SheetData) => void; onRef: (d: RefImg) => void; onGuide: () => void }) {
+export function MenuModal({ t, snap, onClose, onOpen, onSheet, onRef, onGuide, onAiWindow }: { t: ReturnType<typeof makeT>; snap: Snapshot; onClose: () => void; onOpen: (m: ModalId) => void; onSheet: (d: SheetData) => void; onRef: (d: RefImg) => void; onGuide: () => void; onAiWindow?: () => void }) {
   // the onboarding tour may open a sub-menu when the menu is shown
   const [sub, setSub] = useState<null | "import" | "ai">(() => {
     const g = (window as unknown as { __pcGuideMenuSub?: null | "import" }).__pcGuideMenuSub;
     return g ?? null;
   });
   useEffect(() => {
-    const onSub = (e: Event) => setSub(((e as CustomEvent).detail ?? null) as null | "import");
+    const onSub = (e: Event) => {
+      const d = (e as CustomEvent).detail;
+      if (d === "ai") { onAiWindowRef.current?.(); onClose(); return; }
+      setSub(((d ?? null) as null | "import"));
+    };
     window.addEventListener("pc-guide-menu-sub", onSub);
     return () => window.removeEventListener("pc-guide-menu-sub", onSub);
   }, []);
+  /** `onAiWindow` 只在渲染里更新，事件监听器要读最新的那一个（菜单可能被打开多次） */
+  const onAiWindowRef = useRef(onAiWindow);
+  onAiWindowRef.current = onAiWindow;
+  const openAi = (): void => { onAiWindow?.(); onClose(); };
   const go = (modal: ModalId) => (label: string, icon: string, guide?: string) => <Btn label={label} icon={icon} onClick={() => onOpen(modal)} className="menuitem" guide={guide} />;
   const act = (label: string, icon: string, fn: () => void, guide?: string) => <Btn label={label} icon={icon} onClick={() => { fn(); onClose(); }} className="menuitem" guide={guide} />;
   const sheetPick = async () => {
@@ -419,10 +429,7 @@ export function MenuModal({ t, snap, onClose, onOpen, onSheet, onRef, onGuide }:
   return (
     <>
       <Dialog title={t("menu")} onClose={onClose} bodyClass="col">
-        {sub === "ai" ? (
-          /* 应用内助手（C5）：面板自己带「返回」，这里的对话框只是它的外壳 */
-          <AiPanel t={t} onBack={() => setSub(null)} />
-        ) : !sub ? (<>
+        {!sub ? (<>
           {go("newproject")(t("newProject"), FEATURE_ICONS.menu.newProject, "menu-new")}
           {act(t("save"), FEATURE_ICONS.menu.save, () => void saveProject(), "menu-save")}
           {go("export")(t("exportCanvas"), FEATURE_ICONS.menu.export, "menu-export")}
@@ -431,9 +438,10 @@ export function MenuModal({ t, snap, onClose, onOpen, onSheet, onRef, onGuide }:
           {go("coloradv")(t("cadv.open"), FEATURE_ICONS.menu.colorAdv, "menu-color-adv")}
           {go("autosave")(t("asHistory"), FEATURE_ICONS.menu.recover, "menu-autosave")}
           {act(t("iso.open"), FEATURE_ICONS.menu.iso, () => SESSION.enterIso(), "menu-iso")}
-          {/* 平台门：普通浏览器 / GitHub Pages 不背 AI —— 连这一行都不出现（§3.6） */}
+          {/* 平台门：普通浏览器 / GitHub Pages 不背 AI —— 连这一行都不出现（§3.6）。
+              点击 = 关掉菜单 + 打开**助手浮窗**（P2 起不再是菜单里的子面板，见 §3.7.6） */}
           {bridge.isNativeShell() ? (
-            <Btn label={t("aiChatOpen")} icon={FEATURE_ICONS.menu.aiChat} className="menuitem" guide="menu-ai-chat" onClick={() => setSub("ai")} />
+            <Btn label={t("aiChatOpen")} icon={FEATURE_ICONS.menu.aiChat} className="menuitem" guide="menu-ai-chat" onClick={openAi} />
           ) : null}
           {go("settings")(t("settings"), FEATURE_ICONS.menu.settings, "menu-settings")}
           {go("shortcuts")(t("shortcutHelp"), FEATURE_ICONS.menu.shortcuts, "menu-shortcuts")}
