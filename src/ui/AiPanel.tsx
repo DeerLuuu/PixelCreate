@@ -39,7 +39,7 @@ import {
   AI_CHAT_HOST_KEY_SENTINEL, AI_CHAT_TEMP_STEP, aiChatStatusText, chatConfigError,
   detectChatProxy, formatCallLog, proxyChatFetch, runChatTurn, systemMessage, userMessage,
 } from "../app/ai-chat";
-import type { ChatCallLog, ChatFetch, ChatMessage } from "../app/ai-chat";
+import type { ChatCallLog, ChatFetch, ChatFetchResponse, ChatMessage } from "../app/ai-chat";
 import type { AiToolCtx } from "../app/ai-tools";
 import { AI_CHAT_DEFAULT_MODEL, aiChatSettings, saveAiChatSettings } from "../app/settings";
 import { AI_CHAT_BALL_KEY, CHAT_BALL_ID, clampAiBallPos, normalizeAiBallPos } from "../app/uibar";
@@ -71,6 +71,13 @@ import type { makeT } from "./i18n";
 interface AiEntry {
   role: "user" | "assistant" | "note" | "error";
   text: string;
+  /**
+   * 模型这一轮的思考过程（`delta.reasoning_content` 的累积）。
+   * 显示成**默认折叠**的「思考过程」块（点开 / 收起）—— 它是**辅助信息**，不该抢正文的位置。
+   */
+  reasoning?: string;
+  /** 这一行还在流式长（用来画「流式输出中…」那个标记） */
+  live?: boolean;
 }
 
 /** 预览还没收尾的那一轮 */
@@ -271,12 +278,78 @@ export function ChatBall({ t, onRestore, onOtherRings }: {
 /** 没有浮窗存储（SSR / 单测直接渲染面板）时的退路：进程内一个空壳，行为与从前一致 */
 const scratchStore: AiWinStore = { thread: [], entries: [], pending: null, logs: [], input: "" };
 
-/** 浏览器 / APK / 桌面壳的 fetch 都满足 `ChatFetch`；没有 fetch 的运行环境返回 null */
+/**
+ * 浏览器 / APK / 桌面壳的 fetch 都满足 `ChatFetch`；没有 fetch 的运行环境返回 null。
+ *
+ * **流式挂在这一层**（`ai-chat.ts` 保持平台无关：不 import DOM 类型、不直接调 fetch）：
+ * 把 `res.body`（Web Streams 的 `ReadableStream`）包成 `ChatFetchResponse.chunks()` 那个
+ * `AsyncIterable<string>`，只负责**解码**，切分与累积由 `ai-chat` 的 `consumeSseStream()` 做。
+ *
+ * 三条边界：
+ *   · `body` 不存在（204 / 老宿主）→ **不挂 `chunks`**：`ai-chat` 据此走整包（自动降级那条路）；
+ *   · `body` 既不是异步可迭代、也没有 `getReader` → 同上（宁可降级，也不要一个坏掉的回答）；
+ *   · 迭代被提前打断（超时 / 回合失败）→ `finally` 里 `cancel()`/`releaseLock()`，
+ *     别把上游连接吊在那儿。
+ */
 function platformFetch(): ChatFetch | null {
   if (typeof fetch !== "function") return null;
   // `ChatFetchInit` 与 `RequestInit` 结构一致，只有 `signal` 一个是**故意写成 `unknown`** 的
   // （`ai-chat.ts` 要保持平台无关、不 import DOM 类型），所以在平台边界这一次转换是准确的。
-  return (url, init) => fetch(url, init as RequestInit);
+  return async (url, init) => {
+    const res = await fetch(url, init as RequestInit);
+    const body = res.body as (ReadableStream<Uint8Array> & { getReader?: unknown }) | null | undefined;
+    if (!body) return res as unknown as ChatFetchResponse;
+    const dec = new TextDecoder();
+    let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
+    /** 收尾：**正常读完也走它**（`finally`）—— 提前中断（超时 / 回合失败）时顺带取消上游 */
+    const finish = (): void => {
+      const r = reader;
+      reader = null;
+      if (r) {
+        try { void r.cancel().catch(() => { /* 已经关了 / 已读完 */ }); } catch { /* 已经关了 */ }
+      }
+    };
+    const raw = body as unknown as AsyncIterable<Uint8Array>;
+    const holder: { chunks?: () => AsyncIterable<string> } = {};
+    if (typeof (raw as { [Symbol.asyncIterator]?: unknown })[Symbol.asyncIterator] === "function") {
+      holder.chunks = async function* (): AsyncIterable<string> {
+        try {
+          for await (const part of raw) yield dec.decode(part, { stream: true });
+          const tail = dec.decode();
+          if (tail) yield tail;
+        } finally {
+          finish();
+        }
+      };
+    } else if (typeof body.getReader === "function") {
+      reader = body.getReader();
+      holder.chunks = async function* (): AsyncIterable<string> {
+        try {
+          for (;;) {
+            const step = await reader!.read();
+            if (step.done) break;
+            if (step.value) yield dec.decode(step.value, { stream: true });
+          }
+          const tail = dec.decode();
+          if (tail) yield tail;
+        } finally {
+          finish();
+        }
+      };
+    } else {
+      return res as unknown as ChatFetchResponse;
+    }
+    // 一个**薄**包装：`text()` 原样转发（错误体那条路要用原文），`ok` / `status` 原样读，
+    // 只有流式时多一个 `chunks()`。`res` 上的 `headers` 也一并透出去 ——
+    // `ai-chat` 的 `isEventStream()` 要拿 `content-type` 判断「这到底是不是 SSE」。
+    return {
+      ok: res.ok,
+      status: res.status,
+      headers: res.headers,
+      text: () => res.text(),
+      chunks: holder.chunks,
+    } as unknown as ChatFetchResponse;
+  };
 }
 
 // ------------------------------------------------------------------ 通路：直连 / 同源代理（§3.7.3）
@@ -365,12 +438,27 @@ export function AiPanel({ t, onBack, store }: {
   const [pending, setPending] = useState<AiPending | null>(() => st.pending);
   // 通路（直连 / 同源代理）：null = 还没探完（探完才决定 key 从哪来）
   const [transport, setTransport] = useState<typeof transportCache>(() => transportCache);
+  // 流式那一行的状态：`live` = 正在流式（画「流式输出中…」），`fallback` = 降级的说明（一定要给用户看）
+  const [streamFlag, setStreamFlag] = useState<{ live: boolean; fallback: string }>({ live: false, fallback: "" });
   const live = useRef(true);
+  /**
+   * 流式增量的目标行下标（`entries` 的最后一行）。用 ref 而不是从 state 反推：
+   * 增量回调可能在**同一次 `send()` 里连着来几十次**，从 state 里找会读到旧值、把自增写坏。
+   */
+  const streamRow = useRef(-1);
+  /**
+   * `entries` 的**同步长度镜像**：React 的 `setEntries(fn)` 不保证立刻跑 `fn`，
+   * 所以「流式那一行是第几条」不能靠 state 反推（增量可能连着来几十次）。
+   * 每次 `setEntries` 都同步维护它，行下标当场就能定下来。
+   */
+  const entriesLen = useRef(st.entries.length);
 
   /** 任何一项变化都同步进存储（卸载时不丢）；四处状态一起走这里，别各写一份 */
   useEffect(() => {
     st.thread = thread; st.entries = entries; st.pending = pending;
     st.logs = logs; st.input = input;
+    // 行数镜像（见 `entriesLen` 的注释）：一次渲染里补平，下一批增量就有准数了
+    entriesLen.current = entries.length;
   }, [st, thread, entries, pending, logs, input]);
 
   useEffect(() => () => {
@@ -464,7 +552,30 @@ export function AiPanel({ t, onBack, store }: {
     setInput("");
     setErr("");
     setLogs([]);
+    setStreamFlag({ live: false, fallback: "" });
+    // 流式落点的行下标：此刻 `entries` 的最后一条刚推入的是用户那句话，
+    // 增量来时（`onText`）再推一条 assistant 预览行并把下标记下来。
+    streamRow.current = -1;
     setBusy(true);
+    /**
+     * 流式增量：**只改显示**（那一行的正文 / 思考过程），回合与历史一个字节都没碰。
+     * `thinking` 只写进行对象，`text` 变了才重建 —— 免得每次 reasoning 增量都白重渲染一遍正文。
+     */
+    const onDelta = (kind: "text" | "reasoning", value: string): void => {
+      if (!live.current) return;
+      const i = streamRow.current;
+      if (i < 0) {
+        const row: AiEntry = { role: "assistant", text: kind === "text" ? value : "", live: true };
+        if (kind === "reasoning") row.reasoning = value;
+        streamRow.current = entriesLen.current;
+        entriesLen.current += 1;
+        setEntries((prev) => prev.concat([row]));
+        return;
+      }
+      setEntries((prev) => prev.map((e, j) => (
+        j !== i ? e : (kind === "text" ? { ...e, text: value, live: true } : { ...e, reasoning: value, live: true })
+      )));
+    };
     const r = await runChatTurn({
       messages,
       ctx,
@@ -481,9 +592,13 @@ export function AiPanel({ t, onBack, store }: {
       stream: cfg.stream,
       systemPrompt: cfg.systemPrompt,
       onCall: (log) => { if (live.current) setLogs((prev) => prev.concat([log])); },
+      onText: (v) => onDelta("text", v),
+      onReasoning: (v) => onDelta("reasoning", v),
     });
     if (!live.current) return;
     setBusy(false);
+    // 这一轮到底流式了没有：让用户看见一行说明（尤其是**降级**时的具体原因）
+    setStreamFlag({ live: false, fallback: r.streamNote.fellBack ? (r.streamNote.reason || "") : "" });
     if (!r.ok) {
       const why = r.error || t("aiChatFailed");
       setErr(why);
@@ -491,7 +606,23 @@ export function AiPanel({ t, onBack, store }: {
       return;                                           // 文档已经被 rollback 了（ai-chat 保证）
     }
     setThread(r.messages.filter((m) => m.role !== "system"));
-    if (r.text) setEntries((prev) => prev.concat([{ role: "assistant", text: r.text }]));
+    // 正文以**收尾后的完整文本**为准：把流式那一行的 `live` 标记摘掉并补齐（工具调用轮里的中间文本
+    // 本来就不显示，所以这里只更新最后那条 assistant 行，不新推一条）。
+    const rc = r.messages.filter((m) => m.role === "assistant").map((m) => m.reasoning_content ?? "").join("");
+    const rowIdx = streamRow.current;
+    if (r.text) {
+      setEntries((prev) => {
+        const next = prev.slice();
+        if (rowIdx >= 0 && rowIdx < next.length && next[rowIdx].role === "assistant") {
+          next[rowIdx] = { ...next[rowIdx], text: r.text, live: false, ...(rc ? { reasoning: rc } : {}) };
+          return next;
+        }
+        return next.concat([{ role: "assistant", text: r.text, live: false, ...(rc ? { reasoning: rc } : {}) }]);
+      });
+    } else if (rc && rowIdx >= 0) {
+      // 只有思考过程、没有正文（例如模型直接调工具）：那一行也别留着「流式中」的标记
+      setEntries((prev) => prev.map((e, j) => (j === rowIdx ? { ...e, reasoning: rc, live: false } : e)));
+    }
     if (r.turnOpen) {
       const pv = SESSION.previewAiTurn();
       setPending({ calls: r.calls.length, rect: pv.rect, docRev: r.docRev, docRevBefore: r.docRevBefore });
@@ -555,7 +686,16 @@ export function AiPanel({ t, onBack, store }: {
             <div className="as-main">
               <b>{e.role === "user" ? t("aiChatYou") : e.role === "assistant" ? t("aiChatAssistant") : "·"}</b>
               <span className={e.role === "error" ? "warn" : undefined}>{e.text}</span>
+              {e.live ? <span className="as-why" data-guide="ai-stream">{t("aiChatStreaming")}</span> : null}
             </div>
+            {/* 思考过程：**单独一块、默认折叠**（`<details>` 不带 `open`）—— 它不该抢正文的位置，
+                但流式期间必须看得见它在长（`summary` 上的字数会跟着涨）。 */}
+            {e.reasoning ? (
+              <details className="ai-reason" data-guide="ai-reasoning">
+                <summary>{t("aiChatReasoning") + "（" + e.reasoning.length + "）"}</summary>
+                <div className="ai-reason-body">{e.reasoning}</div>
+              </details>
+            ) : null}
           </div>
         ))}
       </div>
@@ -573,6 +713,10 @@ export function AiPanel({ t, onBack, store }: {
         </div>
       ) : null}
       {busy ? <div className="row-note">{t("aiChatThinking")}</div> : null}
+      {/* 流式降级的说明：**一定要给用户看**（否则「说好的流式怎么没动」就成了谜） */}
+      {streamFlag.fallback
+        ? <div className="row-note" data-guide="ai-stream-fallback">{t("aiChatStreamFallback").replace("{why}", streamFlag.fallback)}</div>
+        : null}
       {err ? <div className="row-note warn" data-guide="ai-error">{err}</div> : null}
       {showPreview && pending ? (
         <div data-guide="ai-pending">

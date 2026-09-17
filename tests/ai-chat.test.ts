@@ -18,11 +18,12 @@
 import { Session } from "../src/app/session";
 import {
   AI_CHAT_COMPLETIONS_PATH, AI_CHAT_DEFAULT_MAX_ROUNDS, AI_CHAT_HOST_KEY_SENTINEL, AI_CHAT_PROXY_CHAT_PATH,
-  AI_CHAT_SYSTEM_PROMPT, AI_CHAT_TEMP_STEP, aiChatStatusText, appendToolResult,
+  AI_CHAT_STREAM_FALLBACK_BROKEN, AI_CHAT_STREAM_FALLBACK_NOT_SSE,
+  AI_CHAT_SYSTEM_PROMPT, AI_CHAT_TEMP_STEP, aiChatStatusText, appendToolResult, appendStreamChunk,
   assistantMessage, buildSystemPrompt, changedCount, chatCompletionsUrl, chatConfigError, chatProxyUrl,
-  defaultTurnLabel, detectChatProxy, formatCallLog, parseToolCalls, proxyChatFetch, readHostProviderConfig,
-  responseText, runChatTurn, systemMessage, toOpenAiTools, toolResultContent,
-  userMessage,
+  consumeSseStream, defaultTurnLabel, detectChatProxy, formatCallLog, newChatStreamState, parseSseData,
+  parseToolCalls, proxyChatFetch, readHostProviderConfig, responseText, runChatTurn, splitSseChunk,
+  streamResponse, systemMessage, toOpenAiTools, toolResultContent, userMessage,
 } from "../src/app/ai-chat";
 import type { ChatFetch, ChatFetchInit, ChatMessage, ChatTurnOpts } from "../src/app/ai-chat";
 import { callTool, listTools, validateArgs } from "../src/app/ai-tools";
@@ -105,7 +106,12 @@ function toolCtx(s: Session, confirm: (req: { tool: string }) => Promise<boolean
 
 // ---------------------------------------------------------------- 假端点
 
-interface Reply { status?: number; body?: string; thrown?: string }
+/**
+ * 一次假的模型回复。
+ * `contentType` / `sse` 是**流式**那两个字段（见 `streamReply()`）：
+ * `sse` 非空 = 这个响应有 `chunks()`，按块吐那些文本；`contentType` 决定算不算 SSE。
+ */
+interface Reply { status?: number; body?: string; thrown?: string; contentType?: string; sse?: string[] }
 /** 记下一个请求：`init` 是**原样的** `ChatFetchInit`（所以「GET 到底带没带 body 字段」可断言） */
 interface Seen { url: string; init: ChatFetchInit; headers: Record<string, string>; body: any }
 
@@ -137,9 +143,80 @@ function fakeFetch(replies: Reply[]): { fn: ChatFetch; seen: Seen[] } {
     const r = replies[Math.min(i++, replies.length - 1)];
     if (r.thrown) throw new Error(r.thrown);
     const status = r.status ?? 200;
-    return { ok: status >= 200 && status < 300, status, text: async () => r.body ?? "" };
+    const out: {
+      ok: boolean; status: number; text(): Promise<string>;
+      headers?: { get(k: string): string | null };
+      chunks?: () => AsyncIterable<string>;
+    } = { ok: status >= 200 && status < 300, status, text: async () => r.body ?? "" };
+    if (r.contentType) out.headers = { get: (k: string) => (k.toLowerCase() === "content-type" ? r.contentType! : null) };
+    if (r.sse) {
+      // 真的**按块**吐（每块之间让一次 microtask）—— 不是一下子把整段给出去
+      out.chunks = async function* (): AsyncIterable<string> {
+        for (const piece of r.sse!) { await Promise.resolve(); yield piece; }
+      };
+    }
+    return out;
   };
   return { fn, seen };
+}
+
+/** 把一段模型回复写成 SSE 分片（`[DONE]` 收尾）。**分片边界故意切在字段中间** —— 这才是真流式的样子 */
+function sseChunks(text: string, reasoning: string, calls: Array<{ id: string; name: string; args: string }>): string[] {
+  const pieces: string[] = [];
+  const put = (delta: Record<string, unknown>): void => {
+    pieces.push("data: " + JSON.stringify({ choices: [{ index: 0, delta }] }) + "\n\n");
+  };
+  // 思考过程：切成 3 段（真的逐块增长，而不是一次给完）
+  if (reasoning) {
+    const a = Math.max(1, Math.floor(reasoning.length / 3));
+    const b = Math.max(a + 1, Math.floor((reasoning.length * 2) / 3));
+    put({ reasoning_content: reasoning.slice(0, a) });
+    put({ reasoning_content: reasoning.slice(a, b) });
+    put({ reasoning_content: reasoning.slice(b) });
+  }
+  if (text) {
+    const h = Math.max(1, Math.floor(text.length / 2));
+    put({ content: text.slice(0, h) });
+    put({ content: text.slice(h) });
+  }
+  // tool_calls **分片**：第一片带 id / name，后续片是 arguments 的字符串片段（按 index 合并）
+  for (let i = 0; i < calls.length; i++) {
+    const c = calls[i];
+    put({ tool_calls: [{ index: i, id: c.id, type: "function", function: { name: c.name, arguments: "" } }] });
+    const arg = c.args;
+    const mid = Math.max(1, Math.floor(arg.length / 2));
+    for (const part of [arg.slice(0, mid), arg.slice(mid)]) {
+      put({ tool_calls: [{ index: i, function: { arguments: part } }] });
+    }
+  }
+  // 收尾帧（`finish_reason`）与 `[DONE]`
+  pieces.push("data: " + JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: calls.length ? "tool_calls" : "stop" }] }) + "\n\n");
+  pieces.push("data: [DONE]\n\n");
+  return pieces;
+}
+
+/**
+ * 一次**流式**假回复：`contentType` 默认 `text/event-stream`（改它就能演「端点不支持 SSE」），
+ * `body` 是**等价整包**（同一个 message 形状）—— 两条路必须解析出**逐字段相同**的结果，
+ * 这就是「流式不改变既有语义」的证据面。
+ */
+function streamReply(
+  msg: { content?: string; reasoning?: string; calls?: Array<{ id: string; name: string; args: string }> },
+  over: { contentType?: string | null; status?: number } = {},
+): Reply {
+  const content = msg.content ?? "";
+  const reasoning = msg.reasoning ?? "";
+  const calls = msg.calls ?? [];
+  const message: Record<string, unknown> = { role: "assistant", content };
+  if (reasoning) message.reasoning_content = reasoning;
+  if (calls.length) {
+    message.tool_calls = calls.map((c) => ({ id: c.id, type: "function", function: { name: c.name, arguments: c.args } }));
+  }
+  const status = over.status ?? 200;
+  const out: Reply = { status, body: JSON.stringify({ choices: [{ index: 0, message, finish_reason: calls.length ? "tool_calls" : "stop" }] }) };
+  if (over.contentType !== null) out.contentType = over.contentType ?? "text/event-stream";
+  out.sse = sseChunks(content, reasoning, calls);
+  return out;
 }
 
 /** 一次假的模型回复：`calls` 是 tool_calls（`rawArgs` 可故意给一段坏 JSON） */
@@ -535,6 +612,8 @@ export async function testAiChat(): Promise<void> {
     eq("aichat.setting.endpoint-text", SETTINGS_BY_PATH.get("ai.chatEndpoint")!.text, "plain");
     eq("aichat.setting.no-new-kind", SETTINGS_BY_PATH.get("ai.chatKey")!.kind, undefined);
     eq("aichat.setting.default-off", SETTINGS_BY_PATH.get("ai.chatOn")!.default, false);
+    // `ai.chatStream` 的声明默认值也是**打开**（`normalizeAiChatSettings` 的 `!== false` 是另一道）
+    eq("aichat.setting.stream.default-on", SETTINGS_BY_PATH.get("ai.chatStream")!.default, true);
     eq("aichat.setting.group", SETTINGS_BY_PATH.get("ai.chatOn")!.group, "chat");
     // 平台门：没有原生桥接时这一组一条都不显示（浏览器里连设置都没有）
     const savedBridge = (globalThis as unknown as { window: Record<string, unknown> }).window.PixelBridge;
@@ -580,7 +659,7 @@ export async function testAiChat(): Promise<void> {
     // 结果「归一化多出/漏掉一个字段」这类回归它能溜过去。14 个字段一个不漏地列全。
     eq("aichat.setting.normalize-junk", normalizeAiChatSettings({ on: 1, endpoint: 5, model: null, key: "k" }), {
       on: false, preset: "deepseek", endpoint: "", model: "", key: "k", providerBase: "",
-      maxRounds: 12, temp: 0, thinking: "default", timeoutSec: 60, systemPrompt: "", stream: false, protectKey: true,
+      maxRounds: 12, temp: 0, thinking: "default", timeoutSec: 60, systemPrompt: "", stream: true, protectKey: true,
       winOpen: false, winMin: false, ball: true,
     });
     // 字段数也要钉住：多一个字段（比如将来加新设置忘了同步这条）同样会红
@@ -593,14 +672,16 @@ export async function testAiChat(): Promise<void> {
       JSON.stringify(Object.assign(normalizeAiChatSettings({ on: 1, endpoint: 5, model: null, key: "k" }), { iAmNew: 1 }))
         === JSON.stringify({
           on: false, preset: "deepseek", endpoint: "", model: "", key: "k", providerBase: "",
-          maxRounds: 12, temp: 0, thinking: "default", timeoutSec: 60, systemPrompt: "", stream: false, protectKey: true,
+          maxRounds: 12, temp: 0, thinking: "default", timeoutSec: 60, systemPrompt: "", stream: true, protectKey: true,
           winOpen: false, winMin: false, ball: true,
         }), false);
-    // 预设 / 高级项各自的默认值与夹取（P8/W2 的新增面）
+    // 预设 / 高级项各自的默认值与夹取（P8/W2 的新增面）。
+    // `stream` 现在是**默认打开**的真开关（`o.stream !== false`），旧数据 / 缺字段都当打开。
     eq("aichat.setting.normalize-addons", (() => {
       const v = normalizeAiChatSettings({});
       return [v.preset, v.providerBase, v.maxRounds, v.temp, v.systemPrompt, v.stream, v.protectKey];
-    })(), ["deepseek", "", 12, 0, "", false, true]);
+    })(), ["deepseek", "", 12, 0, "", true, true]);
+    eq("aichat.setting.stream.opt-out", normalizeAiChatSettings({ stream: false }).stream, false);
     eq("aichat.setting.normalize-clamp", (() => {
       const v = normalizeAiChatSettings({ preset: "nope", maxRounds: 999, temp: -3, protectKey: false });
       return [v.preset, v.maxRounds, v.temp, v.protectKey];
@@ -832,7 +913,7 @@ export async function testAiChat(): Promise<void> {
     // 同样恢复成**整对象比较**（P15 第 3 项：3 字段子集形态同类，一并改掉）
     eq("aiwin.state.normalize", normalizeAiChatSettings({ winOpen: 1, winMin: "x" }), {
       on: false, preset: "deepseek", endpoint: "", model: "", key: "", providerBase: "",
-      maxRounds: 12, temp: 0, thinking: "default", timeoutSec: 60, systemPrompt: "", stream: false, protectKey: true,
+      maxRounds: 12, temp: 0, thinking: "default", timeoutSec: 60, systemPrompt: "", stream: true, protectKey: true,
       winOpen: false, winMin: false, ball: true,
     });
     eq("aiwin.state.ball-default", normalizeAiChatSettings({}).ball, true);
@@ -1027,6 +1108,183 @@ export async function testAiChat(): Promise<void> {
       ["ball", "endpoint", "key", "maxRounds", "model", "on", "preset", "protectKey", "providerBase",
         "stream", "systemPrompt", "temp", "thinking", "timeoutSec", "winMin", "winOpen"]);
     saveAiChatSettings({ on: false, key: "" });
+  }
+
+  // ================================================================ 14b. 流式输出（`ai.chatStream`，§26.6）
+  //
+  // 盯四件事（名字统一 `stream.*` 前缀）：
+  //   ① SSE 文本分片能拼出**最终文本**，`reasoning_content` **单独累积**；
+  //   ② 分片 `tool_calls`（第一片带 id/name，后续片是 arguments 字符串片段）拼出来的形状
+  //      与整包**逐字段相同** —— 这是「整轮循环一个字节都不变」的证据；
+  //   ③ 端点不是 `text/event-stream` / 流中途抛错 → **自动降级**成整包，并说明原因；
+  //   ④ 流式下 `assistantMessage()` 仍带回 `reasoning_content`（DeepSeek 带 tools 时后续必须回传）。
+  {
+    stubEnv();
+    const S_REASON = "先看画布，再决定用哪把工具";
+    const S_TEXT = "画好了：一条红线。";
+    const S_ARGS = '{"points":[[1,1],[4,1]],"color":"#ff0000"}';
+    /** 流式增量回调收到的正文 / 思考（面板就是拿它们让文字长出来的） */
+    const partsText: string[] = [];
+    const partsReason: string[] = [];
+    const partsNoSse: string[] = [];
+
+    // ---- ① 纯函数层：分片 → 状态 → 文本 / 思考 ----
+    const state = newChatStreamState();
+    for (const raw of ["data: " + JSON.stringify({ choices: [{ delta: { content: "你" } }] }) + "\n\n",
+      "data: " + JSON.stringify({ choices: [{ delta: { reasoning_content: "想" } }] }) + "\n\n"]) {
+      const split = splitSseChunk("", raw);
+      for (const d of split.events) appendStreamChunk(state, parseSseData(d));
+    }
+    // 跨块：一个事件的 JSON **切两半**，第二次调用必须能拼回来（`carry` 的职责）
+    const half = JSON.stringify({ choices: [{ delta: { content: "好" } }] });
+    const s1 = splitSseChunk("", "data: " + half.slice(0, 12));
+    eq("stream.split.carry-open", s1.events.length, 0);
+    const s2 = splitSseChunk(s1.carry, half.slice(12) + "\n\n");
+    eq("stream.split.carry-closed", s2.events, [half]);
+    eq("stream.split.carry-drained", s2.carry, "");
+    appendStreamChunk(state, parseSseData(s2.events[0]));
+    eq("stream.text.accumulated", responseText(streamResponse(state)), "你好");
+    eq("stream.reasoning.accumulated", state.message.reasoning_content, "想");
+
+    // ---- ② 工具调用分片 → 与 parseToolCalls() **逐字段相同** ----
+    const fullMsg = {
+      choices: [{ message: {
+        role: "assistant", content: S_TEXT, reasoning_content: S_REASON,
+        tool_calls: [{ id: "c1", type: "function", function: { name: "draw_path", arguments: S_ARGS } }],
+      } }],
+    };
+    const tState = newChatStreamState();
+    let tCarry = "";
+    for (const piece of sseChunks(S_TEXT, S_REASON, [{ id: "c1", name: "draw_path", args: S_ARGS }])) {
+      const split = splitSseChunk(tCarry, piece);
+      tCarry = split.carry;
+      for (const d of split.events) {
+        const parsed = parseSseData(d);
+        if (parsed !== null && parsed !== undefined) appendStreamChunk(tState, parsed);
+      }
+    }
+    const tResponse = streamResponse(tState);
+    const streamCalls = parseToolCalls(tResponse);
+    const fullCalls = parseToolCalls(fullMsg);
+    eq("stream.tools.identical-to-full", streamCalls, fullCalls);
+    // 逐字段钉一遍（上面那条是整对象比较，这里再拆开写死，回归时一眼能看出是哪个字段坏了）
+    eq("stream.tools.field-wise", [streamCalls.length, streamCalls[0].id, streamCalls[0].name, streamCalls[0].raw, streamCalls[0].args, !!streamCalls[0].error],
+      [1, "c1", "draw_path", S_ARGS, { points: [[1, 1], [4, 1]], color: "#ff0000" }, false]);
+    // 形状本身也要与整包一致（回灌给端点的那条 assistant 消息）
+    eq("stream.assistant-same-as-full", assistantMessage(tResponse), assistantMessage(fullMsg));
+    // ---- ④ 流式下 `reasoning_content` 仍要回传（DeepSeek 带 tools 的硬要求）----
+    eq("stream.assistant.carries-reasoning", assistantMessage(tResponse).reasoning_content, S_REASON);
+
+    // ---- ③ 降级：不是 text/event-stream（端点不支持 SSE）→ 同一个响应按整包解析 ----
+    const sNoSse = live();
+    const backNoSse: unknown[] = [];
+    const { fn: noSseFn, seen: noSseSeen } = fakeFetch([
+      streamReply({ content: "整包也画好了" }, { contentType: "application/json" }),
+    ]);
+    const wrapNoSse: ChatFetch = async (url, init) => {
+      backNoSse.push(JSON.parse(String(init.body)));
+      return noSseFn(url, init);
+    };
+    const rNoSse = await runChatTurn({
+      ...turnOpts(sNoSse, wrapNoSse), commit: false, stream: true,
+      onText: (v) => partsNoSse.push(v),
+    });
+    eq("stream.fallback.not-sse.requests", backNoSse.length, 1);       // **不重发**
+    eq("stream.fallback.not-sse.text", rNoSse.text, "整包也画好了");
+    eq("stream.fallback.not-sse.note", [rNoSse.streamNote.used, rNoSse.streamNote.fellBack, rNoSse.streamNote.reason],
+      [false, true, AI_CHAT_STREAM_FALLBACK_NOT_SSE]);
+    eq("stream.fallback.not-sse.no-deltas", partsNoSse.length, 0);     // 降级 = 一次增量都没有
+
+    // ---- ③' 降级：流中途抛错 → 重发一次**整包**（第二次请求不带 stream）----
+    const sBroken = live();
+    const brokenBodies: any[] = [];
+    const { fn: okInner } = fakeFetch([{ body: JSON.stringify({ choices: [{ message: { role: "assistant", content: "整包救回来了" } }] }) }]);
+    const brokenFetch: ChatFetch = async (url, init) => {
+      brokenBodies.push(JSON.parse(String(init.body)));
+      if (brokenBodies.length === 1) {
+        const pieces = sseChunks("半截", "", []).slice(0, 1);
+        return {
+          ok: true, status: 200, text: async () => "",
+          headers: { get: () => "text/event-stream" },
+          // 吐完一块就**断掉**（网关挂掉 / 网络断的真实样子：迭代器抛错）
+          chunks: async function* (): AsyncIterable<string> {
+            for (const p of pieces) yield p;
+            throw new Error("upstream stream reset");
+          },
+        };
+      }
+      return okInner(url, init);
+    };
+    const rBroken = await runChatTurn({
+      ...turnOpts(sBroken, brokenFetch), commit: false, stream: true, maxRounds: 1,
+    });
+    eq("stream.fallback.broken.requests", brokenBodies.length, 2);
+    eq("stream.fallback.broken.second-not-stream", brokenBodies[1].stream, undefined);
+    eq("stream.fallback.broken.text", rBroken.text, "整包救回来了");
+    eq("stream.fallback.broken.note", [rBroken.streamNote.used, rBroken.streamNote.fellBack, rBroken.streamNote.reason],
+      [false, true, AI_CHAT_STREAM_FALLBACK_BROKEN]);
+
+    // ---- 真流式整轮：逐块回调 + 与整包逐字段相同 ----
+    const sStream = live();
+    const { fn: streamFn, seen: seenStream } = fakeFetch([
+      streamReply({ content: "画好了", reasoning: "先读画布，再落笔" }),
+    ]);
+    const rStream = await runChatTurn({
+      ...turnOpts(sStream, streamFn), commit: false, stream: true,
+      onText: (v) => partsText.push(v), onReasoning: (v) => partsReason.push(v),
+    });
+    eq("stream.turn.stream-body", seenStream[0].body.stream, true);
+    eq("stream.turn.text", rStream.text, "画好了");
+    eq("stream.turn.note", [rStream.streamNote.used, rStream.streamNote.fellBack], [true, false]);
+    // 逐块：至少来过一次，且**最后一次就是终值**（面板照着它让文字长出来）
+    ok("stream.turn.on-text-grows", partsText.length >= 2 && partsText[partsText.length - 1] === "画好了", JSON.stringify(partsText));
+    ok("stream.turn.on-reasoning-grows", partsReason.length >= 2 && partsReason[partsReason.length - 1] === "先读画布，再落笔",
+      JSON.stringify(partsReason));
+    eq("stream.turn.assistant-carries-reasoning",
+      rStream.messages.filter((m) => m.role === "assistant").map((m) => m.reasoning_content), ["先读画布，再落笔"]);
+    // 关掉 `stream` 时**一个字节都不发**这个字段（从前的行为逐字不变）
+    const { fn: offFn, seen: seenOff } = fakeFetch([streamReply({ content: "普通" }, { contentType: null })]);
+    const rOff = await runChatTurn({ ...turnOpts(live(), offFn), commit: false, stream: false });
+    eq("stream.off.no-field", Object.prototype.hasOwnProperty.call(seenOff[0].body, "stream"), false);
+    eq("stream.off.text", rOff.text, "普通");
+    eq("stream.off.note", [rOff.streamNote.used, rOff.streamNote.fellBack], [false, false]);
+
+    // ---- 流式 + 多轮工具调用：一轮一条 undo / 预览后应用一个字都没变 ----
+    const sTools = live();
+    const beforeTools = docBytes(sTools);
+    const histBeforeTools = histLen(sTools);
+    const { ctx: ctxTools } = toolCtx(sTools);
+    const { fn: toolsFn, seen: seenTools } = fakeFetch([
+      streamReply({ content: "", reasoning: "先看一眼", calls: [{ id: "c1", name: "draw_path", args: S_ARGS }] }),
+      streamReply({ content: "画完了", reasoning: "收工" }),
+    ]);
+    const rTools = await runChatTurn({
+      messages: [systemMessage(), userMessage("画一条红线")], ctx: ctxTools,
+      endpoint: "https://endpoint.test/v1", model: "test-model", key: "sk-test-key",
+      fetchFn: toolsFn, commit: false, stream: true, maxRounds: 3,
+    });
+    eq("stream.loop.rounds", rTools.rounds, 2);
+    eq("stream.loop.calls", rTools.calls.map((c) => c.name), ["draw_path"]);
+    eq("stream.loop.pixel", pxSoft(sTools, 0, 1, 1), [255, 0, 0, 255]);
+    eq("stream.loop.turn-open", rTools.turnOpen, true);
+    eq("stream.loop.history-untouched", histLen(sTools), histBeforeTools);   // 预览模式：还没落历史
+    eq("stream.loop.second-round-carries-reasoning",
+      (seenTools[1].body.messages as ChatMessage[]).filter((m) => m.role === "assistant").map((m) => m.reasoning_content),
+      ["先看一眼"]);
+    sTools.commitAiTurn();
+    eq("stream.loop.one-undo-entry", histLen(sTools) - histBeforeTools, 1);
+    sTools.undo();
+    eq("stream.loop.undo-restores-bytes", docBytes(sTools), beforeTools);
+    // `[DONE]` / 注释行 / 坏 JSON 都不抛异常
+    eq("stream.sse.done-is-null", parseSseData("[DONE]"), null);
+    eq("stream.sse.junk-skipped", [parseSseData(""), parseSseData("{oops")], [undefined, undefined]);
+    eq("stream.split.ignores-comments", splitSseChunk("", ": hb\n\nevent: x\ndata: {}\n\n").events, ["{}"]);
+    // `consumeSseStream()` 直接吃一个**逐块**迭代器（不必先拼成整段）
+    const chunks: string[] = sseChunks("逐块", "", []);
+    const consumed = await consumeSseStream((async function* (): AsyncIterable<string> {
+      for (const c of chunks) yield c;
+    })());
+    eq("stream.consume.final-text", responseText(streamResponse(consumed)), "逐块");
   }
 
   // ================================================================ 15. 通路：环境 key → 同源代理（P3/W1，§3.7.2/§3.7.3）
@@ -1451,11 +1709,12 @@ export async function testAiChat(): Promise<void> {
     saveAiChatSettings({ on: false, key: "" });
   }
 
-  // ================================================================ 16. 壳侧代理的静态口径（P3/W1）
+  // ================================================================ 16. 壳侧代理的静态口径（P3/W1 + 流式）
   //
   // 壳是 `.mjs`（跑不了 tsc），所以这里查源码钉住几条**结构性**口径：
   //   · 环境变量名与优先级、`--provider-*` 参数都在；
   //   · 环境 key **只发往已知主机**、密钥不落日志、不跟随重定向；
+  //   · **流式**：有真的流式分支（不再对 `stream:true` 回 400），且擦 key 是**按 SSE 事件边界**做的；
   //   · 页面侧不留任何「把 key 拼进文本」的路径。
   {
     const shell = readFile("toolchain/pc-shell.mjs");
@@ -1495,6 +1754,32 @@ export async function testAiChat(): Promise<void> {
     ok("shell.key-never-in-config", shell.indexOf("providerConfigBody") > 0
       && shell.indexOf("hasEnvKey: !!opts.providerKey") > 0);
     ok("shell.token-auth", shell.indexOf('req.headers["x-shell-token"]') > 0 && shell.indexOf("providerAuthOk") > 0);
+    // ---- 流式（`stream:true`）：壳侧必须真的转，且擦 key 按**事件边界**做 ----
+    // ① 不再回 400（旧分支的文案一个字都不许回来）
+    eq("shell.stream.no-400", shell.indexOf("本轮不支持 stream:true") < 0
+      && shell.indexOf("body.stream === true") > 0, true);
+    // ② 有真的流式转发函数，且它把上游响应标成 `text/event-stream` 边收边转
+    ok("shell.stream.forward-exists", shell.indexOf("function forwardToProviderStream(payload, timeoutMs, req, res)") > 0
+      && shell.indexOf("forwardToProviderStream(JSON.stringify(out), timeoutMs, req, res)") > 0
+      && shell.indexOf('"content-type": "text/event-stream; charset=utf-8"') > 0
+      && shell.indexOf('accept: "text/event-stream"') > 0);
+    // ③ 擦 key 在**事件边界**上：`flushSseEvents()` 一定在切出完整事件之后才 `res.write`
+    //    （分块各擦一遍会漏掉被 TCP 切两半的 key —— 这就是「未擦原文透给页面」那条红线）
+    ok("shell.stream.scrub-per-event", shell.indexOf("function flushSseEvents(queue, res)") > 0
+      && shell.indexOf("res.write(scrubProviderKey(rawEvent));") > 0
+      && shell.indexOf("queue = flushSseEvents(queue, res);") > 0
+      && shell.indexOf("rest = rest.subarray(cut + skip);") > 0);
+    // ④ carry-over 缓冲：跨 TCP 块的半截事件留在 `queue` 里，收尾时也要**先擦再发**
+    ok("shell.stream.carry-over", shell.indexOf("queue = Buffer.concat([queue, c]);") > 0
+      && shell.indexOf('if (queue.length) res.write(scrubProviderKey(queue.toString("utf8")));') > 0);
+    // ⑤ 上游不是 SSE 时按整包透传（同一口径：擦 key + 改 content-length），不是原样甩给页面
+    ok("shell.stream.non-sse-passthrough", shell.indexOf("const isSse = ctype.indexOf(\"text/event-stream\") >= 0;") > 0
+      && shell.indexOf("const safeStream = scrubProviderKey(rs.body);") > 0
+      && shell.indexOf('"content-length": bufStream.length') > 0);
+    // ⑥ 超时：流式那条腿同样按 `req.setTimeout(waitMs)`（首字节 + 整个流），不是只在流结束才算
+    ok("shell.stream.timeout-covers-first-byte", shell.indexOf("upReq.on(\"timeout\"") > 0
+      && shell.indexOf("timeout: waitMs") > 0
+      && shell.indexOf("stats.providerTimeouts++") > 0);
     // 超时**分两条**：页面临时通道 `timeoutMs`（10s，与 APK 的 AI_CALL_TIMEOUT_MS 同口径）
     // 与上游转发 `providerTimeoutMs`（60s，模型请求十几秒很正常）。早先共用 10s，
     // 用户第一次真实调用必然撞 504 provider-timeout。这里的断言钉住"两条都在、且没有回退成共用"。

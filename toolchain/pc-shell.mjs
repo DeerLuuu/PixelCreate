@@ -1239,6 +1239,177 @@ function forwardToProvider(payload, timeoutMs) {
 }
 
 /**
+ * **流式转发**（`stream:true`）：与 `forwardToProvider()` 同一套口径（`Accept-Encoding: identity`、
+ * 响应体上限 `MAX_PROVIDER_BYTES`、`AbortController` 掐超时、不跟随重定向、唯一例外是擦 key），
+ * 区别只有一条：**按 SSE 事件边界边收边转**，不再等整包。
+ *
+ * 为什么擦 key 要按事件边界做（**这是流式下不能丢的安全红线**）：
+ *   · `scrubProviderKey()` 只能在**完整的明文多字节串**上工作 —— 如果 provider 把
+ *     `Bearer sk-xxxx` 拆在两个 TCP 块里，分块各擦一遍就会漏（`Bearer sk-x` / `xxx` 谁也匹配不到）；
+ *   · 所以这里维护一个 `queue`：收到字节先并进去，**只在攒齐一个事件（空行 `\n\n`）之后**
+ *     才切出来 → 擦 → flush；`carry` 负责「事件跨块」的那半截；
+ *   · 结论：**页面拿到的每一个字节都过了擦除**，未擦的原文一个字节都不出这个函数。
+ *
+ * 超时口径与整包一致：`req.setTimeout(waitMs)` 从**发起请求**起算，覆盖**首字节 + 整个流**
+ * （不是「只在流结束才算」）—— 超时就销毁上游，页面侧那条流会断掉并自动降级重问一次。
+ */
+function forwardToProviderStream(payload, timeoutMs, req, res) {
+  const waitMs = Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : opts.providerTimeoutMs;
+  return new Promise((resolve) => {
+    let target;
+    try {
+      target = new URL(opts.providerBase);
+    } catch {
+      resolve({ ok: false, kind: "unreachable", detail: "provider 基地址不合法" });
+      return;
+    }
+    const isHttps = target.protocol === "https:";
+    const mod = isHttps ? https : http;
+    const basePath = target.pathname.replace(/\/+$/, "");
+    const full = target.origin + basePath + "/chat/completions";
+    const data = Buffer.from(payload, "utf8");
+    let settled = false;
+    let headersSentFlag = false;
+    const done = (r) => { if (!settled) { settled = true; try { upReq.destroy(); } catch { /* ignore */ } resolve(r); } };
+    /** 收到 SSE 响应头之后才写回页面：这样「上游还没回头就超时」还能回一个 504 信封 */
+    const openSse = (up) => {
+      if (headersSentFlag || res.headersSent) return;
+      headersSentFlag = true;
+      res.writeHead(200, {
+        ...providerCors(req),
+        "content-type": "text/event-stream; charset=utf-8",
+        "cache-control": "no-store",
+        connection: "keep-alive",
+        "x-accel-buffering": "no",
+      });
+    };
+    const upReq = mod.request(full, {
+      method: "POST",
+      timeout: waitMs,
+      headers: {
+        "content-type": "application/json",
+        "content-length": data.length,
+        authorization: "Bearer " + opts.providerKey,
+        "user-agent": "pixelcraft-pc-shell",
+        accept: "text/event-stream",
+        "accept-encoding": "identity",
+      },
+    }, (up) => {
+      // 已经是 SSE 才边收边转；否则整包读回来交给调用方按老口径透传（错误体 / 假流式都在这一支）
+      const ctype = String(up.headers["content-type"] || "").toLowerCase();
+      const isSse = ctype.indexOf("text/event-stream") >= 0;
+      if (!isSse) {
+        const chunks = [];
+        let size = 0;
+        let truncated = false;
+        up.on("data", (c) => {
+          size += c.length;
+          if (size > MAX_PROVIDER_BYTES) {
+            truncated = true;
+            up.destroy();
+            return;
+          }
+          chunks.push(c);
+        });
+        const finish = () => {
+          if (settled) return;
+          settled = true;
+          resolve({
+            ok: true,
+            status: up.statusCode || 502,
+            headers: up.headers,
+            body: Buffer.concat(chunks).toString("utf8"),
+            truncated,
+          });
+        };
+        up.on("end", finish);
+        up.on("close", finish);
+        up.on("error", (e) => {
+          if (settled) return;
+          settled = true;
+          resolve({ ok: false, kind: "unreachable", detail: String(e && e.message ? e.message : e) });
+        });
+        return;
+      }
+      // ---- 真的 SSE：边收边擦边转 ----
+      openSse(up);
+      let queue = Buffer.alloc(0);
+      let size = 0;
+      up.on("data", (c) => {
+        if (settled) return;
+        size += c.length;
+        if (size > MAX_PROVIDER_BYTES) {   // 体积上限与整包同一口径：超了截断收尾
+          try { up.destroy(); } catch { /* ignore */ }
+          return;
+        }
+        queue = Buffer.concat([queue, c]);
+        queue = flushSseEvents(queue, res);
+      });
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        // 收尾：没有空行结尾的最后一截也要**先擦再发**（有的网关最后一条事件不带空行）
+        try {
+          if (queue.length) res.write(scrubProviderKey(queue.toString("utf8")));
+          res.end();
+        } catch { /* 页面可能已经走了 */ }
+        resolve({ ok: true, streamed: true, status: up.statusCode || 200 });
+      };
+      up.on("end", finish);
+      up.on("close", finish);
+      up.on("error", (e) => {
+        if (settled) return;
+        settled = true;
+        try { res.destroy(e); } catch { /* ignore */ }
+        resolve({ ok: false, kind: "unreachable", detail: String(e && e.message ? e.message : e) });
+      });
+    });
+    upReq.on("timeout", () => {
+      stats.providerTimeouts++;
+      try { upReq.destroy(new Error("timeout")); } catch { /* ignore */ }
+      done({ ok: false, kind: "timeout", detail: waitMs + "ms" });
+    });
+    upReq.on("error", (e) => done({ ok: false, kind: "unreachable", detail: String(e && e.message ? e.message : e) }));
+    // 页面这一侧断了（用户取消 / 回合超时）→ 立刻掐掉上游，别把一个还在生成的请求吊在那儿
+    res.on("close", () => { if (!settled) done({ ok: false, kind: "client-gone", detail: "页面断开" }); });
+    upReq.end(data);
+  });
+}
+
+/**
+ * 把 `queue` 里**攒齐的 SSE 事件**（空行分隔）切出来 → 擦 key → 立刻 flush，返回剩下的半截。
+ *
+ * 为什么必须按事件边界切（**流式下不能丢的安全红线**）：`scrubProviderKey()` 只在**完整的
+ * 明文多字节串**上有效 —— provider 把 `Bearer sk-xxxx` 拆在两个 TCP 块里时，分块各擦一遍谁也
+ * 匹配不到，key 就明文进了页面。所以这里只在「一个事件攒齐」之后才切出来擦，
+ * **页面拿到的每一个字节都过了 `scrubProviderKey()`**，未擦的原文一个字节都不出这个函数。
+ *
+ * 用 Buffer 切（不是先 `toString`）：中文 / emoji 的 UTF-8 字节可能跨块，
+ * 先解码会把半个字符变成 U+FFFD。
+ */
+function flushSseEvents(queue, res) {
+  let rest = queue;
+  let flushed = false;
+  for (;;) {
+    const lf = rest.indexOf("\n\n");
+    const crlf = rest.indexOf("\r\n\r\n");
+    let cut = -1;
+    let skip = 2;
+    if (lf >= 0) { cut = lf; skip = 2; }
+    else if (crlf >= 0) { cut = crlf; skip = 4; }
+    if (cut < 0) break;
+    const rawEvent = rest.subarray(0, cut + skip).toString("utf8");
+    rest = rest.subarray(cut + skip);
+    res.write(scrubProviderKey(rawEvent));
+    flushed = true;
+  }
+  if (flushed) {
+    try { res.flush?.(); } catch { /* 有的 Node 版本没有 flush；不 flush 也照样按块到 */ }
+  }
+  return rest;
+}
+
+/**
  * `POST /provider/chat`：页面 → 壳 → provider，**把 provider 的状态码与 body 原样透传**。
  *
  * 为什么原样透传（§3.7.2）：页面侧的 `httpError()` 按状态分档的文案一行都不用改；
@@ -1282,16 +1453,43 @@ async function routeProviderChat(req, res, url) {
     providerError(res, req, 400, "bad-request", "请求体不是 JSON 对象");
     return;
   }
-  if (body.stream === true) {
-    providerError(res, req, 400, "bad-request", "本轮不支持 stream:true（流式还没做）");
-    return;
-  }
   // 页面没给 model 时用壳的默认模型（§3.7.2 的「壳补充的字段」）
   const out = { ...body };
   if (typeof out.model !== "string" || !out.model.trim()) out.model = opts.providerModel;
   stats.providerCalls++;
-  vlog("转发一次模型请求 → " + new URL(opts.providerBase).origin + "（model=" + out.model + "，key " + providerKeyTail() + "）");
-  const r = await forwardToProvider(JSON.stringify(out), requestProviderTimeoutMs(req));
+  const timeoutMs = requestProviderTimeoutMs(req);
+  vlog("转发一次模型请求 → " + new URL(opts.providerBase).origin + "（model=" + out.model
+    + (body.stream === true ? "，流式" : "") + "，key " + providerKeyTail() + "）");
+  // ---- 流式（`stream:true`）----
+  // 早先这里**直接回 400**（「流式还没做」），现在真的转：按 SSE 事件边界边收边擦边转
+  // （口径见 forwardToProviderStream() 的注释）。上游不是 SSE（4xx 错误体 / 端点忽略了 stream）
+  // 时，这一段会整包读回来，走下面与整包完全相同的透传 + 擦除逻辑。
+  if (body.stream === true) {
+    const rs = await forwardToProviderStream(JSON.stringify(out), timeoutMs, req, res);
+    if (rs.ok && rs.streamed) return;            // 已经边收边写完，收尾由那边负责
+    if (!rs.ok) {
+      stats.providerErrors++;
+      if (res.headersSent) return;               // 已经开始写流：只能让它断（页面会自动降级重问）
+      if (rs.kind === "timeout") {
+        providerError(res, req, 504, "provider-timeout", rs.detail);
+      } else {
+        providerError(res, req, 502, "provider-unreachable", rs.detail);
+      }
+      return;
+    }
+    // 上游回的不是 SSE：按整包原样透传（与下面那一段同一口径，含擦 key 与 content-length 改写）
+    if (res.headersSent) return;
+    const safeStream = scrubProviderKey(rs.body);
+    const bufStream = Buffer.from(safeStream, "utf8");
+    res.writeHead(rs.status, {
+      ...providerCors(req),
+      "content-type": "application/json; charset=utf-8",
+      "content-length": bufStream.length,
+    });
+    res.end(bufStream);
+    return;
+  }
+  const r = await forwardToProvider(JSON.stringify(out), timeoutMs);
   if (!r.ok) {
     stats.providerErrors++;
     if (r.kind === "timeout") {
@@ -1301,7 +1499,8 @@ async function routeProviderChat(req, res, url) {
     }
     return;
   }
-  // **原样透传**状态码与 body（3xx 也照透，不跟随重定向）——**唯一**的例外是把 key 擦掉：
+  // **原样透传**状态码与 body（3xx 也照透，不跟随重定向）——**例外**是把 key 擦掉
+  // （流式那条路同样遵守，见 forwardToProviderStream()）：
   // provider 可能把收到的 Authorization 回显在 body 里，而页面会把 4xx body 前 120 字拼进错误行，
   // 那样环境 key 就进页面了（P15 第 2 项）。擦完按**新字节长度**回写 content-length。
   if (res.headersSent) return;

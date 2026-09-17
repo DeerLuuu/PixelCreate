@@ -1418,6 +1418,13 @@ html[data-pc] .dlg-sh{width:min(600px,64vw)}
 /* 自动保存历史（设置 → 数据 / 启动恢复提示 / 主菜单「自动保存历史」） */
 .as-list{display:flex;flex-direction:column;gap:6px;margin:6px 0 2px}
 .as-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:6px 8px;border:1px solid var(--line);border-radius:var(--r-2);background:var(--bg3)}
+/* 思考过程那一块（AI 助手，默认折叠）：单独一行、贴满整行；`summary` 上的字数会随流式增长 */
+.ai-reason{flex:1 1 100%;border:1px dashed var(--line);border-radius:var(--r-2);padding:2px 6px;background:var(--bg2)}
+.ai-reason>summary{cursor:pointer;font-size:11px;color:var(--dim);list-style:none}
+.ai-reason>summary::-webkit-details-marker{display:none}
+.ai-reason>summary::before{content:"▸ "}
+.ai-reason[open]>summary::before{content:"▾ "}
+.ai-reason-body{margin-top:4px;font-size:11px;color:var(--text-2);white-space:pre-wrap;word-break:break-word;max-height:180px;overflow-y:auto}
 .as-main{flex:1 1 150px;min-width:0;display:flex;flex-wrap:wrap;gap:2px 8px;align-items:baseline;font-size:11px;color:var(--text-2)}
 .as-main b{font-weight:700;color:var(--text)}
 .as-why{font-style:normal;color:var(--dim)}

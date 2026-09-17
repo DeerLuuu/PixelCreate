@@ -312,7 +312,14 @@ export interface AiChatSettings {
   thinking: string;
   /** `ai.chatTimeoutSec`：等模型回话的秒数（5..600，默认 60；见 `ai-chat.ts` 的 `requestModel()`） */
   timeoutSec: number;
-  /** `ai.chatStream`：本轮**固定 false**（代理对 `stream:true` 回 400）；留着是给以后流式一个口径位 */
+  /**
+   * `ai.chatStream`（默认 **true**）：把 `stream:true` 发给端点并逐块读 SSE
+   * （正文打字机 + 思考过程单独一块）。
+   *
+   * 端点不支持（回的 content-type 不是 `text/event-stream`）或流中途出错时
+   * **自动降级**成整包请求，原因写在 `ChatTurnResult.streamNote.reason` 里由面板显示 ——
+   * 所以这条开关最坏也就是「退回从前的行为」，不会让用户看到一个坏掉的回答。
+   */
   stream: boolean;
   /**
    * `ai.protectKey`：**诊断 / 提示文本里不折叠 key 相关信息**的开关（默认 `true`）。
@@ -356,8 +363,8 @@ function normalizeThinking(v: unknown): string {
 }
 
 /**
- * 归一化：字符串只认字符串、四个开关只认真 true、两个整数夹进区间
- * （与 `normalizeAiServeSettings` 同口径）；`ball` 是唯一的「默认 true」，所以单独判。
+ * 归一化：字符串只认字符串、**五个**开关只认真 false（`stream` / `protectKey` / `ball` 是
+ * 「默认 true」，所以判的是 `!== false`）、三个整数夹进区间。
  *
  * `endpoint` / `model` 的空串**不填默认值**：空串是「用户主动清空」的意思（§3.7.7 第 5 条），
  * 只有第一次打开助手（`pc.aichat` 这个键还不存在）时才会落预设默认值 —— 那一步由
@@ -381,7 +388,7 @@ export function normalizeAiChatSettings(raw: unknown): AiChatSettings {
     thinking: normalizeThinking(o.thinking),
     timeoutSec: clampInt(o.timeoutSec, AI_CHAT_TIMEOUT_MIN, AI_CHAT_TIMEOUT_MAX, AI_CHAT_TIMEOUT_DEFAULT),
     systemPrompt: str(o.systemPrompt),
-    stream: o.stream === true,
+    stream: o.stream !== false,
     protectKey: o.protectKey !== false,
     winOpen: o.winOpen === true, winMin: o.winMin === true, ball: o.ball !== false,
   };
@@ -628,13 +635,13 @@ export const CHAT_SETTINGS: SettingDef[] = [
     set: (_s, v) => { saveAiChatSettings({ systemPrompt: String(v) }); },
   },
   {
-    // 流式：本轮**固定 false**（壳的代理对 `stream:true` 直接回 400）。留着是给「以后做流式」一个口径位，
-    // 所以它照旧渲染出来（用户改了也只是把请求体的 `stream` 字段显式写成 true，壳会回 400 并说明原因）
+    // 流式（默认开）：真的把 `stream:true` 发给端点并逐块读 SSE；端点不支持或流中途出错时
+    // **自动降级**成整包（原因由面板显示）。关掉 = 请求体里一个字节都不发这个字段（从前的行为）。
     path: "ai.chatStream", kind: "bool", group: "chat",
-    label: "aiChatStreamLabel", desc: "aiChatStreamDesc", default: false, refresh: "none",
+    label: "aiChatStreamLabel", desc: "aiChatStreamDesc", default: true, refresh: "none",
     visible: () => chatRowsVisible() && aiChatSettings().on,
     get: () => aiChatSettings().stream,
-    set: (_s, v) => { saveAiChatSettings({ stream: v === true }); },
+    set: (_s, v) => { saveAiChatSettings({ stream: v !== false }); },
   },
   {
     // 「诊断 / 提示文本里不许出现 key」这条**已经由代码保证**（状态文本只拼「有无」，见

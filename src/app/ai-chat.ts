@@ -172,6 +172,11 @@ export interface ChatTurnResult {
   docRev: number;
   /** 开始时的文档版本号 */
   docRevBefore: number;
+  /**
+   * 流式的落地情况（**给用户一行说明**）：`used` = 真的流式了；`fellBack` = 试过但降级了
+   * （`reason` 是降级的具体原因）；`stream` 关着时两个都是 `false`、`reason` 为空。
+   */
+  streamNote: ChatStreamNote;
 }
 
 /** 思考强度档位（与 `settings.ts` 的 `AI_CHAT_THINKING_MODES` 同一口径） */
@@ -216,8 +221,234 @@ export interface ChatFetchResponse {
   ok: boolean;
   status: number;
   text(): Promise<string>;
+  /**
+   * **流式响应体的分块**（平台差异的**唯一**挂点；只有流式时才有这个字段）。
+   *
+   * 为什么不在这一层 import DOM 类型：`ai-chat.ts` 必须保持平台无关（不 import `window`、
+   * 不直接调 `fetch`），所以异步迭代器是**结构上**最省的形状 —— 浏览器里
+   * `AiPanel.platformFetch()` 把 `res.body`（Web Streams）包成一个异步生成器，
+   * Node 测试里给一个假生成器，两边都满足 `AsyncIterable<string>`。
+   *
+   * 返回值是**解码后的文本片段**（可能是半个 SSE 事件、也可能是好几行）——切分与累积由
+   * `consumeSseStream()` 负责，所以这里不需要保证任何分块边界。
+   * 缺席 = 这个响应**不能**流式读（老宿主 / 假 fetch），`requestModel()` 据此回退整包。
+   */
+  chunks?(): AsyncIterable<string>;
 }
 export type ChatFetch = (url: string, init: ChatFetchInit) => Promise<ChatFetchResponse>;
+
+/**
+ * 流式的一行摘要（`ChatTurnResult.streamNote`）：**用在哪儿**、**有没有降级**、**为什么**。
+ * 面板把它当一行 `note` 显示，用户才有解释 —— 「说好的流式怎么没动」不该变成谜。
+ */
+export interface ChatStreamNote {
+  /** 这一轮**真的**用了流式（`false` = 从头到尾都是整包） */
+  used: boolean;
+  /** 流式试过但失败了，这一轮回落整包（`false` = 没试过 / 试用成功） */
+  fellBack: boolean;
+  /** 降级的具体原因（`fellBack` 为真时非空，直接显示给用户） */
+  reason?: string;
+}
+
+/** 累积中的流式消息状态：`content` / `reasoning_content` 逐块长，`tool_calls` 按 `index` 合并 */
+export interface ChatStreamState {
+  message: ChatMessage;
+  toolCalls: ChatToolCall[];
+  /** 模型给的收尾原因（`stop` / `tool_calls` …），最后一帧为准 */
+  finishReason: string;
+}
+
+export function newChatStreamState(): ChatStreamState {
+  return { message: { role: "assistant", content: "" }, toolCalls: [], finishReason: "" };
+}
+
+/**
+ * **把一个 SSE 数据分片并进流式状态**（纯函数式：就地改 `state` 并返回它）。
+ *
+ * 口径（DeepSeek / OpenAI 兼容的 `chat.completion.chunk`）：
+ *   · `delta.content` → 追加到 `message.content`（打字机效果的来源）；
+ *   · `delta.reasoning_content` → **单独累积**到 `message.reasoning_content`（思考过程那一块；
+ *     它必须留在 assistant 消息上，见 `ChatMessage.reasoning_content` 的注释）；
+ *   · `delta.tool_calls` **是分片来的**：第一片带 `id` / `function.name`，后续片是
+ *     `function.arguments` 的字符串片段，**按 `index` 合并**。合出来的形状必须与
+ *     `parseToolCalls()` 吃的一模一样（`{id, type:"function", function:{name, arguments}}`），
+ *     否则整轮「模型 → 工具 → 模型」的循环会坏在这里。
+ */
+export function appendStreamChunk(state: ChatStreamState, chunk: unknown): ChatStreamState {
+  if (!chunk || typeof chunk !== "object") return state;
+  const o = chunk as Record<string, unknown>;
+  const choices = o.choices;
+  if (!Array.isArray(choices) || !choices.length) return state;
+  const c0 = choices[0] as Record<string, unknown> | null | undefined;
+  if (!c0 || typeof c0 !== "object") return state;
+  if (typeof c0.finish_reason === "string" && c0.finish_reason) state.finishReason = c0.finish_reason;
+  const rawDelta = c0.delta ?? c0.message;
+  if (!rawDelta || typeof rawDelta !== "object") return state;
+  const delta = rawDelta as Record<string, unknown>;
+  const content = contentTextOf(delta.content);
+  if (content) state.message.content = String(state.message.content ?? "") + content;
+  const rc = delta.reasoning_content;
+  if (typeof rc === "string" && rc) {
+    state.message.reasoning_content = String(state.message.reasoning_content ?? "") + rc;
+  }
+  const rawCalls = delta.tool_calls;
+  if (Array.isArray(rawCalls)) {
+    for (const raw of rawCalls) {
+      if (!raw || typeof raw !== "object") continue;
+      const item = raw as Record<string, unknown>;
+      const idx = typeof item.index === "number" && Number.isFinite(item.index) ? Math.trunc(item.index) : state.toolCalls.length;
+      const slot = Math.max(0, idx);
+      while (state.toolCalls.length <= slot) {
+        state.toolCalls.push({ id: "", type: "function", function: { name: "", arguments: "" } });
+      }
+      const call = state.toolCalls[slot];
+      if (typeof item.id === "string" && item.id) call.id = item.id;
+      const fn = item.function;
+      if (fn && typeof fn === "object") {
+        const f = fn as Record<string, unknown>;
+        if (typeof f.name === "string" && f.name) call.function.name = f.name;
+        // arguments 是**字符串片段**；有的宿主给对象（非流式形状混进来）→ 落成 JSON 文本
+        if (typeof f.arguments === "string") call.function.arguments += f.arguments;
+        else if (f.arguments && typeof f.arguments === "object") call.function.arguments += JSON.stringify(f.arguments);
+      }
+    }
+  }
+  return state;
+}
+
+/**
+ * 流式累积结果 → **与整包响应同形**的 `choices[0].message`。
+ *
+ * 这一步是「流式不改变既有语义」的关键：`runChatTurn()` 拿到它之后走的还是
+ * `parseToolCalls()` / `responseText()` / `assistantMessage()` 那一条老路，
+ * 所以「预览后应用」「一轮一条 undo」「多轮工具调用」三件事一个字节都没变。
+ *
+ * 三条与整包对齐的细节：缺 `id` 的调用**补一个稳定 id**（与 `parseToolCalls()` 同一条口径）、
+ * 没有内容的 `content` 落成空串（不是 `undefined`）、`tool_calls` 只在非空时挂上去。
+ */
+export function streamResponse(state: ChatStreamState): Record<string, unknown> {
+  const message: Record<string, unknown> = { role: "assistant", content: String(state.message.content ?? "") };
+  if (state.message.reasoning_content) message.reasoning_content = state.message.reasoning_content;
+  if (state.toolCalls.length) {
+    message.tool_calls = state.toolCalls.map((c, i) => ({
+      // 分片里没给 id（或只给了空串）时按位置补 —— 与 parseToolCalls() 的 "call_"+i 逐字一致
+      id: c.id || "call_" + i,
+      type: "function" as const,
+      function: { name: c.function.name, arguments: c.function.arguments },
+    }));
+  }
+  const choice: Record<string, unknown> = { index: 0, message };
+  if (state.finishReason) choice.finish_reason = state.finishReason;
+  return { choices: [choice] };
+}
+
+/** `delta.content` 可能是字符串或 parts 数组（与 `responseText()` 同一套宽容口径） */
+function contentTextOf(c: unknown): string {
+  if (typeof c === "string") return c;
+  if (Array.isArray(c)) {
+    return c.map((part) => {
+      if (typeof part === "string") return part;
+      const t = part && typeof part === "object" ? (part as { text?: unknown }).text : undefined;
+      return typeof t === "string" ? t : "";
+    }).join("");
+  }
+  return "";
+}
+
+/**
+ * 从一条 SSE `data:` 行的正文里取分片：`[DONE]` → `null`（流结束）、空串 / 坏 JSON → `undefined`
+ * （**跳过**这一行，不抛异常 —— 网关的注释行、心跳、`event:` 行都可能落在同一条线上）。
+ */
+export function parseSseData(data: string): unknown {
+  const t = String(data ?? "").trim();
+  if (!t) return undefined;
+  if (t === "[DONE]") return null;
+  try {
+    return JSON.parse(t) as unknown;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * 把一个 SSE 文本分片切成 `{data, done}`（**跨分片**的连接状态放在 `carry` 里）。
+ *
+ * 口径：事件以**空行**（`\n\n`）分隔，同一个事件可能落进多个分片，所以：
+ *   · `carry` = 还没收到空行的那半截，调用方必须原样带回下一次调用（丢了就会把事件吃掉）；
+ *   · 只认 `data:` 行（含 `data: ` 与 `data:` 两种写法），忽略注释（`:` 开头）与 `event:` / `id:`
+ *     —— 我们只关心分片 JSON；
+ *   · **多条 `data:` 行按行拼接**（SSE 规范：一个事件里多行 data 用 `\n` 连接）。
+ */
+export function splitSseChunk(carry: string, text: string): { events: string[]; carry: string; done: boolean } {
+  const buf = String(carry ?? "") + String(text ?? "");
+  const events: string[] = [];
+  let rest = buf;
+  let done = false;
+  for (;;) {
+    const at = rest.search(/\r?\n\r?\n/);
+    if (at < 0) break;
+    const rawEvent = rest.slice(0, at);
+    rest = rest.slice(at + (rest.slice(at).startsWith("\r\n") ? 4 : 2));
+    const data: string[] = [];
+    for (const rawLine of rawEvent.split(/\r?\n/)) {
+      const line = rawLine.trim();
+      if (!line || line.startsWith(":")) continue;            // 注释 / 心跳行
+      if (line.startsWith("data:")) data.push(line.slice(5).trim());
+    }
+    if (!data.length) continue;
+    const joined = data.join("\n");
+    if (joined === "[DONE]") { done = true; break; }          // `[DONE]` 之后不再收
+    events.push(joined);
+  }
+  return { events, carry: rest, done };
+}
+
+/**
+ * 消费一条流：逐块读 → 并进 `state` → 每次有增量就回调（`onText` / `onReasoning` 只在实际变化时调）。
+ *
+ * **不做任何降级判断** —— 那是调用方（`requestModel()`）的事：这里抛出去的异常（流中途断了 /
+ * 用户点了取消）由它决定「回退整包」还是「报错」。
+ */
+export async function consumeSseStream(
+  chunks: AsyncIterable<string>,
+  onDelta?: (state: ChatStreamState) => void,
+): Promise<ChatStreamState> {
+  const state = newChatStreamState();
+  let carry = "";
+  let done = false;
+  for await (const piece of chunks) {
+    if (done) break;
+    const split = splitSseChunk(carry, String(piece ?? ""));
+    carry = split.carry;
+    if (split.done) done = true;
+    const beforeText = String(state.message.content ?? "");
+    const beforeRc = String(state.message.reasoning_content ?? "");
+    for (const raw of split.events) {
+      const parsed = parseSseData(raw);
+      if (parsed === null) { done = true; break; }
+      if (parsed === undefined) continue;
+      appendStreamChunk(state, parsed);
+    }
+    if (onDelta && (String(state.message.content ?? "") !== beforeText
+      || String(state.message.reasoning_content ?? "") !== beforeRc)) {
+      onDelta(state);
+    }
+  }
+  // 收尾时把没有空行结尾的最后一截也吃掉（有的网关最后一条事件不带空行）
+  if (!done && carry.trim()) {
+    const parsed = parseSseData(carry);
+    if (parsed !== null && parsed !== undefined) {
+      appendStreamChunk(state, parsed);
+      onDelta?.(state);
+    }
+  }
+  return state;
+}
+
+/** 流式降级的原因：**给用户看的一句话**（面板会把 `streamNote.reason` 原样显示出来） */
+export const AI_CHAT_STREAM_FALLBACK_NOT_SSE = "端点没有回 text/event-stream（可能不支持 SSE），本轮改用整包请求";
+export const AI_CHAT_STREAM_FALLBACK_BROKEN = "流式读取中断，本轮改用整包请求重新问一次";
+export const AI_CHAT_STREAM_READY = "本轮用流式输出（思考过程与正文都是逐块显示的）";
 
 export interface ChatTurnOpts {
   /** 已经拼好的消息（第一条通常是 system 提示词） */
@@ -241,8 +472,18 @@ export interface ChatTurnOpts {
   thinking?: string;
   /** 等模型回话的毫秒数（`ai.chatTimeoutSec` × 1000）：0 / 省略 = 不设，沿用壳自己的默认 */
   timeoutMs?: number;
-  /** `ai.chatStream`：本轮**固定 false**（壳的代理对 `stream:true` 直接回 400）；省略 = 不发这个字段 */
+  /**
+   * `ai.chatStream`（默认 **true**）：把 `stream:true` 发给端点并**逐块**读 SSE。
+   *
+   * 关 = 请求体里**一个字节都不发**这个字段（与从前逐字相同）；
+   * 开 = 试流式，端点不支持（不是 `text/event-stream`）或流中途失败时**自动降级**回整包，
+   * 降级的原因写在 `ChatTurnResult.streamNote` 里（面板会显示一行说明）。
+   */
   stream?: boolean;
+  /** 流式增量：正文累积到哪儿了（**只在真的变了时**回调；降级后一次都不会有） */
+  onText?: (text: string) => void;
+  /** 流式增量：思考过程（`delta.reasoning_content`）累积到哪儿了 */
+  onReasoning?: (text: string) => void;
   /** `ai.chatSystemPrompt`：非空则**追加**在内置提示词之后（不改内置那份） */
   systemPrompt?: string;
   /** 历史标签正文（`ai: ` 前缀由 ai-turn 加）；省略 = 取最后一条用户消息 */
@@ -793,14 +1034,188 @@ function hostError(status: number, body: string): string {
  *   · 哨兵（`AI_CHAT_HOST_KEY_SENTINEL`，走壳的同源代理）：不带 Authorization，改带
  *     `X-Provider-Key: host`。真 key 由壳在转发时补（页面从头到尾没有它）。
  */
+type StreamNote = ChatStreamNote;
+/** 一次模型请求的形状（`requestModel()` 与 `postChatOnce()` 共用；`stream` 只在需要时置真） */
+interface ChatRequestShape {
+  endpoint: string; model: string; key: string; messages: readonly ChatMessage[];
+  tools: readonly AiTool[]; temperature?: number; stream?: boolean;
+  thinking?: string; timeoutMs?: number;
+}
+
+/**
+ * 发一次模型请求并解析成 JSON；任何失败都抛一句人话（调用方包在回合里，异常即回滚）。
+ *
+ * **三条路，顺序固定**（§26.6 的流式与降级口径）：
+ *   ① `stream:true` 且宿主给了 `chunks()` → 试流式；响应不是 `text/event-stream` → **同一个响应**
+ *      在内存里按整包解析（不重发一次请求）；流中途抛错 → ② 重发一次整包；
+ *   ② `stream:true` 但宿主没有 `chunks()`（老宿主）→ 直接整包，`streamNote` 说明降级原因；
+ *   ③ 非流式请求：`stream` 字段**一个字节都不发**（「关」就是不发，与从前逐字相同）。
+ */
 async function requestModel(
-  opts: {
-    endpoint: string; model: string; key: string; messages: readonly ChatMessage[];
-    tools: readonly AiTool[]; temperature?: number; stream?: boolean;
-    thinking?: string; timeoutMs?: number;
-  },
+  opts: ChatRequestShape,
   fetchFn: ChatFetch,
+  note?: StreamNote,
+  onDelta?: (text: string, reasoning: string) => void,
 ): Promise<unknown> {
+  const wantStream = opts.stream === true;
+  if (wantStream) {
+    try {
+      return await requestModelStream(opts, fetchFn, note, onDelta);
+    } catch (e) {
+      if (isStreamBlocking(e)) throw e;   // 超时 / 端点自己报的错：**不重发**，直接让回合失败
+      if (note) { note.fellBack = true; note.reason = AI_CHAT_STREAM_FALLBACK_BROKEN; }
+      return await requestModelOnce(opts, fetchFn);
+    }
+  }
+  return requestModelOnce(opts, fetchFn);
+}
+
+/**
+ * 流式那一次的「不能再重发」错误：**超时**（已经等过一个完整窗口，重发只会再等一次）
+ * 与**端点自己的报错**（4xx/5xx 的正文翻出来的话）—— 这两类必须原样上抛。
+ * 其余（读失败 / 流断了 / 宿主不支持 chunks）才是「降级重问一次」的信号。
+ */
+function isStreamBlocking(e: unknown): boolean {
+  const m = message(e);
+  return m.indexOf("等了 ") === 0 || m.indexOf("端点") === 0 || m.indexOf("连不上") === 0 || m.indexOf("读端点响应失败") === 0;
+}
+
+async function requestModelOnce(opts: ChatRequestShape, fetchFn: ChatFetch): Promise<unknown> {
+  // 整包请求**一律不发 stream 字段**（「关」= 不发，与从前逐字相同）
+  const res = await postChatOnce({ ...opts, stream: false }, fetchFn);
+  return parseModelResponse(res, await readResponseText(res));
+}
+
+/**
+ * 试一次流式：先看响应头是不是 `text/event-stream`，是就逐块读；不是就当整包解析
+ * （**不重发请求** —— 这一条让「端点不支持 SSE」的降级是零成本的）。
+ */
+async function requestModelStream(
+  opts: ChatRequestShape,
+  fetchFn: ChatFetch,
+  note?: StreamNote,
+  onDelta?: (text: string, reasoning: string) => void,
+): Promise<unknown> {
+  const res = await postChatOnce({ ...opts, stream: true }, fetchFn);
+  if (!res.ok) {
+    if (note) { note.fellBack = true; note.reason = AI_CHAT_STREAM_FALLBACK_BROKEN; }
+    return parseModelResponse(res, await readResponseText(res));
+  }
+  const chunks = res.chunks;
+  if (typeof chunks !== "function") {
+    if (note) { note.fellBack = true; note.reason = AI_CHAT_STREAM_FALLBACK_NOT_SSE; }
+    return parseModelResponse(res, await readResponseText(res));
+  }
+  if (!isEventStream(res)) {
+    // 端点把 `stream:true` 忽略了（或者根本不懂），回的是整包 JSON：**不重发**，就地解析
+    if (note) { note.fellBack = true; note.reason = AI_CHAT_STREAM_FALLBACK_NOT_SSE; }
+    return parseModelResponse(res, await readResponseText(res));
+  }
+  const state = await consumeSseStream(chunks.call(res), (s) => {
+    // 逐块把增量交给上层（面板据此让正文像打字机一样长、「思考过程」那一块跟着长）
+    onDelta?.(String(s.message.content ?? ""), String(s.message.reasoning_content ?? ""));
+  });
+  if (note) { note.used = true; note.fellBack = false; note.reason = undefined; }
+  return streamResponse(state);
+}
+
+/**
+ * 解析非流式响应体（整包 / 假流式退化用的都是它）。
+ * **`hostErrorBodies` 那一条不许省**：代理模式下失败体的**壳原文**优先（见上面那段注释）。
+ */
+function parseModelResponse(res: ChatFetchResponse, text: string): unknown {
+  if (!res.ok) {
+    const raw = hostErrorBodies.get(res) ?? text;
+    throw new Error(hostError(res.status, raw));
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new Error("端点返回的不是 JSON（HTTP " + res.status + "）：" + clip(text.replace(/\s+/g, " ").trim(), 120));
+  }
+  const err = parsed && typeof parsed === "object" ? (parsed as { error?: unknown }).error : null;
+  if (err) {
+    const m = err && typeof err === "object" ? (err as { message?: unknown }).message : err;
+    throw new Error("端点报错：" + (typeof m === "string" && m ? m : JSON.stringify(err)));
+  }
+  return parsed;
+}
+
+async function readResponseText(res: ChatFetchResponse): Promise<string> {
+  try {
+    return await res.text();
+  } catch (e) {
+    throw new Error("读端点响应失败：" + message(e));
+  }
+}
+
+/** 响应是不是 SSE：只有 `text/event-stream` 才走流式（**命门** —— 别放宽成「有 chunks 就当流式」） */
+function isEventStream(res: ChatFetchResponse): boolean {
+  const probe = res as ChatFetchResponse & { contentType?: unknown; headers?: { get?(k: string): string | null } };
+  if (typeof probe.contentType === "string" && probe.contentType) {
+    return probe.contentType.toLowerCase().indexOf("text/event-stream") >= 0;
+  }
+  try {
+    const ct = probe.headers?.get?.("content-type");
+    return typeof ct === "string" && ct.toLowerCase().indexOf("text/event-stream") >= 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 发一次 POST 并按响应头建 `ChatFetchResponse`（直连与代理两条腿共用）。
+ *
+ * 超时口径与从前**逐字相同**：`X-Provider-Timeout` 优先（壳读它去等上游），
+ * 直连侧由 `AbortController` 按同一个值兜底 —— 流式也一样，计时器覆盖
+ * **首字节 + 整个流**（不是「只在流结束才算」）。
+ *
+ * `body.stream` 只在 `stream === true` 时才写进去（「关」= 不发这个字段）。
+ */
+/**
+ * 发一次 POST 并建出 `ChatFetchResponse`（直连与代理两条腿共用这个形状）。
+ *
+ * 两条头路径在这里定：哨兵 key → `X-Provider-Key: host`（真 key 由壳补）；
+ * 非哨兵（用户手填 key）→ `Authorization: Bearer <key>`，逐字不变。
+ *
+ * 超时口径与从前**逐字相同**：`X-Provider-Timeout` 优先（壳读它去等上游），
+ * 直连侧由 `AbortController` 按同一个值兜底 —— 流式也一样，计时器覆盖
+ * **首字节 + 读体（整个流）**，不是「只在流结束才算」。
+ */
+async function postChatOnce(opts: ChatRequestShape, fetchFn: ChatFetch): Promise<ChatFetchResponse> {
+  const hostKey = opts.key === AI_CHAT_HOST_KEY_SENTINEL;
+  const headers: Record<string, string> = hostKey
+    ? { "Content-Type": "application/json", "X-Provider-Key": "host" }
+    : { "Content-Type": "application/json", Authorization: "Bearer " + opts.key };
+  // 超时（`ai.chatTimeoutSec`）：**两条腿都按它等** —— 代理模式下壳读这个头去等上游
+  // （见 `docs/API.md` §26.6），直连模式下由下面的 AbortController 兜底。
+  const timeoutMs = timeoutMsOf(opts.timeoutMs);
+  if (timeoutMs > 0) headers["X-Provider-Timeout"] = String(timeoutMs);
+  const ctl = timeoutMs > 0 && typeof AbortController === "function" ? new AbortController() : null;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  if (ctl) timer = setTimeout(() => ctl.abort(), timeoutMs);
+  // 计时器**覆盖首字节 + 读体**（流式下也覆盖整个流）—— 所以它在 `finally` 里才清，
+  // 不是 fetch 一 resolve 就清：早先那样写的话，body 读到一半卡住就没有任何超时兜底。
+  try {
+    return await sendChatRequest(opts, fetchFn, headers, ctl ? ctl.signal : undefined, timeoutMs, ctl !== null);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+/**
+ * 真正的那一次 POST（请求体在这里拼，直连与代理两条腿共用同一个形状）。
+ * `body.stream` 只在 `stream === true` 时才写进去（「关」= 不发这个字段）。
+ */
+async function sendChatRequest(
+  opts: ChatRequestShape,
+  fetchFn: ChatFetch,
+  headers: Record<string, string>,
+  signal: unknown,
+  timeoutMs: number,
+  abortable: boolean,
+): Promise<ChatFetchResponse> {
   const body: Record<string, unknown> = { model: opts.model, messages: opts.messages };
   if (opts.tools.length) body.tools = toOpenAiTools(opts.tools);
   // ---- 思考模式（`ai.chatThinking`，见 docs/API.md §26.2 与 DeepSeek 的「思考模式」文档）----
@@ -818,62 +1233,21 @@ async function requestModel(
   if (!thinkingOn && typeof opts.temperature === "number" && Number.isFinite(opts.temperature) && opts.temperature !== 0) {
     body.temperature = opts.temperature;
   }
+  // 流式：只在真的要流式时才写这个字段（「关」= 一个字节都不发）
   if (opts.stream === true) body.stream = true;
-  const hostKey = opts.key === AI_CHAT_HOST_KEY_SENTINEL;
-  const headers: Record<string, string> = hostKey
-    ? { "Content-Type": "application/json", "X-Provider-Key": "host" }
-    : { "Content-Type": "application/json", Authorization: "Bearer " + opts.key };
-  // 超时（`ai.chatTimeoutSec`）：**两条腿都按它等** —— 代理模式下壳读这个头去等上游
-  // （见 `docs/API.md` §26.6），直连模式下由下面的 AbortController 兜底。
-  const timeoutMs = timeoutMsOf(opts.timeoutMs);
-  if (timeoutMs > 0) headers["X-Provider-Timeout"] = String(timeoutMs);
-  const ctl = timeoutMs > 0 && typeof AbortController === "function" ? new AbortController() : null;
-  let timer: ReturnType<typeof setTimeout> | null = null;
-  if (ctl) timer = setTimeout(() => ctl.abort(), timeoutMs);
-  let res: ChatFetchResponse;
   try {
-    res = await fetchFn(chatCompletionsUrl(opts.endpoint), {
+    return await fetchFn(chatCompletionsUrl(opts.endpoint), {
       method: "POST",
       headers,
       body: JSON.stringify(body),
-      signal: ctl ? ctl.signal : undefined,
+      signal,
     });
   } catch (e) {
-    if (ctl && ctl.signal.aborted) {
+    if (abortable) {
       throw new Error("等了 " + Math.round(timeoutMs / 1000) + " 秒模型还没回：可在「设置 → AI 助手 → 模型响应超时」调大，或把思考强度调低 / 关闭");
     }
     throw new Error("连不上端点（" + message(e) + "）：检查端点地址和这台设备的网络");
-  } finally {
-    if (timer) clearTimeout(timer);
   }
-  let text = "";
-  try {
-    text = await res.text();
-  } catch (e) {
-    throw new Error("读端点响应失败：" + message(e));
-  }
-  if (!res.ok) {
-    // 代理模式的失败体：优先用包装层留底的**壳原文**（见 `hostErrorBodies` 的注释）。
-    // **一律过 `hostError()`**：它内部按「响应形状」判这条错误是不是壳自己发的（`ok === false`），
-    // 判不出来就原样退回 `httpError()`（provider 档）。早先这里写成 `hostKey ? hostError : httpError`
-    // 二选一，于是「壳的信封落到直连分支」时会把原始 JSON 直接甩给用户
-    // （用户实测撞过：`端点返回 HTTP 504：{"ok":false,"error":"provider-timeout","detail":"10000ms"}`，
-    //  本该是「端点没在超时时间内回：10000ms（可用 --provider-timeout 调大）」）。
-    const raw = hostErrorBodies.get(res) ?? text;
-    throw new Error(hostError(res.status, raw));
-  }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    throw new Error("端点返回的不是 JSON（HTTP " + res.status + "）：" + clip(text.replace(/\s+/g, " ").trim(), 120));
-  }
-  const err = parsed && typeof parsed === "object" ? (parsed as { error?: unknown }).error : null;
-  if (err) {
-    const m = err && typeof err === "object" ? (err as { message?: unknown }).message : err;
-    throw new Error("端点报错：" + (typeof m === "string" && m ? m : JSON.stringify(err)));
-  }
-  return parsed;
 }
 
 // ------------------------------------------------------------------ 整轮
@@ -945,10 +1319,12 @@ export async function runChatTurn(opts: ChatTurnOpts): Promise<ChatTurnResult> {
   const label = (opts.label && opts.label.trim()) || defaultTurnLabel(messages);
   const docRevBefore = docRevOf(ctx);
   const histBefore = historyLen(ctx);
+  // 流式的落地情况（**所有返回路径都要带上**）：`used` 只在真的逐块读完一条 SSE 后才置真
+  const streamNote: ChatStreamNote = { used: false, fellBack: false };
 
   const fail = (error: string, rounds: number, stop: ChatStopReason = "text"): ChatTurnResult => ({
     ok: false, error, text: "", messages, calls, rounds, stop,
-    turnOpen: isTurnOpen(), recorded: false, docRev: docRevOf(ctx), docRevBefore,
+    turnOpen: isTurnOpen(), recorded: false, docRev: docRevOf(ctx), docRevBefore, streamNote,
   });
 
   const cfgErr = chatConfigError({ endpoint: opts.endpoint, model: opts.model, key: opts.key ?? "" });
@@ -968,7 +1344,12 @@ export async function runChatTurn(opts: ChatTurnOpts): Promise<ChatTurnResult> {
         endpoint: opts.endpoint, model: opts.model, key: opts.key ?? "", messages, tools,
         temperature: opts.temperature, stream: opts.stream,
         thinking: opts.thinking, timeoutMs: opts.timeoutMs,
-      }, opts.fetchFn);
+      }, opts.fetchFn, streamNote, (saidText, saidReasoning) => {
+        // 逐块把增量交给面板：正文像打字机一样长、「思考过程」那一块跟着长。
+        // **只回调，不改任何状态** —— 回合、历史与「预览后应用」的语义一点没碰。
+        opts.onText?.(saidText);
+        opts.onReasoning?.(saidReasoning);
+      });
       messages.push(assistantMessage(response));
       const parsed = parseToolCalls(response);
       const said = responseText(response);
@@ -1008,7 +1389,7 @@ export async function runChatTurn(opts: ChatTurnOpts): Promise<ChatTurnResult> {
     return {
       ok: true, text: fallbackText(text, calls, stop, maxRounds), messages, calls, rounds, stop,
       // 落没落历史由 History 自己说了算（只读回合 / 无改动时 runAiTurn 也是 ok:true）
-      turnOpen: false, recorded: historyLen(ctx) > histBefore, docRev: docRevOf(ctx), docRevBefore,
+      turnOpen: false, recorded: historyLen(ctx) > histBefore, docRev: docRevOf(ctx), docRevBefore, streamNote,
     };
   }
   // 预览模式：回合开着交给 UI（点「应用」才 commitTurn、「放弃」才 rollbackTurn）
@@ -1022,7 +1403,7 @@ export async function runChatTurn(opts: ChatTurnOpts): Promise<ChatTurnResult> {
   }
   return {
     ok: true, text: fallbackText(text, calls, stop, maxRounds), messages, calls, rounds, stop,
-    turnOpen: isTurnOpen(), recorded: false, docRev: docRevOf(ctx), docRevBefore,
+    turnOpen: isTurnOpen(), recorded: false, docRev: docRevOf(ctx), docRevBefore, streamNote,
   };
 }
 

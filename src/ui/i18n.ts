@@ -380,6 +380,10 @@ const zh: Dict = {
   aiChatLocalOnly: "key 只存在本机",
   aiChatThinking: "正在请求模型…",
   aiChatPlaceholder: "说一句话，例如：画一个绿色史莱姆",
+  // 流式（`ai.chatStream`）：思考过程单独一块、默认折叠；降级时给一行说明
+  aiChatReasoning: "思考过程",
+  aiChatStreaming: "流式输出中…",
+  aiChatStreamFallback: "流式没用上：{why}",
   aiChatSend: "发送", aiChatTitle: "AI 助手", aiChatOpen: "AI 助手", aiChatBack: "‹ 返回",
   aiChatMinimize: "最小化为浮动球", aiChatResize: "拖动改变窗口大小",
   // ---- P8/W2：厂商预设 + 更完善的设置项（docs/PLAN-ai.md §3.7.7）----
@@ -395,7 +399,7 @@ const zh: Dict = {
   aiChatThinking_default: "跟随端点默认", aiChatThinking_off: "关闭思考", aiChatThinking_low: "低", aiChatThinking_high: "高", aiChatThinking_max: "最高",
   aiChatTimeoutLabel: "模型响应超时", aiChatTimeoutDesc: "等模型回话的秒数（5..600，默认 60）：随请求发给本机壳，直连时也按它中止；思考模式首字慢，撞超时先调大这里（单位：秒）",
   aiChatSystemPromptLabel: "补充提示词", aiChatSystemPromptDesc: "非空时追加在内置提示词之后（不改内置那份）：可以写「一律用像素画配色」这类偏好",
-  aiChatStreamLabel: "流式输出", aiChatStreamDesc: "本版本固定关闭：本机壳的同源代理对 stream=true 直接回 400，打开后发请求会失败（留着是给以后支持流式一个口径位）",
+  aiChatStreamLabel: "流式输出", aiChatStreamDesc: "默认打开：边生成边显示，正文像打字机一样长，模型的思考过程单独一块（默认折叠）。端点不支持流式（没回 text/event-stream）或流中途出错时，会自动改用整包请求重问一次，面板会说明原因",
   aiProtectKeyLabel: "保护 key", aiProtectKeyDesc: "打开时不在诊断 / 提示文本里拼任何与 key 有关的内容。注意：关掉它也不代表 key 会显示出来 —— key 不进设置导出、不进日志、不进任何提示这几条与这个开关无关",
   aiChatBallLabel: "最小化后显示浮动球", aiChatBallDesc: "关掉 = 最小化助手窗口后不留悬浮小球，只能用主菜单里的「AI 助手」重新打开",
   aiChatYou: "你", aiChatAssistant: "助手",
@@ -840,6 +844,10 @@ const en: Dict = {
   aiChatLocalOnly: "the key stays on this device",
   aiChatThinking: "Asking the model…",
   aiChatPlaceholder: "Say one sentence, e.g. draw a green slime",
+  // Streaming (`ai.chatStream`): the reasoning chain gets its own collapsed block; fallback says why
+  aiChatReasoning: "Reasoning",
+  aiChatStreaming: "Streaming…",
+  aiChatStreamFallback: "Streaming was not used: {why}",
   aiChatSend: "Send", aiChatTitle: "AI assistant", aiChatOpen: "AI assistant", aiChatBack: "‹ Back",
   aiChatMinimize: "Minimise to a floating ball", aiChatResize: "Drag to resize the window",
   // ---- P8/W2: vendor presets + the fuller assistant settings (docs/PLAN-ai.md §3.7.7) ----
@@ -855,7 +863,7 @@ const en: Dict = {
   aiChatThinking_default: "Endpoint default", aiChatThinking_off: "Off", aiChatThinking_low: "Low", aiChatThinking_high: "High", aiChatThinking_max: "Max",
   aiChatTimeoutLabel: "Model timeout", aiChatTimeoutDesc: "Seconds to wait for the model (5..600, default 60): sent to the desktop shell with every request and also used as the direct-mode abort timeout; thinking mode is slow on the first token (unit: seconds)",
   aiChatSystemPromptLabel: "Extra instructions", aiChatSystemPromptDesc: "When non-empty it is appended after the built-in prompt (which stays unchanged): use it for preferences such as always keeping to a pixel-art palette",
-  aiChatStreamLabel: "Streaming", aiChatStreamDesc: "Fixed off in this version: the same-origin proxy in the desktop shell answers stream=true with 400, so turning it on makes requests fail (the switch is kept as a hook for streaming later)",
+  aiChatStreamLabel: "Streaming", aiChatStreamDesc: "On by default: text appears as it is generated (typewriter style) and the model's reasoning gets its own collapsed block. If the endpoint does not stream (no text/event-stream) or the stream breaks midway, the request is retried as a single whole response and the panel says why",
   aiProtectKeyLabel: "Protect the key", aiProtectKeyDesc: "While on, no diagnostics or notices mention anything about the key. Note that turning it off still does not reveal the key: keeping it out of settings exports, logs and every notice is guaranteed elsewhere",
   aiChatBallLabel: "Show a floating ball when minimised", aiChatBallDesc: "Off = minimising the assistant window leaves no floating ball; reopen it from the main menu entry instead",
   aiChatYou: "You", aiChatAssistant: "Assistant",

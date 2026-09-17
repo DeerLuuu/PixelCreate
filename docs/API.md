@@ -3386,7 +3386,7 @@ curl.exe -s http://127.0.0.1:8787/provider/config
 | `ai.chatThinking` | `enum` | `default` | 否 | 否 | 思考强度：`default` = **一个思考字段都不发**（对任何 OpenAI 兼容端点最安全）；`off` = `{"thinking":{"type":"disabled"}}`；`low`/`high`/`max` = `{"thinking":{"type":"enabled"},"reasoning_effort":<档位>}`（DeepSeek 口径）。⚠️ 打开思考后 **`temperature` 不生效**（官方文档明说），且**带 `tools` 时后续每一轮必须回传 `reasoning_content`**（否则 400）—— 后者由 `assistantMessage()` 把 `choices[].message.reasoning_content` 记进 assistant 消息实现 |
 | `ai.chatTimeoutSec` | `int` | `60`（`5..600`，单位秒） | 否 | 否 | **等模型回话**的秒数：发请求时 ×1000 → 请求头 `X-Provider-Timeout`（壳按它等上游，见 §26.6）；直连时由页面的 `AbortController` 按同一个值中止 |
 | `ai.chatSystemPrompt` | `text:"plain"` | `""` | 否 | 否 | 非空则**追加**在内置提示词之后 |
-| `ai.chatStream` | `bool` | `false` | 否 | 否 | 本轮固定关闭：代理对 `stream:true` 直接回 400 |
+| `ai.chatStream` | `bool` | `true` | 否 | 否 | 流式输出总开关（**默认打开**）：把 `stream:true` 发给端点并**逐块**读 SSE —— 正文像打字机一样长，`delta.reasoning_content` 单独累积成默认折叠的「思考过程」块。端点没回 `text/event-stream` 或流中途出错时**自动降级**成整包（见 §26.6.1）；关掉 = 请求体里一个字节都不发这个字段 |
 | `ai.protectKey` | `bool` | `true` | 否 | 否 | 决定状态行**要不要附那句与 key 有关的说明**（见 26.3） |
 | `ai.chatWinOpen` | `bool` | `false` | 否 | 否 | 浮窗当前是否打开（`visible` 恒 false：这是状态不是可调值） |
 | `ai.chatWinMin` | `bool` | `false` | 否 | 否 | 是否已最小化成球（`visible` 恒 false） |
@@ -3627,7 +3627,7 @@ key 的值一个字符都不进这段文本）：
 | 页面 → 壳的地址 | **恒为同源相对路径 `/provider/chat`**（`chatProxyUrl()`）。⚠️ 早先写成 `<壳报的 providerBase>/provider/chat`，于是请求被发去 `https://api.deepseek.com/provider/chat`（生产）或假 provider 的地址（跨源，必然 `Failed to fetch`）—— **P8 修掉的真缺陷**，别改回去 |
 | 页面怎么拿通道 token | 复用 §25.2 的既有桥：`window.PixelBridge.aiServerStatus()` 回的 `{"running","port","token"}`（**不新增桥方法**），只放内存、**绝不写 localStorage**；取不到就按「代理不可用」回落直连 |
 | 探测的 GET | **不能带 body**（真浏览器对 `GET` 带 body 直接抛 `TypeError`，而当时的 `catch { return null }` 把它静默吞成「这台机器没有代理」）—— 这是 **P8 修掉的第二个真缺陷**；测试那边配了一个按真浏览器规则校验的假 fetch（`strictFetch`）盯着它 |
-| 请求体 | OpenAI 兼容**原样转发**：`{ model, messages, tools?, tool_choice?, temperature?, max_tokens? }`。壳**只补** `Authorization`，不改其它字段；`model` 缺省时用壳的默认模型；`stream:true` 直接回 `400`。**请求体里没有 URL 字段** —— 目标地址只由壳的启动参数决定，这从结构上堵死「拿代理当任意 URL 转发器」 |
+| 请求体 | OpenAI 兼容**原样转发**：`{ model, messages, tools?, tool_choice?, temperature?, max_tokens?, stream? }`。壳**只补** `Authorization`，不改其它字段；`model` 缺省时用壳的默认模型；**`stream:true` 真的转**（按 SSE 事件边界边收边擦边转，见 §26.6.1；上游回的不是 SSE 就按整包透传）。**请求体里没有 URL 字段** —— 目标地址只由壳的启动参数决定，这从结构上堵死「拿代理当任意 URL 转发器」 |
 | 鉴权（对页面） | `POST /provider/chat`：优先 `Authorization: Bearer <通道token>`，兼容 `X-Shell-Token`；常量时间比较。页面在代理模式下**去掉** `Authorization`、改带 `X-Provider-Key: host`，并把通道 token 放 `X-Shell-Token`（通道 token 只放内存、绝不写 localStorage） |
 | 响应 | 把 provider 的 **HTTP 状态码与 body 原样透传**（3xx 也照透，**不跟随重定向**）。页面侧的 `httpError()` 按状态分档的文案因此一行都不用改 |
 | 超时 / 体积 | **超时有三层，别混**：① 页面设置 `ai.chatTimeoutSec`（默认 **60s**）→ 每次请求带 `X-Provider-Timeout`（毫秒，壳**夹到 1s..10min**）；② 壳的上游转发用「该头优先，否则 `--provider-timeout`（默认 **60000ms**，env `PC_SHELL_PROVIDER_TIMEOUT`）」→ 超时回 `504`；③ 壳 ↔ 页面的临时通道仍用 `--timeout`（默认 10000ms，与 `MainActivity.AI_CALL_TIMEOUT_MS` 同口径）。**别再让模型请求共用 10s**：V4 默认带思考模式，一次带 61 个工具 schema 的请求十几秒很正常（实测：假 provider 延迟 12s，旧默认 10s → 504；新默认 60s → 200；壳默认 2s + 请求头 8s、provider 延迟 3.5s → 200，去掉头 → 2s 时 504）。上游响应体上限 8 MiB（`MAX_PROVIDER_BYTES`，超了截断）；页面 → 壳的请求体上限 1 MiB（`MAX_BODY_BYTES`）→ `413` |
@@ -3654,8 +3654,8 @@ key 的值一个字符都不进这段文本）：
 | `403` | `proxy-off` | 本机壳拒绝了这次转发（<detail>，例如 `--no-provider-proxy` / 目标不是已知 provider） |
 | `413` | `body-too-large` | 请求太大（上限 1 MiB）：对话太长，清一下会话 |
 | `502` | `provider-unreachable` | 连不上端点（<detail>）：检查这台设备的网络 |
-| `504` | `provider-timeout` | 端点没在超时时间内回：<detail>（本机壳的上游超时，可用 `--provider-timeout` 调大） |
-| `400` | `bad-request` | 端点返回 HTTP 400：<detail>（体不是 JSON / `stream:true` / `no-model`） |
+| `504` | `provider-timeout` | 端点没在超时时间内回：<detail>（本机壳的上游超时，可用 `--provider-timeout` 调大）；**流式下同样是首字节 / 整体口径**（§26.6.1） |
+| `400` | `bad-request` | 端点返回 HTTP 400：<detail>（体不是 JSON / `no-model`） |
 | `404` | `not-found` | **页面静默回落直连**（老壳没有这个端点），不弹错 |
 | 其它 4xx/5xx | 原样透传 provider 的 | 走 `httpError()` 四档（401/403、404、429、其它） |
 
@@ -3692,13 +3692,100 @@ key 的值一个字符都不进这段文本）：
 诊断一致，所以「页面能看到的」与「日志能看到的」严格相同，不多泄漏一位。
 （页面在回显场景下看到的是 `…尾4` 掩码 —— 与壳的 banner 惯例一致，判可接受。）
 
+#### 26.6.1 流式（`stream:true`）与自动降级
+
+**这一条以前是「壳直接回 400」**（`{"ok":false,"error":"bad-request","detail":"本轮不支持 stream:true"}`），
+现在两条腿都真的支持流式：页面发 `stream:true`，直连时直接发给 provider，代理时由壳转发。
+
+**壳侧（`forwardToProviderStream()` / `flushSseEvents()`）**：
+
+| 项 | 定稿 |
+|---|---|
+| 什么时候走流式 | 上游响应的 `content-type` 含 `text/event-stream` **且**请求体 `stream === true`；其余一律整包透传（4xx/5xx 错误体、端点忽略 `stream` 回 JSON、假流式都在这一支） |
+| 回给页面的头 | `200` + `content-type: text/event-stream; charset=utf-8` + `cache-control: no-store` + `x-accel-buffering: no` + CORS 头；`Transfer-Encoding: chunked`（不设 `content-length`） |
+| **擦 key 的粒度** | **按 SSE 事件边界**（空行 `\n\n` 分隔）：把同一个事件的字节攒齐 → `scrubProviderKey()` → **立刻 flush**。理由：`scrubProviderKey()` 只在**完整的明文多字节串**上有效，provider 把 `Bearer sk-xxxx` 拆在两个 TCP 块里时分块各擦一遍谁也匹配不到 ⇒ key 会明文进页面。所以**页面拿到的每一个字节都过了擦除**，未擦的原文一个字节都不出这个函数 |
+| carry-over 缓冲 | 跨 TCP 块的半截事件留在 `queue`（`Buffer`，不是字符串 —— 中文 / emoji 的 UTF-8 字节也可能跨块，先解码会变 `U+FFFD`）；收尾时没有空行结尾的最后一截**也要先擦再发** |
+| 上游不是 SSE | 整包读回来走与整包**完全相同**的透传 + 擦 key + 按新字节长度改写 `content-length` |
+| 超时 | 与整包同一条：`X-Provider-Timeout` 优先（夹 1s..10min），否则 `--provider-timeout`；`req.setTimeout(waitMs)` **从发起请求起算，覆盖首字节 + 整个流**（不是「只在流结束才算」）。实测：壳 `--provider-timeout 2000` + 静默 8s 的 SSE 上游 ⇒ 2026ms 回 `504 provider-timeout`，不是 8s |
+| 体积 / 重定向 / CORS | 与整包同口径：`MAX_PROVIDER_BYTES`（8 MiB，超了截断收尾）；3xx 原样透传、**不跟跨主机重定向**；`providerCors()` 照旧 |
+| 页面断开 | `res.on("close")` 掐掉上游（别把一个还在生成的请求吊着） |
+
+**页面侧（`src/app/ai-chat.ts`）的自动降级** —— 这是「不能让用户看到一个坏掉的回答」那条：
+
+| 触发条件 | 行为 | `ChatTurnResult.streamNote` |
+|---|---|---|
+| 宿主响应**没有** `chunks()`（老宿主 / 无 body） | 直接整包（`stream` 字段照发，只是不逐块读） | `fellBack:true`，reason = `AI_CHAT_STREAM_FALLBACK_NOT_SSE` |
+| 响应头**不是** `text/event-stream`（本地 Ollama / 网关忽略 `stream` / 直接回 JSON） | **同一个响应**在内存里按整包解析，**不重发请求**（零成本） | `fellBack:true`，reason = 同上 |
+| 流**中途抛错**（连接断 / 迭代器抛 / 壳侧上游挂掉） | **重发一次整包**请求（不带 `stream` 字段） | `fellBack:true`，reason = `AI_CHAT_STREAM_FALLBACK_BROKEN` |
+| 超时（`等了 N 秒模型还没回`）/ 端点自己报的错（4xx-5xx 翻出来的话）/ 连不上 | **不重发**：原样上抛，回合按既有失败路径 rollback（免得白等第二个超时窗口） | 保持/置成 `fellBack:true` |
+| 真的逐块读完了一条 SSE | 正常收尾 | `used:true`，`reason` 为空 |
+
+**流式不改任何既有语义**（三条一起钉住）：流式累积出来的 `choices[0].message`（含 `tool_calls`）与整包**逐字段相同**
+（`stream.tools.identical-to-full`），所以 `parseToolCalls()` / `assistantMessage()` / 整轮循环一个字都没改；
+`reasoning_content` 照旧记进 assistant 消息（DeepSeek 带 `tools` 时后续每轮必须回传）；
+「预览后应用」「一轮一条 undo」也不受流式影响（`stream.loop.*`）。
+
+**前端的两个挂点**（`src/ui/AiPanel.tsx`）：`platformFetch()` 把 `res.body`（Web Streams）包成
+`ChatFetchResponse.chunks()` 那个 `AsyncIterable<string>`（只解码，切分与累积在 `ai-chat`）；
+面板把增量写进**最后一行**（`onText` / `onReasoning`），`delta.reasoning_content` 渲染成
+**默认折叠**的 `<details>`「思考过程」块（`data-guide="ai-reasoning"`，摘要里带字数，流式期间看得见它在长）。
+降级时面板显示一行说明（`aiChatStreamFallback`，`data-guide="ai-stream-fallback"`）——
+「说好的流式怎么没动」不该变成谜。
+
+##### 26.6.2 流式的端到端自测（假 provider + curl）
+
+**为什么要用假 provider**：真 DeepSeek 需要真 key 与联网，而且**没法让它按你想要的节奏吐块**。
+一个会 sleep 的本地 SSE 端点能把「逐块到达」和「key 擦除」两件事都量出来：
+
+```js
+// %TEMP%\fake-sse-provider.mjs：先吐 3 个 delta.reasoning_content、再吐 delta.content 片段、最后 [DONE]
+// 每步之间 sleep 400ms（总耗时 ≈ 2.4s）；第一条事件**把收到的 Authorization 原样回显**，用来验擦除
+import http from "node:http";
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const ev = (o) => "data: " + JSON.stringify(o) + "\n\n";
+http.createServer((req, res) => {
+  let b = ""; req.on("data", (c) => (b += c));
+  req.on("end", async () => {
+    res.writeHead(200, { "content-type": "text/event-stream; charset=utf-8" });
+    res.write(ev({ choices: [{ index: 0, delta: { reasoning_content: "[回显 " + (req.headers.authorization || "") + "] " } }] }));
+    await sleep(400);
+    res.write(ev({ choices: [{ index: 0, delta: { reasoning_content: "先看一下画布，" } }] }));
+    await sleep(400);
+    res.write(ev({ choices: [{ index: 0, delta: { content: "好的，这就画一条红线。" } }] }));
+    await sleep(400);
+    res.write("data: [DONE]\n\n");
+    res.end();
+  });
+}).listen(8913, "127.0.0.1", () => console.log("fake sse provider: http://127.0.0.1:8913"));
+```
+
+```powershell
+node $env:TEMP\fake-sse-provider.mjs                                        # 假 provider（8913）
+node toolchain\pc-shell.mjs --port 8911 --no-open --token a1b2c3d4e5f60718 --provider-key sk-cli-probe-8888 --provider-base http://127.0.0.1:8913
+'{"model":"deepseek-v4-pro","stream":true,"messages":[{"role":"user","content":"画一条红线"}]}' | Set-Content -NoNewline $env:TEMP\req.json
+# ⚠️ 请求体**写成文件**用 --data-binary "@文件"：PowerShell 会吞掉内联 JSON 的引号
+curl.exe -sS -N -D $env:TEMP\hdr.txt -H "Authorization: Bearer a1b2c3d4e5f60718" -H "Content-Type: application/json" --data-binary "@$env:TEMP\req.json" http://127.0.0.1:8911/provider/chat
+```
+
+**期望现象**（2026-09-17 实测）：
+
+| 观察点 | 期望 |
+|---|---|
+| 回给客户端的头 | `HTTP/1.1 200`、`content-type: text/event-stream; charset=utf-8`、`Transfer-Encoding: chunked` |
+| 逐块到达 | `curl -N` 的输出**分多次**刷出来，相邻两块之间 ≈ 400ms（不是一次性结尾全到）；`-w "%{time_starttransfer}"` 应明显小于总耗时 |
+| key 擦除 | 回显那条事件里是 `Bearer …8888`（**掩码**）；整段输出里搜不到 `sk-cli-probe-8888` |
+| 逐块内容 | 三个 `reasoning_content` 事件在前、`content` 事件在后，最后一个 `data: [DONE]` |
+| 上游不支持 SSE | 换一个只回 `application/json` 的假 provider ⇒ 壳按整包透传（`content-type: application/json` + 正确 `content-length`），页面侧自动降级 |
+| 首字节超时 | 假 provider 静默 8s + 壳 `--provider-timeout 2000` ⇒ **≈2s** 回 `504 provider-timeout`（不是 8s） |
+
 **APK 侧（本轮明确不做）**：Android 上**没有「宿主环境变量」这种给应用进程用的一等机制**
 （`System.getenv` 在应用进程里读不到用户设的 shell 变量），所以「环境 key」这条路在 APK 上不存在；
 APK 今天的行为仍是「手填 key + 直连」（`INTERNET` 权限已在）。**它能不能连上真 provider 存疑**
 （桌面 Edge 的实测表明 `Origin: file://` 对 DeepSeek 放行，但那**不是** Android WebView 的行为：
 `MainActivity` 没有开 `setAllowUniversalAccessFromFileURLs`，WebView 默认对 `file://` 页面的跨源
 请求是拦的，而本机没有 Android 设备可验证）⇒ 记进 `AGENTS.md` §7 的缺口，要做代理就照抄 §26.6 的
-路径与错误码，Java 侧多回一个 `Access-Control-Allow-Origin: file://`。
+路径与错误码，Java 侧多回一个 `Access-Control-Allow-Origin: file://`。**流式在 APK 上同理没做**
+（`AiServer.java` 那条路仍是整包；页面侧会自动降级，所以不会坏，只是没有打字机效果）。
 
 **自测 / 验证口径**（`toolchain/pc-shell.mjs`）：
 
@@ -3719,7 +3806,7 @@ node toolchain/pc-shell.mjs --port 8915 --no-open --provider-base http://api.dee
 node toolchain/check-bundle.mjs app2/www/js/app.js      # 期望：✓ 产物自检通过…（exit 0）
 # 更严的一条（推荐）：按 §6.4 在 %TEMP% 里用同一套 esbuild 口径重建一份，
 # md5 必须与 app2/www/js/app.js **逐字节相同** —— check-bundle 只证「能加载」，不证「等于 src」。
-node tests\.ts-out\tests\run-tests.js | Select-Object -Last 1   # 期望：ALL PASS（当前 7642 条）
+node tests\.ts-out\tests\run-tests.js | Select-Object -Last 1   # 期望：ALL PASS（当前 7701 条）
 ```
 
 壳伺服的就是 `app2/www/js/app.js`（§5.1b）：md5 或自检不对，说明产物落后于源码，先在仓库根重建（§6.4），
@@ -3752,6 +3839,13 @@ node toolchain/pc-shell.mjs             # 默认会自己打开浏览器
 **UI 五步**：① 菜单 →「AI 助手」→ 浮窗出现；② 拖标题栏移动、右下角缩放、点「最小化」变成一颗小球、
 点球还原（几何按机器记住，刷新后不变）；③ 设置里确认厂商预设**默认选中 DeepSeek**、端点与模型已预填；
 ④ 在输入框说「在画布中心画一只猫」→ 看「调用摘要」；⑤ 点「应用」落一条可撤销的操作，或点「放弃」逐字节回滚。
+
+**自己验「流式」**：页面上的两条肉眼可见的判据 —— ① 正文是**一块一块长出来**的（不是憋到最后一次性出现），
+且它下面有「流式输出中…」那一行（`data-guide="ai-stream"`）；② 出现一个**默认折叠**的「思考过程」块
+（`data-guide="ai-reasoning"`，摘要上的字数在流式期间会涨），点开是模型的思维链。
+要**量**逐块到达、要看擦除在流式下成不成立，走 §26.6.2 的假 provider + `curl.exe -N`（那里有原始输出与期望现象表）。
+设置里把 `ai.chatStream` 关掉再发一句：应该还是整包行为（请求体里连 `stream` 字段都没有）。
+端点不支持 SSE 时面板会出现一行 `流式没用上：…`（`data-guide="ai-stream-fallback"`）—— 这就是自动降级的可见证据。
 
 **自己验「key 不进页面」**（F12 → Console，三行都应为 `false`）：
 
