@@ -62,7 +62,7 @@ toolchain/     自写开发脚本（devserver / make-icon / check-bundle / stres
   · **改了环境变量要重启壳**（key 只在 `parseArgs` 时读一次）；`AI_TOKEN` 是**壳 ↔ 页面的通道 token**，与 provider key 是两件事，不得混用；
   · **安全分档**：环境变量那把 key **只发往已知 provider 主机（`api.deepseek.com` / `api.openai.com`）且必须是 `https:`**，两者有一个不满足就**直接关掉 `/provider/*` 转发**并在 banner 讲明原因（`--provider-base http://api.deepseek.com:8080` 这种也会被拒）；只有显式 `--provider-key` 才可走非白名单主机 / 明文 http；
   · 壳把自己那把 key **擦成 `…尾4`** 再写回页面（防上游在错误体里回显 `Authorization`，那会让环境 key 明文进 DOM）；不跟随跨主机重定向；banner / 日志 / 诊断里只有尾 4 位。
-  接口形状、九档错误码与完整安全边界见 `docs/API.md` §26.6；环境变量优先级与「key 不进页面」的准确口径见 §26.3。
+  接口形状、九档错误码与完整安全边界见 `docs/API.md` §26.6；环境变量优先级与「key 不进页面」的准确口径见 §26.3；**怎么自己测（三条测法 / 期望现象 / 症状排查表）见 §26.7**。
 - 大改动可用 git 回滚（仓库已有 90+ 提交）。
 
 ---

@@ -3709,3 +3709,106 @@ node toolchain/pc-shell.mjs --port 8914 --no-open --provider-key sk-cli-probe-88
 node toolchain/pc-shell.mjs --port 8915 --no-open --provider-base http://api.deepseek.com
 ```
 
+### 26.7 测试手册（本机怎么验助手与代理）
+
+**先对齐两个基准**（对不上就别往下测）：
+
+```powershell
+node toolchain/check-bundle.mjs app2/www/js/app.js      # 期望：✓ 产物自检通过…（exit 0）
+(Get-FileHash app2/www/js/app.js -Algorithm MD5).Hash   # 期望：B51A0A94FBF7C892DE405A8E4097E059
+node tests\.ts-out\tests\run-tests.js | Select-Object -Last 1   # 期望：ALL PASS（当前 7639 条）
+```
+
+壳伺服的就是 `app2/www/js/app.js`（§5.1b）：md5 或自检不对，说明产物落后于源码，先在仓库根重建（§6.4），
+否则你测到的是旧包 —— **`check-bundle` 只证「能加载」，不证「等于 src」**，所以两个都看。
+
+**测法 A：零成本 + 离线（本地 OpenAI 兼容服务）** —— 不需要任何真 key，最适合先把流程跑通：
+
+```powershell
+node toolchain/pc-shell.mjs --port 8911 --provider-key local --provider-base http://127.0.0.1:11434/v1
+```
+
+`--provider-key` 显式给出的通道**豁免「白名单主机 + https」闸门**（§26.6），所以本机 `http` 端点可用
+（Ollama 默认 `11434`、LM Studio 默认 `1234`，端点要带 `/v1`）。设置里选「自定义」，把端点填成同一个地址。
+
+**测法 B：手填 key 直连**（最快看到真回答）：起壳后进「设置 → AI 助手」，在 key 那一行粘上你的 key，
+端点保持 DeepSeek 默认值即可。这条路是**页面直连** provider（实测 DeepSeek 会回 CORS 头，§3.7.1），
+key 存在页面 `localStorage` 里 —— 这是 §26.3 写明的那条边界。
+
+**测法 C：环境变量 key + 同源代理**（推荐，key 不进页面）：
+
+```powershell
+$env:DEEPSEEK_API_KEY = "sk-你的key"    # 只对当前 PowerShell 窗口有效
+node toolchain/pc-shell.mjs             # 默认会自己打开浏览器
+# 想长期有效（新窗口才生效）：setx DEEPSEEK_API_KEY "sk-你的key"
+```
+
+⚠️ **双击 `toolchain\pc-shell.cmd` 读不到你刚在 PowerShell 里 `$env:` 设的变量**（那是当前窗口的环境）；
+要么就用 `setx` 设成用户级变量再双击，要么在同一个 PowerShell 窗口里 `node toolchain/pc-shell.mjs`。
+
+**UI 五步**：① 菜单 →「AI 助手」→ 浮窗出现；② 拖标题栏移动、右下角缩放、点「最小化」变成一颗小球、
+点球还原（几何按机器记住，刷新后不变）；③ 设置里确认厂商预设**默认选中 DeepSeek**、端点与模型已预填；
+④ 在输入框说「在画布中心画一只猫」→ 看「调用摘要」；⑤ 点「应用」落一条可撤销的操作，或点「放弃」逐字节回滚。
+
+**自己验「key 不进页面」**（F12 → Console，三行都应为 `false`）：
+
+```js
+const k = "sk-";                                        // 用你 key 的前 3 位就够
+document.documentElement.outerHTML.includes(k);
+JSON.stringify(localStorage).includes(k);
+performance.getEntriesByType("resource").some(r => r.name.includes(k));
+```
+
+环境变量那条路下，设置页的状态行会写「本机环境变量已提供 key（key 不在页面里）（由桌面壳从环境变量提供并
+同源转发，页面拿不到它；换 key 要重启壳）」。
+
+**自己验「回显防护」**（provider 把收到的 `Authorization` 回显时，页面只应看到掩码）：
+
+```js
+// 存成 %TEMP%\fake-provider.mjs：任何请求都回 401，并把 Authorization 回显进错误体
+import http from "node:http";
+http.createServer((req, res) => {
+  let b = ""; req.on("data", (c) => (b += c));
+  req.on("end", () => {
+    res.writeHead(401, { "content-type": "application/json" });
+    res.end(JSON.stringify({ error: { message: "bad key: " + (req.headers.authorization || "") } }));
+  });
+}).listen(8913, "127.0.0.1", () => console.log("fake provider: http://127.0.0.1:8913"));
+```
+
+```powershell
+node $env:TEMP\fake-provider.mjs
+node toolchain/pc-shell.mjs --port 8914 --provider-key sk-cli-probe-8888 --provider-base http://127.0.0.1:8913
+```
+
+设置里选「自定义」+ 端点 `http://127.0.0.1:8913`，随便发一句：错误行应显示 `Bearer …8888`（**掩码**），
+**不应**出现 `sk-cli-probe-8888` 明文；`document.documentElement.outerHTML.includes("sk-cli-probe-8888")` 必须是 `false`。
+
+**正常时应该看到什么**：
+
+| 观察点 | 期望 |
+|---|---|
+| `curl.exe -s http://127.0.0.1:8911/provider/config` | `{"ok":true,"proxy":true,"baseUrl":"https://api.deepseek.com","defaultModel":"deepseek-v4-pro","models":[…],"hasEnvKey":<bool>,"keySource":"env"\|"cli"\|"none"}`，**不含任何 `sk-` 形状串、连尾 4 位都没有** |
+| 无 token 调 `/ai/health` | `401`（服务默认关闭时会是 `503 ai-off`，都对） |
+| 壳的 banner | 只打 key 的**尾 4 位**（`…abcd`）；有闸门拦截时会写原因（`协议不是 https，key 会明文出网` / `主机不在白名单`） |
+| 无桥接的普通浏览器（devserver / Pages） | 菜单里**没有**「AI 助手」、控制台**零** AI 请求（平台门，不是 bug） |
+
+**症状 → 排查**：
+
+| 症状 | 原因 / 处理 |
+|---|---|
+| 菜单里没有「AI 助手」 | 当前页面没有 `window.PixelBridge`（普通浏览器 / Pages）：用桌面壳或 APK 打开 |
+| 状态行「没有可用的 key」 | 三种来源都没有：设置里手填，或设环境变量后**重启壳**（key 只在启动时读一次） |
+| 「本机壳拒绝了这次转发（目标不是已知 provider）」 | env key + 非白名单主机或非 https：换白名单 https，或改用显式 `--provider-key` |
+| 「本机壳的通道 token 不对」 | 重启过壳 → 刷新页面（token 每次启动随机，除非 `--token` 固定） |
+| 「端点没在超时时间内回」 | 上游慢：`--timeout 20000`；「连不上端点」先查这台设备的网络 |
+| 请求发去奇怪地址后 `Failed to fetch` | 检查是不是把端点写成了 `<providerBase>/provider/chat`（§26.6：页面必须发**同源** `/provider/chat`） |
+| 页面白屏 | 产物坏了：在仓库根重建（§6.4 的 tsconfig 坑），再 `check-bundle` |
+
+**清场**：Ctrl+C，或
+
+```powershell
+curl.exe -s -X POST -H "Authorization: Bearer <壳启动时打印的 token>" http://127.0.0.1:8911/shell/shutdown
+Get-NetTCPConnection -LocalPort 8911 -State Listen   # 期望：无输出（端口已释放）
+```
+
