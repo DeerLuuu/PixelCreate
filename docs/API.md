@@ -2453,7 +2453,7 @@ Stroke 侧：`BrushState.pattern` 一填，落笔统一走 `paintOne()`——图
 ### 测试
 
 ```bash
-npm test        # 7639 条断言：引擎 / 选区 / 历史 / 播放 / 设置 / 引导 / 渲染 / 导出 / Aseprite 读写 / 返回手势 / UI 控件与令牌 / AI（ai-doc / tools / draw / turn / rpc / chat / presets / 浮窗与球）（末尾打印 assertions: N）
+npm test        # 7655 条断言：引擎 / 选区 / 历史 / 播放 / 设置 / 引导 / 渲染 / 导出 / Aseprite 读写 / 返回手势 / UI 控件与令牌 / AI（ai-doc / tools / draw / turn / rpc / chat / presets / 浮窗与球）（末尾打印 assertions: N）
 ```
 
 新增纯逻辑（算法、布局、解析、决策）时，优先抽成无 DOM 依赖的函数再补一条 `tests/*.test.ts` 断言——这是本项目保持可回归的主要手段。
@@ -3382,7 +3382,9 @@ curl.exe -s http://127.0.0.1:8787/provider/config
 | `ai.chatKey` | `text:"password"` | `""` | **否**（`SETTING_SECRET_PATHS`） | **是** | 用户手填的 key，只存本机；`action` = 一键清除（清空后自动落回环境 key） |
 | `ai.providerBase` | `text:"plain"` | `""` | 否 | 否 | **手填 key 时**的直连地址；留空 = 用 `ai.chatEndpoint`。代理模式不看它 |
 | `ai.chatMaxRounds` | `int` | `12`（`1..24`） | 否 | 否 | 一轮最多问几次模型 |
-| `ai.chatTemp` | `int` | `0`（`0..20`，单位 `×0.1`） | 否 | 否 | `temperature` = 值 × 0.1；`0` = **不发这个字段**（用端点默认） |
+| `ai.chatTemp` | `int` | `0`（`0..20`，单位 `×0.1`） | 否 | 否 | `temperature` = 值 × 0.1；`0` = **不发这个字段**（用端点默认）；**思考模式下不发**（见下一行） |
+| `ai.chatThinking` | `enum` | `default` | 否 | 否 | 思考强度：`default` = **一个思考字段都不发**（对任何 OpenAI 兼容端点最安全）；`off` = `{"thinking":{"type":"disabled"}}`；`low`/`high`/`max` = `{"thinking":{"type":"enabled"},"reasoning_effort":<档位>}`（DeepSeek 口径）。⚠️ 打开思考后 **`temperature` 不生效**（官方文档明说），且**带 `tools` 时后续每一轮必须回传 `reasoning_content`**（否则 400）—— 后者由 `assistantMessage()` 把 `choices[].message.reasoning_content` 记进 assistant 消息实现 |
+| `ai.chatTimeoutSec` | `int` | `60`（`5..600`，单位秒） | 否 | 否 | **等模型回话**的秒数：发请求时 ×1000 → 请求头 `X-Provider-Timeout`（壳按它等上游，见 §26.6）；直连时由页面的 `AbortController` 按同一个值中止 |
 | `ai.chatSystemPrompt` | `text:"plain"` | `""` | 否 | 否 | 非空则**追加**在内置提示词之后 |
 | `ai.chatStream` | `bool` | `false` | 否 | 否 | 本轮固定关闭：代理对 `stream:true` 直接回 400 |
 | `ai.protectKey` | `bool` | `true` | 否 | 否 | 决定状态行**要不要附那句与 key 有关的说明**（见 26.3） |
@@ -3628,7 +3630,7 @@ key 的值一个字符都不进这段文本）：
 | 请求体 | OpenAI 兼容**原样转发**：`{ model, messages, tools?, tool_choice?, temperature?, max_tokens? }`。壳**只补** `Authorization`，不改其它字段；`model` 缺省时用壳的默认模型；`stream:true` 直接回 `400`。**请求体里没有 URL 字段** —— 目标地址只由壳的启动参数决定，这从结构上堵死「拿代理当任意 URL 转发器」 |
 | 鉴权（对页面） | `POST /provider/chat`：优先 `Authorization: Bearer <通道token>`，兼容 `X-Shell-Token`；常量时间比较。页面在代理模式下**去掉** `Authorization`、改带 `X-Provider-Key: host`，并把通道 token 放 `X-Shell-Token`（通道 token 只放内存、绝不写 localStorage） |
 | 响应 | 把 provider 的 **HTTP 状态码与 body 原样透传**（3xx 也照透，**不跟随重定向**）。页面侧的 `httpError()` 按状态分档的文案因此一行都不用改 |
-| 超时 / 体积 | **两条超时是分开的**：上游转发用 `--provider-timeout`（默认 **60000ms**，env `PC_SHELL_PROVIDER_TIMEOUT`）→ `504`；壳 ↔ 页面的临时通道仍用 `--timeout`（默认 10000ms，与 `MainActivity.AI_CALL_TIMEOUT_MS` 同口径）。**别再让模型请求共用 10s**：V4 默认带思考模式，一次带 61 个工具 schema 的请求十几秒很正常，共用时用户第一次真实调用必然撞 `504 provider-timeout`（实测：假 provider 延迟 12s，旧默认 10s → 504；新默认 60s → 200）。上游响应体上限 8 MiB（`MAX_PROVIDER_BYTES`，超了截断）；页面 → 壳的请求体上限 1 MiB（`MAX_BODY_BYTES`）→ `413` |
+| 超时 / 体积 | **超时有三层，别混**：① 页面设置 `ai.chatTimeoutSec`（默认 **60s**）→ 每次请求带 `X-Provider-Timeout`（毫秒，壳**夹到 1s..10min**）；② 壳的上游转发用「该头优先，否则 `--provider-timeout`（默认 **60000ms**，env `PC_SHELL_PROVIDER_TIMEOUT`）」→ 超时回 `504`；③ 壳 ↔ 页面的临时通道仍用 `--timeout`（默认 10000ms，与 `MainActivity.AI_CALL_TIMEOUT_MS` 同口径）。**别再让模型请求共用 10s**：V4 默认带思考模式，一次带 61 个工具 schema 的请求十几秒很正常（实测：假 provider 延迟 12s，旧默认 10s → 504；新默认 60s → 200；壳默认 2s + 请求头 8s、provider 延迟 3.5s → 200，去掉头 → 2s 时 504）。上游响应体上限 8 MiB（`MAX_PROVIDER_BYTES`，超了截断）；页面 → 壳的请求体上限 1 MiB（`MAX_BODY_BYTES`）→ `413` |
 
 **`GET /provider/config` 响应**（**绝不含 key 的任何片段，连尾 4 位都不给**）：
 
@@ -3802,7 +3804,7 @@ node toolchain/pc-shell.mjs --port 8914 --provider-key sk-cli-probe-8888 --provi
 | 状态行「没有可用的 key」 | 三种来源都没有：设置里手填，或设环境变量后**重启壳**（key 只在启动时读一次） |
 | 「本机壳拒绝了这次转发（目标不是已知 provider）」 | env key + 非白名单主机或非 https：换白名单 https，或改用显式 `--provider-key` |
 | 「本机壳的通道 token 不对」 | 重启过壳 → 刷新页面（token 每次启动随机，除非 `--token` 固定） |
-| 「端点没在超时时间内回：…ms」 | 上游（模型）在这段时间内没回：**调大上游超时** `--provider-timeout 120000`（默认 60s）后重启壳；「连不上端点」先查这台设备的网络 |
+| 「端点没在超时时间内回：…ms」 | 上游（模型）在这段时间内没回：**先在「设置 → AI 助手 → 模型响应超时」调大**（默认 60 秒，5..600），或起壳时给 `--provider-timeout 120000`；「连不上端点」先查这台设备的网络；首字慢通常是想模式所致，把「思考强度」调低 / 关闭会快很多 |
 | 面板里出现 `端点返回 HTTP 504：{"ok":false,…}` 这种**原始信封** | 那是页面按「直连档」选文案的旧行为（已修）：壳的信封现在**无论走哪条分支**都按 `ok:false` 形状翻成人话 |
 | 请求发去奇怪地址后 `Failed to fetch` | 检查是不是把端点写成了 `<providerBase>/provider/chat`（§26.6：页面必须发**同源** `/provider/chat`） |
 | 页面白屏 | 产物坏了：在仓库根重建（§6.4 的 tsconfig 坑），再 `check-bundle` |

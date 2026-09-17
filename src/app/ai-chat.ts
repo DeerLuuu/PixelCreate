@@ -109,6 +109,15 @@ export interface ChatMessage {
   tool_call_id?: string;
   /** role === "tool" 时的工具名（部分宿主会忽略，带上便于排查） */
   name?: string;
+  /**
+   * **思考模式下必须回传**的思维链（DeepSeek 的 `choices[].message.reasoning_content`）。
+   *
+   * 为什么必须留着：文档写明「**携带了 `tools` 参数的请求，在后续所有请求中必须完整回传
+   * `reasoning_content`**，即使该轮模型未实际进行工具调用，否则 API 返回 400」——
+   * 而我们的助手**每次都带 61 个工具**，所以只要用户把思考强度打开，第 2 轮起就靠这个字段活着。
+   * 不打开思考时它是 `undefined`，不会多带一个字节。
+   */
+  reasoning_content?: string;
 }
 
 /** `parseToolCalls()` 的产物：`error` 非空 = 这条调用的参数不能用来调工具 */
@@ -165,6 +174,27 @@ export interface ChatTurnResult {
   docRevBefore: number;
 }
 
+/** 思考强度档位（与 `settings.ts` 的 `AI_CHAT_THINKING_MODES` 同一口径） */
+export type AiChatThinking = "default" | "off" | "low" | "high" | "max";
+const AI_CHAT_THINKING_SET: readonly string[] = ["default", "off", "low", "high", "max"];
+
+/** 只认白名单档位，其余（含 undefined / 旧数据）一律回 `default` —— 与设置层的归一化同一口径 */
+function thinkingOf(v: unknown): AiChatThinking {
+  const s = String(v ?? "");
+  return (AI_CHAT_THINKING_SET.indexOf(s) >= 0 ? s : "default") as AiChatThinking;
+}
+
+/** 超时的夹取区间（与 `settings.ts` 的 `AI_CHAT_TIMEOUT_MIN/MAX` 同一口径，这里是毫秒） */
+export const AI_CHAT_TIMEOUT_MIN_MS = 5000;
+export const AI_CHAT_TIMEOUT_MAX_MS = 600000;
+
+/** 超时：0 / 省略 = 不设（沿用壳自己的默认）；其余夹到 5s..10min */
+function timeoutMsOf(v: unknown): number {
+  const n = Math.round(Number(v));
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  return Math.max(AI_CHAT_TIMEOUT_MIN_MS, Math.min(AI_CHAT_TIMEOUT_MAX_MS, n));
+}
+
 /** 注入的 fetch（DOM 的 `fetch` 结构上就满足它；测试里给假的） */
 export interface ChatFetchInit {
   method: string;
@@ -175,6 +205,12 @@ export interface ChatFetchInit {
    * 假 fetch 也必须按这条校验（见 tests 的 `strictFetch`），否则这类缺陷会在全绿的单测里溜过去。
    */
   body?: string;
+  /**
+   * 中止信号（`AbortController.signal`，见 `requestModel()` 的超时兜底）。
+   * 类型写成 `unknown` 是为了让这一层继续**平台无关**（它在 Node 测试里跑，不 import DOM 类型）；
+   * `proxyChatFetch()` 会把它原样转给内层 fetch。
+   */
+  signal?: unknown;
 }
 export interface ChatFetchResponse {
   ok: boolean;
@@ -197,6 +233,14 @@ export interface ChatTurnOpts {
   maxRounds?: number;
   /** `ai.chatTemp` × 0.1 = 发给端点的 `temperature`；0 / 省略 = **不发这个字段**（用端点默认） */
   temperature?: number;
+  /**
+   * 思考强度（`ai.chatThinking`）：`default` / 省略 = **一个思考字段都不发**；
+   * `off` = `{"thinking":{"type":"disabled"}}`；`low` / `high` / `max` = 打开思考 + `reasoning_effort`。
+   * ⚠️ 打开思考时 `temperature` **不生效**（DeepSeek 文档明说），所以那时干脆不发它。
+   */
+  thinking?: string;
+  /** 等模型回话的毫秒数（`ai.chatTimeoutSec` × 1000）：0 / 省略 = 不设，沿用壳自己的默认 */
+  timeoutMs?: number;
   /** `ai.chatStream`：本轮**固定 false**（壳的代理对 `stream:true` 直接回 400）；省略 = 不发这个字段 */
   stream?: boolean;
   /** `ai.chatSystemPrompt`：非空则**追加**在内置提示词之后（不改内置那份） */
@@ -395,6 +439,11 @@ export function assistantMessage(response: unknown): ChatMessage {
   if (calls.length) {
     msg.tool_calls = calls.map((c) => ({ id: c.id, type: "function" as const, function: { name: c.name, arguments: c.raw } }));
   }
+  // 思考模式下**必须**把思维链一起记进这条 assistant 消息（下一轮原样回传，否则 400）：
+  // 文档见 `ChatMessage.reasoning_content` 的注释。拿不到就一个字段都不加。
+  const rc = (response as { choices?: { message?: { reasoning_content?: unknown } }[] } | null)
+    ?.choices?.[0]?.message?.reasoning_content;
+  if (typeof rc === "string" && rc) msg.reasoning_content = rc;
   return msg;
 }
 
@@ -603,7 +652,9 @@ export function proxyChatFetch(base: string, shellToken: string, inner: ChatFetc
     const noBody = method === "GET" || method === "HEAD";
     let res: ChatFetchResponse;
     try {
-      res = await inner(url, noBody ? { method, headers } : { method, headers, body: init.body });
+      res = await inner(url, noBody
+        ? { method, headers, signal: init.signal }
+        : { method, headers, body: init.body, signal: init.signal });
     } catch (e) {
       throw new Error("连不上本机壳（" + message(e) + "）：窗口是不是已经关了？");
     }
@@ -746,13 +797,25 @@ async function requestModel(
   opts: {
     endpoint: string; model: string; key: string; messages: readonly ChatMessage[];
     tools: readonly AiTool[]; temperature?: number; stream?: boolean;
+    thinking?: string; timeoutMs?: number;
   },
   fetchFn: ChatFetch,
 ): Promise<unknown> {
   const body: Record<string, unknown> = { model: opts.model, messages: opts.messages };
   if (opts.tools.length) body.tools = toOpenAiTools(opts.tools);
-  // temperature 只在用户真的填了非 0 档位时才发（0 = 用端点默认，不是「温度 0」）
-  if (typeof opts.temperature === "number" && Number.isFinite(opts.temperature) && opts.temperature !== 0) {
+  // ---- 思考模式（`ai.chatThinking`，见 docs/API.md §26.2 与 DeepSeek 的「思考模式」文档）----
+  // `default` = **一个字段都不发**（对任何 OpenAI 兼容端点最安全）；其余按 DeepSeek 的口径发：
+  //   关闭 → {"thinking":{"type":"disabled"}}；
+  //   打开 → {"thinking":{"type":"enabled"},"reasoning_effort":<档位>}（档位就是 low / high / max）
+  const thinking = thinkingOf(opts.thinking);
+  const thinkingOn = thinking !== "default" && thinking !== "off";
+  if (thinking !== "default") {
+    body.thinking = { type: thinkingOn ? "enabled" : "disabled" };
+    if (thinkingOn) body.reasoning_effort = thinking;
+  }
+  // temperature 只在用户真的填了非 0 档位时才发（0 = 用端点默认，不是「温度 0」）；
+  // **思考模式下不发**：DeepSeek 文档明说该模式下 temperature 不生效（传了不报错，但也没用）。
+  if (!thinkingOn && typeof opts.temperature === "number" && Number.isFinite(opts.temperature) && opts.temperature !== 0) {
     body.temperature = opts.temperature;
   }
   if (opts.stream === true) body.stream = true;
@@ -760,15 +823,28 @@ async function requestModel(
   const headers: Record<string, string> = hostKey
     ? { "Content-Type": "application/json", "X-Provider-Key": "host" }
     : { "Content-Type": "application/json", Authorization: "Bearer " + opts.key };
+  // 超时（`ai.chatTimeoutSec`）：**两条腿都按它等** —— 代理模式下壳读这个头去等上游
+  // （见 `docs/API.md` §26.6），直连模式下由下面的 AbortController 兜底。
+  const timeoutMs = timeoutMsOf(opts.timeoutMs);
+  if (timeoutMs > 0) headers["X-Provider-Timeout"] = String(timeoutMs);
+  const ctl = timeoutMs > 0 && typeof AbortController === "function" ? new AbortController() : null;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  if (ctl) timer = setTimeout(() => ctl.abort(), timeoutMs);
   let res: ChatFetchResponse;
   try {
     res = await fetchFn(chatCompletionsUrl(opts.endpoint), {
       method: "POST",
       headers,
       body: JSON.stringify(body),
+      signal: ctl ? ctl.signal : undefined,
     });
   } catch (e) {
+    if (ctl && ctl.signal.aborted) {
+      throw new Error("等了 " + Math.round(timeoutMs / 1000) + " 秒模型还没回：可在「设置 → AI 助手 → 模型响应超时」调大，或把思考强度调低 / 关闭");
+    }
     throw new Error("连不上端点（" + message(e) + "）：检查端点地址和这台设备的网络");
+  } finally {
+    if (timer) clearTimeout(timer);
   }
   let text = "";
   try {
@@ -891,6 +967,7 @@ export async function runChatTurn(opts: ChatTurnOpts): Promise<ChatTurnResult> {
       const response = await requestModel({
         endpoint: opts.endpoint, model: opts.model, key: opts.key ?? "", messages, tools,
         temperature: opts.temperature, stream: opts.stream,
+        thinking: opts.thinking, timeoutMs: opts.timeoutMs,
       }, opts.fetchFn);
       messages.push(assistantMessage(response));
       const parsed = parseToolCalls(response);

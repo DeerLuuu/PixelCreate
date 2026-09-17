@@ -49,7 +49,7 @@
 npm install            # 安装开发依赖（React / TypeScript / esbuild）
 
 npm run typecheck      # tsc 严格检查
-npm test               # 引擎 / 逻辑回归测试（7639 条断言，无 DOM 依赖；跑完末尾会打印总数）
+npm test               # 引擎 / 逻辑回归测试（7655 条断言，无 DOM 依赖；跑完末尾会打印总数）
 npm run build          # 产出 app2/www/js/app.js + css/style.css
 sh scripts/sync-web.sh # 或者：不自己构建，直接取部署分支 main 上那一份产物（见 AGENTS.md §5.1b）
 ```
@@ -93,7 +93,7 @@ toolchain/       开发辅助脚本（devserver 静态服务、make-icon 图标�
 
 ### 架构要点
 
-- **引擎层零 DOM**：`engine/`、`app/`、`tools/`、`servers/` 全部可在 Node 下测试（7639 条断言跑在纯数据上，含 UI 控件与令牌契约；`npm test` 末尾会打印条数）。
+- **引擎层零 DOM**：`engine/`、`app/`、`tools/`、`servers/` 全部可在 Node 下测试（7655 条断言跑在纯数据上，含 UI 控件与令牌契约；`npm test` 末尾会打印条数）。
 - **服务层**：合成与缓存归 `RenderServer`、视图数学归 `ViewportServer`（`docs/API.md` §15b），手势策略归 `input.ts`、轻点序列 + 四个指针入口 + 触点会话状态归 `gesture.ts`（§15c / §15c2 / §15c3），`render/view.ts` 只做 blit、覆盖层与各工具的动作体 —— 这是 `docs/ARCHITECTURE.md` 里 Server 化的落地进度。
 - **声明式注册表**：设置项写在 `src/app/settings.ts`，引导步骤写在 `src/app/guide.ts`；新增功能 = 一条声明 + i18n 文案，界面自动生成。
 - **增量渲染**：笔迹只重合成/重绘改动区域（`Rect` + `composeRectInto` + `celToCanvasRect`），一帧一次绘制（rAF 合并）。

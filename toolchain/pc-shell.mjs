@@ -1162,7 +1162,20 @@ async function routeProviderConfig(req, res) {
  * 三件事写死在这里：① `Accept-Encoding: identity`（免去 gzip 解码，透传才是原样）；
  * ② 响应体上限 `MAX_PROVIDER_BYTES`；③ 超时用 `AbortController` 掐断。
  */
-function forwardToProvider(payload) {
+/**
+ * **本次请求**的上游超时：页面可以在 `X-Provider-Timeout` 头里给一个毫秒值（`ai.chatTimeoutSec` × 1000），
+ * 非法 / 缺失 / 非正数一律回退到壳自己的 `--provider-timeout`。夹在 1s..10min ——
+ * 页面只能"要求等多久"，不能借这个头表达别的含义。
+ */
+function requestProviderTimeoutMs(req) {
+  const raw = req.headers["x-provider-timeout"];
+  const n = Math.round(Number(Array.isArray(raw) ? raw[0] : raw));
+  if (!Number.isFinite(n) || n <= 0) return opts.providerTimeoutMs;
+  return Math.max(1000, Math.min(600000, n));
+}
+
+function forwardToProvider(payload, timeoutMs) {
+  const waitMs = Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : opts.providerTimeoutMs;
   return new Promise((resolve) => {
     let target;
     try {
@@ -1178,7 +1191,7 @@ function forwardToProvider(payload) {
     const data = Buffer.from(payload, "utf8");
     const req = mod.request(full, {
       method: "POST",
-      timeout: opts.providerTimeoutMs,
+      timeout: waitMs,
       headers: {
         "content-type": "application/json",
         "content-length": data.length,
@@ -1218,7 +1231,7 @@ function forwardToProvider(payload) {
       } catch {
         /* ignore */
       }
-      resolve({ ok: false, kind: "timeout", detail: opts.providerTimeoutMs + "ms" });
+      resolve({ ok: false, kind: "timeout", detail: waitMs + "ms" });
     });
     req.on("error", (e) => resolve({ ok: false, kind: "unreachable", detail: String(e && e.message ? e.message : e) }));
     req.end(data);
@@ -1278,7 +1291,7 @@ async function routeProviderChat(req, res, url) {
   if (typeof out.model !== "string" || !out.model.trim()) out.model = opts.providerModel;
   stats.providerCalls++;
   vlog("转发一次模型请求 → " + new URL(opts.providerBase).origin + "（model=" + out.model + "，key " + providerKeyTail() + "）");
-  const r = await forwardToProvider(JSON.stringify(out));
+  const r = await forwardToProvider(JSON.stringify(out), requestProviderTimeoutMs(req));
   if (!r.ok) {
     stats.providerErrors++;
     if (r.kind === "timeout") {

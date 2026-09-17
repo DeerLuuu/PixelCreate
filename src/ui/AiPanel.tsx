@@ -274,7 +274,9 @@ const scratchStore: AiWinStore = { thread: [], entries: [], pending: null, logs:
 /** 浏览器 / APK / 桌面壳的 fetch 都满足 `ChatFetch`；没有 fetch 的运行环境返回 null */
 function platformFetch(): ChatFetch | null {
   if (typeof fetch !== "function") return null;
-  return (url, init) => fetch(url, init);
+  // `ChatFetchInit` 与 `RequestInit` 结构一致，只有 `signal` 一个是**故意写成 `unknown`** 的
+  // （`ai-chat.ts` 要保持平台无关、不 import DOM 类型），所以在平台边界这一次转换是准确的。
+  return (url, init) => fetch(url, init as RequestInit);
 }
 
 // ------------------------------------------------------------------ 通路：直连 / 同源代理（§3.7.3）
@@ -474,6 +476,8 @@ export function AiPanel({ t, onBack, store }: {
       label: text,
       maxRounds: cfg.maxRounds,
       temperature: cfg.temp * AI_CHAT_TEMP_STEP,        // 档位 × 0.1；0 = 不发这个字段
+      thinking: cfg.thinking,                           // 思考强度（default = 一个思考字段都不发）
+      timeoutMs: cfg.timeoutSec * 1000,                 // 秒 → 毫秒；壳的上游腿与直连兜底都按它等
       stream: cfg.stream,
       systemPrompt: cfg.systemPrompt,
       onCall: (log) => { if (live.current) setLogs((prev) => prev.concat([log])); },

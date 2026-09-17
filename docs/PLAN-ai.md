@@ -60,7 +60,7 @@
 | 唯一改动入口 `Session` | `src/app/session.ts`（约 4.2k 行，公开方法 **287** 个） | AI 只需要一个 `Session` 句柄，不需要 UI |
 | 动作表 + 动作目录 | `Session.allActions()` / `actionById()` / `registerOrbCatalog()`；`src/ui/App.tsx` 里注册 **54+** 条 `{id,label,icon,group,run}` | **工具 schema 的现成来源**；`ActionSearchModal` 已经是它的 UI 壳 |
 | 一切可撤销 | `engine/history.ts`：`record` / `pushPixels` / `pushStruct`；`Session.struct()` | 一轮 AI 操作可合成**一条** undo（§3.3） |
-| 无 DOM 回归套件 | `tests/`（**7639 条断言**，`node .ts-out/tests/run-tests.js`） | 工具层可以像引擎一样被回归测试，不需要模拟器 |
+| 无 DOM 回归套件 | `tests/`（**7655 条断言**，`node .ts-out/tests/run-tests.js`） | 工具层可以像引擎一样被回归测试，不需要模拟器 |
 | 文档即数据 | `Doc` / `Cel.data`（RGBA `Uint8ClampedArray`）/ `palette: RGBA[]` / `Sel.mask` | 可以给模型**文本化视图**：32×32 只有 1024 像素，token 便宜（§3.2） |
 | 工程文件与图片 IO | `io/project.ts`（`.pxc`）、`io/aseread.ts` / `io/asewrite.ts`、`io/exporters.ts`（`pngBytes` / `encodeGIF`） | AI 可读写工程、导出预览图 |
 | 合成器能出图 | `render/compositor.ts`（`composeRectInto` 等） | 需要「给模型看一张图」时用它合成 PNG |

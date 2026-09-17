@@ -552,7 +552,24 @@ export async function testAiChat(): Promise<void> {
     // P8/W2：新增的设置项逐条列全（这是 P1 §3.7.8 **明确授权**要改的第二条断言）
     eq("aichat.setting.visible-on", settingsOfGroup(s, "chat").map((d) => d.path),
       ["ai.chatOn", "ai.chatPreset", "ai.chatEndpoint", "ai.chatModel", "ai.chatKey", "ai.providerBase",
-        "ai.chatMaxRounds", "ai.chatTemp", "ai.chatSystemPrompt", "ai.chatStream", "ai.protectKey", "ai.chatBall"]);
+        "ai.chatMaxRounds", "ai.chatTemp", "ai.chatThinking", "ai.chatTimeoutSec",
+        "ai.chatSystemPrompt", "ai.chatStream", "ai.protectKey", "ai.chatBall"]);
+    // 新增的两条：思考强度（白名单 + 默认"什么都不发"）与超时（秒，夹 5..600）
+    eq("aichat.setting.thinking.default", aiChatSettings().thinking, "default");
+    eq("aichat.setting.timeout.default", aiChatSettings().timeoutSec, 60);
+    eq("aichat.setting.thinking.options", (SETTINGS_BY_PATH.get("ai.chatThinking")!.options ?? []).map((o) => o.value),
+      ["default", "off", "low", "high", "max"]);
+    s.setSetting("ai.chatThinking", "max");
+    s.setSetting("ai.chatTimeoutSec", 600000);
+    eq("aichat.setting.thinking.clamped", [aiChatSettings().thinking, aiChatSettings().timeoutSec], ["max", 600]);
+    s.setSetting("ai.chatThinking", "ultra-不存在的档位");
+    s.setSetting("ai.chatTimeoutSec", 1);
+    // 设置层对 enum 只认选项表里的值（非法值不改动），所以白名单要**直接问归一化函数**
+    eq("aichat.setting.thinking.whitelist",
+      [normalizeAiChatSettings({ thinking: "ultra-不存在的档位" }).thinking,
+        normalizeAiChatSettings({}).thinking,
+        normalizeAiChatSettings({ thinking: "off" }).thinking], ["default", "default", "off"]);
+    eq("aichat.setting.timeout.clamped-low", aiChatSettings().timeoutSec, 5);
     s.setSetting("ai.chatEndpoint", "https://gateway.test/v1/");
     s.setSetting("ai.chatModel", "my-model");
     s.setSetting("ai.chatKey", "sk-local-only");
@@ -563,20 +580,20 @@ export async function testAiChat(): Promise<void> {
     // 结果「归一化多出/漏掉一个字段」这类回归它能溜过去。14 个字段一个不漏地列全。
     eq("aichat.setting.normalize-junk", normalizeAiChatSettings({ on: 1, endpoint: 5, model: null, key: "k" }), {
       on: false, preset: "deepseek", endpoint: "", model: "", key: "k", providerBase: "",
-      maxRounds: 12, temp: 0, systemPrompt: "", stream: false, protectKey: true,
+      maxRounds: 12, temp: 0, thinking: "default", timeoutSec: 60, systemPrompt: "", stream: false, protectKey: true,
       winOpen: false, winMin: false, ball: true,
     });
     // 字段数也要钉住：多一个字段（比如将来加新设置忘了同步这条）同样会红
     eq("aichat.setting.normalize-keys", Object.keys(normalizeAiChatSettings({})).sort().join(","),
       ["ball", "endpoint", "key", "maxRounds", "model", "on", "preset", "protectKey", "providerBase",
-        "stream", "systemPrompt", "temp", "winMin", "winOpen"].join(","));
+        "stream", "systemPrompt", "temp", "thinking", "timeoutSec", "winMin", "winOpen"].join(","));
     // **这条断言不是摆设**：给它一份「多一个字段」的对象，它必须不等（否则就是恒真的假断言）。
     // 这同时证明上面那条确实在做**全量**比较（子集比较在这种输入下会静默相等）。
     eq("aichat.setting.normalize-junk.is-tight",
       JSON.stringify(Object.assign(normalizeAiChatSettings({ on: 1, endpoint: 5, model: null, key: "k" }), { iAmNew: 1 }))
         === JSON.stringify({
           on: false, preset: "deepseek", endpoint: "", model: "", key: "k", providerBase: "",
-          maxRounds: 12, temp: 0, systemPrompt: "", stream: false, protectKey: true,
+          maxRounds: 12, temp: 0, thinking: "default", timeoutSec: 60, systemPrompt: "", stream: false, protectKey: true,
           winOpen: false, winMin: false, ball: true,
         }), false);
     // 预设 / 高级项各自的默认值与夹取（P8/W2 的新增面）
@@ -786,7 +803,8 @@ export async function testAiChat(): Promise<void> {
     // ---- 13c 状态机：窗口三布尔进 CHAT_SETTINGS（`pc.aichat`），几何进 localStorage ----
     eq("aiwin.setting.paths", CHAT_SETTINGS.map((d) => d.path),
       ["ai.chatOn", "ai.chatPreset", "ai.chatEndpoint", "ai.chatModel", "ai.chatKey", "ai.providerBase",
-        "ai.chatMaxRounds", "ai.chatTemp", "ai.chatSystemPrompt", "ai.chatStream", "ai.protectKey",
+        "ai.chatMaxRounds", "ai.chatTemp", "ai.chatThinking", "ai.chatTimeoutSec",
+        "ai.chatSystemPrompt", "ai.chatStream", "ai.protectKey",
         "ai.chatWinOpen", "ai.chatWinMin", "ai.chatBall"]);
     eq("aiwin.setting.win-defaults",
       [SETTINGS_BY_PATH.get("ai.chatWinOpen")!.default, SETTINGS_BY_PATH.get("ai.chatWinMin")!.default, SETTINGS_BY_PATH.get("ai.chatBall")!.default],
@@ -814,7 +832,7 @@ export async function testAiChat(): Promise<void> {
     // 同样恢复成**整对象比较**（P15 第 3 项：3 字段子集形态同类，一并改掉）
     eq("aiwin.state.normalize", normalizeAiChatSettings({ winOpen: 1, winMin: "x" }), {
       on: false, preset: "deepseek", endpoint: "", model: "", key: "", providerBase: "",
-      maxRounds: 12, temp: 0, systemPrompt: "", stream: false, protectKey: true,
+      maxRounds: 12, temp: 0, thinking: "default", timeoutSec: 60, systemPrompt: "", stream: false, protectKey: true,
       winOpen: false, winMin: false, ball: true,
     });
     eq("aiwin.state.ball-default", normalizeAiChatSettings({}).ball, true);
@@ -1007,7 +1025,7 @@ export async function testAiChat(): Promise<void> {
     // 这一轮的落盘里也没有 key 明文之外的意外字段（预设不引入新的存储键）
     eq("preset.no-new-storage", Object.keys(normalizeAiChatSettings(null)).sort(),
       ["ball", "endpoint", "key", "maxRounds", "model", "on", "preset", "protectKey", "providerBase",
-        "stream", "systemPrompt", "temp", "winMin", "winOpen"]);
+        "stream", "systemPrompt", "temp", "thinking", "timeoutSec", "winMin", "winOpen"]);
     saveAiChatSettings({ on: false, key: "" });
   }
 
@@ -1115,6 +1133,62 @@ export async function testAiChat(): Promise<void> {
     });
     await pfLoop("http://127.0.0.1:8910/provider/chat", { method: "POST", headers: {}, body: "{}" });
     eq("proxy.fetch.loopback-not-prefixed", seenLoop[0].url, AI_CHAT_PROXY_CHAT_PATH);
+
+    // ---- 思考强度与超时（`ai.chatThinking` / `ai.chatTimeoutSec`）----
+    // ① 打开思考：发 thinking + reasoning_effort，且**不发 temperature**（文档明说该模式下它不生效）
+    const seenThink: Seen[] = [];
+    const thinkWrap = (inner: ChatFetch): ChatFetch => async (url, init) => {
+      seenThink.push({ url, init, headers: init.headers, body: JSON.parse(init.body) });
+      return inner(url, init);
+    };
+    const okReply = { status: 200, body: JSON.stringify({ choices: [{ message: { role: "assistant", content: "hi" } }] }) };
+    const { fn: okFn1 } = fakeFetch([okReply]);
+    await runChatTurn({
+      ...turnOpts(live(), thinkWrap(okFn1)), endpoint: "http://127.0.0.1:8787", key: "sk-x",
+      commit: false, temperature: 0.7, thinking: "high", timeoutMs: 90000,
+    });
+    const bOn = seenThink[0].body as Record<string, unknown>;
+    eq("proxy.thinking.mode-and-effort", [bOn.thinking, bOn.reasoning_effort], [{ type: "enabled" }, "high"]);
+    eq("proxy.thinking.drops-temperature", Object.prototype.hasOwnProperty.call(bOn, "temperature"), false);
+    eq("proxy.timeout.header", seenThink[0].headers["X-Provider-Timeout"], "90000");
+    // ② 关闭思考：只发 disabled，不发 reasoning_effort，temperature 照旧发
+    seenThink.length = 0;
+    const { fn: okFn2 } = fakeFetch([okReply]);
+    await runChatTurn({
+      ...turnOpts(live(), thinkWrap(okFn2)), endpoint: "http://127.0.0.1:8787", key: "sk-x",
+      commit: false, temperature: 0.7, thinking: "off",
+    });
+    const bOff = seenThink[0].body as Record<string, unknown>;
+    eq("proxy.thinking.off", [bOff.thinking, Object.prototype.hasOwnProperty.call(bOff, "reasoning_effort"), bOff.temperature],
+      [{ type: "disabled" }, false, 0.7]);
+    // ③ 默认档：**一个思考字段都不发**（换非 DeepSeek 端点最安全），也不带超时头（沿用壳默认）
+    seenThink.length = 0;
+    const { fn: okFn3 } = fakeFetch([okReply]);
+    await runChatTurn({ ...turnOpts(live(), thinkWrap(okFn3)), endpoint: "http://127.0.0.1:8787", key: "sk-x", commit: false });
+    const bDef = seenThink[0].body as Record<string, unknown>;
+    eq("proxy.thinking.default-sends-nothing",
+      [Object.prototype.hasOwnProperty.call(bDef, "thinking"), Object.prototype.hasOwnProperty.call(bDef, "reasoning_effort"),
+        Object.prototype.hasOwnProperty.call(seenThink[0].headers, "X-Provider-Timeout")], [false, false, false]);
+    // ④ **思考模式 + tools 的硬要求**：上一轮的 `reasoning_content` 必须原样回传（否则 API 400）
+    const seenRc: Seen[] = [];
+    const { fn: rcInner } = fakeFetch([
+      { status: 200, body: JSON.stringify({ choices: [{ message: {
+        role: "assistant", content: "", reasoning_content: "先看一下画布",
+        tool_calls: [{ id: "c1", type: "function", function: { name: "doc_digest", arguments: "{}" } }],
+      } }] }) },
+      okReply,
+    ]);
+    const rcWrap: ChatFetch = async (url, init) => {
+      seenRc.push({ url, init, headers: init.headers, body: JSON.parse(init.body) });
+      return rcInner(url, init);
+    };
+    await runChatTurn({
+      ...turnOpts(live(), rcWrap), endpoint: "http://127.0.0.1:8787", key: "sk-x",
+      commit: false, thinking: "low", maxRounds: 3,
+    });
+    const rcMsgs = (seenRc[1]?.body as { messages?: { role?: string; reasoning_content?: string }[] } | undefined)?.messages ?? [];
+    eq("proxy.thinking.reasoning-content-returned",
+      rcMsgs.filter((m) => m.role === "assistant").map((m) => m.reasoning_content), ["先看一下画布"]);
 
     // ---- 15d 错误码 → 中文文案（§3.7.2 的九档映射）----
     const errFetch = (status: number, body: string): ChatFetch =>
@@ -1425,14 +1499,21 @@ export async function testAiChat(): Promise<void> {
     // 与上游转发 `providerTimeoutMs`（60s，模型请求十几秒很正常）。早先共用 10s，
     // 用户第一次真实调用必然撞 504 provider-timeout。这里的断言钉住"两条都在、且没有回退成共用"。
     ok("shell.timeout-and-size", shell.indexOf("MAX_PROVIDER_BYTES") > 0
-      && shell.indexOf("timeout: opts.providerTimeoutMs") > 0
+      && shell.indexOf("timeout: waitMs") > 0
       && shell.indexOf("DEFAULT_PROVIDER_TIMEOUT_MS = 60000") > 0
       && shell.indexOf("--provider-timeout") > 0);
     eq("shell.timeout.two-legs-separate",
       [shell.indexOf("timeoutMs: DEFAULT_TIMEOUT_MS") > 0,
         shell.indexOf("timeout: opts.timeoutMs") < 0,
-        shell.indexOf("detail: opts.providerTimeoutMs + \"ms\"") > 0],
+        shell.indexOf("const waitMs = Number.isFinite(timeoutMs)") > 0
+          && shell.indexOf("detail: waitMs + \"ms\"") > 0],
       [true, true, true]);
+    // 页面可以在 `X-Provider-Timeout` 里为**这一次请求**要一个上游超时（`ai.chatTimeoutSec`），
+    // 壳夹到 1s..10min、非法就回退自己的 `--provider-timeout`
+    ok("shell.provider-timeout.per-request",
+      shell.indexOf("x-provider-timeout") > 0
+      && shell.indexOf("requestProviderTimeoutMs(req)") > 0
+      && shell.indexOf("Math.min(600000, n)") > 0);
     // 页面侧：不允许把 key 拼进任何文本（哨兵常量只在头里用）
     const panelSrc = readFile("src/ui/AiPanel.tsx");
     ok("shell.page-no-key-text", panelSrc.indexOf("{cfg.key}") < 0 && panelSrc.indexOf("{key}") < 0);

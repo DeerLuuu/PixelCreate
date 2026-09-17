@@ -260,6 +260,20 @@ export const AI_CHAT_DEFAULT_MODEL = aiChatPresetOf(AI_CHAT_DEFAULT_PRESET).defa
 export { AI_CHAT_PRESETS, AI_CHAT_DEFAULT_PRESET };
 export type { AiChatPreset, AiChatPresetId };
 
+/**
+ * `ai.chatThinking` 的档位（与 `ai-chat.ts` 的 `AiChatThinking` 同一口径）。
+ * `default` = **一个字段都不发**（对任何 OpenAI 兼容端点最安全）；其余是 **DeepSeek 的思考模式**参数：
+ * `{"thinking":{"type":"enabled|disabled"}}` + `{"reasoning_effort":"low|high|max"}` —— 换别的端点可能不认，
+ * 所以默认必须是 `default`，只有用户明确选了才发。
+ */
+export const AI_CHAT_THINKING_DEFAULT = "default";
+export const AI_CHAT_THINKING_MODES: readonly string[] = ["default", "off", "low", "high", "max"];
+
+/** `ai.chatTimeoutSec`：**等模型回话**的秒数（发请求时 ×1000 变毫秒；壳的上游转发腿也按它等） */
+export const AI_CHAT_TIMEOUT_DEFAULT = 60;
+export const AI_CHAT_TIMEOUT_MIN = 5;
+export const AI_CHAT_TIMEOUT_MAX = 600;
+
 /** `ai.chatMaxRounds` 的取值区间（与 `ai-chat.ts` 的 `AI_CHAT_MAX_ROUNDS` 同一口径） */
 export const AI_CHAT_MAX_ROUNDS_MIN = 1;
 export const AI_CHAT_MAX_ROUNDS_MAX = 24;
@@ -294,6 +308,10 @@ export interface AiChatSettings {
   temp: number;
   /** `ai.chatSystemPrompt`：非空则追加在内置提示词之后 */
   systemPrompt: string;
+  /** `ai.chatThinking`：思考强度档位（`default` = 不发任何思考字段；`off`/`low`/`high`/`max` = DeepSeek 思考模式） */
+  thinking: string;
+  /** `ai.chatTimeoutSec`：等模型回话的秒数（5..600，默认 60；见 `ai-chat.ts` 的 `requestModel()`） */
+  timeoutSec: number;
   /** `ai.chatStream`：本轮**固定 false**（代理对 `stream:true` 回 400）；留着是给以后流式一个口径位 */
   stream: boolean;
   /**
@@ -331,6 +349,12 @@ function clampInt(v: unknown, lo: number, hi: number, fallback: number): number 
   return Number.isFinite(n) ? Math.max(lo, Math.min(hi, n)) : fallback;
 }
 
+/** 思考强度：只认白名单里的档位，其余（含 undefined / 旧数据）一律回 `default`（= 不发任何思考字段） */
+function normalizeThinking(v: unknown): string {
+  const s = String(v ?? "");
+  return AI_CHAT_THINKING_MODES.indexOf(s) >= 0 ? s : AI_CHAT_THINKING_DEFAULT;
+}
+
 /**
  * 归一化：字符串只认字符串、四个开关只认真 true、两个整数夹进区间
  * （与 `normalizeAiServeSettings` 同口径）；`ball` 是唯一的「默认 true」，所以单独判。
@@ -354,6 +378,8 @@ export function normalizeAiChatSettings(raw: unknown): AiChatSettings {
     providerBase: str(o.providerBase),
     maxRounds: clampInt(o.maxRounds, AI_CHAT_MAX_ROUNDS_MIN, AI_CHAT_MAX_ROUNDS_MAX, AI_CHAT_MAX_ROUNDS_DEFAULT),
     temp: clampInt(o.temp, AI_CHAT_TEMP_MIN, AI_CHAT_TEMP_MAX, AI_CHAT_TEMP_DEFAULT),
+    thinking: normalizeThinking(o.thinking),
+    timeoutSec: clampInt(o.timeoutSec, AI_CHAT_TIMEOUT_MIN, AI_CHAT_TIMEOUT_MAX, AI_CHAT_TIMEOUT_DEFAULT),
     systemPrompt: str(o.systemPrompt),
     stream: o.stream === true,
     protectKey: o.protectKey !== false,
@@ -572,6 +598,27 @@ export const CHAT_SETTINGS: SettingDef[] = [
     visible: () => chatRowsVisible() && aiChatSettings().on,
     get: () => aiChatSettings().temp,
     set: (_s, v) => { saveAiChatSettings({ temp: Number(v) }); },
+  },
+  {
+    // 思考强度（DeepSeek 思考模式）：**默认档一个字段都不发** —— 那些参数换到非 DeepSeek 端点
+    // 可能不被认（甚至 400），所以必须由用户明确选；`off` = 关闭思考（最快）。
+    path: "ai.chatThinking", kind: "enum", group: "chat",
+    label: "aiChatThinkingLabel", desc: "aiChatThinkingDesc", default: AI_CHAT_THINKING_DEFAULT, refresh: "none",
+    options: AI_CHAT_THINKING_MODES.map((m) => ({ value: m, label: "aiChatThinking_" + m })),
+    visible: () => chatRowsVisible() && aiChatSettings().on,
+    get: () => aiChatSettings().thinking,
+    set: (_s, v) => { saveAiChatSettings({ thinking: String(v) }); },
+  },
+  {
+    // 等模型回话的秒数：**这一条真的会传到壳**（请求头 `X-Provider-Timeout`，壳按它等上游），
+    // 直连时由页面的 AbortController 按同一个值兜底 —— 两条路都按它等，别只在一边生效。
+    path: "ai.chatTimeoutSec", kind: "int", group: "chat",
+    label: "aiChatTimeoutLabel", desc: "aiChatTimeoutDesc",
+    default: AI_CHAT_TIMEOUT_DEFAULT, min: AI_CHAT_TIMEOUT_MIN, max: AI_CHAT_TIMEOUT_MAX,
+    reset: AI_CHAT_TIMEOUT_DEFAULT, unit: "s", refresh: "none",
+    visible: () => chatRowsVisible() && aiChatSettings().on,
+    get: () => aiChatSettings().timeoutSec,
+    set: (_s, v) => { saveAiChatSettings({ timeoutSec: Number(v) }); },
   },
   {
     path: "ai.chatSystemPrompt", text: "plain", group: "chat",
