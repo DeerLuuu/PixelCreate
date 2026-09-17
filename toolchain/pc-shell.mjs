@@ -78,6 +78,13 @@ const DEFAULT_PROVIDER_MODEL = "deepseek-v4-pro";
 const PROVIDER_KEY_ENV = ["DEEPSEEK_API_KEY", "OPENAI_API_KEY", "PC_AI_KEY"];
 /** 上游响应体上限（8 MiB）：比它大就截断并记日志，绝不把整个响应无限读进内存 */
 const MAX_PROVIDER_BYTES = 8 * 1024 * 1024;
+/**
+ * **上游转发的默认超时**（与页面临时通道那个 `--timeout` 分开，别混）。
+ * 10s 对模型请求太短：DeepSeek 的 V4 模型默认带思考模式，一次带 61 个工具 schema 的请求
+ * 十几秒很常见 —— 早先共用 `--timeout`（10s）时，用户第一次真实调用基本必然撞
+ * `504 provider-timeout`（实测：`{"ok":false,"error":"provider-timeout","detail":"10000ms"}`）。
+ */
+const DEFAULT_PROVIDER_TIMEOUT_MS = 60000;
 /** 只有这些主机能收到**环境变量那把 key**（§3.7 的安全红线：环境 key 只能发往已知 provider） */
 const ENV_KEY_HOSTS = new Set(["api.deepseek.com", "api.openai.com"]);
 /** 注入脚本的锚点：优先插在应用 bundle 之前（桥必须在 ai-serve 之前就位） */
@@ -116,6 +123,8 @@ const opts = {
   providerKey: "",
   providerBase: DEFAULT_PROVIDER_BASE,
   providerModel: DEFAULT_PROVIDER_MODEL,
+  /** 上游转发超时（`--provider-timeout` / `PC_SHELL_PROVIDER_TIMEOUT`）；与 `timeoutMs` 分开 */
+  providerTimeoutMs: DEFAULT_PROVIDER_TIMEOUT_MS,
   providerProxy: true,
   /** 环境变量里那把 key 的名字（`""` = 没有）：由 `resolveProviderKey` 填，只用于诊断文案 */
   providerKeyEnvName: "",
@@ -207,6 +216,7 @@ function parseArgs(argv) {
   if (process.env.AI_PORT) opts.port = toInt(process.env.AI_PORT, 8787);
   if (process.env.AI_TOKEN) opts.token = String(process.env.AI_TOKEN).trim();
   if (process.env.PC_SHELL_TIMEOUT) opts.timeoutMs = toInt(process.env.PC_SHELL_TIMEOUT, DEFAULT_TIMEOUT_MS);
+  if (process.env.PC_SHELL_PROVIDER_TIMEOUT) opts.providerTimeoutMs = toInt(process.env.PC_SHELL_PROVIDER_TIMEOUT, DEFAULT_PROVIDER_TIMEOUT_MS);
   if (process.env.PC_SHELL_NO_OPEN) opts.open = false;
   if (process.env.PC_SHELL_BROWSER) opts.browser = String(process.env.PC_SHELL_BROWSER);
   // provider 侧：环境变量先读，下面的 argv 覆盖
@@ -228,6 +238,7 @@ function parseArgs(argv) {
     else if (a === "--provider-key") { const k = resolveProviderKey(next()); opts.providerKey = k.key; opts.providerKeyEnvName = k.envName; }
     else if (a === "--provider-base") opts.providerBase = next().trim();
     else if (a === "--provider-model") opts.providerModel = next().trim();
+    else if (a === "--provider-timeout") opts.providerTimeoutMs = toInt(next(), NaN);
     else if (a === "--no-provider-proxy") opts.providerProxy = false;
     else if (a === "--verbose" || a === "-v") opts.verbose = true;
     else if (a === "--help" || a === "-h") opts.help = true;
@@ -269,10 +280,10 @@ function parseArgs(argv) {
 function usage() {
   console.log([
     "用法：node toolchain/pc-shell.mjs [--port 8787] [--token <hex>] [--timeout 10000] [--no-open] [--browser <exe>] [--verbose]",
-    "      [--provider-key <k>] [--provider-base <url>] [--provider-model <m>] [--no-provider-proxy]",
+    "      [--provider-key <k>] [--provider-base <url>] [--provider-model <m>] [--provider-timeout 60000] [--no-provider-proxy]",
     "环境变量：AI_PORT / AI_TOKEN / PC_SHELL_TIMEOUT / PC_SHELL_NO_OPEN / PC_SHELL_BROWSER（命令行参数优先）",
     "          provider key：--provider-key 优先，其次 DEEPSEEK_API_KEY / OPENAI_API_KEY / PC_AI_KEY",
-    "          /provider/* 转发：PC_SHELL_PROVIDER_BASE / PC_SHELL_PROVIDER_MODEL / PC_SHELL_NO_PROVIDER_PROXY",
+    "          /provider/* 转发：PC_SHELL_PROVIDER_BASE / PC_SHELL_PROVIDER_MODEL / PC_SHELL_PROVIDER_TIMEOUT / PC_SHELL_NO_PROVIDER_PROXY",
     "",
     "一个进程同时给：静态站点（app2/www）+ AI 工具服务入口（GET /ai/health · POST /ai）+ 把请求",
     "转发进窗口页面的通道 + 应用内助手的**同源模型代理**（GET /provider/config · POST /provider/chat）。",
@@ -1119,6 +1130,8 @@ function providerConfigBody() {
     defaultModel: opts.providerModel,
     models: [DEFAULT_PROVIDER_MODEL, "deepseek-flash"],
     hasEnvKey: !!opts.providerKey,
+    // 上游转发超时（只读的诊断信息；页面不需要它，也不含任何机密）
+    providerTimeoutMs: opts.providerTimeoutMs,
     keySource: providerKeySourceKind(),
   };
 }
@@ -1165,7 +1178,7 @@ function forwardToProvider(payload) {
     const data = Buffer.from(payload, "utf8");
     const req = mod.request(full, {
       method: "POST",
-      timeout: opts.timeoutMs,
+      timeout: opts.providerTimeoutMs,
       headers: {
         "content-type": "application/json",
         "content-length": data.length,
@@ -1205,7 +1218,7 @@ function forwardToProvider(payload) {
       } catch {
         /* ignore */
       }
-      resolve({ ok: false, kind: "timeout", detail: opts.timeoutMs + "ms" });
+      resolve({ ok: false, kind: "timeout", detail: opts.providerTimeoutMs + "ms" });
     });
     req.on("error", (e) => resolve({ ok: false, kind: "unreachable", detail: String(e && e.message ? e.message : e) }));
     req.end(data);
@@ -1481,6 +1494,10 @@ function main() {
   }
   if (!Number.isInteger(opts.timeoutMs) || opts.timeoutMs < 1000 || opts.timeoutMs > 600000) {
     log("超时不合法：" + opts.timeoutMs + "ms（允许 1000..600000，默认 " + DEFAULT_TIMEOUT_MS + "）");
+    process.exit(1);
+  }
+  if (!Number.isInteger(opts.providerTimeoutMs) || opts.providerTimeoutMs < 1000 || opts.providerTimeoutMs > 600000) {
+    log("上游转发超时不合法：" + opts.providerTimeoutMs + "ms（允许 1000..600000，默认 " + DEFAULT_PROVIDER_TIMEOUT_MS + "）");
     process.exit(1);
   }
   if (!fs.existsSync(path.join(WWW, "index.html"))) {

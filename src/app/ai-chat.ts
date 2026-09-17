@@ -722,7 +722,7 @@ function hostError(status: number, body: string): string {
   if (shell && status === 403) return "本机壳拒绝了这次转发（" + (detail || code || "forbidden") + "）";
   if (shell && status === 413) return "请求太大（上限 1 MiB）：对话太长，清一下会话";
   if (shell && status === 502) return "连不上端点（" + (detail || "provider-unreachable") + "）：检查这台设备的网络";
-  if (shell && status === 504) return "端点没在超时时间内回：" + (detail || "provider-timeout");
+  if (shell && status === 504) return "端点没在超时时间内回：" + (detail || "provider-timeout") + "（本机壳的上游超时，可用 --provider-timeout 调大）";
   if (shell && status === 400 && code === "bad-request") return "端点返回 HTTP 400：" + (detail || "bad-request");
   // ---- 剩下的都是 provider 透传过来的（含 provider 的 403）----
   // 403 单独说清「是模型服务商拒绝的」：这正是最需要方向感的一档 ——
@@ -777,9 +777,14 @@ async function requestModel(
     throw new Error("读端点响应失败：" + message(e));
   }
   if (!res.ok) {
-    // 代理模式的失败体：优先用包装层留底的**壳原文**（见 `hostErrorBodies` 的注释）
+    // 代理模式的失败体：优先用包装层留底的**壳原文**（见 `hostErrorBodies` 的注释）。
+    // **一律过 `hostError()`**：它内部按「响应形状」判这条错误是不是壳自己发的（`ok === false`），
+    // 判不出来就原样退回 `httpError()`（provider 档）。早先这里写成 `hostKey ? hostError : httpError`
+    // 二选一，于是「壳的信封落到直连分支」时会把原始 JSON 直接甩给用户
+    // （用户实测撞过：`端点返回 HTTP 504：{"ok":false,"error":"provider-timeout","detail":"10000ms"}`，
+    //  本该是「端点没在超时时间内回：10000ms（可用 --provider-timeout 调大）」）。
     const raw = hostErrorBodies.get(res) ?? text;
-    throw new Error(hostKey ? hostError(res.status, raw) : httpError(res.status, raw));
+    throw new Error(hostError(res.status, raw));
   }
   let parsed: unknown;
   try {

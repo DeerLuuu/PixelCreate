@@ -3628,7 +3628,7 @@ key 的值一个字符都不进这段文本）：
 | 请求体 | OpenAI 兼容**原样转发**：`{ model, messages, tools?, tool_choice?, temperature?, max_tokens? }`。壳**只补** `Authorization`，不改其它字段；`model` 缺省时用壳的默认模型；`stream:true` 直接回 `400`。**请求体里没有 URL 字段** —— 目标地址只由壳的启动参数决定，这从结构上堵死「拿代理当任意 URL 转发器」 |
 | 鉴权（对页面） | `POST /provider/chat`：优先 `Authorization: Bearer <通道token>`，兼容 `X-Shell-Token`；常量时间比较。页面在代理模式下**去掉** `Authorization`、改带 `X-Provider-Key: host`，并把通道 token 放 `X-Shell-Token`（通道 token 只放内存、绝不写 localStorage） |
 | 响应 | 把 provider 的 **HTTP 状态码与 body 原样透传**（3xx 也照透，**不跟随重定向**）。页面侧的 `httpError()` 按状态分档的文案因此一行都不用改 |
-| 超时 / 体积 | 超时复用壳的 `--timeout`（默认 10000ms）→ `504`；上游响应体上限 8 MiB（`MAX_PROVIDER_BYTES`，超了截断）；页面 → 壳的请求体上限 1 MiB（`MAX_BODY_BYTES`）→ `413` |
+| 超时 / 体积 | **两条超时是分开的**：上游转发用 `--provider-timeout`（默认 **60000ms**，env `PC_SHELL_PROVIDER_TIMEOUT`）→ `504`；壳 ↔ 页面的临时通道仍用 `--timeout`（默认 10000ms，与 `MainActivity.AI_CALL_TIMEOUT_MS` 同口径）。**别再让模型请求共用 10s**：V4 默认带思考模式，一次带 61 个工具 schema 的请求十几秒很正常，共用时用户第一次真实调用必然撞 `504 provider-timeout`（实测：假 provider 延迟 12s，旧默认 10s → 504；新默认 60s → 200）。上游响应体上限 8 MiB（`MAX_PROVIDER_BYTES`，超了截断）；页面 → 壳的请求体上限 1 MiB（`MAX_BODY_BYTES`）→ `413` |
 
 **`GET /provider/config` 响应**（**绝不含 key 的任何片段，连尾 4 位都不给**）：
 
@@ -3652,7 +3652,7 @@ key 的值一个字符都不进这段文本）：
 | `403` | `proxy-off` | 本机壳拒绝了这次转发（<detail>，例如 `--no-provider-proxy` / 目标不是已知 provider） |
 | `413` | `body-too-large` | 请求太大（上限 1 MiB）：对话太长，清一下会话 |
 | `502` | `provider-unreachable` | 连不上端点（<detail>）：检查这台设备的网络 |
-| `504` | `provider-timeout` | 端点没在超时时间内回：<detail> |
+| `504` | `provider-timeout` | 端点没在超时时间内回：<detail>（本机壳的上游超时，可用 `--provider-timeout` 调大） |
 | `400` | `bad-request` | 端点返回 HTTP 400：<detail>（体不是 JSON / `stream:true` / `no-model`） |
 | `404` | `not-found` | **页面静默回落直连**（老壳没有这个端点），不弹错 |
 | 其它 4xx/5xx | 原样透传 provider 的 | 走 `httpError()` 四档（401/403、404、429、其它） |
@@ -3715,8 +3715,9 @@ node toolchain/pc-shell.mjs --port 8915 --no-open --provider-base http://api.dee
 
 ```powershell
 node toolchain/check-bundle.mjs app2/www/js/app.js      # 期望：✓ 产物自检通过…（exit 0）
-(Get-FileHash app2/www/js/app.js -Algorithm MD5).Hash   # 期望：B51A0A94FBF7C892DE405A8E4097E059
-node tests\.ts-out\tests\run-tests.js | Select-Object -Last 1   # 期望：ALL PASS（当前 7639 条）
+# 更严的一条（推荐）：按 §6.4 在 %TEMP% 里用同一套 esbuild 口径重建一份，
+# md5 必须与 app2/www/js/app.js **逐字节相同** —— check-bundle 只证「能加载」，不证「等于 src」。
+node tests\.ts-out\tests\run-tests.js | Select-Object -Last 1   # 期望：ALL PASS（当前 7642 条）
 ```
 
 壳伺服的就是 `app2/www/js/app.js`（§5.1b）：md5 或自检不对，说明产物落后于源码，先在仓库根重建（§6.4），
@@ -3801,7 +3802,8 @@ node toolchain/pc-shell.mjs --port 8914 --provider-key sk-cli-probe-8888 --provi
 | 状态行「没有可用的 key」 | 三种来源都没有：设置里手填，或设环境变量后**重启壳**（key 只在启动时读一次） |
 | 「本机壳拒绝了这次转发（目标不是已知 provider）」 | env key + 非白名单主机或非 https：换白名单 https，或改用显式 `--provider-key` |
 | 「本机壳的通道 token 不对」 | 重启过壳 → 刷新页面（token 每次启动随机，除非 `--token` 固定） |
-| 「端点没在超时时间内回」 | 上游慢：`--timeout 20000`；「连不上端点」先查这台设备的网络 |
+| 「端点没在超时时间内回：…ms」 | 上游（模型）在这段时间内没回：**调大上游超时** `--provider-timeout 120000`（默认 60s）后重启壳；「连不上端点」先查这台设备的网络 |
+| 面板里出现 `端点返回 HTTP 504：{"ok":false,…}` 这种**原始信封** | 那是页面按「直连档」选文案的旧行为（已修）：壳的信封现在**无论走哪条分支**都按 `ok:false` 形状翻成人话 |
 | 请求发去奇怪地址后 `Failed to fetch` | 检查是不是把端点写成了 `<providerBase>/provider/chat`（§26.6：页面必须发**同源** `/provider/chat`） |
 | 页面白屏 | 产物坏了：在仓库根重建（§6.4 的 tsconfig 坑），再 `check-bundle` |
 

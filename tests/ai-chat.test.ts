@@ -1163,6 +1163,20 @@ export async function testAiChat(): Promise<void> {
     // 壳的 413 / 504 都带 `ok:false`（P10 给这几档加的 `shell` 守卫不许把它们改坏）
     ok("proxy.err.413.shell-shape", e413.indexOf("请求太大") >= 0 && e413.indexOf("端点") < 0, e413);
     eq("proxy.err.504.shell-shape", e504.indexOf("端点没在超时时间内回：10000ms") >= 0, true);
+    // **直连分支也必须翻**（用户实测症状）：壳的信封落到非哨兵路径时，早先把原始 JSON 直接甩给用户 ——
+    // `端点返回 HTTP 504：{"ok":false,"error":"provider-timeout","detail":"10000ms"}`。
+    // 判别只按**响应形状**（`ok === false`），与走哪条分支无关。
+    const direct504 = await (async (): Promise<string> => {
+      const { fn } = fakeFetch([{ status: 504, body: JSON.stringify({ ok: false, error: "provider-timeout", detail: "10000ms" }) }]);
+      const r = await runChatTurn({
+        ...turnOpts(live(), fn),
+        endpoint: "http://127.0.0.1:8787", key: "sk-direct-not-sentinel", commit: false,
+      });
+      return String(r.error);
+    })();
+    ok("proxy.err.504.direct-shape-still-translated",
+      direct504.indexOf("端点没在超时时间内回：10000ms") >= 0 && direct504.indexOf("端点返回 HTTP 504") < 0, direct504);
+    eq("proxy.err.504.direct-shape.no-raw-envelope", direct504.indexOf('"ok":false') < 0, true);
     // 未知 code / 非 JSON body → 退回既有的四档文案（不吞错、不泄漏）
     const e429 = await errText(429, "slow down");
     ok("proxy.err.429-fallback", e429.indexOf("429") >= 0 && e429.indexOf("slow down") >= 0, e429);
@@ -1407,7 +1421,18 @@ export async function testAiChat(): Promise<void> {
     ok("shell.key-never-in-config", shell.indexOf("providerConfigBody") > 0
       && shell.indexOf("hasEnvKey: !!opts.providerKey") > 0);
     ok("shell.token-auth", shell.indexOf('req.headers["x-shell-token"]') > 0 && shell.indexOf("providerAuthOk") > 0);
-    ok("shell.timeout-and-size", shell.indexOf("MAX_PROVIDER_BYTES") > 0 && shell.indexOf("timeout: opts.timeoutMs") > 0);
+    // 超时**分两条**：页面临时通道 `timeoutMs`（10s，与 APK 的 AI_CALL_TIMEOUT_MS 同口径）
+    // 与上游转发 `providerTimeoutMs`（60s，模型请求十几秒很正常）。早先共用 10s，
+    // 用户第一次真实调用必然撞 504 provider-timeout。这里的断言钉住"两条都在、且没有回退成共用"。
+    ok("shell.timeout-and-size", shell.indexOf("MAX_PROVIDER_BYTES") > 0
+      && shell.indexOf("timeout: opts.providerTimeoutMs") > 0
+      && shell.indexOf("DEFAULT_PROVIDER_TIMEOUT_MS = 60000") > 0
+      && shell.indexOf("--provider-timeout") > 0);
+    eq("shell.timeout.two-legs-separate",
+      [shell.indexOf("timeoutMs: DEFAULT_TIMEOUT_MS") > 0,
+        shell.indexOf("timeout: opts.timeoutMs") < 0,
+        shell.indexOf("detail: opts.providerTimeoutMs + \"ms\"") > 0],
+      [true, true, true]);
     // 页面侧：不允许把 key 拼进任何文本（哨兵常量只在头里用）
     const panelSrc = readFile("src/ui/AiPanel.tsx");
     ok("shell.page-no-key-text", panelSrc.indexOf("{cfg.key}") < 0 && panelSrc.indexOf("{key}") < 0);
