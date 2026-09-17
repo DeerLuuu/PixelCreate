@@ -25,7 +25,9 @@
 import type { Rect } from "../engine/types";
 import { AI_ARG_CURRENT, callTool, listTools } from "./ai-tools";
 import type { AiParamType, AiTier, AiTool, AiToolCtx, AiToolParam, AiToolResult } from "./ai-tools";
-import { beginAiTurn, isTurnOpen, rollbackTurn, runAiTurn, turnHandle } from "./ai-turn";
+import {
+  beginAiTurn, beginTurnStep, endTurnStep, isTurnOpen, rollbackTurn, runAiTurn, turnHandle,
+} from "./ai-turn";
 
 /** 默认最多几轮「模型 → 工具 → 模型」（§3.5 C5 的口径：12；设置项 `ai.chatMaxRounds` 覆盖它） */
 export const AI_CHAT_DEFAULT_MAX_ROUNDS = 12;
@@ -134,19 +136,52 @@ export interface ParsedToolCall {
 /** 一次工具调用的摘要（UI 显示 / 回灌模型都用它） */
 export interface ChatCallLog {
   id: string;
+  /** 本回合内第几步（**1 起**；回撤用 `SESSION.revertAiTurnStep(stepNo)`） */
+  index: number;
+  /** 本回合内第几轮模型请求（**1 起**：一次模型回复里可能有多个 tool_call，它们同轮） */
+  round: number;
   name: string;
+  /**
+   * 可读的参数摘要（`formatArgsText()`；**已截断**，见 `AI_CHAT_ARGS_TEXT_MAX`）。
+   * UI 展开详情时显示它，回灌模型**不用**它（那边走 `rawArgs`）。
+   */
   args: Record<string, unknown>;
+  /** `args` 的可读一行文本（截断过） */
+  argsText: string;
+  /** 模型原始给的 arguments 字符串（**截断到 `AI_CHAT_RAW_ARGS_MAX`**；解析失败时它就是原文） */
+  rawArgs: string;
   ok: boolean;
   error?: string;
-  /** 这次真的碰到了哪块像素（工具没给就是 null） */
-  changed: Rect | null;
-  /** 调用结束时的文档版本号 */
+  /** 工具回的那几条警告（`AiToolResult.warn`；当前工具表里还没有工具会填它，链路已通） */
+  warn?: string[];
+  /** 这一步从发出到拿到结果的**真耗时**（毫秒，`Date.now()` 差值） */
+  durationMs: number;
+  /** 这一步**执行前**的文档版本号 */
+  docRevBefore: number;
+  /** 这一步**执行后**的文档版本号 */
+  docRevAfter: number;
+  /** 调用结束时的文档版本号（= `docRevAfter`；保留是为了兼容既有调用点与断言） */
   docRev: number;
   /** 文档版本号推进了多少（0 = 一个像素都没改） */
   revDelta: number;
+  /** 这次真的碰到了哪块像素（工具没给就是 null） */
+  changed: Rect | null;
   /** 模型给的参数不能解析（这一条**没有**真的调工具） */
   parseError?: string;
+  /**
+   * 这一步之后被「按步撤回」作废了。
+   *
+   * 怎么填上：`runChatTurn()` 返回时它一律是 false（撤回发生在整轮跑完之后，是 UI 那一下）；
+   * 面板撤回之后拿 `SESSION.previewAiTurn().steps.steps[].reverted`，按 `index` 覆盖这一份
+   * （见 `AiPanel` 的 `markStepsReverted()`），**不在这里留第二份状态**。
+   */
+  reverted?: boolean;
 }
+
+/** `ChatCallLog.argsText` 的最大字符数（一行摘要，别把面板撑爆） */
+export const AI_CHAT_ARGS_TEXT_MAX = 160;
+/** `ChatCallLog.rawArgs` 的最大字符数（模型给的原始 JSON；截断后接省略号） */
+export const AI_CHAT_RAW_ARGS_MAX = 400;
 
 /** `runChatTurn()` 的收尾原因（给 UI 显示「为什么停了」） */
 export type ChatStopReason = "text" | "maxRounds" | "maxCalls";
@@ -490,6 +525,16 @@ export interface ChatTurnOpts {
   label?: string;
   /** true（默认）= 整轮直接落一条历史；false = 预览模式，回合留给 UI 收尾 */
   commit?: boolean;
+  /**
+   * **一次工具调用的接缝**（每一步的 `beginTurnStep()` / `callTool` / `mark()` / `endTurnStep()`）。
+   *
+   * 默认实现就是下面 `body()` 里那一小段；给出来只有两个用途：
+   *   · 白盒测试与一次性探针要**确定性地**写字节（真工具的栅格化会把「第几步写了什么」搅浑），
+   *     所以它们换掉 `callTool` 那一行、但**沿用同一对钩子与同一个 `mark()` 时机**；
+   *   · 将来若要给某一步加超时 / 重试，改这一处而不是在循环里加分支。
+   * **别在正常路径上传它** —— 传了就等于接管了 C1 的 `callTool`（校验 / destructive 确认都在里面）。
+   */
+  callStep?: (call: ParsedToolCall, ctx: AiToolCtx) => Promise<AiToolResult>;
   /** 每执行完一次调用回调一次（UI 实时显示摘要） */
   onCall?: (log: ChatCallLog, index: number) => void;
 }
@@ -1315,6 +1360,8 @@ export async function runChatTurn(opts: ChatTurnOpts): Promise<ChatTurnResult> {
   const calls: ChatCallLog[] = [];
   const ctx: AiToolCtx = { ...opts.ctx, turn: opts.ctx.turn ?? turnHandle() };
   const tools = (opts.tools ?? listTools({ tiers: AI_CHAT_TOOL_TIERS.slice() })).slice();
+  /** 工具 id → 标题（步骤标签用；找不到就退回工具 id） */
+  const titleOf = new Map(tools.map((t) => [t.id, t.title]));
   const maxRounds = clampRounds(opts.maxRounds);
   const label = (opts.label && opts.label.trim()) || defaultTurnLabel(messages);
   const docRevBefore = docRevOf(ctx);
@@ -1357,24 +1404,33 @@ export async function runChatTurn(opts: ChatTurnOpts): Promise<ChatTurnResult> {
       if (!parsed.length) { stop = "text"; return; }         // 模型不再要求调用：这一轮结束
       for (const call of parsed) {
         if (calls.length >= AI_CHAT_MAX_CALLS) { stop = "maxCalls"; return; }
-        const before = docRevOf(ctx);
+        const docRevBefore = docRevOf(ctx);
+        // B2：工具调用**之前**抓「这一步之前」的快照（语义定死了：撤回 = 回到第 n 步执行之前）。
+        // 没写文档的调用（只读 / 失败 / 用户取消）那一步会被 `endTurnStep()` 丢掉，不占下标。
+        beginTurnStep(titleOf.get(call.name) || call.name);
+        const startedAt = Date.now();
+        const stepNo = calls.length + 1;
         let result: AiToolResult;
         if (call.error) {
           // 参数都不能解析：**不要**拿一个空参数去调工具（那会真的改到画布）
           result = { ok: false, error: call.error };
         } else {
-          result = await callTool(call.name, call.args, ctx);
+          result = opts.callStep ? await opts.callStep(call, ctx) : await callTool(call.name, call.args, ctx);
         }
+        const durationMs = Math.max(0, Date.now() - startedAt);
+        endTurnStep(durationMs);
+        const docRevAfter = docRevOf(ctx);
         const log: ChatCallLog = {
-          id: call.id, name: call.name, args: call.args,
+          id: call.id, index: stepNo, round: round + 1, name: call.name, args: call.args,
+          argsText: formatArgsText(call.args), rawArgs: clip(call.raw, AI_CHAT_RAW_ARGS_MAX),
           ok: result.ok !== false,
           changed: result.changed ?? null,
-          docRev: docRevOf(ctx),
-          revDelta: 0,
+          docRevBefore, docRevAfter, docRev: docRevAfter, revDelta: docRevAfter - docRevBefore,
+          durationMs,
           ...(result.error ? { error: result.error } : {}),
+          ...(result.warn && result.warn.length ? { warn: result.warn.slice() } : {}),
           ...(call.error ? { parseError: call.error } : {}),
         };
-        log.revDelta = log.docRev - before;
         calls.push(log);
         opts.onCall?.(log, calls.length - 1);
         messages = appendToolResult(messages, call, result);
@@ -1421,14 +1477,52 @@ export function changedCount(calls: readonly ChatCallLog[]): number {
   return calls.filter((c) => c.revDelta > 0 || c.changed).length;
 }
 
-/** 一次工具调用的一句话摘要（纯文本，和 ai-tools 的 `summarizeToolCall` 同一风格） */
+/**
+ * 参数的**一行可读摘要**（UI 展开详情那一行显示它）。口径：
+ *   · 标量照抄（`"x": 3` → `x=3`，字符串不引号，省地方）；
+ *   · 数组只显示长度与前几个元素（`points=[2 项] (1,1) (4,1)`）—— `draw_path` 的 points
+ *     可以很长，逐项展开会把面板撑爆；
+ *   · 对象退化成 `{…}`（嵌套结构看原始 JSON 那一行）。
+ */
+export function formatArgsText(args: unknown): string {
+  if (!args || typeof args !== "object" || Array.isArray(args)) return "";
+  const bits: string[] = [];
+  for (const [k, v] of Object.entries(args as Record<string, unknown>)) {
+    if (v === undefined) continue;
+    bits.push(k + "=" + argValueText(v));
+  }
+  return clip(bits.join(" "), AI_CHAT_ARGS_TEXT_MAX);
+}
+
+function argValueText(v: unknown): string {
+  if (Array.isArray(v)) {
+    // `[x, y]` 这种二元数组当成一个点 / 一对数值显示成 `(10,10)`：
+    // `draw_path` 的 points 是 `[x,y][]`，逐层展开会写成 `[1 项] [2 项] 10 10`（读起来是乱的）
+    if (v.length === 2 && v.every((x) => typeof x === "number")) return "(" + v[0] + "," + v[1] + ")";
+    const head = v.slice(0, 3).map((x) => argValueText(x)).join(" ");
+    const more = v.length > 3 ? " …" : "";
+    return "[" + v.length + " 项]" + (head ? " " + head : "") + more;
+  }
+  if (v && typeof v === "object") return "{…}";
+  if (typeof v === "string") return v;
+  return JSON.stringify(v);
+}
+
+/**
+ * 一次工具调用的一句话摘要（纯文本，和 ai-tools 的 `summarizeToolCall` 同一风格）。
+ *
+ * **不带步骤号与耗时**：那两个由 UI 用 i18n 文案拼（`aiChatStepNo` / `aiChatStepMs`），
+ * 免得中英混排的文案散落在这一层。既有断言（`aichat.format.*`）钉的就是这个组合。
+ */
 export function formatCallLog(log: ChatCallLog): string {
   const bits: string[] = [log.name];
   bits.push(log.ok ? "成功" : "失败");
   if (log.parseError) bits.push("模型给的参数不是合法 JSON");
   if (log.error && !log.parseError) bits.push(log.error);
   if (log.changed) bits.push("改动 " + log.changed.w + "×" + log.changed.h + " 像素");
-  if (log.revDelta > 0) bits.push("docRev " + (log.docRev - log.revDelta) + "→" + log.docRev);
+  if (log.warn && log.warn.length) bits.push("警告 " + log.warn.length + " 条");
+  if (log.reverted) bits.push("已撤回");
+  if (log.revDelta > 0) bits.push("docRev " + log.docRevBefore + "→" + log.docRevAfter);
   return bits.join(" · ");
 }
 

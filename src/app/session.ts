@@ -45,11 +45,12 @@ import { bytesToB64 } from "../engine/b64";
 import { TAG_COLORS, clampRange, nextTagName, normalizeTags, tagAt as findTag } from "../engine/tags";
 // C2 回合事务的薄门面（实现全在 ai-turn.ts；这里只转发，**不改既有方法的行为**）
 import {
-  beginAiTurn as aiBeginTurn, bindTurnHost as aiBindTurnHost, commitTurn as aiCommitTurn,
-  isTurnOpen as aiIsTurnOpen, previewTurn as aiPreviewTurn, rollbackTurn as aiRollbackTurn,
-  runAiTurn as aiRunAiTurn, turnHandle as aiTurnHandle,
+  beginAiTurn as aiBeginTurn, beginTurnStep as aiBeginTurnStep, bindTurnHost as aiBindTurnHost,
+  commitTurn as aiCommitTurn, endTurnStep as aiEndTurnStep,
+  isTurnOpen as aiIsTurnOpen, previewTurn as aiPreviewTurn, revertTurnStep as aiRevertTurnStep,
+  rollbackTurn as aiRollbackTurn, runAiTurn as aiRunAiTurn, turnHandle as aiTurnHandle,
 } from "./ai-turn";
-import type { AiTurnHandle, AiTurnPreview, AiTurnRunResult } from "./ai-turn";
+import type { AiTurnHandle, AiTurnPreview, AiTurnRunResult, AiTurnStepHandle } from "./ai-turn";
 
 export interface Prefs {
   lang: "zh" | "en";
@@ -3049,6 +3050,27 @@ export class Session {
   previewAiTurn(): AiTurnPreview {
     aiBindTurnHost(this);
     return aiPreviewTurn();
+  }
+  /**
+   * **按步撤回**（B2）：把文档恢复到第 `n` 步执行**之前**，第 `n` 步及之后一并作废；
+   * 回合**仍然开着**（还是预览态，只能「应用」或「放弃」，**不允许再让模型接着跑**）。
+   *
+   * `n` 就是 `previewAiTurn().steps.steps[].index`（1 起）。返回 false = 没撤回
+   * （回合没开 / n 越界 / 这一步已经作废过 / 本回合不支持按步撤回）——**不抛异常**。
+   * 能不能用先看 `previewAiTurn().steps.revert.ok`（跨画布与超大回合会明确禁用，
+   * `reason` 里有一句人话）。实现与全部边界见 `src/app/ai-turn.ts` 的 `revertTurnStep()`。
+   */
+  revertAiTurnStep(n: number): boolean {
+    aiBindTurnHost(this);
+    return aiRevertTurnStep(n);
+  }
+  /**
+   * 按步撤回的**内部**句柄（AI 整轮循环自己用 `ai-turn` 的自由函数，见 `ai-chat.ts`）。
+   * 这里保留一个 Session 上的转发，方便**诊断 / 白盒测试**在不 import `ai-turn` 的情况下
+   * 摆出「调用前后各一次」的姿势；UI 不要用它。
+   */
+  aiTurnStepHandle(): AiTurnStepHandle {
+    return { begin: (label: string) => aiBeginTurnStep(label), end: (ms?: number) => aiEndTurnStep(ms) };
   }
   /** 一轮一条历史（结构快照）+ 补一次 autosave；无改动返回 false 且不压栈 */
   commitAiTurn(): boolean {

@@ -119,8 +119,9 @@ export async function testAiTurn(): Promise<void> {
 
   ok("aiturn.closed.isOpen", !isTurnOpen());
   ok("aiturn.closed.facade-isOpen", !s.aiTurnOpen());
-  eq("aiturn.closed.preview", previewTurn(), { count: 0, rect: null });
-  eq("aiturn.closed.facade-preview", s.previewAiTurn(), { count: 0, rect: null });
+  // 回合没开时的预览：**四个字段都给**（`steps: null` = 没有步骤表可撤回、`docRev: 0` = 拿不到修订号）
+  eq("aiturn.closed.preview", previewTurn(), { count: 0, rect: null, steps: null, docRev: 0 });
+  eq("aiturn.closed.facade-preview", s.previewAiTurn(), { count: 0, rect: null, steps: null, docRev: 0 });
   eq("aiturn.closed.commit", commitTurn(), false);
   eq("aiturn.closed.facade-commit", s.commitAiTurn(), false);
   const closedBytes = spaceBytes(s);

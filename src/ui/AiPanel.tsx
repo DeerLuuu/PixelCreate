@@ -41,6 +41,7 @@ import {
 } from "../app/ai-chat";
 import type { ChatCallLog, ChatFetch, ChatFetchResponse, ChatMessage } from "../app/ai-chat";
 import type { AiToolCtx } from "../app/ai-tools";
+import type { AiTurnStepPreview } from "../app/ai-turn";
 import { AI_CHAT_DEFAULT_MODEL, aiChatSettings, saveAiChatSettings } from "../app/settings";
 import { AI_CHAT_BALL_KEY, CHAT_BALL_ID, clampAiBallPos, normalizeAiBallPos } from "../app/uibar";
 import { orbMetrics } from "./orb-layout";
@@ -86,6 +87,8 @@ interface AiPending {
   rect: Rect | null;
   docRev: number;
   docRevBefore: number;
+  /** 按步撤回的现状（`SESSION.previewAiTurn().steps`；面板撤回之后就靠它重画） */
+  steps: AiTurnStepPreview | null;
 }
 
 interface AiWinStore {
@@ -99,12 +102,25 @@ interface AiWinStore {
   logs: ChatCallLog[];
   /** 输入框里没发出去的那句话 */
   input: string;
+  /** **这一轮撤回过**（B1：留一行说明，且语义上不再放行输入 —— 见 `aiPanelShowsPreview` 的备注） */
+  reverted: boolean;
 }
 
 /** 进程内单例：`AiPanel` 每次挂载都读写它（所以卸载不丢对话） */
 export const aiWinStore: AiWinStore = {
-  thread: [], entries: [], pending: null, logs: [], input: "",
+  thread: [], entries: [], pending: null, logs: [], input: "", reverted: false,
 };
+
+/**
+ * **撤回过之后还能不能再让模型接着跑**：不能（`docs/API.md` §23.4 写死了这条语义）。
+ *
+ * 理由：撤回把文档恢复到第 n 步之前，但消息线程里**还留着**被撤掉那些步骤的 tool 结果 ——
+ * 模型会以为它画在 A 上的东西还在，继续基于一份**不存在的过去**推理。所以撤回之后
+ * 这一轮只剩两个结局：「应用当前状态」或「放弃整轮」（纯函数，可单测）。
+ */
+export function aiPanelAllowsSend(hasPending: boolean, reverted: boolean): boolean {
+  return !hasPending && !reverted;
+}
 
 /**
  * **卸载这个面板时要不要放弃还没收尾的那一轮**（P9 定稿，纯函数、可单测）。
@@ -154,6 +170,7 @@ export function noteAiWinClosed(text: string): void {
   if (!aiWinStore.pending) return;
   aiWinStore.pending = null;
   aiWinStore.logs = [];
+  aiWinStore.reverted = false;
   const lastUser = [...aiWinStore.thread].reverse().find((m) => m.role === "user");
   aiWinStore.thread = lastUser ? [lastUser] : [];
   aiWinStore.entries = aiWinStore.entries.concat([{ role: "note", text }]);
@@ -276,7 +293,7 @@ export function ChatBall({ t, onRestore, onOtherRings }: {
 // ============================================================================================
 
 /** 没有浮窗存储（SSR / 单测直接渲染面板）时的退路：进程内一个空壳，行为与从前一致 */
-const scratchStore: AiWinStore = { thread: [], entries: [], pending: null, logs: [], input: "" };
+const scratchStore: AiWinStore = { thread: [], entries: [], pending: null, logs: [], input: "", reverted: false };
 
 /**
  * 浏览器 / APK / 桌面壳的 fetch 都满足 `ChatFetch`；没有 fetch 的运行环境返回 null。
@@ -436,6 +453,8 @@ export function AiPanel({ t, onBack, store }: {
   const [logs, setLogs] = useState<ChatCallLog[]>(() => st.logs.slice());
   // 还没收尾的那一轮（跨卸载保留，但**只有 Session 里回合真的开着**才画预览，见 aiPanelShowsPreview）
   const [pending, setPending] = useState<AiPending | null>(() => st.pending);
+  /** 这一轮撤回过（B2）：留一行说明，且不再放行输入（见 `aiPanelAllowsSend`） */
+  const [reverted, setReverted] = useState(() => st.reverted === true);
   // 通路（直连 / 同源代理）：null = 还没探完（探完才决定 key 从哪来）
   const [transport, setTransport] = useState<typeof transportCache>(() => transportCache);
   // 流式那一行的状态：`live` = 正在流式（画「流式输出中…」），`fallback` = 降级的说明（一定要给用户看）
@@ -456,10 +475,10 @@ export function AiPanel({ t, onBack, store }: {
   /** 任何一项变化都同步进存储（卸载时不丢）；四处状态一起走这里，别各写一份 */
   useEffect(() => {
     st.thread = thread; st.entries = entries; st.pending = pending;
-    st.logs = logs; st.input = input;
+    st.logs = logs; st.input = input; st.reverted = reverted;
     // 行数镜像（见 `entriesLen` 的注释）：一次渲染里补平，下一批增量就有准数了
     entriesLen.current = entries.length;
-  }, [st, thread, entries, pending, logs, input]);
+  }, [st, thread, entries, pending, logs, input, reverted]);
 
   useEffect(() => () => {
     live.current = false;
@@ -535,7 +554,8 @@ export function AiPanel({ t, onBack, store }: {
     SESSION.askConfirm({ msg: t("aiChatConfirm") + "\n" + req.summary, yes: t("ok"), no: t("cancel") });
 
   const send = async (): Promise<void> => {
-    if (busy || pending) return;                       // 上一轮还在跑 / 还没收尾：不叠加
+    // 撤回过的一轮**不许再让模型接着跑**（文档与消息线程已经不一致，见 §23.4 与 `aiPanelAllowsSend`）
+    if (busy || pending || reverted) return;           // 上一轮还在跑 / 还没收尾 / 已撤回过：不叠加
     const text = input.trim();
     if (!text) return;
     if (!native) { setErr(t("aiChatErrNoBridge")); return; }
@@ -552,6 +572,7 @@ export function AiPanel({ t, onBack, store }: {
     setInput("");
     setErr("");
     setLogs([]);
+    setReverted(false);
     setStreamFlag({ live: false, fallback: "" });
     // 流式落点的行下标：此刻 `entries` 的最后一条刚推入的是用户那句话，
     // 增量来时（`onText`）再推一条 assistant 预览行并把下标记下来。
@@ -625,13 +646,40 @@ export function AiPanel({ t, onBack, store }: {
     }
     if (r.turnOpen) {
       const pv = SESSION.previewAiTurn();
-      setPending({ calls: r.calls.length, rect: pv.rect, docRev: r.docRev, docRevBefore: r.docRevBefore });
+      setPending({ calls: r.calls.length, rect: pv.rect, docRev: pv.docRev, docRevBefore: r.docRevBefore, steps: pv.steps });
     }
+  };
+
+  /**
+   * **按步撤回**（B2）：撤回第 `n` 步 → 文档回到它执行之前，它和它之后的步骤一并作废。
+   *
+   * 三条不许动的口径（`docs/API.md` §23.4）：
+   *   · 回合**仍然开着**（还是预览态），所以这里只重画预览，不动历史、不动 thread；
+   *   · 预览里的 `docRev` / `changed` / 每一步的 `changed` 一律取自 `SESSION.previewAiTurn()`
+   *     （**撤回后的实况**），不在面板里自己算；
+   *   · 撤回之后**不再放行输入**（`reverted`），理由见 `aiPanelAllowsSend()`。
+   */
+  const revertStep = (n: number): void => {
+    if (!SESSION.revertAiTurnStep(n)) return;   // 越界 / 已经作废过 / 本回合不支持：什么都不做
+    const pv = SESSION.previewAiTurn();
+    setPending((prev) => (prev ? { ...prev, rect: pv.rect, docRev: pv.docRev, steps: pv.steps } : prev));
+    // 调用记录里也标一下（`ChatCallLog.reverted`）：按 `index` 对上，`index` 就是撤回用的 n
+    const gone = new Set((pv.steps?.steps ?? []).filter((s) => s.reverted).map((s) => s.index));
+    setLogs((prev) => prev.map((l) => (gone.has(l.index) ? { ...l, reverted: true } : l)));
+    setReverted(true);
+    const note = t("aiChatStepReverted").replace("{n}", String(n));
+    setEntries((prev) => prev.concat([{ role: "note", text: note }]));
   };
 
   const apply = (): void => {
     const recorded = SESSION.commitAiTurn();
     setPending(null);
+    setReverted(false);
+    // 这一轮已经落定：步骤表随回合一起消失（`previewAiTurn().steps` 变成 null），
+    // 记录里那份「已撤回」的标记也一起清掉 —— 历史里落的是**撤回后的当前状态**那一条。
+    // （用解构而不是 `reverted: undefined`：`exactOptionalPropertyTypes` 现在是关的，
+    //   但留一个显式的 `undefined` 字段会让 `JSON.stringify` 之类的地方多一个键。）
+    setLogs((prev) => prev.map(({ reverted: _was, ...rest }) => rest));
     const note = recorded ? t("aiChatApplied") : t("aiChatAppliedNothing");
     setEntries((prev) => prev.concat([{ role: "note", text: note }]));
     bridge.toast(note);
@@ -640,6 +688,7 @@ export function AiPanel({ t, onBack, store }: {
   const discard = (): void => {
     SESSION.rollbackAiTurn();
     setPending(null);
+    setReverted(false);
     // 这一轮忘掉：文档回去了，对话里也把模型的这半轮清掉，只留用户那句话
     const lastUser = [...thread].reverse().find((m) => m.role === "user");
     setThread(lastUser ? [lastUser] : []);
@@ -702,14 +751,68 @@ export function AiPanel({ t, onBack, store }: {
       {logs.length ? (
         <div data-guide="ai-calls">
           <div className="rowlabel">{t("aiChatCalls") + "（" + logs.length + "）"}</div>
-          {logs.map((log, i) => (
-            <div className="as-row" key={i}>
-              <div className="as-main">
-                <b>{log.ok ? "✓" : "✗"}</b>
-                <span>{formatCallLog(log)}</span>
+          {/*
+            调用记录（B1）：每条**一行摘要**（第几步 / 工具 / 耗时 / ok·失败 / 改动），
+            点开看详情（参数、结果、docRev 变化、警告）；右侧是**按步撤回**（B2）。
+            「步骤号」直接取 `log.index` —— 它就是 `SESSION.revertAiTurnStep(n)` 的 n
+            （ai-turn 的步骤表与 ai-chat 的 `calls` 一一对应，见 `ChatCallLog.index`）。
+          */}
+          {logs.map((log, i) => {
+            const step = pending?.steps?.steps.find((s) => s.index === log.index) ?? null;
+            // 撤回之后一切都以 Session 的实况为准（本地 `log.reverted` 只是那一瞬间的快照）
+            const isReverted = step ? step.reverted : log.reverted === true;
+            // 撤回之后一切都以 Session 的实况为准（本地 `log.reverted` 只是那一瞬间的快照）
+            const changed = isReverted ? null : (step ? step.changed : log.changed);
+            // 「还能撤回」的判据 = 这一步**还活着**。Session 那边只给活步骤返回非 null 的 `changed`
+            // （作废的整段都返回 null），所以这一个条件同时管住两件事：
+            //   · 已经作废的步骤没有按钮（撤过之后再点第 2 步 = 那儿已经没有按钮）；
+            //   · 真改了像素的活步骤才有按钮（没改像素的步骤本来就无从「撤回」）。
+            // 再叠一道 `revert.ok`（整轮禁用时所有步骤都没有按钮）。
+            const canRevert = !!pending?.steps?.revert.ok && changed !== null && changed !== undefined;
+            return (
+              <div className={"as-row ai-call-row" + (isReverted ? " reverted" : "")} key={i} data-guide="ai-call">
+                <details className="ai-call" style={{ flex: "1 1 150px", minWidth: 0 }}>
+                  <summary className="ai-call-head" data-guide="ai-call-summary" title={t("aiChatStepDetail")}>
+                    <b>{t("aiChatStepNo").replace("{n}", String(log.index))}</b>
+                    <span>{log.name}</span>
+                    <span className="as-why">{t("aiChatStepMs").replace("{ms}", String(log.durationMs))}</span>
+                    <span className={log.ok ? undefined : "warn"}>{log.ok ? t("aiChatStepOk") : t("aiChatStepFail")}</span>
+                    {changed ? <span>{"改动 " + changed.w + "×" + changed.h}</span> : null}
+                    {isReverted ? <span className="as-why">{"· " + t("aiChatStepRevert")}</span> : null}
+                  </summary>
+                  <div className="ai-call-body">
+                    <div>{t("aiChatStepArgs").replace("{v}", log.argsText || t("aiChatStepNoArgs"))}</div>
+                    <div>{t("aiChatStepResult").replace("{v}", formatCallLog(log))}</div>
+                    {log.rawArgs ? <div className="as-why">{t("aiChatStepRaw").replace("{v}", log.rawArgs)}</div> : null}
+                    <div className={"ai-call-rev" + (log.revDelta > 0 ? " grew" : "")}>
+                      {t("aiChatDocRev").replace("{from}", String(log.docRevBefore)).replace("{to}", String(log.docRevAfter))}
+                    </div>
+                    {log.warn && log.warn.length
+                      ? <div className="warn">{t("aiChatStepWarn").replace("{v}", log.warn.join("；"))}</div>
+                      : null}
+                  </div>
+                </details>
+                {canRevert ? (
+                  <div className="row-actions as-acts">
+                    <Btn icon="i-undo" label={t("aiChatStepRevert")} onClick={() => revertStep(log.index)}
+                      guide="ai-step-revert" />
+                  </div>
+                ) : null}
               </div>
+            );
+          })}
+          {/* 按步撤回在本回合不可用（跨画布 / 太大）：**明确说出来**，别让用户找那个不存在的按钮 */}
+          {pending && pending.steps && !pending.steps.revert.ok ? (
+            <div className="row-note warn" data-guide="ai-step-off">
+              {t("aiChatStepOff").replace("{why}", pending.steps.revert.reason || "")}
             </div>
-          ))}
+          ) : null}
+          {pending && pending.steps && pending.steps.revert.ok && pending.steps.steps.length ? (
+            <div className="row-note" data-guide="ai-step-budget">
+              {t("aiChatStepBudget").replace("{used}", String(Math.round(pending.steps.revert.usedBytes / 1024)))
+                .replace("{budget}", String(Math.round(pending.steps.revert.budgetBytes / 1024)))}
+            </div>
+          ) : null}
         </div>
       ) : null}
       {busy ? <div className="row-note">{t("aiChatThinking")}</div> : null}
@@ -732,6 +835,20 @@ export function AiPanel({ t, onBack, store }: {
             <Btn icon="i-check" label={t("aiChatApply")} className="primary" onClick={apply} guide="ai-apply" />
             <Btn icon="i-x" label={t("aiChatDiscard")} danger onClick={discard} guide="ai-discard" />
           </div>
+        </div>
+      ) : !aiPanelAllowsSend(pending !== null, reverted) ? (
+        // 撤回过 / 还有一轮没收尾：语义上**不再放行输入**（见 `aiPanelAllowsSend()` 与 §23.4）。
+        // 这里给的是输入框本身（disabled）+ 一句「为什么」，而不是干脆不画 ——
+        // 用户看得见「这一轮要怎么收尾」，不会以为面板坏了。`send()` 自己也有同一道闸
+        // （`if (busy || pending) return` 之外还有 `reverted`），所以这里就算被触发也发不出去。
+        <div data-guide="ai-step-locked">
+          <div className="row-actions">
+            <input className="textinput" value={input} disabled placeholder={t("aiChatStepRevert")}
+              data-guide="ai-input-locked" onChange={() => { /* disabled：这里不会触发 */ }} />
+            <Btn icon="i-check" label={t("aiChatSend")} className="primary"
+              onClick={() => void send()} guide="ai-send-locked" />
+          </div>
+          {reverted ? <div className="row-note warn" data-guide="ai-step-reverted">{t("aiChatStepRevertedNote")}</div> : null}
         </div>
       ) : (
         <div className="row-actions">

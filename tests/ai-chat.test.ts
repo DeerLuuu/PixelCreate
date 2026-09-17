@@ -17,17 +17,19 @@
 //     不挂输入框（静态接线 + SSR 各查一遍）。
 import { Session } from "../src/app/session";
 import {
-  AI_CHAT_COMPLETIONS_PATH, AI_CHAT_DEFAULT_MAX_ROUNDS, AI_CHAT_HOST_KEY_SENTINEL, AI_CHAT_PROXY_CHAT_PATH,
+  AI_CHAT_ARGS_TEXT_MAX, AI_CHAT_COMPLETIONS_PATH, AI_CHAT_DEFAULT_MAX_ROUNDS, AI_CHAT_HOST_KEY_SENTINEL,
+  AI_CHAT_PROXY_CHAT_PATH, AI_CHAT_RAW_ARGS_MAX,
   AI_CHAT_STREAM_FALLBACK_BROKEN, AI_CHAT_STREAM_FALLBACK_NOT_SSE,
   AI_CHAT_SYSTEM_PROMPT, AI_CHAT_TEMP_STEP, aiChatStatusText, appendToolResult, appendStreamChunk,
   assistantMessage, buildSystemPrompt, changedCount, chatCompletionsUrl, chatConfigError, chatProxyUrl,
-  consumeSseStream, defaultTurnLabel, detectChatProxy, formatCallLog, newChatStreamState, parseSseData,
-  parseToolCalls, proxyChatFetch, readHostProviderConfig, responseText, runChatTurn, splitSseChunk,
-  streamResponse, systemMessage, toOpenAiTools, toolResultContent, userMessage,
+  consumeSseStream, defaultTurnLabel, detectChatProxy, formatArgsText, formatCallLog, newChatStreamState,
+  parseSseData, parseToolCalls, proxyChatFetch, readHostProviderConfig, responseText, runChatTurn,
+  splitSseChunk, streamResponse, systemMessage, toOpenAiTools, toolResultContent, userMessage,
 } from "../src/app/ai-chat";
-import type { ChatFetch, ChatFetchInit, ChatMessage, ChatTurnOpts } from "../src/app/ai-chat";
+import type { ChatCallLog, ChatFetch, ChatFetchInit, ChatMessage, ChatTurnOpts, ChatTurnResult } from "../src/app/ai-chat";
+import { Doc } from "../src/engine/doc";
 import { callTool, listTools, validateArgs } from "../src/app/ai-tools";
-import type { AiToolCtx } from "../src/app/ai-tools";
+import type { AiToolCtx, AiToolResult } from "../src/app/ai-tools";
 import {
   AI_CHAT_DEFAULT_ENDPOINT, AI_CHAT_DEFAULT_MODEL, AI_CHAT_DEFAULT_PRESET, AI_CHAT_MAX_ROUNDS_MAX,
   AI_CHAT_PRESETS, AI_CHAT_SETTINGS_KEY, CHAT_SETTINGS, SETTINGS, SETTINGS_BY_PATH, SETTING_SECRET_PATHS,
@@ -47,16 +49,22 @@ import * as aiPanelModule from "../src/ui/AiPanel";
 import * as modalsModule from "../src/ui/modals";
 import * as aiWindowModule from "../src/ui/AiWindow";
 import {
-  ChatBall, aiPanelDropsTurnOnUnmount, aiPanelShowsPreview, aiWinStore, chatTransport, noteAiWinClosed, resetChatTransport,
+  ChatBall, aiPanelAllowsSend, aiPanelDropsTurnOnUnmount, aiPanelShowsPreview, aiWinStore, chatTransport,
+  noteAiWinClosed, resetChatTransport,
 } from "../src/ui/AiPanel";
 import { stubEnv } from "./session.test";
 import { beginAiTurn, rollbackTurn } from "../src/app/ai-turn";
+import {
+  AI_TURN_STEP_BUDGET_BYTES, AI_TURN_STEP_OFF_CROSS_CANVAS, AI_TURN_STEP_OFF_TOO_BIG,
+  beginTurnStep, endTurnStep, previewTurn, revertTurnStep,
+} from "../src/app/ai-turn";
 import { eq, ok } from "./common";
 
 declare const require: (m: string) => any;
 declare const __dirname: string;
 const fs = require("fs");
 const path = require("path");
+const { spawnSync } = require("child_process");
 /** **已编译**的 src/ 目录（用例跑在 <app>/tests/.ts-out/tests） */
 const SRC = path.resolve(__dirname, "../src");
 
@@ -83,6 +91,194 @@ function docBytes(s: Session): string {
 }
 
 const histLen = (s: Session): number => s.history.list().labels.length;
+
+/**
+ * 一个**确定性**的假工具：写一格像素，然后**照 `ai-tools.callTool` 的规矩**调一次 `mark()`
+ * （`mark()` 是「文档真被改了」的唯一信号，步骤表就在它里面落行）。
+ * 用它而不是 `draw_path`，是因为这里要钉的是「撤回 = 逐字节回到那一步之前」——
+ * 工具的栅格化（线宽 / 对称 / 笔尖）会把「哪一步写了哪些字节」搅浑。
+ */
+function setPx(s: Session, x: number, y: number, hex: string): AiToolResult {
+  const t = hex.replace("#", "");
+  if (x < 0 || y < 0 || x >= s.doc.w || y >= s.doc.h) return { ok: false, error: "全在画布外" };
+  s.doc.ensureCel(s.curLayer(), s.curFrame())
+    .setPixel(x, y, [parseInt(t.slice(0, 2), 16), parseInt(t.slice(2, 4), 16), parseInt(t.slice(4, 6), 16), 255]);
+  s.syncAfterDocChange();
+  return { ok: true, changed: { x, y, w: 1, h: 1 }, docRev: s.doc.pixelRev };
+}
+
+/** 一次「多步」预览回合：假模型一次回 N 个 `test_px` 调用，每一步走**与 `runChatTurn` 相同**的那对钩子 */
+async function runSteps(s: Session, steps: Array<[number, number, string]>, ms = 0): Promise<ChatTurnResult> {
+  const queue = steps.slice();
+  const { fn } = fakeFetch([
+    reply(steps.map((_st, i) => ({ id: "s" + (i + 1), name: "test_px", args: { n: i } }))),
+    reply([], "做完了。"),
+  ]);
+  const { ctx } = toolCtx(s);
+  return runChatTurn({
+    messages: [systemMessage(), userMessage("按步来")],
+    ctx, endpoint: "https://endpoint.test/v1", model: "test-model", key: "sk-test-key",
+    fetchFn: fn, commit: false,
+    callStep: async (_call, c) => {
+      const [x, y, color] = queue.shift() ?? [0, 0, "#ffffff"];
+      beginTurnStep("test_px");
+      const out = setPx(c.session, x, y, color);
+      if (out.ok !== false && c.turn && c.turn.isOpen()) c.turn.mark();
+      endTurnStep(ms);
+      return out;
+    },
+  });
+}
+
+/**
+ * **一次性探针**：写到 `%TEMP%` 并**真跑一次**（`spawnSync(node, [<tmp>/step-revert-probe.cjs])`），
+ * 回读它的原始输出。
+ *
+ * 为什么要真跑（不能只有单测）：按步撤回的验收比的是「cel 字节哈希有没有回到那一步之前」，
+ * 而**哈希对不对**在这一个进程里是自证不了的 —— 同一份 `s.doc` 已经被撤回改过之后，
+ * 「第 1 步之后」那个哈希也就跟着被验过一遍了，成了循环论证。所以探针**重放两遍**：
+ *   ① 跑完两步 → 记 `H(开始之前)` / `H(第 1 步之后)` / `H(第 2 步之前)` / `H(第 2 步之后)`；
+ *   ② `revertAiTurnStep(2)` → 比 `H(现在) == H(第 2 步之前)`（**不是比 docRev**：它是单调修订号）；
+ *   ③ `revertAiTurnStep(1)` → 比 `H(现在) == H(开始之前)`；
+ *   ④ **另开一份干净会话**重跑同一串步骤 → `H(第 2 步之前)` 与 ① 里那个逐位相同（交叉验证）。
+ *
+ * 宿主与 `toolchain/ai-server.mjs` 是同一条路：**Node 里跑真 `Session`**（靠 `tests/session.test.ts`
+ * 的 `stubEnv()` 把 DOM 桩起来），不是另写一份假 Session —— 而 `callStep` 与单测用的是
+ * **同一个接缝**（`ChatTurnOpts.callStep` 的默认实现就是 `runChatTurn` 里那对钩子）。
+ *
+ * 探针输出走**文件**：捕获子进程的 stdio 在受限沙箱下会被拒（EPERM），写文件两边都能读。
+ */
+function runStepRevertProbe(): { code: number; out: string } {
+  const tmpRoot = String((globalThis as unknown as { process?: { env?: Record<string, string | undefined> } })
+    .process?.env?.TEMP ?? "");
+  const dir = path.join(tmpRoot || path.resolve(__dirname, "."), "pc-step-revert-probe");
+  const outFile = path.join(dir, "out.txt");
+  const script = path.join(dir, "step-revert-probe.cjs");
+  // 编译产物落在 `<repo>/tests/.ts-out/{src,tests}/…`，`SRC` 是 `<…>/.ts-out/src`
+  const mod = (rel: string): string => path.join(SRC, rel);
+  const testMod = (rel: string): string => path.join(SRC, "..", "tests", rel);
+  try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* 第一次跑没有这个目录 */ }
+  fs.mkdirSync(dir, { recursive: true });
+  const js: string[] = [
+    '"use strict";',
+    'const fs = require("fs");',
+    'const path = require("path");',
+    'const crypto = require("crypto");',
+    'const OUT = ' + JSON.stringify(outFile) + ';',
+    'const print = (line) => fs.appendFileSync(OUT, line + "\\n");',
+    'const { stubEnv } = require(' + JSON.stringify(testMod("session.test.js")) + ');',
+    'stubEnv();',
+    'const { Session } = require(' + JSON.stringify(mod("app/session.js")) + ');',
+    'const { runChatTurn, systemMessage, userMessage } = require(' + JSON.stringify(mod("app/ai-chat.js")) + ');',
+    'const { beginTurnStep, endTurnStep } = require(' + JSON.stringify(mod("app/ai-turn.js")) + ');',
+    'const hash = (s) => {',
+    '  const h = crypto.createHash("sha256");',
+    '  const keys = Array.from(s.doc.cels.keys()).sort();',
+    '  for (const k of keys) {',
+    '    const d = s.doc.cels.get(k).data;',
+    '    h.update(k); h.update(Buffer.from(d.buffer, d.byteOffset, d.byteLength));',
+    '  }',
+    '  return h.digest("hex").slice(0, 16);',
+    '};',
+    'const reply = (x, y, color, text) => ({ body: JSON.stringify({ choices: [{ message: { role: "assistant", content: text || "",',
+    '  tool_calls: x < 0 ? [] : [{ id: "c1", type: "function", function: { name: "draw_path", arguments: JSON.stringify({ points: [[x, y]], size: 1, color }) } }] } }] }) });',
+    'const fresh = () => {',
+    '  const s = new Session();',
+    '  s.doc.palette = [[255, 0, 0, 255], [0, 255, 0, 255], [0, 0, 255, 255]];',
+    '  s.layerAdd();',
+    '  s.doc.ensureCel(0, 0).setPixel(0, 0, [255, 0, 0, 255]);',
+    '  s.doc.ensureCel(1, 0).setPixel(1, 1, [0, 255, 0, 255]);',
+    '  s.history.clear();',
+    '  return s;',
+    '};',
+    'const setPx = (s, x, y, hex) => {',
+    '  const t = hex.replace("#", "");',
+    '  s.doc.ensureCel(s.curLayer(), s.curFrame()).setPixel(x, y,',
+    '    [parseInt(t.slice(0, 2), 16), parseInt(t.slice(2, 4), 16), parseInt(t.slice(4, 6), 16), 255]);',
+    '  s.syncAfterDocChange();',
+    '  return { ok: true, changed: { x, y, w: 1, h: 1 }, docRev: s.doc.pixelRev };',
+    '};',
+    'const STEPS = [[2, 2, "#ff0000"], [30, 30, "#0000ff"]];',
+    'const ctxOf = (s) => ({ session: s, confirm: async () => true, turn: s.aiTurnHandle() });',
+    '// 与 ai-chat.ts 的 runChatTurn 逐行相同的调用循环（这里的 callStep 就是它的默认实现）',
+    'async function play(s, at, onStep) {',
+    '  const replies = [reply(at[0][0], at[0][1], at[0][2]), reply(at[1][0], at[1][1], at[1][2]), reply(-1, 0, "", "两个点都画好了。")];',
+    '  let n = 0;',
+    '  const fn = async () => ({ ok: true, status: 200, text: async () => replies[Math.min(n++, replies.length - 1)].body });',
+    '  return runChatTurn({',
+    '    messages: [systemMessage(), userMessage("画两个点")], ctx: ctxOf(s),',
+    '    endpoint: "https://probe.test/v1", model: "probe-model", key: "probe-key", fetchFn: fn, commit: false,',
+    '    callStep: async (_call, c) => {',
+    '      // `onStep()` 在第 i 步的调用**开始**时跑：此刻文档还停在「第 i 步之前」（i-1 步都落了），',
+    '      // 所以它记下的哈希就是那个存档点（第 1 次 = 开始之前、第 2 次 = 第 1 步之后 = 第 2 步之前）',
+    '      const i = onStep();',
+    '      beginTurnStep("draw_path");',
+    '      const out = setPx(c.session, at[i][0], at[i][1], at[i][2]);',
+    '      if (c.turn && c.turn.isOpen()) c.turn.mark();',
+    '      endTurnStep(3);',
+    '      return out;',
+    '    },',
+    '  });',
+    '}',
+    'async function main() {',
+    '  fs.writeFileSync(OUT, "");',
+    '  const s = fresh();',
+    '  const marks = [];',
+    '  const r = await play(s, STEPS, () => { const i = marks.length; marks.push(hash(s)); return i; });',
+    '  const afterSecond = hash(s);',
+    '  const before = marks[0];         // 回合开始（第 1 步之前）',
+    '  const beforeSecond = marks[1];   // 第 1 步之后 = 第 2 步之前（同一个存档点）',
+    '  const afterFirst = beforeSecond;',
+    '  print("回合: ok=" + r.ok + " turnOpen=" + r.turnOpen + " rounds=" + r.rounds + " calls=" + r.calls.map((c) => c.index + ":" + c.name).join(","));',
+    '  print("步骤表: " + JSON.stringify((s.previewAiTurn().steps || {}).steps));',
+    '  print("H(cels, 开始之前)    = " + before);',
+    '  print("H(cels, 第 1 步之后) = " + afterFirst);',
+    '  print("H(cels, 第 2 步之前) = " + beforeSecond + "   （与上一行同一个存档点）");',
+    '  print("H(cels, 第 2 步之后) = " + afterSecond);',
+    '  print("三个存档点两两不同 ? " + (new Set([before, afterFirst, afterSecond]).size === 3));',
+    '  const ok2 = s.revertAiTurnStep(2);',
+    '  const h2 = hash(s);',
+    '  print("revertAiTurnStep(2) -> " + ok2 + "   H(现在) = " + h2 + "   == H(第 2 步之前) ? " + (h2 === beforeSecond));',
+    '  print("  回合还开着 ? " + s.aiTurnOpen() + "  docRev(单调修订号，别当内容指纹) = " + s.doc.pixelRev);',
+    '  print("  步骤表(下标, 已撤回): " + JSON.stringify(((s.previewAiTurn().steps || {}).steps || []).map((x) => [x.index, x.reverted])));',
+    '  print("  previewTurn().rect = " + JSON.stringify(s.previewAiTurn().rect) + "  docRev = " + s.previewAiTurn().docRev);',
+    '  const ok1 = s.revertAiTurnStep(1);',
+    '  const h1 = hash(s);',
+    '  print("revertAiTurnStep(1) -> " + ok1 + "   H(现在) = " + h1 + "   == H(开始之前) ? " + (h1 === before));',
+    '  print("  previewTurn().rect = " + JSON.stringify(s.previewAiTurn().rect) + "（回到回合开始 = 一个像素都没改）");',
+    '  print("  历史条数 = " + s.history.list().labels.length + "（回合还开着 → 一条都没落）");',
+    '  const committed = s.commitAiTurn();',
+    '  print("commitAiTurn() -> " + committed + "   历史条数 = " + s.history.list().labels.length + "   标签 = " + s.history.list().labels.join(","));',
+    '  print("  H(cels, 应用后) = " + hash(s) + "   == H(开始之前) ? " + (hash(s) === before));',
+    '  s.undo();',
+    '  print("undo 后 H(cels) = " + hash(s) + "   == H(开始之前) ? " + (hash(s) === before));',
+    '  const s2 = fresh();',
+    '  const marks2 = [];',
+    '  const STEPS2 = [[2, 2, "#ff0000"], [30, 30, "#0000ff"]];   // 与第一轮**同一串写入**（坐标 + 颜色都相同）',
+    '  await play(s2, STEPS2, () => { const i = marks2.length; marks2.push(hash(s2)); return i; });',
+    '  const cleanAfter = hash(s2);',
+    '  print("交叉验证（另开一份干净会话，重跑**同一串**两步）：");',
+    '  print("  H(cels, 开始之前)    = " + marks2[0] + "   == 第一轮的 ? " + (marks2[0] === before));',
+    '  print("  H(cels, 第 1 步之后) = " + marks2[1] + "   == 第一轮的 ? " + (marks2[1] === afterFirst));',
+    '  print("  H(cels, 第 2 步之后) = " + cleanAfter + "   == 第一轮的 ? " + (cleanAfter === afterSecond));',
+    '}',
+    'main().catch((e) => { print("PROBE FAILED " + (e && e.stack ? e.stack : String(e))); process.exitCode = 1; });',
+    "",
+  ];
+  fs.writeFileSync(script, js.join("\n"), "utf8");
+  const res = spawnSync(execPath(), [script], { cwd: path.dirname(script), encoding: "utf8" });
+  let out = "";
+  try { out = fs.readFileSync(outFile, "utf8") as string; } catch { out = "(探针没有写出输出文件)"; }
+  const errText = typeof res.stderr === "string" ? res.stderr : "";
+  const code = res.status === null ? -1 : res.status;
+  try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* 清不掉就算了：它在 %TEMP% 里 */ }
+  return { code, out: out + (errText ? "stderr: " + errText : "") };
+}
+
+/** `process.execPath`（跑探针用的 node 可执行文件） */
+function execPath(): string {
+  return String((globalThis as unknown as { process: { execPath: string } }).process.execPath);
+}
 
 /** 某一格像素（cel 键是 `li:fi`，见 engine/doc.ts 的 Doc.key；cel 不存在 = 全透明） */
 function px(s: Session, li: number, x: number, y: number): number[] {
@@ -422,6 +618,7 @@ export async function testAiChat(): Promise<void> {
     eq("aichat.preview.session-open", s.aiTurnOpen(), true);
     const pv = s.previewAiTurn();
     eq("aichat.preview.count", pv.count, 2);
+    // `rect` = 从**回合开始**到实况的逐字节比对（两步改动的并集：那条红线 + 那个蓝点）
     eq("aichat.preview.rect", pv.rect, { x: 1, y: 1, w: 6, h: 6 });
 
     // 请求体：URL / 头 / tools / 消息角色顺序
@@ -596,8 +793,307 @@ export async function testAiChat(): Promise<void> {
     // 摘要文案（UI 直接显示）
     const line = formatCallLog(rBad.calls[0]);
     ok("aichat.format.failed", line.indexOf("draw_path") === 0 && line.indexOf("失败") > 0 && line.indexOf("JSON") > 0, line);
-    const line2 = formatCallLog({ id: "x", name: "fill", args: {}, ok: true, changed: { x: 0, y: 0, w: 5, h: 6 }, docRev: 9, revDelta: 2 });
+    const line2 = formatCallLog({
+      id: "x", index: 1, round: 1, name: "fill", args: {}, argsText: "", rawArgs: "", ok: true,
+      changed: { x: 0, y: 0, w: 5, h: 6 }, durationMs: 7, docRevBefore: 7, docRevAfter: 9,
+      docRev: 9, revDelta: 2, warn: ["w1", "w2"],
+    });
     ok("aichat.format.ok", line2.indexOf("改动 5×6") > 0 && line2.indexOf("docRev 7→9") > 0, line2);
+    ok("aichat.format.warn", line2.indexOf("警告 2 条") > 0, line2);
+    ok("aichat.format.reverted", formatCallLog({
+      id: "y", index: 2, round: 1, name: "fx_blur", args: {}, argsText: "", rawArgs: "", ok: true,
+      changed: null, durationMs: 1, docRevBefore: 3, docRevAfter: 3, docRev: 3, revDelta: 0, reverted: true,
+    }).indexOf("已撤回") > 0);
+    // 参数摘要（B1）：标量照抄、数组只给长度与前 3 项、对象退化、超长截断
+    eq("aichat.args.scalar", formatArgsText({ size: 3, color: "#ff0000" }), "size=3 color=#ff0000");
+    eq("aichat.args.array", formatArgsText({ points: [[1, 1], [2, 2], [3, 3], [4, 4]] }), "points=[4 项] (1,1) (2,2) (3,3) …");
+    eq("aichat.args.nested", formatArgsText({ rect: { x: 0, y: 0, w: 1, h: 1 } }), "rect={…}");
+    eq("aichat.args.empty", formatArgsText({}), "");
+    eq("aichat.args.junk", [formatArgsText(null), formatArgsText("nope"), formatArgsText([1, 2])], ["", "", ""]);
+    ok("aichat.args.clipped", formatArgsText({ s: "x".repeat(400) }).length <= AI_CHAT_ARGS_TEXT_MAX + 8);
+    eq("aichat.args.no-undefined", formatArgsText({ a: undefined, b: 1 }), "b=1");
+  }
+
+  // ================================================================ 9b. B1 调用记录：字段齐 + 截断
+  {
+    const s = live();
+    const longArg = "y".repeat(AI_CHAT_RAW_ARGS_MAX + 200);
+    const { fn } = fakeFetch([
+      reply([
+        { id: "r1", name: "doc_digest", args: {} },                                        // 只读：不改文档
+        { id: "r2", name: "draw_path", args: { points: [[10, 10]], color: "#123456" } },   // 写：第 1 步
+      ]),
+      reply([{ id: "r3", name: "read_region", rawArgs: JSON.stringify({ pad: longArg }) }]),   // 缺必填参数 → 校验失败
+      reply([{ id: "r4", name: "erase", args: { rect: { x: 0, y: 0, w: 1, h: 1 } } }]),  // destructive：拒绝 → 不占步骤
+      reply([], "看完了也画了。"),
+    ]);
+    const { ctx, asked } = toolCtx(s, async () => false);   // 破坏性操作一律被用户拒绝
+    const r = await runChatTurn({
+      messages: [systemMessage(), userMessage("先看看再画")],
+      ctx, endpoint: "https://endpoint.test/v1", model: "test-model", key: "sk-test-key",
+      fetchFn: fn, commit: false,
+    });
+    eq("steplog.ok", r.ok, true);
+    eq("steplog.rounds", r.rounds, 4);
+    eq("steplog.count", r.calls.length, 4);
+    // index = 本回合内第几步（1 起，**按调用顺序**，与步骤表的下标分开看）
+    eq("steplog.index", r.calls.map((c) => c.index), [1, 2, 3, 4]);
+    // round = 第几轮模型请求（1 起）：第 1 轮两个调用同号，后面各一轮一个
+    eq("steplog.round", r.calls.map((c) => c.round), [1, 1, 2, 3]);
+    eq("steplog.names", r.calls.map((c) => c.name), ["doc_digest", "draw_path", "read_region", "erase"]);
+    // 第 3 条缺必填参数 → `callTool` 的校验直接拒（连 handler 都没进）
+    eq("steplog.ok-flags", r.calls.map((c) => c.ok), [true, true, false, false]);
+    ok("steplog.invalid-args", String(r.calls[2].error).indexOf("invalid args") >= 0, r.calls[2].error);
+    eq("steplog.asked", asked, ["erase"]);
+    ok("steplog.duration", r.calls.every((c) => typeof c.durationMs === "number" && c.durationMs >= 0),
+      JSON.stringify(r.calls.map((c) => c.durationMs)));
+    // docRevBefore / docRevAfter / docRev / revDelta 四条自洽；只有真的写了的那些 docRev 才推进
+    ok("steplog.rev-consistent", r.calls.every((c) => c.docRev === c.docRevAfter && c.revDelta === c.docRevAfter - c.docRevBefore));
+    eq("steplog.rev-readonly", [r.calls[0].docRevBefore, r.calls[0].docRevAfter], [r.calls[0].docRev, r.calls[0].docRev]);
+    eq("steplog.rev-readonly-delta", r.calls[0].revDelta, 0);
+    ok("steplog.rev-write", r.calls[1].revDelta > 0, String(r.calls[1].revDelta));
+    eq("steplog.rev-cancelled", r.calls[3].revDelta, 0);
+    ok("steplog.changed", !!r.calls[1].changed, JSON.stringify(r.calls[1].changed));
+    eq("steplog.changed-readonly", r.calls[2].changed, null);
+    // args（对象）、argsText（一行摘要）、rawArgs（原始字符串，**截断**）
+    eq("steplog.args", r.calls[1].args, { points: [[10, 10]], color: "#123456" });
+    eq("steplog.args-text", r.calls[1].argsText, "points=[1 项] (10,10) color=#123456");
+    eq("steplog.raw-args", r.calls[1].rawArgs, JSON.stringify({ points: [[10, 10]], color: "#123456" }));
+    ok("steplog.raw-args-clipped", r.calls[2].rawArgs.length <= AI_CHAT_RAW_ARGS_MAX + 8
+      && r.calls[2].rawArgs.indexOf("…（已截断）") > 0, String(r.calls[2].rawArgs.length));
+    eq("steplog.error-cancelled", r.calls[3].error, "cancelled");
+    eq("steplog.warn-empty", r.calls.map((c) => c.warn), [undefined, undefined, undefined, undefined]);
+    eq("steplog.reverted-default", r.calls.map((c) => c.reverted === true), [false, false, false, false]);
+    // 步骤表：只读 / 被取消 / 参数不合法的那三次一步都不占（`mark()` 才是「真写了」的信号）；
+    // 标签取工具的**标题**（面板上一眼看懂），不是 id
+    const pv = s.previewAiTurn();
+    eq("steplog.steps", (pv.steps?.steps ?? []).map((x) => [x.index, x.label]), [[1, "画一条路径"]]);
+    eq("steplog.steps-count", pv.steps?.count, 1);
+    ok("steplog.steps-revertable", pv.steps?.revert.ok === true, JSON.stringify(pv.steps?.revert));
+    ok("steplog.steps-bytes", (pv.steps?.revert.usedBytes ?? 0) > 0
+      && (pv.steps?.revert.usedBytes ?? 0) < (pv.steps?.revert.budgetBytes ?? 0));
+    ok("steplog.steps-rect", pv.steps?.steps[0].changed !== null, JSON.stringify(pv.steps?.steps[0].changed));
+    eq("steplog.steps-duration", (pv.steps?.steps[0].durationMs ?? -1) >= 0, true);
+    ok("steplog.steps-docrev", (pv.steps?.steps[0].docRevAfter ?? 0) >= (pv.steps?.steps[0].docRevBefore ?? 0));
+    s.rollbackAiTurn();
+  }
+
+  // ================================================================ 9c. B2 按步撤回：字节指纹 / 后段作废 / 一轮一条 undo
+  {
+    // ---- ①②③：撤到第 2 步前 == 只跑了第 1 步；撤到第 1 步前 == 回合开始前 ----
+    // 先跑一遍**取参照**：`beginAiTurn()` 会先把上一轮未提交的改动丢掉（C2 口径），
+    // 所以两份会话的回合不能同时开着 —— 参照会话必须**先跑完并放弃**，再动主会话。
+    const ref = live();
+    const refBefore = docBytes(ref);
+    await runSteps(ref, [[2, 2, "#ff0000"], [30, 30, "#0000ff"]]);
+    ref.revertAiTurnStep(2);
+    const only1Bytes = docBytes(ref);
+    ref.rollbackAiTurn();
+    eq("steprevert.ref-closed", ref.aiTurnOpen(), false);
+    ok("steprevert.only1-is-not-turn-start", only1Bytes !== refBefore);
+
+    const s = live();
+    const before = docBytes(s);
+    const hist0 = histLen(s);
+    const r = await runSteps(s, [[2, 2, "#ff0000"], [30, 30, "#0000ff"]]);
+    eq("steprevert.turn-ok", r.ok, true);
+    eq("steprevert.turn-open", s.aiTurnOpen(), true);
+    const pv0 = s.previewAiTurn();
+    eq("steprevert.steps-two", (pv0.steps?.steps ?? []).map((x) => x.index), [1, 2]);
+    eq("steprevert.step1-changed", pv0.steps?.steps[0].changed, { x: 2, y: 2, w: 1, h: 1 });   // 只有第 2 步之前的那一格
+    eq("steprevert.step2-changed", pv0.steps?.steps[1].changed, { x: 30, y: 30, w: 1, h: 1 });
+    eq("steprevert.preview-rect", pv0.rect, { x: 2, y: 2, w: 29, h: 29 });
+    eq("steprevert.hist-unchanged", histLen(s), hist0);
+    const revAfterStep2 = s.doc.pixelRev;
+
+    // 撤回第 2 步：文档回到「第 2 步之前」= 只跑了第 1 步（**比字节，不比 docRev**）
+    eq("steprevert.revert2-ok", s.revertAiTurnStep(2), true);
+    eq("steprevert.revert2-bytes", docBytes(s), only1Bytes);
+    ok("steprevert.revert2-docrev-not-fingerprint", s.doc.pixelRev !== revAfterStep2,
+      "docRev " + revAfterStep2 + " → " + s.doc.pixelRev + "（单调修订号，回滚也 +1）");
+    eq("steprevert.revert2-turn-open", s.aiTurnOpen(), true);
+    ok("steprevert.revert2-step1-first", s.previewAiTurn().steps?.steps[0].reverted === false);
+    eq("steprevert.revert2-voided", s.previewAiTurn().steps?.steps[1].reverted, true);
+
+    // ---- ⑥：撤回后 preview 的 docRev / changed 与实况一致 ----
+    const pv2 = s.previewAiTurn();
+    eq("steprevert.preview2-docrev", pv2.docRev, s.doc.pixelRev);
+    eq("steprevert.preview2-rect", pv2.rect, { x: 2, y: 2, w: 1, h: 1 });          // 只剩第 1 步那一格
+    eq("steprevert.preview2-step1-cached", pv2.steps?.steps[0].changed, { x: 2, y: 2, w: 1, h: 1 });
+    eq("steprevert.preview2-voided-changed", pv2.steps?.steps[1].changed, null);
+    eq("steprevert.preview2-count", pv2.count, 2);                                 // 操作数不因撤回而变
+
+    // 第 2 步之后一并作废：再撤第 2 步 = 拒绝（它已经作废过）
+    eq("steprevert.revert2-again", s.revertAiTurnStep(2), false);
+    eq("steprevert.revert-junk", [s.revertAiTurnStep(0), s.revertAiTurnStep(3), s.revertAiTurnStep(1.5)],
+      [false, false, false]);
+
+    // ---- ④ + ②（早一步）：再撤到第 1 步之前 == 回合开始前 ----
+    eq("steprevert.revert1-ok", s.revertAiTurnStep(1), true);
+    eq("steprevert.revert1-bytes", docBytes(s), before);
+    eq("steprevert.revert1-rect", s.previewAiTurn().rect, null);
+    eq("steprevert.revert1-docrev", s.previewAiTurn().docRev, s.doc.pixelRev);
+    eq("steprevert.revert1-all-voided", (s.previewAiTurn().steps?.steps ?? []).map((x) => x.reverted), [true, true]);
+    eq("steprevert.hist-still-unchanged", histLen(s), hist0);
+
+    // 应用：**只多一条**历史（内容是「撤回后的当前状态」= 回合开始，所以这一条内容为空包）。
+    // 这里刻意用「撤到最早」这种极端情形，钉的是「一轮一条 undo」这条不变式不受撤回影响；
+    // 「压的那条确实是撤回后的状态」由 9d 那一段（撤到第 2 步前 → 应用）单独钉。
+    eq("steprevert.apply", s.commitAiTurn(), false);          // 回到回合开始 = 没有内容改动 → 按口径 3 不压栈
+    eq("steprevert.apply-hist+0", histLen(s), hist0);
+    eq("steprevert.apply-turn-closed", s.aiTurnOpen(), false);
+    eq("steprevert.apply-nothing-to-record", s.previewAiTurn().steps, null);
+    ok("steprevert.apply-doc-rev-grew", s.doc.pixelRev > revAfterStep2, "rev=" + s.doc.pixelRev);
+    s.undo();
+    eq("steprevert.undo-round-trip", docBytes(s), before);       // 没有新历史可撤：undo 也不该改坏文档
+  }
+
+  // ================================================================ 9d. B2：撤回之后的「应用」压的是当前状态
+  {
+    const before = docBytes(live());
+    const s = live();
+    await runSteps(s, [[4, 4, "#ff0000"], [40, 40, "#0000ff"]]);
+    s.revertAiTurnStep(2);
+    const only1Bytes = docBytes(s);
+    s.commitAiTurn();
+    const appliedBytes = docBytes(s);
+    eq("steprevert.apply-after-revert", appliedBytes, only1Bytes);
+    ok("steprevert.apply-after-revert-not-start", appliedBytes !== before);
+    s.undo();
+    eq("steprevert.apply-after-revert-undo", docBytes(s), before);   // begin 没被撤回改过 → 一条 undo 回到回合开始
+  }
+
+  // ================================================================ 9e. B2 的禁用：跨画布 / 本回合太大
+  {
+    // ---- ⑤a 跨画布：第 2 步改到另一张画布 → **明确禁用**（不静默少留几步） ----
+    const s = live();
+    const other = new Doc(8, 8, "second");
+    other.palette = [[255, 0, 0, 255]];
+    s.addCanvas(other, { focus: false });
+    s.history.clear();
+    const r = await runSteps(s, [[3, 3, "#ff0000"]]);
+    eq("steprevert.cross.turn-ok", r.ok, true);
+    const pv1 = s.previewAiTurn();
+    eq("steprevert.cross.ok-so-far", pv1.steps?.revert.ok, true);      // 第 1 步在聚焦画布上：还可用
+    const idx2 = s.docs.findIndex((e) => e.doc === other);
+    s.focusCanvas(idx2);
+    beginTurnStep("第二张画布");
+    s.doc.ensureCel(0, 0).setPixel(0, 0, [0, 255, 0, 255]);
+    s.syncAfterDocChange();
+    s.aiTurnHandle().mark();
+    endTurnStep(1);
+    const pv2 = s.previewAiTurn();
+    eq("steprevert.cross.ok", pv2.steps?.revert.ok, false);
+    eq("steprevert.cross.reason", pv2.steps?.revert.reason, AI_TURN_STEP_OFF_CROSS_CANVAS);
+    eq("steprevert.cross.steps-cleared", pv2.steps?.steps.length, 0);   // 已经抓到的快照当场释放
+    eq("steprevert.cross.revert-step1", s.revertAiTurnStep(1), false);  // 禁用之后一步都撤不了
+    eq("steprevert.cross.turn-open", s.aiTurnOpen(), true);
+    eq("steprevert.cross.discard-ok", (() => { s.rollbackAiTurn(); return s.aiTurnOpen(); })(), false);
+
+    // ---- ⑤b 画布集合变了（回合里新开一张）→ 同样禁用 ----
+    const sNew = live();
+    sNew.history.clear();
+    await runSteps(sNew, [[5, 5, "#ff0000"]]);
+    eq("steprevert.newcanvas.ok-before", sNew.previewAiTurn().steps?.revert.ok, true);
+    sNew.addCanvas(new Doc(8, 8, "extra"));
+    beginTurnStep("新画布之后");
+    sNew.doc.ensureCel(0, 0).setPixel(1, 1, [0, 0, 255, 255]);
+    sNew.syncAfterDocChange();
+    sNew.aiTurnHandle().mark();
+    endTurnStep(1);
+    eq("steprevert.newcanvas.reason", sNew.previewAiTurn().steps?.revert.reason, AI_TURN_STEP_OFF_CROSS_CANVAS);
+    sNew.rollbackAiTurn();
+
+    // ---- ⑤c 本回合太大：快照累计顶满预算 → 禁用，退回「只能整轮回滚」 ----
+    const big = new Session();
+    // 1024² × 6 图层：**每一层都先建出 cel**（`snapshotCost` 按「已存在的 cel 数」算，
+    // 只写一层的话一份快照只有 4 MiB —— 那正是这条口径要量的东西），此后一份「执行前」
+    // 快照 ≈ 1024×1024×4×6 = 24 MiB，每一步两份 → 两步 96 MiB，第 2 步就顶过 32 MiB 的上限。
+    // `addCanvas` 默认聚焦新画布 —— 步骤快照抓的正是**聚焦**画布（见 `captureStepSnap`）。
+    big.addCanvas(new Doc(1024, 1024, "big"));
+    while (big.doc.layers.length < 6) big.layerAdd();
+    for (let li = 0; li < big.doc.layers.length; li++) big.doc.ensureCel(li, 0).setPixel(0, 0, [0, 0, 0, 1]);
+    big.history.clear();
+    eq("steprevert.big.size", [big.doc.w, big.doc.h, big.doc.layers.length, big.doc.cels.size], [1024, 1024, 6, 6]);
+    const b0 = docBytes(big);
+    const rb = await runSteps(big, [[1, 1, "#ff0000"], [900, 900, "#00ff00"]]);
+    eq("steprevert.big.turn-ok", rb.ok, true);
+    const pvb = big.previewAiTurn();
+    ok("steprevert.big.dropped", (pvb.steps?.steps.length ?? -1) === 0);   // 已经抓到的快照当场释放
+    ok("steprevert.big.bytes-over-budget", (pvb.steps?.revert.usedBytes ?? 0) === 0
+      || (pvb.steps?.revert.usedBytes ?? 0) <= AI_TURN_STEP_BUDGET_BYTES);
+    eq("steprevert.big.ok", pvb.steps?.revert.ok, false);
+    eq("steprevert.big.reason", pvb.steps?.revert.reason, AI_TURN_STEP_OFF_TOO_BIG);
+    eq("steprevert.big.revert", big.revertAiTurnStep(1), false);
+    eq("steprevert.big.turn-open", big.aiTurnOpen(), true);
+    eq("steprevert.big.budget", pvb.steps?.revert.budgetBytes, AI_TURN_STEP_BUDGET_BYTES);
+    // 预览的 rect 仍然照旧（走了另一条路：与回合开始逐字节比对）—— 两个新写下的点撑出的包围盒
+    eq("steprevert.big.rect", pvb.rect, { x: 1, y: 1, w: 900, h: 900 });
+    // 整轮回滚照旧逐字节回到回合开始（按步撤回禁用不影响这条不变式）
+    big.rollbackAiTurn();
+    eq("steprevert.big.rollback-bytes", docBytes(big), b0);
+    eq("steprevert.big.rollback-hist", histLen(big), 0);
+
+    // ---- ⑤d 小画布不触发上限（阈值不是「一律禁用」） ----
+    const small = live();
+    await runSteps(small, [[1, 1, "#ff0000"], [2, 2, "#00ff00"]]);
+    eq("steprevert.small.ok", small.previewAiTurn().steps?.revert.ok, true);
+    eq("steprevert.small.steps", small.previewAiTurn().steps?.steps.length, 2);
+    small.rollbackAiTurn();
+  }
+
+  // ================================================================ 9f. B2 的真实探针（%TEMP% 里真跑一次 node）
+  {
+    const probe = runStepRevertProbe();
+    // 探针的原始输出是交付物的一部分：**整段打印**（末尾 ALL PASS 之前就能看到）
+    console.log("--- 按步撤回探针（%TEMP% 里的一次性脚本，真跑）---");
+    console.log(probe.out.replace(/\n$/, ""));
+    console.log("--- 探针输出结束 ---");
+    eq("steprevert.probe.exit", probe.code, 0);
+    ok("steprevert.probe.two-reverts", probe.out.indexOf("revertAiTurnStep(2) -> true") > 0
+      && probe.out.indexOf("revertAiTurnStep(1) -> true") > 0, probe.out);
+    eq("steprevert.probe.hash-step2", probe.out.indexOf("== H(第 2 步之前) ? true") > 0, true);
+    eq("steprevert.probe.hash-start", probe.out.indexOf("== H(开始之前) ? true") > 0, true);
+    eq("steprevert.probe.no-failure", probe.out.indexOf("PROBE FAILED") < 0, true);
+    // 撤到第 1 步之前 = 逐字节回到回合开始 → 这一轮**没有内容改动**可落，`commitTurn()` 按口径 3
+    // 返回 false 且历史条数保持 0（「应用后只多一条」由上面 9c 的 `steprevert.apply-hist+1` 钉）
+    eq("steprevert.probe.commit-noop", probe.out.indexOf("commitAiTurn() -> false   历史条数 = 0") > 0, true);
+    eq("steprevert.probe.marks-distinct", probe.out.indexOf("三个存档点两两不同 ? true") > 0, true);
+    // 交叉验证：另一份干净会话重跑**同一串**步骤，三个存档点的哈希与第一轮逐位相同
+    eq("steprevert.probe.cross-check", (probe.out.match(/== 第一轮的 \? true/g) ?? []).length, 3);
+  }
+
+  // ================================================================ 9g. B2 的 UI 接线（静态 + 纯函数）
+  {
+    const panel = readFile("src/ui/AiPanel.tsx");
+    const style = readFile("src/ui/style.css");
+    // 每条记录：一行摘要（<details>/<summary>，默认折叠）+ 展开详情 + 撤回按钮
+    for (const anchor of ["ai-call", "ai-call-summary", "ai-step-revert", "ai-step-off", "ai-step-budget",
+      "ai-step-locked", "ai-step-reverted"]) {
+      ok("steprevert.ui.anchor." + anchor, panel.indexOf('"' + anchor + '"') > 0, anchor);
+    }
+    ok("steprevert.ui.details", panel.indexOf("<details className=\"ai-call\"") > 0
+      && panel.indexOf("<summary className=\"ai-call-head\"") > 0);
+    ok("steprevert.ui.no-open-attr", panel.indexOf("open={") < 0 || panel.indexOf("<details className=\"ai-call\" open") < 0);
+    ok("steprevert.ui.revert-call", panel.indexOf("SESSION.revertAiTurnStep(n)") > 0);
+    ok("steprevert.ui.step-no", panel.indexOf('t("aiChatStepNo")') > 0 && panel.indexOf('t("aiChatStepMs")') > 0);
+    ok("steprevert.ui.style", style.indexOf(".ai-call-head") > 0 && style.indexOf(".ai-call-body") > 0);
+    // 撤回之后不许再让模型接着跑（纯函数 + `send()` 里的闸）
+    eq("steprevert.send.normal", aiPanelAllowsSend(false, false), true);
+    eq("steprevert.send.pending", aiPanelAllowsSend(true, false), false);
+    eq("steprevert.send.reverted", [aiPanelAllowsSend(false, true), aiPanelAllowsSend(true, true)], [false, false]);
+    ok("steprevert.send.gate", panel.indexOf("if (busy || pending || reverted) return;") > 0);
+    // 面板显示的每一步信息都取自 Session（不在面板里另算一份）
+    ok("steprevert.ui.from-session", panel.indexOf("SESSION.previewAiTurn()") > 0
+      && panel.indexOf("pending?.steps?.steps.find") > 0);
+    // i18n：中英各一条（键的成对由 tests/i18n.test.ts 兜底，这里只查这几条真的在）
+    const zh = readFile("src/ui/i18n.ts");
+    for (const key of ["aiChatStepNo", "aiChatStepMs", "aiChatStepOk", "aiChatStepFail", "aiChatStepArgs",
+      "aiChatStepResult", "aiChatStepWarn", "aiChatStepNoArgs", "aiChatStepRaw", "aiChatStepDetail",
+      "aiChatStepRevert", "aiChatStepReverted", "aiChatStepRevertedNote", "aiChatStepOff", "aiChatStepBudget"]) {
+      const n = zh.split(key + ":").length - 1;
+      eq("steprevert.i18n." + key, n, 2);
+    }
   }
 
   // ================================================================ 10. 设置项 + key 只存在本机
@@ -1022,11 +1518,12 @@ export async function testAiChat(): Promise<void> {
     aiWinStore.entries = [{ role: "user", text: "画一条红线" }];
     noteAiWinClosed("已放弃");
     eq("aiwin.store.no-pending-no-note", aiWinStore.entries.length, 1);
-    aiWinStore.pending = { calls: 1, rect: null, docRev: 3, docRevBefore: 1 };
+    aiWinStore.pending = { calls: 1, rect: null, docRev: 3, docRevBefore: 1, steps: null };
     aiWinStore.logs = [{ id: "x", name: "draw_path", args: {}, ok: true, changed: null, docRev: 3, revDelta: 1 } as never];
     noteAiWinClosed("已放弃");
     eq("aiwin.store.note-on-pending", [aiWinStore.pending, aiWinStore.logs.length, aiWinStore.entries.length], [null, 0, 2]);
     eq("aiwin.store.note-keeps-user-line", aiWinStore.entries[0].text, "画一条红线");
+    eq("aiwin.store.reverted-cleared", aiWinStore.reverted, false);
     aiWinStore.entries = []; aiWinStore.pending = null; aiWinStore.logs = [];
 
     // ---- 13g 平台门下的 SSR 冒烟：没有桥接时浮窗与球都渲染成空 ----

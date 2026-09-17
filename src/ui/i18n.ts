@@ -408,6 +408,15 @@ const zh: Dict = {
   aiChatApply: "应用", aiChatDiscard: "放弃", aiChatApplied: "已应用：历史里多了一条撤销", aiChatDiscarded: "已放弃：文档回到这一轮开始",
   aiChatAppliedNothing: "这一轮没有改动画面", aiChatStopped: "已停止",
   aiChatDocRev: "文档版本 {from} → {to}", aiChatFailed: "这一轮失败了",
+  // ---- B1 调用记录（每条一行摘要、可展开看详情）+ B2 按步撤回（docs/API.md §23.4）----
+  aiChatStepNo: "第 {n} 步", aiChatStepMs: "{ms} ms", aiChatStepOk: "成功", aiChatStepFail: "失败",
+  aiChatStepArgs: "参数：{v}", aiChatStepResult: "结果：{v}", aiChatStepWarn: "警告：{v}",
+  aiChatStepNoArgs: "（没有参数）", aiChatStepRaw: "原始参数：{v}", aiChatStepDetail: "展开这一步的详情",
+  aiChatStepRevert: "撤回这一步",
+  aiChatStepReverted: "已撤回第 {n} 步：文档回到这一步执行之前，这一步及之后的步骤一并作废。这一轮仍然开着 —— 现在只能「应用当前状态」或「放弃整轮」，不能再让模型接着跑（消息里还留着被撤掉的步骤，文档已经对不上了）",
+  aiChatStepOff: "本回合不支持按步撤回：{why}",
+  aiChatStepBudget: "快照已用 {used} / 上限 {budget}",
+  aiChatStepRevertedNote: "这一步已撤回：文档回到它执行之前。这一轮只能「应用当前状态」或「放弃整轮」—— 撤回过之后不再接着让模型跑（消息里还留着被撤掉的步骤，文档已经对不上了）",
   bucketGlobalLabel: "油漆桶：非连续填充",
   bucketGlobalDesc: "开启后填充整层所有同色像素（关闭=仅填充连通区域）",
   guide: {
@@ -872,6 +881,15 @@ const en: Dict = {
   aiChatApply: "Apply", aiChatDiscard: "Discard", aiChatApplied: "Applied: one more undo step in the history", aiChatDiscarded: "Discarded: the document is back to the start of this turn",
   aiChatAppliedNothing: "This turn changed nothing", aiChatStopped: "stopped",
   aiChatDocRev: "document revision {from} → {to}", aiChatFailed: "this turn failed",
+  // ---- B1 call log (one summary line each, expandable) + B2 per-step revert (docs/API.md §23.4) ----
+  aiChatStepNo: "Step {n}", aiChatStepMs: "{ms} ms", aiChatStepOk: "ok", aiChatStepFail: "failed",
+  aiChatStepArgs: "args: {v}", aiChatStepResult: "result: {v}", aiChatStepWarn: "warnings: {v}",
+  aiChatStepNoArgs: "(no arguments)", aiChatStepRaw: "raw arguments: {v}", aiChatStepDetail: "Show the details of this step",
+  aiChatStepRevert: "Revert this step",
+  aiChatStepReverted: "Step {n} reverted: the document is back to just before it ran and that step plus everything after it is void. The turn is still open, so the only endings left are Apply current state or Discard the whole turn - the model cannot keep going, because the thread still holds the steps that were just undone while the document no longer matches",
+  aiChatStepOff: "Per-step revert is unavailable for this turn: {why}",
+  aiChatStepBudget: "Snapshots used {used} / limit {budget}",
+  aiChatStepRevertedNote: "This step was reverted, so the document is back to just before it ran. The only endings left for this turn are Apply current state or Discard the whole turn - after a revert the model does not keep going, because the thread still holds the undone steps while the document no longer matches",
   bucketGlobalLabel: "Bucket: global fill",
   bucketGlobalDesc: "Fill every matching pixel in the layer (off = connected region only)",
   guide: {

@@ -1430,3 +1430,15 @@ html[data-pc] .dlg-sh{width:min(600px,64vw)}
 .as-why{font-style:normal;color:var(--dim)}
 .as-acts{margin:0;flex:0 0 auto;gap:4px}
 .as-acts .btn{flex:0 0 auto;white-space:nowrap;padding:4px 8px;min-height:26px;font-size:11px}
+/* AI 助手的调用记录（B1）与按步撤回（B2）：
+   · 每条记录 = 一行摘要（<details> 的 summary，**默认折叠**），点开看参数 / 结果 / 版本 / 警告；
+   · `.ai-call-row` 里的 `.as-main` 不抢整行，把右边的「撤回」按钮留给 `.as-acts`。 */
+.ai-call-row{align-items:flex-start}
+.ai-call>.ai-call-head{cursor:pointer;font-size:11px;color:var(--text-2);list-style:none;display:flex;flex-wrap:wrap;gap:2px 8px;align-items:baseline}
+.ai-call>.ai-call-head::-webkit-details-marker{display:none}
+.ai-call>.ai-call-head::before{content:"▸ "}
+.ai-call[open]>.ai-call-head::before{content:"▾ "}
+.ai-call-body{margin-top:4px;display:flex;flex-direction:column;gap:2px;font-size:11px;color:var(--text-2);word-break:break-word}
+.ai-call-rev{color:var(--dim);font-style:normal}
+.ai-call-rev.grew{color:var(--text)}
+.ai-call-row.reverted .ai-call>.ai-call-head{text-decoration:line-through;opacity:.6}

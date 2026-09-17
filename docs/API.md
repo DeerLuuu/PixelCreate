@@ -2453,7 +2453,7 @@ Stroke 侧：`BrushState.pattern` 一填，落笔统一走 `paintOne()`——图
 ### 测试
 
 ```bash
-npm test        # 7655 条断言：引擎 / 选区 / 历史 / 播放 / 设置 / 引导 / 渲染 / 导出 / Aseprite 读写 / 返回手势 / UI 控件与令牌 / AI（ai-doc / tools / draw / turn / rpc / chat / presets / 浮窗与球）（末尾打印 assertions: N）
+npm test        # 7843 条断言：引擎 / 选区 / 历史 / 播放 / 设置 / 引导 / 渲染 / 导出 / Aseprite 读写 / 返回手势 / UI 控件与令牌 / AI（ai-doc / tools / draw / turn / rpc / chat / presets / 浮窗与球）（末尾打印 assertions: N）
 ```
 
 新增纯逻辑（算法、布局、解析、决策）时，优先抽成无 DOM 依赖的函数再补一条 `tests/*.test.ts` 断言——这是本项目保持可回归的主要手段。
@@ -2893,6 +2893,13 @@ P1 新增的 `erase`（把一块内容清成透明）与 `transform`（移走像
 加一个「只记像素」的开关，或让 `ai-draw.ts` 走 `History.pushPixels` —— 两条都要动
 `src/app/session.ts` / `src/engine/history.ts` 的接口，本轮明确不做（见 `AGENTS.md` §7）。
 
+**这些工具的手写警告目前只进 `data.warnings`，没升到 `AiToolResult.warn`**（B1 的已知缺口）：
+`applyOps` 的 `warnings[]`（`warn: 目标图层已锁定…` / `clamped: size 64 → 8`）走的是
+`data.warnings`（`src/app/ai-doc.ts` §21.3），而 `ChatCallLog.warn` 读的是**顶层**
+`AiToolResult.warn` —— 当前 61 条工具**没有一条**会填它，所以那条链路是**通的但没数据**。
+要让它有数据：在 `ai-tools.ts` 的对应 handler 里把 `data.warnings` 顺手
+`out.warn = warnings`（一处一行），别改 `AiToolResult` 的形状。
+
 ---
 
 ## 23. AI 回合事务 `src/app/ai-turn.ts` 与 Session 门面
@@ -2904,8 +2911,20 @@ P1 新增的 `erase`（把一块内容清成透明）与 `transform`（移走像
 ### 23.1 类型与常量
 
 ```ts
-interface AiTurnPreview { count: number; rect: Rect | null }   // count = 这一轮被 mark() 记的操作数
+interface AiTurnPreview { count: number; rect: Rect | null; steps: AiTurnStepPreview | null; docRev: number }
 interface AiTurnHandle { isOpen(): boolean; mark(): void }     // C1 的 AiToolCtx.turn 形状（定死）
+interface AiTurnStepHandle { begin(label: string): void; end(durationMs?: number): void }   // `ai-chat` 用，见 §23.4
+interface AiTurnStepInfo {                                     // 一条步骤的摘要（不含快照）
+  index: number; label: string;                                // index 1 起，**就是 revertTurnStep(n) 的 n**
+  docRevBefore: number; docRevAfter: number;
+  changed: Rect | null;                                        // 这一步改了什么像素（惰性算 + 缓存）
+  durationMs: number; reverted: boolean;                       // 已作废
+}
+interface AiTurnStepPreview {
+  steps: AiTurnStepInfo[];                                     // 含已撤回的那些（它们排在各步里，`reverted` 为真）
+  revert: { ok: boolean; reason?: string; usedBytes: number; budgetBytes: number };
+  rect: Rect | null; count: number;
+}
 interface AiTurnRunResult<T> { ok: boolean; result?: T; error?: unknown }
 interface AiTurnSession {                                      // 回合宿主 = Session 的公开面（结构类型）
   docs: CanvasEntry[]; docIdx: number; layerIdx: number; frameIdx: number;
@@ -2918,6 +2937,10 @@ interface AiTurnSession {                                      // 回合宿主 =
 const AI_TURN_LABEL_PREFIX = "ai: ";
 const AI_TURN_LABEL_MAX = 80;
 const AI_TURN_LABEL_FALLBACK = "未命名回合";
+const AI_TURN_STEP_BUDGET_BYTES = 32 * 1024 * 1024;             // 按步撤回的快照预算（依据见 §23.4）
+const AI_TURN_STEP_REVERT_MAX_BYTES_PER_DOC = 1024 * 1024 * 4 * 4;   // 最重档一份快照 = 1024² × 4 图层 × 4 通道
+const AI_TURN_STEP_OFF_TOO_BIG = "本回合太大，不支持按步撤回（只能整轮回滚）";
+const AI_TURN_STEP_OFF_CROSS_CANVAS = "这一轮改到了多张画布，不支持按步撤回（只能整轮回滚）";
 ```
 
 ### 23.2 对外接口
@@ -2926,16 +2949,20 @@ const AI_TURN_LABEL_FALLBACK = "未命名回合";
 bindTurnHost(s: AiTurnSession | null): void
 beginAiTurn(label: string): number              // 返回 turnId（≥1）；没有宿主返回 0 且回合不打开
 runAiTurn<T>(label: string, fn: () => T | Promise<T>): Promise<AiTurnRunResult<T>>   // 单一安全入口
-previewTurn(): AiTurnPreview                    // 只算不改文档；回合没开 → {count:0, rect:null}
+previewTurn(): AiTurnPreview                    // 只算不改文档；回合没开 → {count:0, rect:null, steps:null, docRev:0}
 commitTurn(): boolean                           // 一条历史 + 补一次 autosave；无改动 / 回合没开 → false
 rollbackTurn(): void                            // 恢复到回合开始（逐字节一致）；回合没开 → no-op
 isTurnOpen(): boolean
 turnHandle(): AiTurnHandle                      // 交给 C1 的 AiToolCtx.turn
+beginTurnStep(label: string): void              // 一次工具调用**之前**（§23.4）：抓「这一步之前」的快照
+endTurnStep(durationMs?: number): void          // 一次工具调用**之后**：补真耗时；没写文档的那一步丢掉
+revertTurnStep(n: number): boolean              // **按步撤回**（§23.4）；回合没开 / n 越界 / 已作废 / 不支持 → false
 ```
 
 `Session` 的门面（每次调用都 `bindTurnHost(this)`，所以谁先调都能用）：
 `beginAiTurn(label)` / `previewAiTurn()` / `commitAiTurn()` / `rollbackAiTurn()` / `aiTurnOpen()` /
-`aiTurnHandle()` / `runAiTurn(label, fn)` / `aiTurnAutosaveSuppressed(on)`。
+`aiTurnHandle()` / `runAiTurn(label, fn)` / `aiTurnAutosaveSuppressed(on)` /
+**`revertAiTurnStep(n)`**（按步撤回，§23.4） / **`aiTurnStepHandle()`**（`{begin,end}`，给整轮循环与诊断用）。
 
 **`runAiTurn` 是推荐入口**（C3/C5 的「一次调用 = 一整轮」）：`begin → await fn() → commitTurn()`；
 `fn` 抛异常 → `rollbackTurn()` 并把异常装进 `error` 返回（**不重抛**）；`finally` 里只要回合还开着
@@ -2964,11 +2991,83 @@ turnHandle(): AiTurnHandle                      // 交给 C1 的 AiToolCtx.turn
 10. 回合的「不动历史」是**临时影子掉** `History` 的三个压栈入口（`record` / `pushPixels` / `pushStruct`）
     实现的；影子残留在身后 = 用户此后的正常绘制**静默不进历史**（丢撤销），所以任何失败路径都必须 rollback。
 11. **`docRev`（`Doc.pixelRev`）是单调修订号，不是内容指纹**：`Doc.restore()` 自己会 `pixelRev++`，
-    所以 `rollbackTurn()` / undo / redo **都会让它 +1** —— 「rev 变了」只说明「有人写过或者被恢复过」，
-    不代表内容真的变了。判断「是否回到原样」要比**内容**（图层 / 帧 / 标签 / 调色板 / cel 字节）；
-    `previewTurn()` 的脏矩形就是这么算的（逐字节比对，见口径 7）。
+    所以 `rollbackTurn()` / undo / redo / **按步撤回**都会让它 +1 —— 「rev 变了」只说明「有人写过或者
+    被恢复过」，不代表内容真的变了。判断「是否回到原样」要比**内容**（图层 / 帧 / 标签 / 调色板 / cel 字节）；
+    `previewTurn()` 的脏矩形就是这么算的（逐字节比对，见口径 7）。**按步撤回的验收也只能比内容**
+    （`tests/ai-chat.test.ts` 的 `steprevert.*` 比的是 cel 字节指纹，不是 `docRev`）。
+12. **步骤表的下标 = `mark()` 的次数**（= 文档真被改了几次），**不是** `callTool` 的次数：
+    只读 / 失败 / 被用户取消的调用一步都不占（`mark()` 不会触发，`endTurnStep()` 把那份没用的
+    「执行前」快照丢掉）。所以 `revertTurnStep(n)` 的 n 总能指到一次真的写入上。
+13. **按步撤回不改 `begin`**：`commitTurn()` / `rollbackTurn()` 用的永远是回合开始那份快照
+    —— 「应用当前状态」压的仍是一条覆盖**整轮**的 struct（哪怕中间撤回掉了后面几步），
+    「放弃整轮」也仍然逐字节回到回合开始。撤回只改 `baseline`（用来算 `rect` / `changed` 的**实况基线**）。
 
-### 23.4 回合期间的自动保存
+### 23.4 按步撤回（B2，**只在预览回合里**）
+
+> 「撤回第 n 步」= 把文档恢复到**第 n 步执行之前**的状态，并且**第 n 步及之后的所有步骤一并作废**
+> （后续步骤建立在它们之上）。语义由用户定死，别自由发挥。
+
+怎么用（`ai-chat` 与面板是仅有的两个调用方）：
+
+```ts
+SESSION.beginAiTurn(label);
+for (const call of parsed) {
+  const t0 = Date.now();
+  beginTurnStep(call.name);          // ← **调用之前**抓快照（这就是「第 n 步之前」）
+  const r = await callTool(call.name, call.args, ctx);
+  endTurnStep(Date.now() - t0);      // ← 只读 / 失败 / 取消的那一步在这里被丢掉
+}
+const pv = SESSION.previewAiTurn();
+pv.steps.steps;                      // 每一步的 index / label / docRev 前后 / changed / durationMs / reverted
+pv.steps.revert.ok;                  // 能不能按步撤回；不能时 reason 是一句人话
+SESSION.revertAiTurnStep(2);         // 撤到第 2 步之前
+pv = SESSION.previewAiTurn();        // rect / docRev / steps[].changed 已经是**撤回后的实况**
+SESSION.commitAiTurn();              // 仍然只压**一条**覆盖整轮的历史
+```
+
+口径（**不要改回去**）：
+
+1. **回合仍然开着**：撤回是预览态里的一个动作，不改历史、不写盘、不动 autosave 那面旗。
+   用户之后只能「应用当前状态」或「放弃整轮」。
+2. **撤回之后不允许再让模型接着跑**（用户定死的口径）：消息线程里还留着被撤掉那些步骤的
+   tool 结果，模型会以为它画在 A 上的东西还在 —— 再跑就是基于一份**不存在的过去**推理。
+   UI 侧的落点：`aiPanelAllowsSend()`（纯函数）+ `send()` 的第一道闸 + 撤回后那行说明
+   （`aiChatStepReverted` / `aiChatStepRevertedNote`）。
+3. **一轮一条 undo 不变**：`commitTurn()` 压的仍是「回合开始 → 当前状态」那一条 struct；
+   撤回只把「当前状态」改掉，**不改 `begin`**（见 §23.3 口径 13）。`rollbackTurn()` 也照旧逐字节
+   回到回合开始，与撤没撤过无关。
+4. **快照从哪来**：与 `commitTurn()` 用的是同一套 —— `Doc.capture()` / `Doc.restore()`
+   （结构快照，整档深拷贝），**不新造序列化**。每一步在**调用之前**抓一份「执行前」快照；
+   撤回 = 对那张画布 `doc.restore(那一步的 before)` + 把选择（当前图层 / 帧）也还原到那一刻。
+   撤回时先 `view.flushStroke()`（与 `rollbackTurn()` 同一条口径：`Doc.restore()` 会整批换掉
+   cel 对象，View 手里那份会变成孤儿）。
+5. **撤回后一律以实况为准**：`previewTurn()` 的 `rect` / `docRev`、每一步的 `changed` 都由
+   Session 现算（`rect` 的比对基线换成「第 n 步之前」那份状态），UI 不许自己算一份。
+   已作废的步骤仍在 `steps` 里（`reverted: true`），但它们的快照**当场释放**。
+6. **只在单画布回合里可用**（明确禁用，不是默默不做）：这一步碰了别的画布 / 画布集合变了
+   → `revert.ok=false`，`reason = AI_TURN_STEP_OFF_CROSS_CANVAS`。理由：一步一份快照是
+   **一张画布**的量；跨画布要抓 N 张（内存 N 倍），而且跨画布回合的历史本来就只能是
+   payload-less 的闭包（§23.5）。UI 显示 `aiChatStepOff` 那句人话。
+7. **内存阈值：32 MiB**（`AI_TURN_STEP_BUDGET_BYTES`）。依据：一步要**两份**结构快照
+   （「执行前」那份留着以便撤回 + 写完当场那份用来算差值），代价 ≈ `2 × 宽 × 高 × 4 × cel 数`
+   （`snapshotCost()`：与快照里 cel 字节之和取大者；注意它只算**已存在的 cel**）。
+   像素画常态（64² · 2 图层）一步 64 KiB；最重档（1024² · 6 图层 · 6 个 cel）一步 48 MiB ——
+   一步就顶过上限。超过上限就**整体禁用**（`reason = AI_TURN_STEP_OFF_TOO_BIG`），
+   退回「只能整轮回滚」，并把已经抓到的快照全部释放（`usedBytes` 归零）。
+   选 32 MiB 的参照物是历史栈本身：`prefs.histSteps` 默认 120 条，`Session.struct()` 每条也是整档快照
+   —— 「120 份快照」是这套代码本来就接受的口径，给一轮 AI 撤留 32 MiB 远低于它。
+   **超了就整体禁用，不是少留几步**：少留几步会让「撤回第 n 步」指向一个错的过去，比禁用危险得多。
+   实测口径（`tests/ai-chat.test.ts` 的 `steprevert.big.*`）：1024² · 6 图层 · 每层都有 cel 时，
+   第 2 步就触发禁用；`previewTurn().rect` 仍照旧工作（它走的是另一条路：与**回合开始**逐字节比对）。
+8. **每步的 `changed` 在 `mark()` 里当场算完存死**（`StepSnap.deltaRect`），**不在预览里现算**。
+   这不是优化，是正确性要求：`Doc.restore()` 是**就地**改同一个 `Doc` 对象（`this.cels = new Map()`），
+   而每一步的 `before.doc` 都是同一个实况文档 —— 下一步的 `restore` 会把这一步「依附的那个 Doc」
+   也换掉，于是「拿这一步的快照比下一步的快照」会得到 null 或错的矩形（第一版就这么写错了：
+   第 1 步的 `changed` 变成两步的并集 29×29，`previewTurn().rect` 只剩最后一步）。
+9. **失败口径与 C2 其余部分一致：不抛异常**。`revertTurnStep(n)` 返回 `false` 的情形：
+   回合没开 / n 不是 1..步数 / n 已经作废过（`n >= revertedAt`）/ 本回合不支持按步撤回。
+
+### 23.5 回合期间的自动保存
 
 - 独立字段 `Session.aiTurnAutosaveHeld` 与回放查看器的 `replayActive` **互不覆盖**：三处守卫统一按
   `replayActive || aiTurnAutosaveHeld` 早退（`scheduleAutosave` / `flushAutosave` / 非强制的 `writeAutosave`）；
@@ -2978,10 +3077,13 @@ turnHandle(): AiTurnHandle                      // 交给 C1 的 AiToolCtx.turn
 - `commitTurn()` 之后补一次；`flushAutosave(force)` 会先查旗，**`writeAutosave(true)` 是逃生门**
   （只有 force 路径会用得到）。
 
-### 23.5 已知缺口（本轮不做）
+### 23.6 已知缺口（本轮不做）
 
 - **跨画布回合的 History entry 是 payload-less**：`History.dump()` 实测返回 `[]`，会让该步与**更早步骤**
   一起从 `.pxc` 的内嵌历史里消失（单画布走 `pushStruct` 可序列化；in-session 一条 undo 仍覆盖两张画布）。
+- **跨画布回合也不能按步撤回**（§23.4 口径 6）—— 与上一条同源：一步一份快照只覆盖一张画布。
+- **按步撤回的那份快照不进 `.pxc` / 不进历史**：它只活在回合开着的那段时间里（撤完 / 应用 / 放弃
+  之后都会释放）。回合跨过「页面隐藏 + 进程被杀」时，撤不撤得回来取决于进程还在不在。
 - **回合开着时页面隐藏的同步 flush 会早退**（口径 4 的固有取舍）：回合跨过「页面隐藏 + 进程被杀」时，
   回合开始前那几笔不落盘。
 - 模块级 `lastCommitError` 在「回合没开」早退时**不清**，可能携带上一次的陈旧错误（一行加固未做）。
@@ -3523,6 +3625,21 @@ key 的值一个字符都不进这段文本）：
 | `AI_CHAT_MAX_CALLS` | 80 | 一整轮最多真的执行多少次工具调用 |
 | `AI_CHAT_MAX_RESULT_CHARS` | 4000 | 单条工具结果回灌给模型的字符上限（超了截断并写明） |
 | `AI_CHAT_TOOL_TIERS` | `read` / `draw` / `destructive` | 默认给模型的档（`ui` 不暴露，与 `listTools()` 同口径） |
+| `AI_CHAT_ARGS_TEXT_MAX` | 160 | `ChatCallLog.argsText`（一行参数摘要）的字符上限 |
+| `AI_CHAT_RAW_ARGS_MAX` | 400 | `ChatCallLog.rawArgs`（模型给的原始 arguments）的字符上限 |
+
+**每一次调用都留一条记录**（`ChatCallLog`，B1 起加厚；面板每条一行摘要、点开看详情）：
+
+| 字段 | 含义 |
+|---|---|
+| `index` | 本回合内第几步（**1 起**）——**就是按步撤回的 n**（§23.4） |
+| `round` | 本回合内第几轮模型请求（1 起；同一轮里的多个 `tool_call` 同号） |
+| `name` / `args` / `argsText` / `rawArgs` | 工具名 / 解析后的参数对象 / **一行可读摘要**（`formatArgsText()`，截到 160 字）/ 模型原始 arguments（截到 400 字） |
+| `ok` / `error` / `parseError` / `warn` | 成功与否 / 可读错误 / 参数不是合法 JSON / 工具回的那几条警告（`AiToolResult.warn`，可空） |
+| `durationMs` | 这一步从发出到拿到结果的**真耗时**（`Date.now()` 差值） |
+| `docRevBefore` / `docRevAfter` / `docRev` / `revDelta` | 这一步前后的 `Doc.pixelRev`（`docRev` = `docRevAfter`，保留是为了兼容既有调用点）/ 推进量（0 = 一个像素都没改） |
+| `changed` | 这次真的碰到了哪块像素（工具没给就是 null） |
+| `reverted` | 这一步之后被**按步撤回**作废（`runChatTurn()` 返回时一律 false —— 撤回是面板那一下；面板按 `index` 覆盖它，`AiPanel` 里没有第二份状态） |
 
 - **一轮 = 一条 undo**：整轮包在 ai-turn 的回合里（预览模式也一样），任何失败路径都
   `rollbackTurn()` ——「模型中途报错、文档已经被改了一半」不允许出现；
@@ -3530,6 +3647,9 @@ key 的值一个字符都不进这段文本）：
   **`commit: false`（面板用的预览模式）** 回合**留开着**（结果里 `turnOpen: true`、不落历史、
   不刷 autosave），用户点「应用」才 `SESSION.commitAiTurn()`（一轮一条撤销）、点「放弃」才
   `SESSION.rollbackAiTurn()`（逐字节回到这一轮开始，并把模型那半轮从对话里忘掉）；
+- **预览里还能按步撤回**（B2，§23.4）：面板每条记录右边一个「撤回这一步」→
+  `SESSION.revertAiTurnStep(n)`；撤回后**回合仍然开着**，但**不允许再让模型接着跑**
+  （`aiPanelAllowsSend()` = `!hasPending && !reverted`，理由见 §23.4 口径 2），只能「应用 / 放弃」；
 - **面板卸载时回合还开着 → 立刻放弃**（`AiPanel` 的卸载钩子）：回合开着时用户自己的写入会被
   下一次 rollback 吞掉，绝不能把这个状态留下来；
 - **destructive 每次都弹确认框**：面板把 `SESSION.askConfirm()` 接成 `AiToolCtx.confirm`
@@ -3542,8 +3662,8 @@ key 的值一个字符都不进这段文本）：
   工具参数不是合法 JSON），不静默失败、也不把异常抛给 UI；
 - `ChatTurnResult` 里带 `docRevBefore` / `docRev` / `recorded` / `turnOpen` / `stop`
   （`"text"` / `"maxRounds"` / `"maxCalls"`）与每次调用的 `ChatCallLog`（`revDelta > 0` = 真的改了画面）；
-  面板用 `previewAiTurn()` 拿 `{count, rect}` 显示「这一轮改了哪块」。
-- 相关导出：`chatConfigError` / `formatCallLog` / `changedCount` / `defaultTurnLabel` /
+  面板用 `previewAiTurn()` 拿 `{count, rect, steps, docRev}` 显示「这一轮改了哪块」与按步撤回。
+- 相关导出：`chatConfigError` / `formatCallLog` / `formatArgsText` / `changedCount` / `defaultTurnLabel` /
   `buildSystemPrompt` / `systemMessage` / `userMessage` / `assistantMessage` / `toolResultContent` /
   `appendToolResult` / `parseToolCalls` / `responseText` / `toOpenAiTools` /
   `chatCompletionsUrl` / `AI_CHAT_HOST_KEY_SENTINEL` / `chatProxyUrl` / `detectChatProxy` /
@@ -3579,11 +3699,19 @@ key 的值一个字符都不进这段文本）：
 - **写入点唯一**：`winMin` / `winOpen` 只由 `App.tsx` 的 `minimizeAiWin()` / `closeAiWin()` /
   `openAiWin()` / `restoreAiWin()` 四处写。`AiWindow` **自己不碰设置、不碰回合**，它只收
   `onMinimize` / `onClose` 两个 prop。**不要把浮窗包进 `Keep`**（那会让它不卸载）。
-- **对话跨卸载保留**：模型侧 `thread` / 用户可见的 `entries` / 调用摘要 `logs` / 输入框草稿
-  放在**模块作用域**的 `aiWinStore`（进程内保留、**不落盘**）。而「预览中 → 应用 / 放弃」
-  这套 UI 由 `aiPanelShowsPreview(cfg, session, hasPending)` 判 —— 它同时要求
+- **对话跨卸载保留**：模型侧 `thread` / 用户可见的 `entries` / 调用摘要 `logs` / 输入框草稿 /
+  **`reverted`（这一轮撤回过没有）** 放在**模块作用域**的 `aiWinStore`（进程内保留、**不落盘**）。
+  而「预览中 → 应用 / 放弃」这套 UI 由 `aiPanelShowsPreview(cfg, session, hasPending)` 判 —— 它同时要求
   「面板看得见（`winOpen && !winMin`）」与「Session 里真有一轮开着」，所以最小化后
   不会留一套点了没反应的假预览（`data-guide="ai-pending"`）。
+- **调用记录与按步撤回的新锚点**（`tests/guide-anchors.test.ts` 会静态校验锚点真实存在）：
+  `ai-call`（一条记录）/ `ai-call-summary`（那一行摘要）/ `ai-step-revert`（撤回按钮）/
+  `ai-step-off`（本回合不支持按步撤回的说明）/ `ai-step-budget`（快照用量）/
+  `ai-step-locked` + `ai-step-reverted`（撤回后不再放行输入的说明）。
+  对应的 i18n 键：`aiChatStepNo` / `aiChatStepMs` / `aiChatStepOk` / `aiChatStepFail` /
+  `aiChatStepArgs` / `aiChatStepResult` / `aiChatStepWarn` / `aiChatStepNoArgs` / `aiChatStepRaw` /
+  `aiChatStepDetail` / `aiChatStepRevert` / `aiChatStepReverted` / `aiChatStepRevertedNote` /
+  `aiChatStepOff` / `aiChatStepBudget`（中英各一条）。
 - **拖动 / 缩放只用指针事件**（`pointerdown/move/up` + capture），不用鼠标专属事件，
   所以触屏与电脑模式是**同一条**代码路径；拖动**从不累加**（每帧从按下那一刻的几何重算），
   否则夹取会把位置一点点往回挤。

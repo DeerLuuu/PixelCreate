@@ -65,6 +65,20 @@
 //      `fn` 抛异常 → rollback + 把异常装进 `error` 返回（**不重抛**，调用方看 `ok:false` 即可）。
 //      压栈中途出错这种情况由 `commitTurn` 内部记 `lastCommitError`，`runAiTurn` 会把它
 //      转成 `ok:false`（否则「压根没落盘」会被误报成成功）。
+//  11. **按步撤回**（B2，`revertTurnStep(n)`）只在**预览回合**里有意义，语义定死：
+//      「撤回第 n 步 = 文档回到第 n 步执行**之前**，第 n 步及之后一并作废」。三条边界：
+//        · **单画布**才可用：这一步碰了别的画布 / 画布集合变了 → 当场禁用（`stepOff`），
+//          `previewTurn().steps.revert.reason` 给一句人话，UI 显示「本回合不支持按步撤回」；
+//          **不静默少留几步** —— 那会让「撤回第 n 步」指向一个错的过去，比禁用危险得多。
+//        · **预算 32 MiB**（`AI_TURN_STEP_BUDGET_BYTES`，依据见那里的注释）：超了同样禁用，
+//          退回「只能整轮回滚」。
+//        · 撤回**不碰历史**（回合期间历史本来就是打桩的）：点「应用」时仍然只压**一条**
+//          覆盖整轮的 struct。撤回之后**不再让模型接着跑** —— 消息线程里还留着被撤掉那些
+//          步骤的 tool 结果，模型会基于一份不存在的过去继续推理（用户定死的口径）。
+//  12. 步骤表（`TurnState.steps`）的下标 = **`mark()` 的次数**（= 文档真被改了几次），
+//      不是 `callTool` 的次数：只读 / 失败 / 被用户取消的调用一步都不占（`mark()` 不会触发，
+//      `endTurnStep()` 把那份没用的「执行前」快照丢掉）。所以 `revertTurnStep(n)` 的 n
+//      总能指到一次真的写入上。
 
 import type { Doc, DocSnapshot, Sel } from "../engine/doc";
 import type { History } from "../engine/history";
@@ -75,12 +89,70 @@ import type { CanvasEntry } from "./session";
 export interface AiTurnPreview {
   count: number;
   rect: Rect | null;
+  /** 按步撤回的现状（见 `previewTurnSteps()`）；**回合没开时是 `null`** */
+  steps: AiTurnStepPreview | null;
+  /** 当前实况的文档版本号（撤回之后它就是撤回后的值） */
+  docRev: number;
+}
+
+/** `previewTurn().steps`：这一轮的步骤表 + 按步撤回还能不能用 */
+export interface AiTurnStepPreview {
+  /** **能撤回的**步骤（`reverted` 为真的已经作废；撤回之后再撤到更早，它们一起从这张表里消失） */
+  steps: AiTurnStepInfo[];
+  /** 这一步的下标（`AiTurnStepInfo.index`）→ 撤回后要拿它传给 `revertTurnStep()` */
+  revert: AiTurnStepRevert;
+  /** 当前实况下与「本轮基线」逐字节比对出的改动包围盒 */
+  rect: Rect | null;
+  /** 落定后会压进历史的那条记录能覆盖的**操作总数**（含被撤回的那些） */
+  count: number;
+}
+
+/** 一条步骤的摘要（纯数据，给 UI 显示用；**不含快照**） */
+export interface AiTurnStepInfo {
+  /** 1 起。**它就是 `revertTurnStep(n)` 的 n** */
+  index: number;
+  /** 工具名（步骤标签） */
+  label: string;
+  /** 这一步执行**之前**的文档版本号 */
+  docRevBefore: number;
+  /** 这一步执行**之后**的文档版本号 */
+  docRevAfter: number;
+  /** 这一步改动的像素矩形（与下一步的「执行前」逐字节比对得出；上一步没动就是 null） */
+  changed: Rect | null;
+  /** 这一步花了多少毫秒（`ai-chat` 量的真耗时；没量到就是 0） */
+  durationMs: number;
+  /** 已经被「撤回」作废（文档回到它执行之前，它和它之后的步骤都不作数了） */
+  reverted: boolean;
+}
+
+/** 按步撤回的可用性（`ok:false` 时 `reason` 一定非空，UI 直接显示它） */
+export interface AiTurnStepRevert {
+  ok: boolean;
+  reason?: string;
+  /** 已经用掉的快照字节数（`AI_TURN_STEP_BUDGET_BYTES` 是上限） */
+  usedBytes: number;
+  /** 上限本身（UI 要显示「多大算太大」时用它，不要在 UI 里抄常量） */
+  budgetBytes: number;
 }
 
 /** C1 定死的回合句柄形状（`AiToolCtx.turn`）：callTool 每成功一次写操作调用一次 `mark()` */
 export interface AiTurnHandle {
   isOpen(): boolean;
   mark(): void;
+}
+
+/**
+ * **按步撤回**（B2）的内部句柄：`ai-chat` 在每一次工具调用前后各调一次。
+ *
+ * 为什么不塞进 `AiTurnHandle`：C1 把 `AiToolCtx.turn` 的形状钉成 `{isOpen, mark}`，
+ * 而「这一步从哪开始」是**整轮循环**才知道的事（`callTool` 自己不该关心）。所以这两条
+ * 走模块级自由函数（与 `beginAiTurn` 同一条路），`ai-tools` 一个字节都不用改。
+ */
+export interface AiTurnStepHandle {
+  /** 一次工具调用**开始**：记下「执行前」快照（能不能按步撤回在这里判） */
+  begin(label: string): void;
+  /** 一次工具调用**结束**：这一步真改了文档才落进步骤表（只读 / 失败 / 取消都丢掉） */
+  end(): void;
 }
 
 /**
@@ -120,6 +192,30 @@ export const AI_TURN_LABEL_MAX = 80;
 /** 空标签时的兜底正文 */
 export const AI_TURN_LABEL_FALLBACK = "未命名回合";
 
+// ------------------------------------------------------------------ 按步撤回（B2）
+
+/**
+ * **按步撤回的快照预算：32 MiB**（`AI_TURN_STEP_REVERT_MAX_BYTES_PER_DOC` × 4 张画布）。
+ *
+ * 怎么算的：一步一份**结构快照**（`Doc.capture()` 的深拷贝），代价 ≈ `宽 × 高 × 4 × cel 数`。
+ * 像素画的常态（64² · 2 图层）一步只有 32 KiB，整轮几十步也就几 MB；而最重的一档
+ * （1024² · 4 图层，见 `AI_TURN_STEP_REVERT_MAX_BYTES_PER_DOC`）**一步就是 16 MiB** ——
+ * 两步就顶到 32 MiB，于是这一轮干脆不逐留快照，只能整轮回滚（历史栈里那条 undo 照旧）。
+ *
+ * 为什么是这个量级：`prefs.histSteps` 默认 120 条，历史本身就用 `pushStruct` 存整档快照
+ * （`Session.struct()`），也就是「120 份快照」是这套代码**本来就接受**的内存口径；
+ * 给一个回合的撤留 32 MiB（≈ 最重档 2 步 / 常态 1024 步）远低于历史栈的常态占用，
+ * 又足够覆盖像素画里真实的一轮 AI（几十次调用）。**超了就退回「只能整轮回滚」**，
+ * 不是静默少留几步 —— 少留几步会让「撤回第 n 步」指向一个错的过去，比禁用危险得多。
+ */
+export const AI_TURN_STEP_BUDGET_BYTES = 32 * 1024 * 1024;
+/** 单张画布在「最重档」下的一份快照字节数（1024² × 4 图层 × 4 通道 = 16 MiB）；仅用于文档与测试口径 */
+export const AI_TURN_STEP_REVERT_MAX_BYTES_PER_DOC = 1024 * 1024 * 4 * 4;
+/** 禁用原因：超预算 */
+export const AI_TURN_STEP_OFF_TOO_BIG = "本回合太大，不支持按步撤回（只能整轮回滚）";
+/** 禁用原因：跨画布 */
+export const AI_TURN_STEP_OFF_CROSS_CANVAS = "这一轮改到了多张画布，不支持按步撤回（只能整轮回滚）";
+
 // ------------------------------------------------------------------ 内部状态
 
 /** 一张画布在回合开始（或结束）时的样子：内容快照 + 它在工程里的位置/选择 */
@@ -144,17 +240,86 @@ interface DocSetState {
   frameIdx: number;
 }
 
+/**
+ * 一步的「执行前」快照（B2 的核心状态）。**只存一张画布**（见 `StepSnap` 的注释），
+ * 并且只存那一步真正要用的东西：内容快照 + 当前图层/帧 + 版本号 + 预计算的字节代价。
+ */
+interface StepSnap {
+  /** 画布 id（`null` = 没有画布时的替身文档） */
+  id: string | null;
+  doc: Doc;
+  snap: DocSnapshot;
+  li: number;
+  fi: number;
+  docRev: number;
+  /**
+   * 这一步改了什么像素：**写完当场逐字节比对得出，写完就定死**（`null` = 没改到像素）。
+   *
+   * 为什么必须当场算、而不是 `previewTurn()` 里「拿这一步的快照比下一步的快照」（第一版那么写，
+   * 是错的）：`Doc.restore()` 是**就地**改同一个 `Doc` 对象（`this.cels = new Map()`），
+   * 而每一步的 `before.doc` 都是**同一个**实况文档 —— 下一步的 `restore` 会顺手把这一步
+   * 「依附的那个 Doc」也换成新内容，于是两步一比就得到 null 或错的矩形
+   * （探针实测：第 1 步的 `changed` 变成了两步的并集 29×29，`previewTurn().rect` 只剩最后一步）。
+   * 在 `mark()` 里算完存下来，还顺带让「这一步改了什么」在下一步开始前就冻结了。
+   */
+  deltaRect: Rect | null;
+  /**
+   * 这份快照的**字节代价**（`宽 × 高 × 4 × cel 数`，与快照里 cel 字节之和取大者）。
+   * 每落一步会深拷贝**两份**（`before` + 写完当场的那份，见 `recordStep`），所以按两倍算 ——
+   * 见 §23.4 口径 7。为什么取大者：cel 的数据长度可能大于 `w*h*4`（画布被改小过），
+   * 而 `capture()` 深拷贝的元数据（图层 / 帧 / 标签 / 选区掩码）比 `w*h*4` 更大时也不能漏算。
+   */
+  cost: number;
+}
+
+/** 步骤表里的一行（**每一行都对应一次真的写操作**，「没写」的调用根本不进表） */
+interface TurnStep {
+  index: number;
+  label: string;
+  before: StepSnap;
+  docRevAfter: number;
+  /** 这一步的真耗时（毫秒，`ai-chat` 量；没量到就是 0） */
+  durationMs: number;
+}
+
 interface TurnState {
   id: number;
   /** 已归一化的标签正文（不含 `ai: ` 前缀） */
   label: string;
   host: AiTurnSession;
+  /** 回合开始时的样子（`commitTurn()` / `rollbackTurn()` 用的**永远**是它，按步撤回不动它） */
   begin: DocSetState;
   /** `mark()` 次数 */
   count: number;
+  /** `rect` 缓存是否还有效（`mark()` 与 `revertTurnStep()` 都会置假） */
   rectComputed: boolean;
+  /** 从回合开始到实况的改动包围盒（`diffRect(t.begin, t.host)` 的结果缓存） */
   rect: Rect | null;
   gate: HistoryGate;
+  // ---- B2 按步撤回 ----
+  /** 步骤表（只收真改了文档的调用） */
+  steps: TurnStep[];
+  /** 正在等结果的那一步（`begin` 与 `end` 之间）；`null` = 现在没在跑工具调用 */
+  activeStep: StepSnap | null;
+  /** 正在等结果的那一步的标签 */
+  activeLabel: string;
+  /**
+   * 这一次调用**刚刚**落过一行步骤（`mark()` 在 `callTool` 返回之前触发）。
+   * `endTurnStep()` 靠它把耗时补进**这一步**，而不是补进上一次调用的那一行。
+   */
+  stepJustRecorded: boolean;
+  /** 已经用掉的快照字节数 */
+  stepBytes: number;
+  /** 按步撤回为什么不能用（空串 = 能用）；一旦置上就**不再逐留快照** */
+  stepOff: string;
+  /**
+   * 步骤表里**撤回点**：下标 ≥ `revertedAt` 的步骤都已经作废（`-1` = 一个都没撤）。
+   * 它只增不减地往前走，所以步骤表本身可以原地留着 —— 但撤回过的那些快照**当场释放**
+   * （`before.snap` 换成空的 `DocSnapshot`），内存不会被一堆够不着的过去占着。
+   */
+  revertedAt: number;
+  /** 回合开始时画布 id（按步撤回只认它，见 `captureStepSnap()`） */
+  firstDocId: string | null;
 }
 
 interface HistoryGate {
@@ -209,15 +374,247 @@ export async function runAiTurn<T>(label: string, fn: () => T | Promise<T>): Pro
   }
 }
 
-/** 预览：这一轮会改多少操作、哪块像素（**只算不改文档**）。回合没开 → `{count:0, rect:null}` */
+/**
+ * 预览：这一轮会改多少操作、哪块像素（**只算不改文档**）。回合没开 → 四个字段都是空值。
+ *
+ * `rect` = 从**回合开始**到实况的逐字节比对（`diffRect()`）—— 于是「撤回之后」它算的正是
+ * 撤回后的实况（比如撤到第 1 步之前就是 `null`）。它与 `steps[].changed` 的并集在正常回合里
+ * 必然相等（每一步的差值就是按同一套比对算的），两条路径各自独立、互为交叉验证。
+ * **缓存**在 `t.rect` 上：`mark()` 会让它失效，`revertTurnStep()` 也会。
+ */
 export function previewTurn(): AiTurnPreview {
   const t = activeTurn;
-  if (!t) return { count: 0, rect: null };
+  if (!t) return { count: 0, rect: null, steps: null, docRev: 0 };
   if (!t.rectComputed) {
     t.rect = diffRect(t.begin, t.host);
     t.rectComputed = true;
   }
-  return { count: t.count, rect: t.rect ? { ...t.rect } : null };
+  return { count: t.count, rect: t.rect ? { ...t.rect } : null, steps: previewTurnSteps(t), docRev: docRevOf(t.host) };
+}
+
+/**
+ * 步骤表摘要。
+ *
+ * 两条口径：
+ *   · `changed` 直接取那一步**写完当场**算好的 `before.deltaRect`（不在预览里现算 —— 见
+ *     `StepSnap.deltaRect` 的注释：现算会因为 `Doc.restore()` 就地改文档而得到错的矩形）；
+ *   · 已经撤回的步骤（下标 ≥ `revertedAt`）**仍然在表里**（UI 要显示「第 n 步已撤回」），
+ *     但它们的快照已经在撤回时释放，这里也不会再去读它（`reverted` 为真时 `changed` 恒 null）。
+ */
+function previewTurnSteps(t: TurnState): AiTurnStepPreview {
+  const out: AiTurnStepInfo[] = [];
+  for (let i = 0; i < t.steps.length; i++) {
+    const st = t.steps[i];
+    const reverted = t.revertedAt >= 0 && i >= t.revertedAt;
+    out.push({
+      index: st.index,
+      label: st.label,
+      docRevBefore: st.before.docRev,
+      docRevAfter: st.docRevAfter,
+      changed: reverted ? null : (st.before.deltaRect ? { ...st.before.deltaRect } : null),
+      durationMs: st.durationMs,
+      reverted,
+    });
+  }
+  return {
+    steps: out,
+    revert: { ok: !t.stepOff, ...(t.stepOff ? { reason: t.stepOff } : {}), usedBytes: t.stepBytes, budgetBytes: AI_TURN_STEP_BUDGET_BYTES },
+    rect: t.rect ? { ...t.rect } : null,
+    count: t.count,
+  };
+}
+
+/** 文档版本号（`Doc.pixelRev`；拿不到就是 0） */
+function docRevOf(s: AiTurnSession): number {
+  const d = (s.doc as unknown as { pixelRev?: number } | null)?.pixelRev;
+  return typeof d === "number" ? d : 0;
+}
+
+// ------------------------------------------------------------------ B2：按步撤回
+
+/**
+ * 一次工具调用**开始**（`ai-chat` 在 `callTool` 之前调）。记下「执行前」快照。
+ *
+ * 为什么在**调用前**抓：语义定死了 —— 「撤回第 n 步 = 把文档恢复到第 n 步执行**之前**」。
+ * 调用后再抓就变成了「恢复到第 n 步之后」，那是另一种功能。
+ * 调用结束没写文档（只读 / 失败 / 用户取消）时这一步会被 `endTurnStep()` 丢掉。
+ */
+export function beginTurnStep(label: string): void {
+  const t = activeTurn;
+  if (!t) return;
+  t.activeLabel = String(label ?? "");
+  t.stepJustRecorded = false;
+  t.activeStep = t.stepOff ? null : captureStepSnap(t);
+}
+
+/**
+ * 一次工具调用**结束**（`ai-chat` 在 `callTool` 之后调）。真改了文档才落进步骤表。
+ *
+ * `mark()`（C1 的 `AiToolCtx.turn.mark`）在 `ai-tools.callTool` 里只对
+ * 「成功 + 非只读」的调用触发一次，所以「写没写」这件事不用这里再猜一遍 ——
+ * 落行发生在 `mark()` 里（见 `recordStep()`），这里只负责两件收尾：
+ *   · 这一步真的写了 → 把 `ai-chat` 量的**真耗时**补进那一行；
+ *   · 没写（只读 / 失败 / 用户取消）→ 把那份没用的「执行前」快照丢掉。
+ */
+export function endTurnStep(durationMs?: number): void {
+  const t = activeTurn;
+  if (!t) return;
+  const just = t.stepJustRecorded;
+  t.stepJustRecorded = false;
+  t.activeStep = null;
+  if (!just || !t.steps.length) return;
+  const ms = Math.round(Number(durationMs));
+  if (Number.isFinite(ms) && ms >= 0) t.steps[t.steps.length - 1].durationMs = ms;
+}
+
+/**
+ * `mark()` 的按步口径：**每成功写一次文档就落一行步骤** —— 下标就是 `revertTurnStep(n)` 的 n。
+ *
+ * 为什么一行就是「一次 `mark()`」而不是「一次 `callTool`」：`mark()` 是 C1 那条**唯一**的
+ * 「文档真的被改了」信号，`callTool` 的一次调用可能一次都没 mark（只读 / 失败 / 取消）。
+ * 用「写了几次」当下标，`revertTurnStep(n)` 才总是有意义的；用「第几次调用」当下标会
+ * 更容易让用户指到一个什么都没改的调用上。
+ */
+function recordStep(t: TurnState): void {
+  const snap = t.activeStep;
+  if (!snap) return;
+  const live = findDocById(t.host, snap.id);
+  const after = live ? live.capture() : null;   // 写完当场的那一份（算差值用，算完就丢）
+  const delta = live ? contentDiffRect(snap.snap, live) : null;
+  // 差值**当场算完存死**：晚一点算就会被下一步的 `Doc.restore()`（就地改文档）污染，见 `deltaRect` 注释
+  snap.deltaRect = delta;
+  t.steps.push({
+    index: t.steps.length + 1, label: t.activeLabel, before: snap,
+    docRevAfter: docRevOf(t.host), durationMs: 0,
+  });
+  t.stepJustRecorded = true;
+  // 预算按**两份**算：`before` + 刚才那份 `after`（`after` 只活在这一次比较里，不进步骤表）
+  t.stepBytes += snap.cost + (after ? snapshotCost(after) : 0);
+  if (t.stepBytes > AI_TURN_STEP_BUDGET_BYTES) disableStepRevert(t, AI_TURN_STEP_OFF_TOO_BIG);
+}
+
+/** 按步撤回不可用（跨画布 / 超预算 / 画布集合变了）：**不再逐留快照**，UI 拿 `previewTurn().steps.revert.reason` */
+function disableStepRevert(t: TurnState, reason: string): void {
+  if (t.stepOff) return;
+  t.stepOff = reason;
+  t.activeStep = null;
+  t.stepJustRecorded = false;
+  // 已经抓到的那些快照**不再够用**（一旦禁用，步骤表整体作废），当场释放，别占着内存
+  for (const st of t.steps) st.before.snap = emptySnap(st.before.snap);
+  t.steps = [];
+  t.stepBytes = 0;
+  t.revertedAt = -1;
+}
+
+/**
+ * 抓「当前实况」的一份「执行前」快照。
+ *
+ * **只抓聚焦画布那一张**，这是「按步撤回的代价」与「安全性」两件事的折中：
+ *   · 回合开始只有一张画布 → 单画布回合（历史走 `pushStruct`），一张快照就够；
+ *   · 这一步碰了**别的**画布（引用图层把写操作投给源画布 / 模型自己切了画布）→
+ *     一张快照不够，而我们**不会**为每一步再抓 N 张（内存是 N 倍）→ 明确禁用按步撤回；
+ *   · 画布集合在这一步里变了（新开 / 关掉画布）→ 同理，禁用。
+ *
+ * 禁用不是「默默不做」：`previewTurn().steps.revert.reason` 里有一句人话，UI 会显示出来。
+ */
+function captureStepSnap(t: TurnState): StepSnap | null {
+  const s = t.host;
+  if (s.docs.length !== t.begin.docs.length) {
+    disableStepRevert(t, AI_TURN_STEP_OFF_CROSS_CANVAS);
+    return null;
+  }
+  const focus = s.docs[s.docIdx];
+  const id = focus ? focus.id : null;
+  if (id !== t.firstDocId) {
+    disableStepRevert(t, AI_TURN_STEP_OFF_CROSS_CANVAS);
+    return null;
+  }
+  const doc = focus ? focus.doc : s.doc;
+  const snap = doc.capture();
+  return {
+    id,
+    doc,
+    snap,
+    li: focus ? focus.li : s.layerIdx,
+    fi: focus ? focus.fi : s.frameIdx,
+    docRev: docRevOf(s),
+    deltaRect: null,                 // 写完当场由 `recordStep()` 填上
+    cost: snapshotCost(snap),
+  };
+}
+
+/** 一份快照的字节代价：`宽 × 高 × 4 × cel 数`，与快照里 cel 字节之和取大者（见 `StepSnap.cost`） */
+function snapshotCost(snap: DocSnapshot): number {
+  let sum = 0;
+  for (const cel of snap.cels.values()) sum += cel.data.length;
+  return Math.max(sum, snap.w * snap.h * 4 * snap.cels.size, snap.w * snap.h * 4);
+}
+
+/** 把一份快照换成空壳（撤回 / 禁用时**当场释放**像素缓冲；步骤摘要还留着给 UI 用） */
+function emptySnap(s: DocSnapshot): DocSnapshot {
+  return { ...s, cels: new Map(), layers: [], frames: [], tags: [], palette: [], sel: null };
+}
+
+function findDocById(s: AiTurnSession, id: string | null): Doc | null {
+  if (!id) return s.docs.length ? null : s.doc;
+  const e = s.docs.find((d) => d.id === id);
+  return e ? e.doc : null;
+}
+
+/**
+ * **按步撤回**（B2，只在预览回合里用）：把文档恢复到**第 n 步执行之前**，并让
+ * **第 n 步及之后的所有步骤一并作废**（后续步骤建立在它们之上）。
+ *
+ * 语义（用户定死，别自由发挥）：
+ *   1. 回合**仍然开着**（还是预览态），用户之后只能「应用当前状态」或「放弃整轮」；
+ *      **不允许撤回后再让模型接着跑** —— 消息线程里还留着「模型画过的那些步骤」的
+ *      tool 结果，而文档已经回到那些步骤之前，再跑下去模型是基于一份**不存在的过去**
+ *      继续推理（它以为画在 A 上的东西还在）。所以 UI 在撤回之后只给「应用 / 放弃」，
+ *      输入框在语义上是关着的（见 `AiPanel` 的 `showPreview` 分支与 `aiChatStepReverted`）。
+ *   2. 撤回**不碰历史**：回合期间历史本来就是打桩的（`suspendHistory`），
+ *      点「应用」时仍然**只压一条**覆盖整轮的 struct（一轮一条 undo 这条不变式不变）。
+ *   3. 撤回后 `previewTurn()` 的 `rect` / `docRev` / `steps[].changed` 反映**撤回后的实况**：
+ *      `rect` 是**还活着的**那些步骤 `changed` 的并集（撤回过的整段不再计入），
+ *      而每一步的 `changed` 是它写完当场算好存死的（见 `StepSnap.deltaRect`）。
+ *
+ * 返回 true = 真撤回了；false = 没撤回（回合没开 / n 不是 1..步骤数 / 这一步已经作废过）。
+ * **不抛异常**，与 C2 其余失败口径一致。
+ */
+export function revertTurnStep(n: number): boolean {
+  const t = activeTurn;
+  if (!t) return false;
+  const k = Math.round(Number(n));
+  if (!Number.isFinite(k) || k < 1 || k > t.steps.length) return false;
+  const at = k - 1;
+  if (t.revertedAt >= 0 && at >= t.revertedAt) return false;   // 已经作废的步骤：不能「再撤一次」
+  const st = t.steps[at];
+
+  // ① 先落定未完成的笔迹：`Doc.restore()` 会整批换掉 cel 对象，View 手里那份会变成孤儿
+  //    （与 `rollbackTurn()` 同一条口径）。
+  try { t.host.view?.flushStroke(); } catch { /* flush 失败不该挡住撤回本身 */ }
+  // ② 内容回到「第 n 步执行之前」（结构快照 = 逐字节）
+  st.before.doc.restore(st.before.snap);
+  // ③ 选择（当前图层 / 帧）也回到那一刻 —— 后续步骤可能切过图层
+  if (st.before.id) {
+    const e = t.host.docs.find((d) => d.id === st.before.id);
+    if (e) { e.li = st.before.li; e.fi = st.before.fi; }
+  }
+  // ④ 第 n 步及之后作废：快照当场释放（够不着了），只留摘要给 UI 显示「已撤回」
+  const after = docRevOf(t.host);        // `Doc.restore()` 自己会 pixelRev++（单调修订号）
+  const wasLast = t.steps.length;
+  for (let i = at; i < wasLast; i++) {
+    const x = t.steps[i];
+    x.before.snap = emptySnap(x.before.snap);
+    x.docRevAfter = after;
+  }
+  t.stepBytes = 0;
+  for (let i = 0; i < at; i++) t.stepBytes += t.steps[i].before.cost;   // 前面的活步骤照旧算（它们还能再撤）
+  t.revertedAt = at;
+  // 实况变了：`rect` 缓存作废（下一次 previewTurn 会按撤回后的实况重算）
+  t.rectComputed = false;
+  t.rect = null;
+  t.host.syncAll();
+  return true;
 }
 
 /** 落一条历史（结构快照）+ 补一次 autosave：真有改动 → true；没改动 / 回合没开 → false */
@@ -294,6 +691,9 @@ export function turnHandle(): AiTurnHandle {
       if (!t) return; // 回合没开：mark 不该凭空造出一个回合
       t.count++;
       t.rectComputed = false; // 脏矩形缓存失效，下一次 previewTurn 重新比对
+      // B2：`mark()` 是「文档真的被改了」的唯一信号，所以**步骤表就在这一行落**
+      // （`beginTurnStep()` 抓的「执行前」快照 + 这一次 mark = 一步）。见 `recordStep()`。
+      recordStep(t);
     },
   };
 }
@@ -313,6 +713,15 @@ function beginTurn(s: AiTurnSession, rawLabel: string): number {
     rect: null,
     // 占位闸门：真正的挂载在下面；先放一个能让 catch 安全调用 restore() 的空实现
     gate: { restore: () => { /* 闸门还没挂上 */ } },
+    // ---- B2 按步撤回 ----
+    steps: [],
+    activeStep: null,
+    activeLabel: "",
+    stepJustRecorded: false,
+    stepBytes: 0,
+    stepOff: "",
+    revertedAt: -1,
+    firstDocId: s.docs.length ? s.docs[Math.max(0, Math.min(s.docs.length - 1, s.docIdx))].id : null,
   };
   // **先发布回合、再动副作用**（挂闸门 / 压 autosave）：两个副作用的逆操作都记在 `t` 上，
   // 中途抛错也能在 catch 里完整还原。反过来（先挂闸门后发布）在挂载那一步抛错时会留下
@@ -462,7 +871,10 @@ function sameDocSetShape(a: DocSetState, b: DocSetState): boolean {
   return true;
 }
 
-/** 与回合开始逐字节比对，给出像素改动的并集包围盒（多画布时是各画布矩形在各自文档坐标下的数值并集） */
+/**
+ * 与回合开始逐字节比对，给出像素改动的并集包围盒（多画布时是各画布矩形在各自文档坐标下的数值并集）。
+ * `previewTurn()` 的 `rect` 用它，`commitTurn()` 的「有没有改动」也用它的兄弟 `changedDocIds()`。
+ */
 function diffRect(begin: DocSetState, s: AiTurnSession): Rect | null {
   let out: Rect | null = null;
   const seen = new Set<string>();
