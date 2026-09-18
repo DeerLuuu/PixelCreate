@@ -22,7 +22,7 @@ import {
   AI_CHAT_STREAM_FALLBACK_BROKEN, AI_CHAT_STREAM_FALLBACK_NOT_SSE,
   AI_CHAT_SYSTEM_PROMPT, AI_CHAT_TEMP_STEP, aiChatStatusText, appendToolResult, appendStreamChunk,
   assistantMessage, buildSystemPrompt, changedCount, chatCompletionsUrl, chatConfigError, chatProxyUrl,
-  consumeSseStream, defaultTurnLabel, detectChatProxy, formatArgsText, formatCallLog, newChatStreamState,
+  consumeSseStream, contentText, defaultTurnLabel, detectChatProxy, formatArgsText, formatCallLog, newChatStreamState,
   parseSseData, parseToolCalls, proxyChatFetch, readHostProviderConfig, responseText, runChatTurn,
   splitSseChunk, streamResponse, systemMessage, toOpenAiTools, toolResultContent, userMessage,
 } from "../src/app/ai-chat";
@@ -538,8 +538,9 @@ export async function testAiChat(): Promise<void> {
   // ================================================================ 3. 纯函数：消息拼装
   {
     const base: ChatMessage[] = [systemMessage(), userMessage("画个圆")];
-    ok("aichat.msg.system-prompt", base[0].content!.indexOf("工具") >= 0 && base[0].content === AI_CHAT_SYSTEM_PROMPT);
-    ok("aichat.msg.digest", systemMessage({ digest: '{"w":64}' }).content!.indexOf('{"w":64}') > 0);
+    // ① `content` 现在可以是 parts 数组（参考图），所以取文本一律走 `contentText()` 而不是 `String()`
+    ok("aichat.msg.system-prompt", contentText(base[0].content).indexOf("工具") >= 0 && contentText(base[0].content) === AI_CHAT_SYSTEM_PROMPT);
+    ok("aichat.msg.digest", contentText(systemMessage({ digest: '{"w":64}' }).content).indexOf('{"w":64}') > 0);
     ok("aichat.msg.digest-clip", buildSystemPrompt({ digest: "x".repeat(9000) }).length < 9000);
 
     const call = { id: "c1", name: "doc_digest" };
@@ -549,9 +550,11 @@ export async function testAiChat(): Promise<void> {
     eq("aichat.msg.role", out[2].role, "tool");
     eq("aichat.msg.call-id", out[2].tool_call_id, "c1");
     eq("aichat.msg.name", out[2].name, "doc_digest");
-    ok("aichat.msg.content-ok", out[2].content!.indexOf('"ok":true') > 0);
-    ok("aichat.msg.content-head", out[2].content!.indexOf('"docRev":7') > 0 && out[2].content!.indexOf('"changed"') > 0);
-    ok("aichat.msg.truncated", out[2].content!.length < 4200 && out[2].content!.indexOf("已截断") > 0, "len=" + out[2].content!.length);
+    ok("aichat.msg.content-ok", contentText(out[2].content).indexOf('"ok":true') > 0);
+    ok("aichat.msg.content-head", contentText(out[2].content).indexOf('"docRev":7') > 0 && contentText(out[2].content).indexOf('"changed"') > 0);
+    ok("aichat.msg.truncated", contentText(out[2].content).length < 4200 && contentText(out[2].content).indexOf("已截断") > 0, "len=" + contentText(out[2].content).length);
+    // tool / assistant / system 的 content **永远是字符串**（只有挂了图的 user 才是数组，见 ai-vision.test.ts）
+    ok("aichat.msg.tool-content-string", typeof out[2].content === "string");
     ok("aichat.msg.error-first", toolResultContent({ ok: false, error: "boom" }).indexOf('"error":"boom"') < 60);
 
     eq("aichat.label.from-user", defaultTurnLabel(base), "画个圆");
@@ -1562,9 +1565,10 @@ export async function testAiChat(): Promise<void> {
       [SETTINGS_BY_PATH.get("ai.chatPreset")!.default, SETTINGS_BY_PATH.get("ai.chatEndpoint")!.default,
         SETTINGS_BY_PATH.get("ai.chatModel")!.default],
       ["deepseek", "https://api.deepseek.com", "deepseek-v4-pro"]);
-    // 模型清单：只有官方文档里当前有的两个名字，**不含已下线的旧名**
-    eq("preset.deepseek-models", AI_CHAT_PRESETS[0].models, ["deepseek-v4-pro", "deepseek-flash"]);
-    eq("preset.no-retired-model", AI_CHAT_PRESETS[0].models.filter((m) => m === "deepseek-v4-chat" || m === "deepseek-chat" || m === "deepseek-reasoner" || m === "deepseek-v4-flash"), []);
+    // 模型清单：只有官方文档里当前有的两个名字，**不含已下线的旧名**；
+    // 每一项是 `{id, vision}`（能力位见 ai-presets.ts / ai-vision.test.ts 的断言）
+    eq("preset.deepseek-models", AI_CHAT_PRESETS[0].models.map((m) => m.id), ["deepseek-v4-pro", "deepseek-flash"]);
+    eq("preset.no-retired-model", AI_CHAT_PRESETS[0].models.map((m) => m.id).filter((m) => m === "deepseek-v4-chat" || m === "deepseek-chat" || m === "deepseek-reasoner" || m === "deepseek-v4-flash"), []);
     // 预设行是 enum（chips），三个选项与预设表同源；端点 / 模型仍是 text:"plain"
     const presetDef = SETTINGS_BY_PATH.get("ai.chatPreset")!;
     eq("preset.row-kind", [presetDef.kind, presetDef.text, (presetDef.options ?? []).map((o) => o.value)],

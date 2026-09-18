@@ -24,7 +24,8 @@
 ```
 src/app/       Session、设置注册表、引导注册表、手势映射、历史编解码、AI（ai-doc 文档文本化 / ai-tools 工具表 /
                ai-draw 落笔适配层（笔迹·形状·填充·擦除·特效·变换）/ ai-turn 回合事务 / ai-rpc 协议路由 /
-               ai-serve 本地服务生命周期 / ai-presets 厂商预设（默认 DeepSeek）/ ai-chat 应用内助手的整轮循环）
+               ai-serve 本地服务生命周期 / ai-presets 厂商预设（默认 DeepSeek）/ ai-chat 应用内助手的整轮循环 /
+               ai-vision 参考图（vision）的尺寸 · 体积 · 能力门控）
                —— 接口见 docs/API.md §21–§26
 src/engine/    文档模型、历史栈、像素操作、调色/对称/导出编码、重采样（resample）、颜色分析（color-analysis）
 src/render/    视口、合成器、脏矩形、洋葱皮
@@ -34,7 +35,7 @@ src/io/        原生桥接、工程文件（.pxc）、Aseprite 读写（aseread
 src/ui/        React 外壳、弹窗、时间线、浮动球、i18n、样式、AiPanel（应用内助手面板 + 助手小球 ChatBall）、
                AiWindow（助手浮窗，portal 到 body）
 android/       MainActivity（Java 层）+ AiServer（本地 AI 端口服务，纯 JDK）+ AndroidManifest
-tests/         无 DOM 的引擎/逻辑回归（**7655 条断言**，`node .ts-out/tests/run-tests.js` 末尾会打印条数）
+tests/         无 DOM 的引擎/逻辑回归（**8090 条断言**，`node .ts-out/tests/run-tests.js` 末尾会打印条数）
 docs/          API.md / COMPARISON.md / PLAN-ai.md / ARCHITECTURE.md / UI.md / PC.md
 toolchain/     自写开发脚本（devserver / make-icon / check-bundle / stress-stroke / ai-server / pc-mcp / pc-shell+pc-shell.cmd）
 ```
@@ -405,6 +406,25 @@ java -jar /root/pk/apksigner.jar verify --print-certs /sdcard/Download/PixelCraf
     （DNS rebinding 类风险，只绑 `127.0.0.1` + 通道 token 已经挡住了实际利用）；② `authOk()` 接受 `?token=`
     查询串（会进浏览器历史 / 日志，但只在本机 + 用户自己配的前提下）。
   · 若干**弱断言**（例如 `digest.tokens` 用同一个公式反推期望值，只保证自洽、不保证预算真实）。
+  · **参考图（vision）已落地（2026-09-18，接口见 `docs/API.md` §26.8）**：助手可挂一张参考图与文本一起发
+    （`content` 变 parts 数组；**无图时仍是纯字符串**，且只有 `user` 消息能带图 —— `system` / `assistant` 带图
+    上游回 400）。能力位是**三态**（`AiVision = yes | no | unknown`）：`deepseek-flash` yes、`deepseek-v4-pro` no、
+    其余（含自建网关与 `gpt-4o` 系）unknown = **允许发送 + 一句风险说明** —— 把 unknown 当 no 会拦死本来能用的用户。
+  · **重采样调用方必须先自查源尺寸（本轮实测的坑，最容易再踩）**：`engine/resample.ts` 的约定是
+    「源与目标都在 1..1024」，越界时**不抛异常**，只返回一块**等长但全透明**的缓冲区（`dimsOk()`）。
+    `ai-vision.ts` 的 `refToRgba()` 早先把用户的原始尺寸直接喂了进去，于是 **1200px 以上的参考图被静默编成
+    一张空白图发给模型**，而附件条上还写着「已缩到 768×768」—— 用户看到的是「发出去了」，模型收到的是空白。
+    修法：源超契约时改走本模块自己的 `downscaleOutOfContract()`（盒式平均 / 抽点），**不动 `MAX_SIZE`**
+    （那是全项目约定，`scaleAdvanced` / `ScaleModal` / `resampleRegion` 都按它算）。回归断言必须是**像素级**的
+    （`aivision.ref.huge.*`：采样颜色数 > 2、alpha > 0）—— 原来那条只比宽高的弱断言正是漏网的原因。
+  · **参考图这条路的未验项**：本机没有可用 key，所以**没有对着真 DeepSeek 端点发过带图请求**（`deepseek-flash`
+    的图像理解只在官方文档层面核对过）；「选择图片文件」那条（`createObjectURL` + `<img>` 解码）没做端到端，
+    只跑了与参考图**共用**的 `encodeAttachment()` 段；「真壳 + 流式 + 带图」这个组合也没跑（e2e 为确定性关掉了流式）；
+    真实照片的 PNG 体积没量过（一张 1024² 低频噪声落在 709 KiB，过软线、差 60 KiB 撞硬线）。
+  · **重建产物后必须核对产物本身（本轮实测的构建坑）**：`%TEMP%` 里那份 esbuild JS API 脚本曾漏掉 `entryPoints`，
+    于是 `esbuild.build()` 什么都不构建、紧接着的 `fs.statSync(outfile)` 抛 ENOENT —— **看起来像「环境坑」，
+    其实是脚本没打**。判「产物里到底有没有这段代码」要用 node 数**字符串字面量**
+    （`s.split("ai-attach").length - 1`）；`Select-String ... .Matches.Count` 在单行大压缩文件上**不可靠**（会数出 0）。
 
 ---
 

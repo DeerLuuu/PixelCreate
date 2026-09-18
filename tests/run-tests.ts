@@ -57,6 +57,7 @@ import { testAiDraw } from "./ai-draw.test";
 import { testAiTurn } from "./ai-turn.test";
 import { testAiRpc } from "./ai-rpc.test";
 import { testAiChat } from "./ai-chat.test";
+import { testAiVision } from "./ai-vision.test";
 import { testHans } from "./hans.test";
 
 async function main(): Promise<void> {
@@ -178,6 +179,8 @@ async function main(): Promise<void> {
   await testAiRpc();
   console.log("--- ai chat (C5 in-app assistant) ---");
   await testAiChat();
+  console.log("--- ai vision (reference image attached to the request) ---");
+  await testAiVision();
   console.log("--- simplified Chinese only (hans) ---");
   testHans();
   finish();

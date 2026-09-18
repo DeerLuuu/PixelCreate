@@ -2453,7 +2453,7 @@ Stroke 侧：`BrushState.pattern` 一填，落笔统一走 `paintOne()`——图
 ### 测试
 
 ```bash
-npm test        # 7843 条断言：引擎 / 选区 / 历史 / 播放 / 设置 / 引导 / 渲染 / 导出 / Aseprite 读写 / 返回手势 / UI 控件与令牌 / AI（ai-doc / tools / draw / turn / rpc / chat / presets / 浮窗与球）（末尾打印 assertions: N）
+npm test        # 8090 条断言：引擎 / 选区 / 历史 / 播放 / 设置 / 引导 / 渲染 / 导出 / Aseprite 读写 / 返回手势 / UI 控件与令牌 / AI（ai-doc / tools / draw / turn / rpc / chat / presets / 浮窗与球）（末尾打印 assertions: N）
 ```
 
 新增纯逻辑（算法、布局、解析、决策）时，优先抽成无 DOM 依赖的函数再补一条 `tests/*.test.ts` 断言——这是本项目保持可回归的主要手段。
@@ -3934,7 +3934,7 @@ node toolchain/pc-shell.mjs --port 8915 --no-open --provider-base http://api.dee
 node toolchain/check-bundle.mjs app2/www/js/app.js      # 期望：✓ 产物自检通过…（exit 0）
 # 更严的一条（推荐）：按 §6.4 在 %TEMP% 里用同一套 esbuild 口径重建一份，
 # md5 必须与 app2/www/js/app.js **逐字节相同** —— check-bundle 只证「能加载」，不证「等于 src」。
-node tests\.ts-out\tests\run-tests.js | Select-Object -Last 1   # 期望：ALL PASS（当前 7701 条）
+node tests\.ts-out\tests\run-tests.js | Select-Object -Last 1   # 期望：ALL PASS（当前 8090 条）
 ```
 
 壳伺服的就是 `app2/www/js/app.js`（§5.1b）：md5 或自检不对，说明产物落后于源码，先在仓库根重建（§6.4），
@@ -4037,4 +4037,191 @@ node toolchain/pc-shell.mjs --port 8914 --provider-key sk-cli-probe-8888 --provi
 curl.exe -s -X POST -H "Authorization: Bearer <壳启动时打印的 token>" http://127.0.0.1:8911/shell/shutdown
 Get-NetTCPConnection -LocalPort 8911 -State Listen   # 期望：无输出（端口已释放）
 ```
+
+### 26.8 参考图（vision）：把一张图与文本一起发给模型
+
+一句话：助手可以挂**一张**参考图，和文本一起发出去（`content` 变成 OpenAI 兼容的 **parts 数组**）。
+数据流是「会话里的参考图 / 本地图片文件 → 页面编码成 PNG data URL → 并进**最后一条 user 消息** →
+壳 `/provider/chat` 原样转发 → 上游」。**没有新增任何出站通道**：图走的就是 §26.6 那条同源代理，
+页面依旧不直连 provider、key 的安全口径（§26.3）一个字节没动。
+
+#### 26.8.1 为什么单独一层 `src/app/ai-vision.ts`
+
+尺寸与体积的判断**全是算术**，而真正的编码必须走 DOM（canvas + `toBlob`）。把算术抽出来之后，
+「768 是怎么来的」「这张图为什么被缩小」「超限到底拦不拦」都能在 `tests/ai-vision.test.ts`（无浏览器）
+里逐条钉住；页面侧只剩三行：`putImageData` → `pngBytes()` → `bytesToB64()`。
+**不要在 UI 里另写一份尺寸/体积判断，也不要在 `ai-vision.ts` 里 import DOM。**
+
+#### 26.8.2 常量（`src/app/ai-vision.ts`）
+
+| 常量 | 值 | 口径 |
+|---|---|---|
+| `AI_VISION_MAX_EDGE` | 768 | 单边上限；**只缩不放**（放大对模型没有新信息，却让 PNG 与 base64 一起变大） |
+| `AI_VISION_MIN_EDGE` | 64 | 缩到这个边就不再用「再缩一轮」的循环；再超限就报错让用户自己裁 |
+| `AI_VISION_DATA_URL_PREFIX` | `data:image/png;base64,` | 体积估算与「是不是 data URL」共用 |
+| `AI_VISION_SOFT_DATA_URL_BYTES` | 512 KiB | 软线：**能发**，但附件条上多一句「体积偏大」 |
+| `AI_VISION_HARD_DATA_URL_BYTES` | 768 KiB | 硬线：**拦住不发**，给一句中文原因 |
+| `AI_VISION_HARD_BYTES` | 由硬线反推 | 硬线对应的**原始 PNG** 字节数（base64 是 4/3，另减前缀长度） |
+| `AI_VISION_FIT_ROUNDS` | 6 | 缩图循环的轮数上限（防死循环） |
+| `AI_VISION_MAX_SHRINK` | 0.25 | 单轮最多缩到 1/4 边长（免得为一张巨图反复编码十几次） |
+| `AI_VISION_RESAMPLE_MAX` | 1024 | `engine/resample.ts` 的尺寸契约（那边的 `MAX_SIZE`）：**源图超过它就不能再交给那个引擎**，见 §26.8.3 末尾的坑 |
+
+**硬线为什么是 768 KiB 而不是贴着壳的 1 MiB**：`toolchain/pc-shell.mjs` 的 `MAX_BODY_BYTES` = 1 MiB 限的是
+**整个请求体**，而请求体里还有系统提示词、对话历史与 61 个工具的 schema（约 60–90 KB，长对话更多）。
+768 KiB 留了 25% 以上余量 —— 而且 base64 本身比原始 PNG 大 4/3，768 KiB 的 data URL 对应的 PNG 只有约 576 KiB。
+**超硬线时不静默截断**：截断的 base64 会让上游解码失败，那比本地报错糟得多。
+
+#### 26.8.3 纯函数
+
+| 函数 | 作用 |
+|---|---|
+| `clampImageSize(w, h, maxEdge?)` | → `{w, h, scale}`：最长边夹到上限、只缩不放、长宽各自 `round` 且下限 1 |
+| `exactDownscaleDivisor(sw, sh, dw, dh)` | 整数倍缩小时返回那个倍数，否则 0（整数倍才能用最近邻） |
+| `rgbaOfRef(img)` | `RefImg` → 能放进 `ImageData` 的**直通 RGBA 拷贝**（绝不改参考图自己的缓冲区） |
+| `refToRgba(img, maxEdge?)` | → `ClampedImage{w,h,px,sw,sh,scale,exactDivisor,algo}`：**编码前唯一的数据准备**。`scale===1` 原样拷贝；源在契约内（两边 ≤ 1024）时整数倍走 `nearest`、非整数走 `bilinear`（复用 `engine/resample.ts`）；**源超契约时改走下面的 `downscaleOutOfContract()`** |
+| `downscaleOutOfContract(px, sw, sh, dw, dh, algo)` | **源超出引擎契约时的降采样**（本模块自己实现，纯算术）：`area` = 目标像素取源上那一块的平均（默认，照片 / 截图走这条），`nearest` = 取那一块的左上角（整数倍缩小时的抽点，像素画硬边不被插值糊掉）。每个源像素只访问一次；按直通 RGBA 平均，不做预乘 |
+| `dataUrlBytesFor(pngLength)` | 只按长度推算 data URL 字节数（不真去 base64） |
+| `dataUrlBytes(url)` | 解析一条 data URL 的字节数；不是 `data:...;base64,` 形状返回 0，**从不抛异常** |
+| `visionBudgetOf(pngBytes, hard?, soft?)` | → `VisionBudget{bytes,dataUrlBytes,overHard,overSoft,ok,reason?}` |
+| `fitEncodedImage(pngBytes, size, opts?)` | → `FitStep{ok,next,reason?,budget}`：**编码之后**的收口，决定「就这样发 / 再缩一轮 / 拦下」 |
+| `visionGate(model, hasImage)` | → `VisionGate{allow,vision,reason?,note?}`：挂图 + 模型不支持视觉 → **发送前拦下** |
+| `dataUrlOfPng(pngLength, b64)` | 拼 `data:image/png;base64,` + base64（**只拼前缀**；base64 由 `src/engine/b64.ts` 的 `bytesToB64()` 产出，仓库里只有那一份） |
+
+**为什么是「编码后再判」而不是「编码前估算」**：PNG 的体积与内容强相关（纯色 768² 只有几 KB，噪点图能到 1 MB），
+任何事前估算都会在某一头失准。所以口径是**以真实字节数为准**，下一档边长由真实比例反推
+（面积 ∝ 边长²，`sqrt(目标 / 现在)`，另乘安全系数 `AREA_SAFETY` = 0.92），每轮都拿真数，不猜。
+`fitEncodedImage()` 还保证**下一档严格变小** —— 否则会死循环在同一条尺寸上（`clampImageSize` 会四舍五入）。
+
+**踩过的坑（2026-09 实测，别改回去）**：`engine/resample.ts` 的约定是「源与目标都在 1..1024」，
+越界时它**不抛异常**，而是返回一块**等长但全透明**的缓冲区（那边的 `dimsOk()`）。早先 `refToRgba()`
+把用户的原始尺寸直接喂了进去，于是**1200px 以上的参考图会被静默编成一张空白图发给模型**，
+而附件条上还写着「参考图已从 1600×1600 缩到 768×768」—— 尺寸对、像素全空，是这一层最难发现、
+后果最重的一类失败（**用户看到的是「发出去了」，模型收到的是一张空白**）。
+`tests/ai-vision.test.ts` 的 `aivision.ref.huge.*` 用**像素级**断言钉着它（采样到的颜色数 > 2、
+alpha 合计 > 0）：**只断言宽高拦不住这个 bug**，原来那条 `aivision.ref.default-max-edge` 就是漏网的弱断言。
+之所以自己写 `downscaleOutOfContract()` 而不把 `MAX_SIZE` 抬到 4096：那个上限是**全项目约定**
+（`scaleAdvanced` / `ScaleModal` 都按它算，`resampleRegion()` 也一样），动它要连带改一整片调用方，
+而且会改掉「越界回透明」这个已被别处依赖的兜底语义。
+
+#### 26.8.4 报文形状（照官方原文；三条硬口径）
+
+```json
+{"role":"user","content":[
+  {"type":"text","text":"……"},
+  {"type":"image_url","image_url":{"url":"data:image/png;base64,……"}}
+]}
+```
+
+1. **没有图时 `content` 永远是纯字符串**（`userContentParts()`）：非视觉端点与不支持 parts 数组的老网关
+   收到数组会直接 400，而且历史消息（tool 结果、模型自己的话）本来就只有文字 —— **既有请求体逐字节没变**。
+2. **只有 `user` 消息能带图**：`system` / `assistant` 带图上游回 **HTTP 400**。所以 `userContentParts()`
+   只被 `userMessage()` 调用，别的角色没有入口。
+3. **顺序是死的：文本先、图后**；`opts.imageNote`（尺寸/体积结论）拼进**文本块**，图本身仍是独立的一块。
+   本轮**不做** `detail`（low/high/original/auto）、不做 Files API、不做外部 URL —— 少一种块就少一条上游 400 的可能。
+
+`ai-chat.ts` 侧的新公开面：
+
+| 导出 | 作用 |
+|---|---|
+| `ChatContentPart` = `ChatTextPart` \| `ChatImagePart`；`ChatContent` = `string \| ChatContentPart[]` | `ChatMessage.content` 的类型（原来只有 `string`） |
+| `contentText(content)` | 取一条消息的正文文本：字符串原样返回，parts 数组**只取 text 块** |
+| `hasImagePart(content)` | 这条消息挂图没有（只有 `image_url` 块才算） |
+| `userContentParts(text, imageDataUrl?)` | 拼装 user 消息的 `content`：**没图返回纯字符串**，有图返回 `[{text},{image_url}]` |
+| `userMessage(text, imageDataUrl?)` | 上面那个的唯一调用者 |
+| `ChatTurnOpts.imageDataUrl` / `.imageNote` | 可选字符串；`runChatTurn()` 据此合并并做硬闸门 |
+
+**取文本一律走 `contentText(content)`**：对 parts 数组直接 `String()` 会得到 `"[object Object]"`
+（历史标签 `defaultTurnLabel()`、`mergeSystemPrompt()` 都踩这个坑，已改）。
+
+`runChatTurn()` 在**连回合都不开**之前做两步：① `visionGate()` 硬闸门（不许发就当场失败，**一个请求都不发**，
+连回合历史都不落）；② 把图并进**最后一条 user 消息** —— 所以调用方传进来的那条 user 消息仍然可以是纯字符串。
+
+#### 26.8.5 能力位（会过期的数据，集中在 `src/app/ai-presets.ts`）
+
+```ts
+export type AiVision = "yes" | "no" | "unknown";      // 三态，不是布尔
+export interface AiModelInfo { id: string; vision: AiVision }
+visionOfModel(model: string): AiVision                // 唯一的查表点（trim + 小写后精确匹配）
+modelAcceptsImages(model: string): boolean            // !== "no"
+visionCapableModels(): string[]                       // 明确支持的那些名字（拦下时用来告诉用户换哪个）
+```
+
+| 模型 | 能力位 | 依据（2026-09-16 核对官方文档） |
+|---|---|---|
+| `deepseek-flash` | `yes` | 官方「图像理解」页：支持 JPEG / PNG / GIF / WebP，**按文件实际内容判格式**，不看文件名或声明的 MIME |
+| `deepseek-v4-pro` | `no` | 同一张模型表的「图像理解」列为不支持 → 挂图必然是 HTTP 400，所以本地拦下 |
+| `deepseek-v4-flash-vision-exp` | `yes` | 该**模型名**已下线，但官方说明请求由最新 Flash 承接 —— 能力跟着承接方走 |
+| `gpt-4o` / `gpt-4o-mini` | `unknown` | 官方支持图像，但助手从没对着 OpenAI 端点跑过挂图请求，所以按「未知」处理（放行 + 一句风险说明） |
+| 其他任何名字（自建网关 / 中转站别名） | `unknown` | 见下 |
+
+**为什么必须有 `unknown` 这一档**：`ai.chatModel` 是**自由文本**。把「不认识」当成 `no` 会把本来能用的
+自建网关用户全部拦死；当成 `yes` 又会让 `deepseek-v4-pro` 拿着图去撞必然的 400。所以 `unknown` =
+**允许发送 + UI 多一句「图像能力未知，若端点报错请换模型」**。**不要**替用户做否定判断；
+也**不要**在 UI 或 `ai-chat.ts` 里另写一份模型名清单 —— 模型名是「会过期的数据」，只在这一个文件里。
+
+#### 26.8.6 UI（`src/ui/AiPanel.tsx` 的附件条）
+
+| 锚点 | 是什么 |
+|---|---|
+| `ai-attach` | 附件条整体（在输入框上方，**与输入框的可用性无关**：输入被锁时也看得出图还挂着，也能先移除） |
+| `ai-attach-ref` / `ai-attach-file` | 两个入口：「用当前参考图」（取 `SESSION.refImg`，没有就给一句中文）/「选择图片文件」（隐藏的 `<input type="file">`，`accept` 是官方支持的那四种） |
+| `ai-attach-thumb` / `ai-attach-info` / `ai-attach-from` | 缩略图（直接用 data URL）/ `原尺寸 → 现在尺寸 · 体积 · 名字` / 来源那一行 |
+| `ai-attach-remove` | 移除这张图 |
+| `ai-attach-busy` / `ai-attach-warn` | 正在编码 / 能力门控的那句提醒（挂图 + 模型不支持视觉时，**点发送之前**就看得见） |
+| `ai-attach-input` | 隐藏的文件选择器本体 |
+
+`AiAttachment{dataUrl,bytes,w,h,srcW,srcH,name,from,note}`：**只留编码后的 data URL**，不留原始 RGBA
+（图已经编好了，再留一份原始像素只是白占内存）。缩略图也不另存 —— `<img src>` 直接用 data URL。
+
+两条行为口径：
+
+- **发送后保留**：只有用户点「移除」才清，这样「换个说法再问一遍同一张图」不用重新挂一次。
+  **只要图还在附件条上，之后的每一轮都会带上它** —— 但 `thread` 里那条历史消息仍然只有纯文本，
+  也就是说「图的记忆」跟着的是**附件条的状态**，不是对话历史。
+- **跨卸载保留**（`aiWinStore.attach`）：浮窗最小化 = DOM 真的卸载，附件若放组件本地就会「最小化一下图就没了」。
+  卸载钩子只收**回合**（`aiPanelDropsTurnOnUnmount`），不碰附件 —— 与「最小化丢回合」不冲突。
+
+编码路径（页面侧**唯一** import DOM 的地方）：`ImageData` + `putImageData` → `pngBytes(canvas)`
+（`src/io/exporters.ts`，`Promise<Uint8Array | null>`）→ `bytesToB64()`（`src/engine/b64.ts`）→ `dataUrlOfPng()`。
+用户选的文件走 `createObjectURL` + `<img>` 解码（**不用** `createImageBitmap()`：老 WebView / 部分桌面壳没有它，
+而 `<img>` + `drawImage` 是 `ui/paste.ts` 用了很久的路径），`finally` 里 `revokeObjectURL()` 不留悬空 blob。
+体积不达标时**从原图重新采样**再编一轮（不是拿上一轮的输出再缩，那会累积模糊）。
+
+#### 26.8.7 自己验（怎么确认图真的发出去了）
+
+纯文本那条路一点没变；要验「图真的到了上游」，用**记录请求体**的假 provider（§26.7 测法 A 的变体）：
+
+```js
+// %TEMP%\shot-provider.mjs：把收到的请求体原样落盘，再回一条最简 OK
+import http from "node:http";
+import fs from "node:fs";
+http.createServer((req, res) => {
+  let b = ""; req.on("data", (c) => (b += c));
+  req.on("end", () => {
+    fs.writeFileSync(process.env.TEMP + "\\shot-body.json", b);
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ choices: [{ message: { role: "assistant", content: "ok" } }] }));
+  });
+}).listen(8915, "127.0.0.1", () => console.log("shot provider: http://127.0.0.1:8915"));
+```
+
+```powershell
+node $env:TEMP\shot-provider.mjs
+node toolchain/pc-shell.mjs --port 8916 --provider-key local --provider-base http://127.0.0.1:8915
+```
+
+设置里选「自定义」+ 端点 `http://127.0.0.1:8915`，在助手浮窗上「用当前参考图」（或选一个文件），随便发一句。
+然后在落盘的 `shot-body.json` 里看**最后一条 user 消息**：
+
+| 观察点 | 期望 |
+|---|---|
+| `content` 的形状 | **数组**：第一项 `{"type":"text",…}`、第二项 `{"type":"image_url","image_url":{"url":"data:image/png;base64,…"}}` |
+| 图是不是真的 | base64 解码后的字节数 = 附件条上显示的 `bytes`（不是空串、不是截断的） |
+| 体积 | 整个请求体 < 1 MiB（壳的 `MAX_BODY_BYTES`；超了页面会看到 HTTP 413 翻成的人话） |
+| 不挂图再发一条 | 那条 user 消息的 `content` 必须是**纯字符串**（回归判据） |
+| 换成 `deepseek-v4-pro` 再挂图点发送 | **不产生任何请求**，面板直接给「这个模型不支持图像理解…请在设置里换成 …」 |
+
+**未验项（诚实边界）**：本机没有可用 key，所以**没有对着真 DeepSeek 端点发过带图请求**（`deepseek-flash`
+的图像理解只在官方文档层面核对过）；`gpt-4o` 那两条 `unknown` 的模型也没实跑过。第一次拿真 key 试的时候
+**先用 `deepseek-flash`**，并注意「思考模式 + 61 个工具 schema」会让首字明显变慢（超时口径见 §26.6 / §26.7）。
 

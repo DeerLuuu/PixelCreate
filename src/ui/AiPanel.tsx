@@ -32,9 +32,16 @@
 import { useEffect, useRef, useState } from "react";
 import { SESSION } from "./singleton";
 import { Btn, Icon } from "./kit/primitives";
+import { FEATURE_ICONS } from "./feature-icons";
 import { isNativeShell } from "../io/bridge";
 import * as bridge from "../io/bridge";
 import { docDigest } from "../app/ai-doc";
+import { pngBytes } from "../io/exporters";
+import { bytesToB64 } from "../engine/b64";
+import {
+  AI_VISION_FIT_ROUNDS, AI_VISION_MAX_EDGE, AI_VISION_MIN_EDGE, clampImageSize, dataUrlOfPng,
+  fitEncodedImage, refToRgba, rgbaOfRef, visionBudgetOf, visionGate,
+} from "../app/ai-vision";
 import {
   AI_CHAT_HOST_KEY_SENTINEL, AI_CHAT_TEMP_STEP, aiChatStatusText, chatConfigError,
   detectChatProxy, formatCallLog, proxyChatFetch, runChatTurn, systemMessage, userMessage,
@@ -91,6 +98,34 @@ interface AiPending {
   steps: AiTurnStepPreview | null;
 }
 
+/**
+ * **挂给这一轮的一张参考图**（契约 §5 的附件条要显示的全部信息）。
+ *
+ * 只留**编码后的 data URL**，不留原始 RGBA：图已经编好了，发送时直接用；
+ * 再留一份原始像素只是白占内存（12 MB 的参考图就是 12 MB）。
+ * 缩略图也不另外存一份 —— `<img src>` 直接用这个 data URL（浏览器自己缓存解码结果）。
+ */
+export interface AiAttachment {
+  /** `data:image/png;base64,……`（发给模型的就是这一串） */
+  dataUrl: string;
+  /** 编码后的 PNG 字节数（**不是** base64 长度；界面按 KiB 显示） */
+  bytes: number;
+  /** 实际编码时的宽度（可能已经被尺寸夹取缩过） */
+  w: number;
+  /** 实际编码时的高度 */
+  h: number;
+  /** 原始宽（与 `w` 不同时界面要写「2048×2048 → 768×768」） */
+  srcW: number;
+  /** 原始高 */
+  srcH: number;
+  /** 来源文件名 / 参考图原名（可为空） */
+  name: string;
+  /** 来自哪一路（文案不同：一条是「用当前参考图」，一条是「选择图片文件」） */
+  from: "ref" | "file";
+  /** 给模型看的一句说明（尺寸缩放 / 体积），拼进文本块，可为空 */
+  note: string;
+}
+
 interface AiWinStore {
   /** 模型侧的消息流（不含 system —— 每次发送时按当时的画布摘要重新拼一条） */
   thread: ChatMessage[];
@@ -104,11 +139,20 @@ interface AiWinStore {
   input: string;
   /** **这一轮撤回过**（B1：留一行说明，且语义上不再放行输入 —— 见 `aiPanelShowsPreview` 的备注） */
   reverted: boolean;
+  /**
+   * 当前挂着的参考图（契约 §5：**发送后保留**，只有用户点移除才清）。
+   *
+   * 为什么放在**跨卸载的存储**里而不是组件本地 `useState`：浮窗「最小化」是真的卸载 DOM
+   * （见本文件顶部的三条口径），放本地状态就会「最小化一下图就没了」——
+   * 与「对话不跟着丢」这条既有行为不一致。卸载钩子只收**回合**（`aiPanelDropsTurnOnUnmount`），
+   * 不碰附件，所以最小化 → 还原之后附件还在，与用户的预期一致。
+   */
+  attach: AiAttachment | null;
 }
 
 /** 进程内单例：`AiPanel` 每次挂载都读写它（所以卸载不丢对话） */
 export const aiWinStore: AiWinStore = {
-  thread: [], entries: [], pending: null, logs: [], input: "", reverted: false,
+  thread: [], entries: [], pending: null, logs: [], input: "", reverted: false, attach: null,
 };
 
 /**
@@ -293,7 +337,151 @@ export function ChatBall({ t, onRestore, onOtherRings }: {
 // ============================================================================================
 
 /** 没有浮窗存储（SSR / 单测直接渲染面板）时的退路：进程内一个空壳，行为与从前一致 */
-const scratchStore: AiWinStore = { thread: [], entries: [], pending: null, logs: [], input: "", reverted: false };
+const scratchStore: AiWinStore = {
+  thread: [], entries: [], pending: null, logs: [], input: "", reverted: false, attach: null,
+};
+
+// ============================================================================================
+// ③b 参考图 → data URL（**页面侧只做 canvas + 编码**，一切算术都在 `src/app/ai-vision.ts`）
+//
+// 这一小段是把纯函数接到真浏览器上的那几行，也是唯一 import DOM 的地方：
+//   `putImageData`（把直通 RGBA 放进画布）→ `pngBytes()`（**仓库既有的 PNG 编码**，
+//   `src/io/exporters.ts`）→ `bytesToB64()`（**仓库既有的 base64**，`src/engine/b64.ts`）
+//   → `dataUrlOfPng()`（拼前缀）。
+//
+// 体积不达标时**缩一轮再编一轮**（`fitEncodedImage()` 用**真实字节数**反推下一档尺寸）：
+// 为什么不是「先估好尺寸一次编成」—— PNG 的体积与内容强相关（纯色几 KB、噪点图几百 KB），
+// 任何事前估算都会在某一头失准；以真数为准则每一轮都收敛。
+// ============================================================================================
+
+/** 编码一张直通 RGBA（尺寸已经由 `clampImage()` 定好）→ PNG data URL 与字节数 */
+async function encodeRgba(px: Uint8ClampedArray, w: number, h: number): Promise<{ dataUrl: string; bytes: number } | null> {
+  try {
+    const cv = document.createElement("canvas");
+    cv.width = Math.max(1, Math.round(w));
+    cv.height = Math.max(1, Math.round(h));
+    const ctx = cv.getContext("2d");
+    if (!ctx) return null;
+    const id = new ImageData(cv.width, cv.height);
+    id.data.set(px.subarray ? px.subarray(0, cv.width * cv.height * 4) : px);
+    ctx.putImageData(id, 0, 0);
+    const bytes = await pngBytes(cv);
+    if (!bytes || !bytes.length) return null;
+    return { dataUrl: dataUrlOfPng(bytesToB64(bytes)), bytes: bytes.length };
+  } catch {
+    return null;   // 编码失败（画布建不出来 / toBlob 回 null）：交给调用方说一句人话
+  }
+}
+
+/**
+ * 把一张参考图（或用户选的文件解出来的像素）夹到能发的尺寸与体积，返回附件。
+ *
+ * 对**端到端脚本**也是入口：契约 §6.3 要求「经真壳 + 无头浏览器发一条带图消息」，
+ * 而参考图在页面里只能靠 `SESSION.refImg` 摆好、再点按钮；脚本需要在**同一台机器**上
+ * 造一张确定性的图，所以这个函数是 `export` 的（探测包把它挂到 `globalThis`，
+ * 走的是与按钮**完全相同**的编码路径）。
+ *
+ * @param img   直通 RGBA 的源（参考图走 `SESSION.refImg`，文件走 `<img>` 解码后的画布）
+ * @param name  来源名（文件用 `file.name`，参考图用 `SESSION.refImg.name`）
+ * @param from  哪一路进来的（只影响文案）
+ * @returns 附件；`error` 非空 = 这张图**发不出去**（中文原因，调用方必须显示出来）
+ */
+export async function encodeAttachment(
+  img: { w: number; h: number; px: Uint8ClampedArray },
+  name: string,
+  from: "ref" | "file",
+  /** 只给探测脚本用：每轮「尺寸 + 真实字节数」的轨迹（默认不收集，不分配） */
+  trace?: Array<{ w: number; h: number; bytes: number }>,
+): Promise<{ attach?: AiAttachment; error?: string }> {
+  const srcW = Math.max(0, Math.round(Number(img?.w) || 0));
+  const srcH = Math.max(0, Math.round(Number(img?.h) || 0));
+  if (srcW <= 0 || srcH <= 0 || !img?.px || !img.px.length) return { error: "这张图没有像素可读（可能是空文件或格式不认识）" };
+  const source = { w: srcW, h: srcH, px: img.px };
+  // 第一档 = 尺寸夹取（只缩不放，整数倍走最近邻）；之后每轮按**上一轮的真实字节数**定的 `next` 重编。
+  // 每一轮都从**原图**重采样（不是拿上一轮的输出再缩）：反复缩一张已经缩过的图会累积模糊。
+  //
+  // 内存口径（一张 4000×3000 ≈ 48 MB 的 RGBA 源，缩图循环最多 6 轮）：
+  //   · 循环里**只调一次** `refToRgba()` —— 它内部会拷一份再缩（`resamplePixels()` 只读源，
+  //     但「绝不改调用方的缓冲区」这条口径是 `rgbaOfRef()` 的职责，不能省）；
+  //   · 第一轮够小（`scale === 1`）时**直接用调用方的缓冲区**（不再拷一份），于是
+  //     「小图直接发」这条最常走的路是零额外拷贝。`encodeAttachment()` 的入参是临时的
+  //     （参考图那条走 `rgbaOfRef()` 明确拷贝，文件那条本来就是新解出来的），
+  //     而 `putImageData()` 只读它 —— 所以这里不拷贝是安全的。
+  let edge = AI_VISION_MAX_EDGE;
+  for (let round = 0; ; round++) {
+    const size = clampImageSize(srcW, srcH, edge);
+    const px = size.scale === 1 ? source.px : refToRgba(source, edge).px;
+    const enc = await encodeRgba(px, size.w, size.h);
+    if (!enc) return { error: "这张图编码不出来（本机浏览器没能生成 PNG）——换一张试试" };
+    if (trace) trace.push({ w: size.w, h: size.h, bytes: enc.bytes });
+    const fit = fitEncodedImage(enc.bytes, size, { round });
+    if (fit.ok) {
+      const shrinkNote = size.w !== srcW || size.h !== srcH
+        ? "参考图已从 " + srcW + "×" + srcH + " 缩到 " + size.w + "×" + size.h + "（最长边上限 768px，只缩不放）"
+        : "";
+      const budget = visionBudgetOf(enc.bytes);
+      const bigNote = budget.overSoft ? "（体积偏大：" + Math.round(budget.dataUrlBytes / 1024) + " KiB）" : "";
+      return {
+        attach: {
+          dataUrl: enc.dataUrl, bytes: enc.bytes, w: size.w, h: size.h, srcW, srcH,
+          name: String(name ?? ""), from, note: shrinkNote + bigNote,
+        },
+      };
+    }
+    if (!fit.next) return { error: fit.reason || "这张图太大，发不出去" };
+    edge = Math.max(AI_VISION_MIN_EDGE, Math.max(fit.next.w, fit.next.h));
+    if (round + 1 >= AI_VISION_FIT_ROUNDS) return { error: fit.reason || "这张图太大，发不出去" };
+  }
+}
+
+/**
+ * **「用当前参考图」**：把 `SESSION.refImg`（索引库里的参考图）编成附件。
+ * 没有参考图时给一句中文说明（不是静默什么都不做）。
+ */
+async function attachmentFromRef(): Promise<{ attach?: AiAttachment; error?: string }> {
+  const ref = SESSION.refImg;
+  if (!ref) return { error: "现在没有参考图：先用「导入参考图」放一张，或直接「选择图片文件」" };
+  return encodeAttachment({ w: ref.w, h: ref.h, px: rgbaOfRef(ref) }, ref.name || "参考图", "ref");
+}
+
+/**
+ * **「选择图片文件」**：`<input type="file">` → 解码成像素 → 走与参考图**同一条**编码路径。
+ *
+ * 为什么用 `createObjectURL` + `<img>` 解码而不是 `createImageBitmap()`：后者在
+ * 老 WebView / 部分桌面壳里没有，而 `<img>` + `drawImage` 是这套代码（`io/bridge.ts`
+ * 的导入、`ui/paste.ts`）用了很久的路径，行为有既有回归兜着。`finally` 里撤销 URL，
+ * 不留悬空的 blob。
+ */
+async function attachmentFromFile(file: File): Promise<{ attach?: AiAttachment; error?: string }> {
+  const url = URL.createObjectURL(file);
+  try {
+    const el = new Image();
+    await new Promise<void>((res, rej) => {
+      el.onload = () => res();
+      el.onerror = () => rej(new Error("decode"));
+      el.src = url;
+    });
+    const w = Math.max(1, el.naturalWidth || el.width);
+    const h = Math.max(1, el.naturalHeight || el.height);
+    const cv = document.createElement("canvas");
+    cv.width = w;
+    cv.height = h;
+    const ctx = cv.getContext("2d");
+    if (!ctx) return { error: "本机浏览器读不了这张图（画布不可用）" };
+    ctx.drawImage(el, 0, 0);
+    const data = ctx.getImageData(0, 0, w, h).data;
+    return await encodeAttachment({ w, h, px: data }, file.name, "file");
+  } catch {
+    return { error: "这张图片文件解不开（可能是损坏的文件，或不是 PNG / JPEG / WebP / GIF）" };
+  } finally {
+    try { URL.revokeObjectURL(url); } catch { /* 撤销失败不算错 */ }
+  }
+}
+
+/** 附件条上的一行体积文本（`KiB`；与错误文案里的单位一致，别一处 KiB 一处 KB） */
+function attachSizeText(a: AiAttachment): string {
+  return String(Math.max(1, Math.round(a.bytes / 1024))) + " KiB";
+}
 
 /**
  * 浏览器 / APK / 桌面壳的 fetch 都满足 `ChatFetch`；没有 fetch 的运行环境返回 null。
@@ -455,6 +643,16 @@ export function AiPanel({ t, onBack, store }: {
   const [pending, setPending] = useState<AiPending | null>(() => st.pending);
   /** 这一轮撤回过（B2）：留一行说明，且不再放行输入（见 `aiPanelAllowsSend`） */
   const [reverted, setReverted] = useState(() => st.reverted === true);
+  /**
+   * 当前挂着的参考图（契约 §5）：跨卸载保留（见 `AiWinStore.attach` 的注释）。
+   * **发送后保留** —— 只有用户点附件条上的「移除」才清，这样「换个说法再问一遍同一张图」
+   * 不用重新挂一次。
+   */
+  const [attach, setAttach] = useState<AiAttachment | null>(() => st.attach);
+  /** 正在编码 / 解码那张图（读文件是异步的，期间按钮要禁用，免得连点挂两张） */
+  const [attaching, setAttaching] = useState(false);
+  /** `<input type="file">` 的 ref（隐藏起来，由「选择图片文件」按钮代点） */
+  const fileRef = useRef<HTMLInputElement | null>(null);
   // 通路（直连 / 同源代理）：null = 还没探完（探完才决定 key 从哪来）
   const [transport, setTransport] = useState<typeof transportCache>(() => transportCache);
   // 流式那一行的状态：`live` = 正在流式（画「流式输出中…」），`fallback` = 降级的说明（一定要给用户看）
@@ -475,10 +673,10 @@ export function AiPanel({ t, onBack, store }: {
   /** 任何一项变化都同步进存储（卸载时不丢）；四处状态一起走这里，别各写一份 */
   useEffect(() => {
     st.thread = thread; st.entries = entries; st.pending = pending;
-    st.logs = logs; st.input = input; st.reverted = reverted;
+    st.logs = logs; st.input = input; st.reverted = reverted; st.attach = attach;
     // 行数镜像（见 `entriesLen` 的注释）：一次渲染里补平，下一批增量就有准数了
     entriesLen.current = entries.length;
-  }, [st, thread, entries, pending, logs, input, reverted]);
+  }, [st, thread, entries, pending, logs, input, reverted, attach]);
 
   useEffect(() => () => {
     live.current = false;
@@ -553,6 +751,43 @@ export function AiPanel({ t, onBack, store }: {
   const confirmTool = (req: { tool: string; tier: string; summary: string }): Promise<boolean> =>
     SESSION.askConfirm({ msg: t("aiChatConfirm") + "\n" + req.summary, yes: t("ok"), no: t("cancel") });
 
+  /**
+   * 挂图的两个入口共用这一段收尾：编码中禁用按钮 → 成功就换上、失败就说一句中文。
+   *
+   * **失败一定说出来**（`setErr`）：体积超限、格式不认、没有参考图，都是用户需要知道的事，
+   * 静默什么都不做就是最糟的那种「点了没反应」。
+   */
+  const runAttach = async (job: () => Promise<{ attach?: AiAttachment; error?: string }>): Promise<void> => {
+    if (attaching) return;
+    setAttaching(true);
+    setErr("");
+    try {
+      const r = await job();
+      if (!live.current) return;
+      if (r.attach) setAttach(r.attach);
+      else if (r.error) setErr(r.error);
+    } catch (e) {
+      if (live.current) setErr(String((e as Error)?.message ?? e));
+    } finally {
+      if (live.current) setAttaching(false);
+    }
+  };
+  /** 「用当前参考图」：取会话里那张参考图（`SESSION.refImg`），走同一条编码路径 */
+  const useRefImage = (): void => { void runAttach(attachmentFromRef); };
+  /** 「选择图片文件」：交给隐藏的 `<input type="file">`，选到之后在 `onChange` 里解码 */
+  const pickFile = (): void => {
+    if (attaching) return;
+    const el = fileRef.current;
+    if (!el) return;
+    el.value = "";                 // 清掉上一次的选择：否则「再选同一个文件」不会触发 change
+    el.click();
+  };
+
+  /** 挂图 + 模型不支持视觉 → 发送前的**本地预览判定**（点发送就报，不等一整轮跑完） */
+  const attachGate = attach && cfg.model.trim() ? visionGate(cfg.model.trim(), true) : null;
+  const attachWarn = attachGate && !attachGate.allow ? (attachGate.reason || t("aiChatVisionNo"))
+    : attachGate && attachGate.note ? attachGate.note : "";
+
   const send = async (): Promise<void> => {
     // 撤回过的一轮**不许再让模型接着跑**（文档与消息线程已经不一致，见 §23.4 与 `aiPanelAllowsSend`）
     if (busy || pending || reverted) return;           // 上一轮还在跑 / 还没收尾 / 已撤回过：不叠加
@@ -566,6 +801,12 @@ export function AiPanel({ t, onBack, store }: {
     const cfgErr = chatConfigError({ endpoint: effEndpoint, model, key: effKey });
     if (cfgErr) { setErr(cfgErr); return; }
     if (!fetchFn) { setErr(t("aiChatErrOff")); return; }
+    // 挂图 + 模型不支持视觉：**发送前拦下**（`ai-chat.runChatTurn()` 里还有同一道闸，
+    // 那里是硬口径 —— 这里只是为了在点发送的那一刻就把中文提示显示出来，不用等一整轮）。
+    if (attach) {
+      const gate = visionGate(model, true);
+      if (!gate.allow) { setErr(gate.reason || t("aiChatVisionNo")); return; }
+    }
     const ctx: AiToolCtx = { session: SESSION, confirm: confirmTool, turn: null };
     const messages = [sysMsg(), ...thread, userMessage(text)];
     setEntries((prev) => prev.concat([{ role: "user", text }]));
@@ -612,6 +853,11 @@ export function AiPanel({ t, onBack, store }: {
       timeoutMs: cfg.timeoutSec * 1000,                 // 秒 → 毫秒；壳的上游腿与直连兜底都按它等
       stream: cfg.stream,
       systemPrompt: cfg.systemPrompt,
+      // 挂图：图是**编好的 data URL**（`ai-vision.ts` + `b64.ts` 在本文件上半段产出），
+      // `ai-chat` 把它并进最后一条 user 消息（文本块先、图块后），并再走一次能力门控。
+      // 没有附件时这两个字段是空串 → 请求体逐字节与从前相同（`content` 仍是纯字符串）。
+      imageDataUrl: attach ? attach.dataUrl : "",
+      imageNote: attach ? attach.note : "",
       onCall: (log) => { if (live.current) setLogs((prev) => prev.concat([log])); },
       onText: (v) => onDelta("text", v),
       onReasoning: (v) => onDelta("reasoning", v),
@@ -821,6 +1067,62 @@ export function AiPanel({ t, onBack, store }: {
         ? <div className="row-note" data-guide="ai-stream-fallback">{t("aiChatStreamFallback").replace("{why}", streamFlag.fallback)}</div>
         : null}
       {err ? <div className="row-note warn" data-guide="ai-error">{err}</div> : null}
+      {/*
+        参考图附件条（契约 §5）：缩略图 + 宽×高 + 编码体积 + 移除按钮，外加两个挂图入口。
+        **它在输入框上方、并且与输入框的可用性无关** —— 输入被锁住（还有一轮没收尾 / 撤回过）
+        的时候用户仍然能看出「图还挂着」，也能先把它移除。
+        挂图 + 模型不支持视觉时，`attachWarn` 就是那句「该换哪个模型」的中文提示（点发送之前就看得见）。
+      */}
+      <div className="ai-attach" data-guide="ai-attach">
+        {attach ? (
+          <div className="ai-attach-row" data-guide="ai-attach-row">
+            <img className="ai-attach-thumb" src={attach.dataUrl} alt="" data-guide="ai-attach-thumb" />
+            <div className="ai-attach-meta">
+              <div className="ai-attach-line" data-guide="ai-attach-info">
+                {attach.srcW !== attach.w || attach.srcH !== attach.h
+                  ? attach.srcW + "×" + attach.srcH + " → " + attach.w + "×" + attach.h
+                  : attach.w + "×" + attach.h}
+                {" · " + attachSizeText(attach)}
+                {attach.name ? " · " + attach.name : ""}
+              </div>
+              <div className="as-why" data-guide="ai-attach-from">
+                {attach.from === "ref" ? t("aiChatAttachFromRef") : t("aiChatAttachFromFile")}
+              </div>
+            </div>
+            <button type="button" className="ai-attach-x" data-guide="ai-attach-remove"
+              title={t("aiChatAttachRemove")} aria-label={t("aiChatAttachRemove")}
+              onClick={() => { setAttach(null); setErr(""); }}>
+              <Icon id="i-x" size={12} />
+            </button>
+          </div>
+        ) : null}
+        <div className="row-actions">
+          {/* 两个挂图入口**并排**，图标必须能分清：`i-ref`（参考图）与 `i-import`（导入文件），
+              登记在 `FEATURE_ICONS.aiAttach`（见那里的注释：为什么可以复用这两个既有图标）。 */}
+          <Btn icon={FEATURE_ICONS.aiAttach.ref} label={t("aiChatAttachRef")} onClick={useRefImage} guide="ai-attach-ref" />
+          <Btn icon={FEATURE_ICONS.aiAttach.file} label={t("aiChatAttachFile")} onClick={pickFile} guide="ai-attach-file" />
+          {attaching ? <span className="as-why" data-guide="ai-attach-busy">{t("aiChatAttachBusy")}</span> : null}
+        </div>
+        {/*
+          隐藏的文件选择器。`accept` 按契约 §5 写死四种格式（**官方图像理解支持的那四种**）；
+          真正的格式判定不看文件名与 MIME —— 我们解成像素之后一律编成 PNG 发出去，
+          所以「格式按内容判」这条天然成立（契约 §1）。
+        */}
+        <input
+          ref={fileRef}
+          type="file"
+          accept="image/png,image/jpeg,image/webp,image/gif"
+          data-guide="ai-attach-input"
+          style={{ display: "none" }}
+          onChange={(e) => {
+            const f = e.target.files && e.target.files[0];
+            if (f) void runAttach(() => attachmentFromFile(f));
+          }}
+        />
+        {attachWarn
+          ? <div className="row-note warn" data-guide="ai-attach-warn">{attachWarn}</div>
+          : null}
+      </div>
       {showPreview && pending ? (
         <div data-guide="ai-pending">
           <div className="row-note">

@@ -73,6 +73,7 @@
     "../tests/ai-draw.test.ts",
     "../tests/ai-turn.test.ts",
     "../tests/ai-rpc.test.ts",
-    "../tests/ai-chat.test.ts"
+    "../tests/ai-chat.test.ts",
+    "../tests/ai-vision.test.ts"
   ]
 }

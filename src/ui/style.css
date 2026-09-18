@@ -1442,3 +1442,13 @@ html[data-pc] .dlg-sh{width:min(600px,64vw)}
 .ai-call-rev{color:var(--dim);font-style:normal}
 .ai-call-rev.grew{color:var(--text)}
 .ai-call-row.reverted .ai-call>.ai-call-head{text-decoration:line-through;opacity:.6}
+/* AI 助手的**参考图附件条**（挂图发给模型；口径见 src/app/ai-vision.ts）：
+   缩略图 + 宽×高 + 编码体积 + 移除按钮；用的是既有设计令牌，没有写死颜色。
+   缩略图用 `object-fit:contain`：像素画的长宽比不能压扁，留白由格子底色补上。 */
+.ai-attach{display:flex;flex-direction:column;gap:4px;margin:4px 0 2px}
+.ai-attach-row{display:flex;align-items:center;gap:8px;padding:4px 6px;border:1px solid var(--line);border-radius:var(--r-2);background:var(--bg3)}
+.ai-attach-thumb{width:36px;height:36px;flex:0 0 auto;object-fit:contain;image-rendering:pixelated;border-radius:var(--r-1);background:var(--bg2)}
+.ai-attach-meta{flex:1 1 120px;min-width:0;display:flex;flex-direction:column;gap:1px;font-size:11px;color:var(--text-2)}
+.ai-attach-line{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ai-attach-x{flex:0 0 auto;width:24px;height:24px;display:flex;align-items:center;justify-content:center;border:1px solid var(--line);border-radius:var(--r-1);background:var(--bg2);color:var(--text-2);cursor:pointer}
+.ai-attach-x:hover{background:var(--bg);color:var(--text)}

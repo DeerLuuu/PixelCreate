@@ -416,6 +416,11 @@ const zh: Dict = {
   aiChatStepReverted: "已撤回第 {n} 步：文档回到这一步执行之前，这一步及之后的步骤一并作废。这一轮仍然开着 —— 现在只能「应用当前状态」或「放弃整轮」，不能再让模型接着跑（消息里还留着被撤掉的步骤，文档已经对不上了）",
   aiChatStepOff: "本回合不支持按步撤回：{why}",
   aiChatStepBudget: "快照已用 {used} / 上限 {budget}",
+  // ---- 参考图 / 视觉输入（挂图发给模型；体积与尺寸口径见 src/app/ai-vision.ts）----
+  aiChatAttachRef: "用当前参考图", aiChatAttachFile: "选择图片文件",
+  aiChatAttachRemove: "移除这张参考图", aiChatAttachBusy: "正在处理图片…",
+  aiChatAttachFromRef: "来自当前参考图", aiChatAttachFromFile: "来自选择的图片文件",
+  aiChatVisionNo: "这个模型不支持图像理解，带参考图发过去会被端点拒绝：请在 设置 → AI 助手 → 模型 里换一个支持图像理解的模型",
   aiChatStepRevertedNote: "这一步已撤回：文档回到它执行之前。这一轮只能「应用当前状态」或「放弃整轮」—— 撤回过之后不再接着让模型跑（消息里还留着被撤掉的步骤，文档已经对不上了）",
   bucketGlobalLabel: "油漆桶：非连续填充",
   bucketGlobalDesc: "开启后填充整层所有同色像素（关闭=仅填充连通区域）",
@@ -890,6 +895,12 @@ const en: Dict = {
   aiChatStepOff: "Per-step revert is unavailable for this turn: {why}",
   aiChatStepBudget: "Snapshots used {used} / limit {budget}",
   aiChatStepRevertedNote: "This step was reverted, so the document is back to just before it ran. The only endings left for this turn are Apply current state or Discard the whole turn - after a revert the model does not keep going, because the thread still holds the undone steps while the document no longer matches",
+  // ---- reference image / vision input (attaching a picture to the request; the sizing and
+  //      byte budgets live in src/app/ai-vision.ts) ----
+  aiChatAttachRef: "Use current reference", aiChatAttachFile: "Choose image file",
+  aiChatAttachRemove: "Remove this reference image", aiChatAttachBusy: "Processing the image…",
+  aiChatAttachFromRef: "From the current reference image", aiChatAttachFromFile: "From the chosen image file",
+  aiChatVisionNo: "This model cannot read images, so a reference picture would be rejected by the endpoint: switch to a model with image understanding under Settings -> AI assistant -> Model",
   bucketGlobalLabel: "Bucket: global fill",
   bucketGlobalDesc: "Fill every matching pixel in the layer (off = connected region only)",
   guide: {

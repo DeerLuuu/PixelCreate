@@ -25,6 +25,9 @@
 import type { Rect } from "../engine/types";
 import { AI_ARG_CURRENT, callTool, listTools } from "./ai-tools";
 import type { AiParamType, AiTier, AiTool, AiToolCtx, AiToolParam, AiToolResult } from "./ai-tools";
+// 参考图 / 视觉输入的两件事都在 `ai-vision.ts`（纯函数，可 Node 测）：体积与尺寸口径 + 能力门控。
+// **这一层不 import DOM**：图是调用方编好之后传进来的 data URL（见 `ChatTurnOpts.imageDataUrl`）。
+import { visionGate } from "./ai-vision";
 import {
   beginAiTurn, beginTurnStep, endTurnStep, isTurnOpen, rollbackTurn, runAiTurn, turnHandle,
 } from "./ai-turn";
@@ -94,6 +97,31 @@ export const AI_CHAT_SYSTEM_PROMPT = [
 
 export type ChatRole = "system" | "user" | "assistant" | "tool";
 
+/**
+ * 用户消息里的一个**内容块**（OpenAI 兼容的 parts 数组；官方原文见契约 §3）。
+ *
+ * 只有两种，因为**这一轮只做「文字 + 一张参考图」**：`detail`（low/high/original/auto）、
+ * Files API 与外部 URL 都明确不做（契约 §3 最后一条）。少一种块就少一条上游 400 的可能。
+ */
+export interface ChatTextPart {
+  type: "text";
+  text: string;
+}
+export interface ChatImagePart {
+  type: "image_url";
+  image_url: { url: string };
+}
+export type ChatContentPart = ChatTextPart | ChatImagePart;
+
+/**
+ * 一条消息的 `content`：**没有图时永远是纯字符串**（契约 §3 的硬口径）。
+ *
+ * 为什么这一条不能松：非视觉端点、以及所有不支持 parts 数组的老网关，收到数组会直接 400；
+ * 而历史消息（tool 结果、模型自己的话）本来就只有文字。所以「数组」这个形状**只在
+ * 用户消息真的挂了图**时出现，其余一律是字符串 —— 既有请求体逐字节没变。
+ */
+export type ChatContent = string | ChatContentPart[];
+
 /** 一次工具调用（OpenAI 兼容形状；`arguments` 恒为字符串） */
 export interface ChatToolCall {
   id: string;
@@ -104,7 +132,7 @@ export interface ChatToolCall {
 /** 一条消息（OpenAI `/chat/completions` 的子集） */
 export interface ChatMessage {
   role: ChatRole;
-  content?: string;
+  content?: ChatContent;
   /** role === "assistant" 且模型要求调用工具时才有 */
   tool_calls?: ChatToolCall[];
   /** role === "tool" 时对应哪一次调用 */
@@ -521,6 +549,25 @@ export interface ChatTurnOpts {
   onReasoning?: (text: string) => void;
   /** `ai.chatSystemPrompt`：非空则**追加**在内置提示词之后（不改内置那份） */
   systemPrompt?: string;
+  /**
+   * **参考图 / 视觉输入**（契约 §1–§4）：已经编好的 PNG data URL
+   * （`data:image/png;base64,……`，由 `src/app/ai-vision.ts` + `src/engine/b64.ts` 在页面侧产出）。
+   *
+   * 两条硬口径：
+   *   · **非空时 `runChatTurn()` 会把它并进最后一条用户消息**（`userContentParts()`：文本先、图后），
+   *     所以调用方传的消息里那条 user 消息仍然可以是**纯字符串**；
+   *   · **模型不支持视觉时在本地拦下**（`visionGate()`），一个请求都不发 —— 不让用户拿着
+   *     `deepseek-v4-pro` 去撞一个必然的 HTTP 400。
+   *
+   * 只影响**报文**，不影响流式：图只在请求体里，SSE 那条路一个字节没变。
+   */
+  imageDataUrl?: string;
+  /**
+   * 附在图后面的一句**说明**（`ai-vision.ts` 的尺寸/体积结论，例如「参考图已从 2048×2048
+   * 缩到 768×768」）。它拼进**文本块**，让模型（和事后看请求体的我们）知道这张图不是原尺寸。
+   * 图本身仍然是独立的 `image_url` 块。
+   */
+  imageNote?: string;
   /** 历史标签正文（`ai: ` 前缀由 ai-turn 加）；省略 = 取最后一条用户消息 */
   label?: string;
   /** true（默认）= 整轮直接落一条历史；false = 预览模式，回合留给 UI 收尾 */
@@ -778,9 +825,61 @@ export function systemMessage(opts: { digest?: string; extra?: string } = {}): C
   return { role: "system", content: buildSystemPrompt(opts) };
 }
 
-/** `{role:"user"}` 消息 */
-export function userMessage(text: string): ChatMessage {
-  return { role: "user", content: String(text ?? "") };
+// ------------------------------------------------------------------ 内容块（parts 数组）
+
+/**
+ * 一条消息的正文文本：字符串原样返回，parts 数组**只取 text 块**（图块没有文字可取）。
+ *
+ * 为什么要有它：`content` 现在是 `string | ChatContentPart[]`，而「取标签」「拼提示词」
+ * 「比前缀」这些老调用点要的是**字符串**。让它们各自 `String(content ?? "")` 会得到
+ * `"[object Object]"` 这种垃圾（数组会被 `String()` 拍成逗号串），所以统一走这一个入口。
+ */
+export function contentText(content: ChatContent | undefined | null): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  const out: string[] = [];
+  for (const part of content) {
+    if (typeof part === "string") { out.push(part); continue; }
+    if (part && typeof part === "object" && (part as ChatTextPart).type === "text") {
+      const t = (part as ChatTextPart).text;
+      if (typeof t === "string") out.push(t);
+    }
+  }
+  return out.join("");
+}
+
+/** 这条消息挂了图没有（只有 `image_url` 块才算） */
+export function hasImagePart(content: ChatContent | undefined | null): boolean {
+  return Array.isArray(content) && content.some((p) => !!p && typeof p === "object" && (p as ChatImagePart).type === "image_url");
+}
+
+/**
+ * **拼装一条用户消息的 `content`**（契约 §3 的报文形状，顺序是死的：文本先、图后）：
+ *
+ *   · 没有图 → **返回纯字符串**（逐字节与从前相同，非视觉端点也安全）；
+ *   · 有图 → `[{type:"text",text},{type:"image_url",image_url:{url}}]`。
+ *
+ * 三条边界：
+ *   1. **只有 `role: "user"` 能带图**（`system` / `assistant` 带图上游回 HTTP 400）——
+ *      所以这个函数只被 `userMessage()` 调用，别的角色没有入口；
+ *   2. `data:` URL 必须已经是编好的（`ai-vision.ts` 的 `dataUrlOfPng()` +
+ *      `src/engine/b64.ts`），这里**不做任何编码**，也就不会 import DOM；
+ *   3. 图块**不做校验**（不是 data URL 也照样发）：校验在 `ai-vision.ts` 的体积判定那一侧，
+ *      这一层只负责形状 —— 一个「拼报文」的纯函数里塞进业务判定会让两边都难测。
+ */
+export function userContentParts(text: string, imageDataUrl?: string): ChatContent {
+  const body = String(text ?? "");
+  const url = typeof imageDataUrl === "string" ? imageDataUrl.trim() : "";
+  if (!url) return body;                       // 没有图：**纯字符串**（硬口径）
+  return [
+    { type: "text", text: body },
+    { type: "image_url", image_url: { url } },
+  ];
+}
+
+/** `{role:"user"}` 消息（`imageDataUrl` 非空 = 挂一张参考图，形状见 `userContentParts()`） */
+export function userMessage(text: string, imageDataUrl?: string): ChatMessage {
+  return { role: "user", content: userContentParts(text, imageDataUrl) };
 }
 
 // ------------------------------------------------------------------ 端点
@@ -1301,7 +1400,9 @@ async function sendChatRequest(
 export function defaultTurnLabel(messages: readonly ChatMessage[]): string {
   for (let i = messages.length - 1; i >= 0; i--) {
     if (messages[i].role !== "user") continue;
-    const text = String(messages[i].content ?? "").replace(/\s+/g, " ").trim();
+    // 挂了图的那条消息 `content` 是 parts 数组：**必须走 `contentText()` 取文本块**，
+    // 直接 `String(content)` 会把整个数组拍成 "[object Object]" 之类的东西进历史标签。
+    const text = contentText(messages[i].content).replace(/\s+/g, " ").trim();
     if (text) return text.length > AI_CHAT_LABEL_MAX ? text.slice(0, AI_CHAT_LABEL_MAX) : text;
   }
   return AI_CHAT_LABEL_FALLBACK;
@@ -1355,15 +1456,19 @@ export async function runChatTurn(opts: ChatTurnOpts): Promise<ChatTurnResult> {
   // 一条），让「每次发请求时按当时的画布摘要重拼 system」这条既有口径继续成立 ——
   // 面板每次都重拼 messages，重拼时把 extra 一起传进来（见 `systemMessage({ digest, extra })`）。
   if (opts.systemPrompt && opts.systemPrompt.trim() && messages.length && messages[0].role === "system") {
-    messages[0] = { role: "system", content: mergeSystemPrompt(String(messages[0].content ?? ""), opts.systemPrompt) };
+    messages[0] = { role: "system", content: mergeSystemPrompt(contentText(messages[0].content), opts.systemPrompt) };
   }
+  // ---- 参考图 / 视觉输入（契约 §3–§4）----
+  // 数据先取出来（后面在 `fail()` 定义好之后再用；`fail()` 要读 `messages`，所以改写也排在它之后）。
+  const imageUrl = typeof opts.imageDataUrl === "string" ? opts.imageDataUrl.trim() : "";
+  const note = String(opts.imageNote ?? "").trim();
   const calls: ChatCallLog[] = [];
   const ctx: AiToolCtx = { ...opts.ctx, turn: opts.ctx.turn ?? turnHandle() };
   const tools = (opts.tools ?? listTools({ tiers: AI_CHAT_TOOL_TIERS.slice() })).slice();
   /** 工具 id → 标题（步骤标签用；找不到就退回工具 id） */
   const titleOf = new Map(tools.map((t) => [t.id, t.title]));
   const maxRounds = clampRounds(opts.maxRounds);
-  const label = (opts.label && opts.label.trim()) || defaultTurnLabel(messages);
+  const label = opts.label?.trim() || defaultTurnLabel(messages);
   const docRevBefore = docRevOf(ctx);
   const histBefore = historyLen(ctx);
   // 流式的落地情况（**所有返回路径都要带上**）：`used` 只在真的逐块读完一条 SSE 后才置真
@@ -1378,6 +1483,25 @@ export async function runChatTurn(opts: ChatTurnOpts): Promise<ChatTurnResult> {
   if (cfgErr) {
     // 配置不全时**连回合都不开**：文档一个字节不动，历史也不会多出空步骤
     return fail(cfgErr, 0);
+  }
+
+  // ---- 参考图 / 视觉输入（契约 §3–§4）：两道闸，顺序是**死的**，都在「连回合都不开」之前 ----
+  //   ① 能力门控：模型 `vision:"no"` + 挂了图 → **当场失败，一个请求都不发**
+  //      （让用户拿着 deepseek-v4-pro 去撞必然的 HTTP 400 是最差的做法：既花时间又给一句看不懂的报错）；
+  //   ② 把图并进**最后一条用户消息**：`{type:"text"}` 先、`{type:"image_url"}` 后。
+  //      `imageNote`（尺寸/体积结论）拼在文本块里，图本身仍是独立的一块。
+  if (imageUrl || note) {
+    const gate = visionGate(opts.model, !!imageUrl);
+    if (!gate.allow) return fail(gate.reason ?? "这个模型不支持图像理解", 0);
+    let at = -1;
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role === "user") { at = i; break; }
+    }
+    if (at >= 0) {
+      const said = contentText(messages[at].content);
+      const body = note ? (said ? said + "\n\n" + note : note) : said;
+      messages[at] = { role: "user", content: userContentParts(body, imageUrl) };
+    }
   }
 
   let text = "";
