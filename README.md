@@ -109,6 +109,7 @@ toolchain/       开发辅助脚本（devserver 静态服务、make-icon 图标�
 |---|---|
 | [`docs/API.md`](docs/API.md) | 各模块 API 接口文档（函数签名、参数、返回值、用法示例） |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | 架构现状盘点 + Server 化 + **模块化**目标设计：分层/数据模型/主链路、实测依赖与硬伤、15 个 server 清单、依赖图与信号总线、21 个可裁剪模块与构建机制（`modules.config.json`）、四个预设、迁移分期 P0–P8 与 M0–M4 |
+| [`docs/ROADMAP.md`](docs/ROADMAP.md) | **发展路线蓝图**：分期（立刻 / 近期 / 中期 / 远期）与可验收条目、与既有计划的去重对齐、明确不做、必须先问用户 |
 | [`docs/PLAN-ai.md`](docs/PLAN-ai.md) | AI 接入方案稿（应用内助手 / 本机工具服务 / 先做地基、工具面与权限分级、回合事务、安全模型） |
 | [`docs/PLAN-isobuilder.md`](docs/PLAN-isobuilder.md) | 等距构建（三视图 → 等距像素画）方案：几何口径、引擎与 UX 设计、分期计划 |
 | [`docs/UI.md`](docs/UI.md) | UI 规范：设计令牌、`src/ui/kit` 控件 API 与 DOM 契约、迁移清单、测试与演示页约定 |
