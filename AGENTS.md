@@ -37,7 +37,7 @@ src/ui/        React 外壳、弹窗、时间线、浮动球、i18n、样式、A
 android/       MainActivity（Java 层）+ AiServer（本地 AI 端口服务，纯 JDK）+ AndroidManifest
 tests/         无 DOM 的引擎/逻辑回归（**8090 条断言**，`node .ts-out/tests/run-tests.js` 末尾会打印条数）
 docs/          ROADMAP.md / API.md / COMPARISON.md / COMPARISON-pixelover-pixelcomposer.md / PLAN-ai.md /
-               PLAN-isobuilder.md / ARCHITECTURE.md / UI.md / PC.md
+               PLAN-deer-ui.md / PLAN-isobuilder.md / ARCHITECTURE.md / UI.md / PC.md
 toolchain/     自写开发脚本（devserver / make-icon / check-bundle / stress-stroke / ai-server / pc-mcp / pc-shell+pc-shell.cmd）
 ```
 
@@ -608,6 +608,7 @@ AI 助手浮窗化 + DeepSeek 预设 + 环境 key 同源代理（P8，2026-09-17
 | 文档 | 内容 |
 |---|---|
 | [`docs/ROADMAP.md`](docs/ROADMAP.md) | **发展路线蓝图**：分期（立刻 / 近期 / 中期 / 远期）的 38 条可验收路线项（每条含目标 / 为什么现在 / 落点 / 验收口径 / 优先级 / 依赖 / 风险）、与既有计划的去重对齐与真冲突、文档漂移校正表 D1–D25、明确不做 21 条、必须先问用户 Q1–Q14、待验证清单、真机验证计划 —— **规划新工作时先读它**，再看下面这些细节文档 |
+| [`docs/PLAN-deer-ui.md`](docs/PLAN-deer-ui.md) | **把 UI 独立成 `deer-ui` 库的方案**：可抽取边界（`src/ui` 39 文件分三档取舍）、`UiHost` 适配层与接线期、包结构与构建发布与三端约束、分期迁移（A0/P0–P8）与可测验收、防分叉与风险登记（含 6 条静默失败）、13 项待用户拍板 —— **动手抽库前先读它** |
 | [`README.md`](README.md) | 项目概览、功能清单、快速开始、目录结构与架构要点 |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | **架构现状 + Server 化 + 模块化**（盘点与目标设计）：分层与规模实测、数据模型与不变量、运行时主链路、能力域、实测依赖现状与三处硬伤、15 个 server 的职责与所有权、算法类清单、目标依赖图、信号总线；**§4 模块化**（Server 与 Module 正交、21 个可裁剪模块与 manifest 契约、`modules.config.json` → 生成静态 import → esbuild 剔除、能力位与"格式永远是超集"、四个预设、体积估算、M0–M4 分期与风险）；绞杀者迁移分期 P0–P8、红线、决策点 |
 | [`docs/API.md`](docs/API.md) | 全部模块的 API 接口文档（签名 / 参数 / 返回值 / 用法）与扩展指南（新增工具 / 设置 / 导出格式 / 引导步骤） |

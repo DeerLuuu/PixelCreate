@@ -112,6 +112,7 @@ toolchain/       开发辅助脚本（devserver 静态服务、make-icon 图标�
 | [`docs/ROADMAP.md`](docs/ROADMAP.md) | **发展路线蓝图**：分期（立刻 / 近期 / 中期 / 远期）与可验收条目、与既有计划的去重对齐、明确不做、必须先问用户 |
 | [`docs/PLAN-ai.md`](docs/PLAN-ai.md) | AI 接入方案稿（应用内助手 / 本机工具服务 / 先做地基、工具面与权限分级、回合事务、安全模型） |
 | [`docs/PLAN-isobuilder.md`](docs/PLAN-isobuilder.md) | 等距构建（三视图 → 等距像素画）方案：几何口径、引擎与 UX 设计、分期计划 |
+| [`docs/PLAN-deer-ui.md`](docs/PLAN-deer-ui.md) | 把 UI 表现层独立成 `deer-ui` 库的方案：可抽取边界、`UiHost` 适配层、包与构建、分期迁移 P0–P8 与验收、风险与待拍板项 |
 | [`docs/UI.md`](docs/UI.md) | UI 规范：设计令牌、`src/ui/kit` 控件 API 与 DOM 契约、迁移清单、测试与演示页约定 |
 | [`docs/COMPARISON.md`](docs/COMPARISON.md) | 与 Aseprite / Resprite 的功能对比与改进优先级 |
 | [`docs/COMPARISON-pixelover-pixelcomposer.md`](docs/COMPARISON-pixelover-pixelcomposer.md) | 与 PixelOver / PixelComposer 的节点式工作流对比（含资料出处与实测节点数） |
