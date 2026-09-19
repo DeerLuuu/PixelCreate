@@ -1,8 +1,8 @@
 # PixelCraft API 接口文档
 
-> 版本：随源码更新 · 覆盖 `src/` 下全部对外导出
+> 版本：随源码更新 · 覆盖 `src/` 下**已文档化**的对外导出（`app/gesture-ids.ts`、`data/palettes.ts`、`render/cursor.ts`、`ui/guide-layout.ts`、`ui/HsvWheel.tsx`、`ui/kit/HoverTip.tsx`、`ui/kit/index.ts`、`ui/refimg.tsx`、`ui/replay.tsx`、`ui/tooltip.ts` 尚未成节，缺口登记在各节的「已知缺口」）
 > 约定：坐标为文档像素（整数，左上为原点）；`RGBA = [r, g, b, a]`（0–255）；`Rect = { x, y, w, h }`（文档像素，含左上、宽高）
-> 引擎层（`engine/` `app/` `tools/`）**不依赖 DOM**，可在 Node 中直接测试；`io/` 里的 `.pxc` / `.aseprite` / zlib 同样是纯逻辑，`render/` `ui/` 与 `io/` 的其余部分需要浏览器环境
+> `engine/` `tools/` **零 DOM**，可在 Node 中直接测试；`app/` 里 `session.ts` / `settings.ts` / `ai-serve.ts` / `ai-rpc.ts` / `ai-chat.ts` / `uibar.ts` 会触 `window` / `document` / `localStorage`，Node 下由 `tests/session.test.ts` 的 `stubEnv()` 铺桩；`io/` 里的 `.pxc` / `.aseprite` / zlib 同样是纯逻辑，`render/` `ui/` 与 `io/` 的其余部分需要浏览器环境
 
 ---
 
@@ -12,20 +12,25 @@
 2. [文档模型 `engine/doc.ts`](#2-文档模型)
 3. [像素元胞 `engine/cel.ts`](#3-像素元胞)
 4. [绘制算法 `engine/paint.ts`](#4-绘制算法)
+4b. [对称数学](#4b-对称数学)
 5. [形状与特效](#5-形状与特效)
 6. [结构操作 `engine/ops.ts`](#6-结构操作)
 6a. [重采样 `engine/resample.ts`](#6a-重采样-engineresamplets高级缩放的引擎)
+6b. [手势映射 `app/gestures.ts`](#6b-手势映射-appgesturests)
+6c. [色彩明暗 `src/engine/shading.ts`](#6c-色彩明暗-srcengineshadingts)
+6d. [等距图形 `src/engine/iso.ts`](#6d-等距图形-srcengineisots)
 7. [撤销栈 `engine/history.ts`](#7-撤销栈)
 8. [颜色与调整](#8-颜色与调整)
 8b. [颜色分析 `engine/color-analysis.ts`](#8b-颜色分析)
 9. [工具注册表与笔迹 `tools/`](#9-工具注册表与笔迹)
 10. [选区与变换 `tools/select.ts`](#10-选区与变换)
+10b. [选区自由变换的几何 `src/tools/xform.ts`](#10b-选区自由变换的几何-srctoolsxformts)
 11. [应用层 `app/session.ts`](#11-应用层-session)
 12. [设置注册表 `app/settings.ts`](#12-设置注册表)
 13. [引导注册表 `app/guide.ts`](#13-引导注册表)
 14. [播放模式 `app/playback.ts`](#14-播放模式)
 15. [渲染 `render/`](#15-渲染)
-15b. [服务层 `servers/`（RenderServer / ViewportServer）](#15b-服务层-serversrenderserver--viewportserver)
+15b. [服务层 `src/servers/`（RenderServer / ViewportServer）](#15b-服务层-srcserversrenderserver--viewportserver)
 15c. [输入服务 `servers/input.ts`（手势策略与算术）](#15c-输入服务-srcserversinputts手势策略与算术)
 15c2. [手势状态机 `servers/gesture.ts`（轻点序列）](#15c2-手势状态机-srcserversgesturets轻点序列)
 15c3. [手势控制器 `servers/gesture.ts`（指针事件入口）](#15c3-手势控制器-srcserversgesturets指针事件入口)
@@ -34,12 +39,12 @@
 18. [多画布空间 / 新工具与特效（1.0.7.11 追加）](#18-多画布空间--新工具与特效)
 19. [扩展指南](#19-扩展指南)
 20. [UI 控件库 `ui/kit/`](#20-ui-控件库-uikit)
-21. [AI 文档文本化 `app/ai-doc.ts`](#21-ai-文档文本化-appai-docts)
-22. [AI 工具表 `app/ai-tools.ts`](#22-ai-工具表-appai-toolsts)
-23. [AI 回合事务 `app/ai-turn.ts` 与 Session 门面](#23-ai-回合事务-appai-turnts-与-session-门面)
+21. [AI 文档文本化 `src/app/ai-doc.ts`](#21-ai-文档文本化-srcappai-docts)
+22. [AI 工具表 `src/app/ai-tools.ts`](#22-ai-工具表-srcappai-toolsts)
+23. [AI 回合事务 `src/app/ai-turn.ts` 与 Session 门面](#23-ai-回合事务-srcappai-turnts-与-session-门面)
 24. [AI 本地工具服务（C3）](#24-ai-本地工具服务c3)
 25. [MCP 入口 `toolchain/pc-mcp.mjs` 与电脑侧壳 `toolchain/pc-shell.mjs`](#25-mcp-入口-toolchainpc-mcpmjs-与电脑侧壳-toolchainpc-shellmjs)
-26. [应用内助手 `app/ai-chat.ts` + `ui/AiPanel.tsx`](#26-应用内助手-appai-chatts--uiaipaneltsx)
+26. [应用内助手 `src/app/ai-chat.ts` + `src/ui/AiWindow.tsx` + `src/ui/AiPanel.tsx`](#26-应用内助手-srcappai-chatts--srcuiaiwindowtsx--srcuiaipaneltsx)
 
 ---
 
@@ -77,9 +82,13 @@ class Sel {
   clear(): void;             // ver++
   fillAll(): void;           // ver++
   clone(): Sel;
-  bounds(): Rect | null;
+  bounds(): Rect | null;     // 没有任何选中像素时返回 null
   bump(): void;              // 直接写 mask 后手动调用
 }
+
+// 构造函数：`new Sel(w, h, all = false)`；`all = true` 直接整块填 1（＝全选）。
+// 越界口径：`get()` 越界返回 0；`set()` 越界**静默不写**，但**仍然 ver++**
+//（所以在画布边上刷 mask 不会让视图缓存与真实掩码脱钩）。
 
 interface LayerMeta { id: string; name: string; visible: boolean; locked: boolean; opacity: number; blend: BlendMode;
                      ref?: string | null;      // 引用层：源画布 id
@@ -90,16 +99,22 @@ class Doc {
   w: number; h: number; name: string;              // 尺寸上限 1024
   layers: LayerMeta[];
   frames: FrameMeta[];
+  tags: FrameTag[];                                // 命名帧区间（动画标签），空 = 整条时间轴
   cels: Map<string, Cel>;                          // key = "li:fi"
   bg: RGBA | null;                                 // null = 透明棋盘格
   palette: RGBA[];
   sel: Sel | null;
+  pixelRev: number;                                // 单调修订号：像素/图层内容改动 +1（引用层与跨画布合成缓存看它）
 
   key(li: number, fi: number): string;
-  celAt(li: number, fi: number): Cel | undefined;
+  celAt(li: number, fi: number): Cel | null;       // 不存在返回 null（不是 undefined）
   ensureCel(li: number, fi: number): Cel;          // 不存在则创建
   selectionActive(): boolean;
-  selAt(x: number, y: number): number;
+  selAt(x: number, y: number): number;             // 没有选区时恒为 1（＝全部可选）
+
+  capture(): DocSnapshot;                          // 深拷贝（含每个 cel 的像素），结构历史用
+  restore(s: DocSnapshot): void;                   // 会先 pixelRev++
+  static fromSnapshot(s: DocSnapshot): Doc;
 }
 ```
 
@@ -118,9 +133,10 @@ class Cel {
 
   idx(x: number, y: number): number;       // 像素 (x,y) 的字节偏移
   inBounds(x: number, y: number): boolean;
+  setPixel(x: number, y: number, c: RGBA): void;   // 越界静默忽略（不是抛错）
   clone(): Cel;
   hasAnyOpaque(): boolean;
-  clear(): void;
+  equals(other: Cel): boolean;             // 逐字节相等（长度不同直接 false）
 }
 ```
 
@@ -149,8 +165,17 @@ floodFill(cel, sx, sy, color, mask?, opts?): void;    // 连续区域填充（�
 floodErase(cel, sx, sy, mask?, opts?): void;
 globalFill(cel, sx, sy, color, mask?, opts?): void;   // 整层同色替换
 globalErase(cel, sx, sy, mask?, opts?): void;
-splinePoints(pts, samples?): [number,number][]        // Catmull-Rom 采样（曲线工具）
-rotateDocContent(doc, dir?)                           // 旋转整幅画布 90°（cel + 选区，宽高互换）
+sprayDots(cx, cy, radius, minSize, maxSize, count, rnd, fn): void
+                                                      // 喷枪：半径内均匀撒 count 个方点，边长取
+                                                      // [minSize, maxSize] 的随机整数；rnd 注入以便测试
+
+// 下面两个是「先算区域、再上色」的两段式入口（渐变填充与全局填充共用）
+floodRegion(cel, sx, sy, global, mask?, opts?): [number, number][]   // 先要区域
+interface GradAxis { x0: number; y0: number; dx: number; dy: number }
+gradientFillRegion(cel, cells, axis, from, to, block, mask?): void   // 再按轴投影上色
+
+// 注意 `splinePoints`（Catmull-Rom 采样，曲线工具用）不在本文件，见 §5 的 `engine/shape.ts`；
+// `rotateDocContent`（整幅旋转 90°）也不在本文件，见 §6 的 `engine/ops.ts`。
 
 interface BrushStamp { size: number; cells: [number,number][]; outline: [number,number][] }
 brushStamp(size: number, shape?: BrushShape): BrushStamp;  // 圆笔尖/方笔尖（带缓存）
@@ -180,12 +205,19 @@ mirrorMaskInPlace(mask, w, h, ax): boolean             // 把选区的镜像副�
 ```ts
 ellipseOutline(x0, y0, x1, y1, fn: (x, y) => void): void;         // Zingl 光栅化，Aseprite 1:1
 ellipseFill(x0, y0, x1, y1, fn: (x, y, right) => void): void;
+splinePoints(pts, samples = 12): [number, number][]              // Catmull-Rom 采样（曲线工具；
+                                                                 // 入参 < 3 点时原样返回）
 ```
 
 `src/engine/effects.ts`
 
 ```ts
-outlineCel(d, w, h, width: number, color: RGBA): void;            // 外描边
+type OutlinePos = "outside" | "inside" | "center";               // 默认 outside（早先只有外描边）
+outlineCel(d, w, h, width: number, color: RGBA, pos: OutlinePos = "outside"): void;
+inlineCel(d, w, h, width: number, color: RGBA, alpha = 255): void;  // 内描边（保住最外圈原色 + 透明度混合）
+type RoundMode = "outer" | "both";
+roundCornersCel(d, w, h, radius: number, mode: RoundMode = "outer"): void;  // 圆角化（只削「一个象限全满」的硬直角）
+blurCel(d, w, h, radius: number): void;                           // 模糊
 invertCel(d): void;                                               // RGB 取反（保留透明）
 desaturateCel(d): void;                                           // 灰度
 dropShadowCel(d, w, h, dx, dy, color, keepOriginal = true): void; // 投影
@@ -203,7 +235,12 @@ addLayer(doc, index, name?): void
 duplicateLayer(doc, li): void
 removeLayer(doc, li): void
 moveLayer(doc, from, to): void
-mergeLayerDown(doc, li, blendComposite): void
+mergeLayerDown(doc, li, blendComposite: (dst: Cel, src: Cel, srcOpacity: number, blend: BlendMode) => void): void
+                                             // 混合实现从 io/调用方注入（Session 传 compositor.compositeOntoCel），
+                                             // 引擎层不依赖渲染层
+
+freshLayer(doc, name?): LayerMeta            // 造一条新图层元数据（统一默认值，别在别处手写对象）
+freshFrame(durationMs = 100): FrameMeta
 
 addFrame(doc, index): void
 duplicateFrame(doc, fi): void
@@ -211,10 +248,11 @@ removeFrame(doc, fi): void          // 至少保留 1 帧
 moveFrame(doc, from, to): void      // 按帧对象身份重映射所有 cel 键
 
 resizeDocCanvas(doc, w2, h2, ox, oy): void   // 改画布尺寸，内容按偏移保留
-scaleDocSprite(doc, w2, h2, algo?, cleanTransparent?): void
+scaleDocSprite(doc, w2, h2, algo = "nearest", cleanTransparent = false): void
                                              // 整体缩放；默认 nearest（行为与老版逐像素一致），
                                              // 采样实现已搬到 engine/resample.ts
 contentBounds(doc): Rect | null              // 所有内容的包围盒（智能裁剪用）
+rotateDocContent(doc, dir: 1 | -1 = 1): void // 整幅旋转 90°（cel + 选区，宽高互换）
 ```
 
 ### 6a. 重采样 `engine/resample.ts`（高级缩放的引擎）
@@ -427,21 +465,24 @@ isoRenderShape(shape, base, look?): IsoRenderResult       // 便捷入口
 `src/engine/history.ts`
 
 ```ts
-interface PixelChange { li: number; fi: number; before: Uint8ClampedArray | null; after: Uint8ClampedArray }
+interface PixelChange { li: number; fi: number;
+  before: Uint8ClampedArray | null;   // null = 改动前这个 cel 不存在
+  after: Uint8ClampedArray | null }   // null = 这一步把 cel 删掉了
 
 class History {
   pushPixels(label: string, doc: Doc, changes: PixelChange[]): void;   // 像素级
   pushStruct(label: string, doc: Doc, fn: () => void): void;           // 结构快照（图层/帧/色板）
-  record(label: string, step: { apply(): void; unapply(): void }): void; // 标量前后值
+  record(label: string, actions: { apply(): void; unapply(): void },
+         data?: ScalarData, doc?: Doc): void;                          // 标量前后值（data 让步骤可写进 .pxc）
 
-  undo(): boolean; redo(): boolean;
-  jump(index: number): void;              // 跳到任意历史步（操作记录面板）
+  undo(): string | null; redo(): string | null;   // 返回这一步的 label（空栈 = null），**不是 boolean**
+  jumpTo(index: number): void;                    // 跳到任意历史步（操作记录面板）
   canUndo(): boolean; canRedo(): boolean;
   list(): { labels: string[]; index: number };
   clear(): void; setCap(n: number): void; limit(): number; trimToCap(): void;
 
   // 工程文件用：导出/重建整个栈
-  dump(): HistoryDump;                                  // 无法序列化的步骤会截断更旧的记录
+  dump(docIdOf?: (doc: Doc) => string | undefined): HistoryDump;   // 归属别的画布 / 无法序列化的步骤会截断更旧的记录
   loadDump(dump: HistoryDump, host: HistoryHost): void;
 }
 
@@ -452,8 +493,10 @@ interface HistoryDumpEntry {
   enc?: EncChange[];                                    // 像素增量
   before?: DocSnapshot; after?: DocSnapshot;            // 结构快照
   data?: ScalarData;                                    // 标量载荷（app/history-io.ts）
+  docId?: string;                                       // 这一步属于哪张画布（历史是工程级的）
 }
-interface HistoryHost { doc: Doc; scalarActions: (d: ScalarData) => { apply(): void; unapply(): void } }
+interface HistoryHost { doc: Doc; docFor?: (docId: string | undefined) => Doc | null;
+  scalarActions: (d: ScalarData, doc?: Doc) => { apply(): void; unapply(): void } }
 ```
 
 > 所有破坏性操作都必须经过这三者之一，才能保证“一步撤销”。
@@ -465,7 +508,7 @@ interface HistoryHost { doc: Doc; scalarActions: (d: ScalarData) => { apply(): v
 `src/engine/color.ts`
 
 ```ts
-clampByte(v): number
+clampByte(v): number                        // 夹到 0..255 并四舍五入
 rgba(r, g, b, a = 255): RGBA
 cssColor(c: RGBA): string          // "rgba(...)"
 chipCss(c: RGBA): string           // 带棋盘底的色块 CSS 背景
@@ -478,10 +521,14 @@ writePixel(data, i, c: RGBA): void
 `src/engine/adjust.ts`
 
 ```ts
-interface HslAdj { h: number; s: number; l: number }   // -100..100
+interface HslAdj {
+  hue: number;       // 色相旋转，角度 -180..180
+  satMul: number;    // 饱和度乘数，0..2（1 = 不变）
+  lightAdd: number;  // 明度增量，-1..1（整幅刻度）
+}
 rgbToHsl(r, g, b): [number, number, number]
 hslToRgb(h, s, l): [number, number, number]
-adjustPixel(r, g, b, a, adj): [number, number, number]
+adjustPixel(r, g, b, a, adj: HslAdj): [number, number, number]   // a === 0 时原样返回
 ```
 
 ---
@@ -519,16 +566,27 @@ sortColourEntries(entries, sort): ColourEntry[]  // 只重排，不重算
 
 // 近似色分组：代表色 = 组内像素最多的颜色（并列取 RGBA 小的），
 // 只返回成员 ≥ 2 的组；阈值默认 GROUP_TOLERANCE = 12（约每通道 7 阶）
-groupSimilarColours(entries, tol?, maxGroups?): ColourGroup[]
+const GROUP_TOLERANCE = 12;      // 近似色分组的默认阈值（欧氏距离）
+const HIST_MAX_BUCKETS = 24;     // 直方图桶数上限（实际桶数还会夹到 12..24 且取 4 的倍数）
+const GROUP_MAX_GROUPS = 64;     // 近似色分组最多返回几组
+const HUE_NEUTRAL_SAT = 0.06;    // 饱和度低于它当灰阶：色相无意义，不进色相直方图
+groupSimilarColours(entries, opts?: {
+  tolerance?: number, maxGroups?: number,
+}): ColourGroup[]                 // 只返回成员 ≥ 2 的组；代表色 = 组内像素最多（并列取 RGBA 小的）
 
 // 替换：容差 / 范围掩码 / 只换不透明像素 / 保留 alpha
-replaceColours(data, w, h, from, to, opts?: {
-  tolerance?: number, scope?: ColourScope,
-  inMask?: (x, y) => boolean, opaqueOnly?: boolean, keepAlpha?: boolean,
-}): { changed: number }
-selectByColour(mask, data, w, h, from, tol?, opaqueOnly?): number
-flattenLayers(w, h, layers: { data, opacity? }[]): Uint8ClampedArray
-colourStatsCsv(a: ColourAnalysis, opts?): string
+replaceColours(data, w, h, from, to, opts?: ReplaceOpts): ReplaceResult   // { changed: number }
+interface ReplaceOpts {
+  tolerance?: number; scope?: ColourScope;
+  inMask?: (x: number, y: number) => boolean;   // 选区掩码：坐标 (x,y) 是否为 1；scope==="selection" 时必填
+                                               // 名字就是 `inMask`（**不是 `mask`**）—— 写错名字 = 掩码被静默忽略；
+                                               // 下面 `selectByColour(mask, …)` 的第一个参数才叫 `mask`（那是 Uint8Array 掩码本身）
+  opaqueOnly?: boolean; keepAlpha?: boolean;
+}
+selectByColour(mask: Uint8Array, data, w, h, from, tol?, opaqueOnly?): number   // 注意：mask 是**函数参数**，不是 ReplaceOpts 的字段
+flattenLayers(w, h, layers: FlattenLayer[]): Uint8ClampedArray
+                                  // FlattenLayer = { data; opacity?; blend? }；只按 source-over 叠
+colourStatsCsv(a: ColourAnalysis, opts?: { scopeLabel?: string; paletteSize?: number }): string
 ```
 
 `ColourAnalysis` 字段：
@@ -553,17 +611,24 @@ colourStatsCsv(a: ColourAnalysis, opts?): string
 `src/tools/registry.ts`
 
 ```ts
-type ToolId = "pencil" | "eraser" | "bucket" | "picker" | "outline"
-  | "line" | "rect" | "rectfill" | "ellipse" | "ellipsefill" | "circle" | "polygon"
+type ToolId = "pencil" | "eraser" | "bucket" | "picker" | "outline" | "airbrush"
+  | "line" | "rect" | "ellipse" | "circle" | "polygon"
+  | "polyline" | "curve"
   | "select" | "wand" | "lasso";
 type BrushShape = "circle" | "square";   // engine/paint.ts 导出
 
 interface ToolDef { id: ToolId; icon: string; drawing: boolean; shape: boolean }
-const CORE_TOOLS / SHAPE_TOOLS / SELECT_TOOLS: ToolDef[];
+const CORE_TOOLS: ToolDef[];    // 6 条：pencil / eraser / bucket / picker / airbrush / outline
+const SHAPE_TOOLS: ToolDef[];   // 7 条：line / rect / ellipse / circle / polygon / polyline / curve
+const SELECT_TOOLS: ToolDef[];  // 3 条：select / wand / lasso
 // outline = 轮廓填充：手绘闭合路径，松手后自动填充内部（View.outlineDown/Move/endOutline）
+// polyline / curve = 多点工具：点一下加一个点，点最后一个点收笔（图标与 line / outline 复用）
+const SYM_TOOLS: readonly string[];   // 绘制对称白名单（pencil…curve + outline）；isSymTool(id) 判的就是它
 isShapeTool(id) / isSelectTool(id) / isSymTool(id): boolean;
 
-interface BrushState { color: RGBA; size: number; alpha: number; pressure: number }
+interface BrushState { color: RGBA; size: number; alpha: number; pressure: number;
+  pattern?: { w: number; h: number; bytes: Uint8ClampedArray; tint: boolean } | null }
+                                      // 图案笔刷：按画布坐标取模平铺，图案透明处不落笔（见 §18.10）
 
 type SymMode = "off" | "on";
 SYM_ANGLES = [0, 45, 90, 135];
@@ -573,7 +638,8 @@ nextSym(m) / SYM_CYCLE;
 `src/tools/stroke.ts` —— 单次手势的笔迹引擎，直接写 cel 数据并跟踪脏矩形。
 
 ```ts
-type ToolKind = "pencil" | "eraser" | "bucket" | "line" | "rect" | "ellipse" | "circle" | "polygon";
+type ToolKind = "pencil" | "eraser" | "bucket" | "airbrush" | "line" | "rect" | "ellipse"
+  | "circle" | "polygon" | "polyline" | "curve";
 
 class Stroke {
   constructor(doc, li, fi, kind, brush: BrushState, layerLocked, sym: SymMode,
@@ -586,6 +652,12 @@ class Stroke {
   fillTolerance = 0; fillGaps = 0;           // 油漆桶：逐通道容差 / 缝隙闭合
   wrapX = false; wrapY = false;              // 平铺模式：笔迹跨边界环绕补画
   snapColor: ((c: RGBA) => RGBA) | null;     // 索引色：落笔颜色吸附调色板
+  sprayMin = 1; sprayMax = 3;                // 喷枪：随机点径范围（px，View 从 prefs 设）
+  gradEnd: RGBA | null = null; gradBlock = 1; // 油漆桶渐变：终点色 + 色块尺寸（null = 纯色填充）
+  refDx = 0; refDy = 0;                      // 引用层重定向：本画布 (x,y) 画到源的 (x-refDx, y-refDy)
+
+  setGeometry(w, h): void;                   // 对称 / 平铺按「用户看到的画布」算（重定向时与 cel 尺寸不同）
+  sprayBurst(count): void;                   // 喷枪按速率补喷 count 个点
 
   startAt(x, y): void;                       // 落笔
   moveTo(x, y, pressure: number): void;      // 移动（形状工具会从头重绘）
@@ -596,7 +668,8 @@ class Stroke {
 }
 ```
 
-**脏矩形语义**：铅笔/橡皮按笔尖单元累积；形状工具把“上一次形状包围盒 ∪ 新包围盒”计入（因为每次重绘都从原始缓冲开始）；油漆桶返回整帧。
+**脏矩形语义**：铅笔/橡皮/喷枪按落点单元累积；形状工具（含 `polyline` / `curve`）把
+“上一次形状包围盒 ∪ 新包围盒”计入（因为每次重绘都从原始缓冲开始）；油漆桶返回整帧。
 
 ---
 
@@ -614,13 +687,20 @@ lassoFill(doc, pts: Array<[number, number]>): void
 
 interface MoveState { /* 抓取前的像素与掩码快照 */ }
 beginMove(doc, li, fi): MoveState | null
-xformFloating(doc, st, angle, sx, sy, buf, cx, cy): Array<...>   // 仿射变换
-floatDropInto(doc, li, fi, st, x, y, history?, label?): boolean  // 落进另一张画布
+warpFloating(doc, st, quad, ...): ...                            // 四点/网格变形的采样实现（§18.11）
+floatQuad(st): Pt[]  /  floatGrid(st, divs = 2): Pt[]            // 控制点（画在像素中心）
+xformFloating(doc, st, angleRad, sx, sy, out, anchorX?, anchorY?): number[]
+                                                    // 仿射变换写进 out（同尺寸缓冲区），返回被写入的像素下标
+xformAffineFloating(doc, st, m: Mat3, out): number[]             // 任意仿射（矩阵入口）
+xformContentBox(cw, ch): XfBox / xformDestBox(m, cw, ch): XfBox / xformAffineDestBox(m, cw, ch, ox, oy): XfBox
+
+// **独立导出函数**（不是 selOps 的成员）：跨画布移动的落笔
+floatDropInto(doc, li, fi, st, x, y, history?, label?): boolean
 pasteRaw(doc, li, fi, clip, at?): boolean                        // 落笔 + 设选区，不记历史
 
 // 对象形式（推荐）
 const selOps = {
-  setRect(doc, x0, y0, x1, y1), selectAll(doc), invert(doc), clear(doc),
+  setRect(doc, x0, y0, x1, y1), selectAll(doc), invert(doc), clear(doc), grab(doc, li, fi): Cel | null,
   fill(doc, history, li, fi, color), eraseSelected(doc, history, li, fi),
   copy(doc, li, fi): Cel | null, cut(doc, history, li, fi): Cel | null,
   paste(doc, history, li, fi, clip: Cel, at?), flip(doc, history, li, fi, horizontal),
@@ -663,8 +743,10 @@ Aseprite 那套「移动 + 缩放 + 旋转 + 斜切」的**纯函数层**（无 
 ### 10b.1 锚点与命中
 
 ```ts
-type AnchorId = "tl" | "tr" | "br" | "bl" | "t" | "b" | "l" | "r";
-const ANCHORS: AnchorId[];                  // 上面这个顺序（角在前，边中点在后）
+type AnchorId = "tl" | "t" | "tr" | "r" | "br" | "b" | "bl" | "l";
+const ANCHORS: AnchorId[];                  // 就是上面这个**绕框一圈**的顺序（角与边中点交替，
+                                            // 与 selFramePts() / drawSelTransform() 同序）；
+                                            // 不是「先四个角再四个边中点」
 isCorner(id): boolean; axisOf(id): "x" | "y" | "xy";   // 边中点只改一个轴
 indexBox(w, h): XfBox;                     // 像素下标框 `0..w-1`（warp / 测试口径）
 contentBox(w, h): XfBox;                   // **内容外框** `0..w`（本模块的坐标口径，见上）
@@ -738,6 +820,14 @@ affineFrom(p: XfParams): Mat3;             // S（绕 scalePivot 缩放）→ K�
 linearOf(p): [number, number, number, number];
 pivotComp(p): Pt;                          // 枢轴挪动时的平移补偿（画面逐字节不动；数值精确，见下）
 
+// Mat3 = [a,b,c,d,e,f]（与 ctx.setTransform 同序）；下面这组是纯矩阵小工具（select.ts / view.ts 在用）
+affineIdentity(): Mat3; applyAffine(m: Mat3, p: Pt): Pt; mulAffine(a: Mat3, b: Mat3): Mat3;
+invertAffine(m: Mat3): Mat3 | null;        // 奇异矩阵返回 null
+affineTranslate(dx, dy, m?): Mat3; affineScale(sx, sy, c: Pt): Mat3;
+affineRotate(a: number, c: Pt = {x:0,y:0}): Mat3; affineSkew(kx, ky, c: Pt): Mat3;
+const XF_LABEL_ORDER: XfKind[];            // 一次会话出现多种语义时谁的 label 说了算（skew→rotate→scale→move）
+const SKEW_LIMIT_DEG = 85;                 // 斜切角上限（TAN_SKEW_LIMIT 就是它的 tan）
+
 solveScale(from, to, anchor, axis, keepAspect?, gridSnap?): { sx, sy };
 solveRotate(from, to, snapClean?): { angle };
 solveSkew(id, from, to, span, angle?): { tan };   // 返回的 tan 直接写进 skewX / skewY
@@ -777,8 +867,9 @@ const TAN_SKEW_LIMIT = Math.tan((85 * Math.PI) / 180);
 所以「拖完枢轴再点一下」不会被误判。触屏双击与电脑双击都走同一条路（不依赖 `isPc()`）。
 
 ```ts
-type PivotPreset = "cc" | "tl" | "tc" | "tr" | "cl" | "cr" | "bl" | "bc" | "br";
-const PIVOT_PRESETS: PivotPreset[];
+type PivotPreset = "tl" | "tc" | "tr" | "cl" | "cc" | "cr" | "bl" | "bc" | "br";
+const PIVOT_PRESETS: PivotPreset[];    // 就是上面这个 3×3 从左到右、从上到下的顺序（"cc" 在正中）；
+                                       // pivotPresetAt(i) 按它取第 i 档
 pivotPresetPoint(box, k): Pt;  pivotPresetAt(i): PivotPreset;  pivotPresetOf(box, pt): PivotPreset;
 adjustPivot(oldBox, newBox, pivot): Pt;    // 独立小工具：按归一化比例把点从旧框映射到新框
 pivotInBox(box, p): boolean;
@@ -867,11 +958,15 @@ insideFrame(frame: ScreenFrame, pt): boolean;
 ```ts
 subscribe(fn: () => void): () => void     // 任何状态变化都会触发
 changed(): void                           // 手动广播（rev++）
+changedUI(): void                         // 只广播界面状态（不置像素/合成脏）
 getVersion(): number
 snapshot(): Snapshot                      // 缓存过的不可变快照，供 React 渲染
+registerPreview(fn: () => void): () => void   // 预览框自订阅（返回取消订阅）
+setConfirmAsk(fn) / setTextAsk(fn): void  // 把确认框 / 文本输入框注入 Session（App 启动时挂），
+                                          // AI 助手的 destructive 确认与改名弹窗都走这两条
 ```
 
-`Snapshot` 关键字段：`tool, shape, brushSize, brushAlpha, colorHex, layerIdx, frameIdx, layerCount, frameCount, canUndo, canRedo, onionOn, gridMode, gridSize, previewBg, previewGray, tileMode, selActive, docName, w, h, playing, loopMode, frameSel, frameSelOn`。
+`Snapshot` 关键字段（共 **35** 个）：`lang, tool, shape, brushSize, brushAlpha, colorHex, layerIdx, frameIdx, layerCount, frameCount, canUndo, canRedo, onionOn, gridMode, gridSize, previewBg, previewGray, tileMode, selActive, docName, w, h, playing, loopMode, playSpeed, tags, activeTag, playTag, frameSel, frameSelOn, isoOn, canvasCount, canvasIdx, canvasName, previewCount`。
 
 ### 11.2 渲染
 
@@ -895,6 +990,31 @@ setColorPicking(on) / colorPickedRecently(now, windowMs)
 docColors(): RGBA[]            // 画面里用到的颜色
 palOrbColors(): RGBA[]         // 取色球当前来源的颜色
 cyclePalOrbMode(): void        // 色板 → 画布颜色 → 最近使用
+
+secondaryColor(): RGBA         // 「另一个色槽」＝当前非活动槽（右键 / 空格+左键用它绘制，见 §15.4）
+switchToPreviousTool(): ToolId | null      // 双击主球＝切回上一个工具
+awaitColorPick(cb: (c: RGBA) => void) / cancelColorPick()   // 下一次取色改交给 cb（弹窗挑参数用）
+paletteFromCanvas(max = 256): number       // 从画布取色生成调色板，返回加入的颜色数
+pushRecentColor(c) / setRecentColorsMax(n) / trimRecentColors()
+
+// 索引色模式（落笔颜色吸附调色板）
+setIndexed(on) / paletteSnap(c: RGBA): RGBA / remapToPalette(scope: "layer" | "canvas"): number
+
+// 油漆桶：相似色容差 / 缝隙闭合 / 整层替换 / 渐变填充
+setFillSimilar(on) / setFillTolerance(n) / setFillGaps(n)
+setBucketGrad(on) / setBucketGradMode("rgb"|"2"|"4"|"8") / cycleBucketGradMode(): "rgb"|"2"|"4"|"8"
+
+// 喷枪
+setAirbrushMin(n) / setAirbrushMax(n) / setAirbrushRate(n)
+
+// 图案笔刷（图案库 + 当前图案；口径见 §18.10）
+patternDefs(): PatternDef[] / patternById(id) / activePattern(): PatternDef | null
+brushPatternData(): { w; h; bytes; tint } | null
+setPattern(id: string | null)              // null = 回到普通纯色笔刷
+addPattern(name, bytes, w, h): string | null / removePattern(id): boolean / renamePattern(id, name)
+patternFromSelection(): "ok" | "empty" | "toolarge" | "nosel"     // 选区 → 图案
+patternFromCanvas(): "ok" | "empty" | "toolarge"                  // 画布 → 图案
+setPixelPerfect(on)
 ```
 
 ### 11.4 对称
@@ -957,8 +1077,11 @@ nearestPaletteColour(c): RGBA | null
 ### 11.6 选区
 
 ```ts
-maskOp(label, fn)              // 把选区改动包成一条撤销记录
+maskOp(label, fn)              // 把选区改动包成一条撤销记录（走 History.pushStruct 结构快照）
 wandAt(x, y) / setSelectionTolerance(n) / deleteSelection()
+nudgeSelection(dx, dy): boolean            // 方向键平移选区（返回是否真的动了）
+setDelTarget(t: "selection" | "frames" | "layer" | "canvas")   // Del 键删什么
+clearCanvas(): void                        // 清空当前图层当前帧
 ```
 
 ### 11.7 图层 / 帧
@@ -982,14 +1105,31 @@ tagAdd(name?, from?, to?): FrameTag | null   // 默认用选中的帧（没选�
 tagRename(id, name) / tagSetRange(id, from, to) / tagSetColor(id, color) / tagRemove(id): boolean
 tagSelectFrames(id)                          // 进入帧多选并选中这段
 tagPlay(id)                                  // 跳到首帧并只播放这一段
+
+// 独奏 / 步进
+// 引用层与多画布一族的口径见 §18.4；这里只列签名（`Session` 是公开面总表）
+toggleSoloLayers(li) / stepFrame(d) / cycleLayer(delta): boolean / pickFrameRange(fi)
+```
+
+```ts
+// 引用层（把另一张画布镜像进当前图层；像素不落本层，落笔重定向到源画布，见 §18.4）
+layerLocked(): boolean / refPaintBlock(li): "locked" | "gone" | null
+isRefLayer(li) / refSourceOf(li) / refSourceLayerOf(li) / refOffset(li): { ox, oy }
+strokeTarget(li): { doc, li, fi, refId, dx, dy } | null      // 笔迹该落到哪个文档的哪一层
+referenceCanvas(canvasIndex, opts?: { mode?: "layers" | "flat" }): boolean
+canSplitRef(li?) / splitRefLayer(li?) / unrefAll(): number   // 解除引用层
+syncRefLayers(): boolean                                     // 别的画布改了 → 本层跟着更新
 ```
 
 ### 11.8 播放 / 洋葱皮 / 画布
 
 ```ts
-togglePlay() / startPlayback() / stopPlayback() / cycleLoopMode(): LoopMode
-// startPlayback 会把「当前帧所在的标签」当作播放窗口（没有则整条时间轴），存进 playTag；
-// stopPlayback 清空它。播放范围不影响手动切帧。
+togglePlay() / startPlayback(tag?: FrameTag | null) / stopPlayback() / cycleLoopMode(): LoopMode
+setPlaySpeed(v): PlaySpeed / cyclePlaySpeed(): PlaySpeed     // 0.25x–2x，见 §14
+// startPlayback 会把「传入的标签（不传则当前帧所在的标签）」当作播放窗口（都没有则整条时间轴），
+// 存进 playTag；stopPlayback 清空它。播放范围不影响手动切帧。
+// 多画布空间与浮动预览窗那一族（addCanvas / focusCanvas / moveCanvas / snapPosition /
+// linkCanvas / addPreview / closePreview …）的口径与签名见 §18.4。
 toggleOnion() / setOnionOn(on) / setOnionBefore(n) / setOnionAfter(n)
 setOnionAlpha(n) / setOnionTint(on) / setOnionWrap(on)
 setGridMode("off"|"pixel"|"iso") / setGridSize(n)
@@ -1077,8 +1217,11 @@ paintBlockedNote(): void      // 当前图层不能绘制时的标准提示（�
 runGestureAction(action: GestureActionId, ctx?: { x?: number; y?: number }): boolean
 showFrame(fi: number): void          // 切帧但不记录历史（供恢复的历史步骤使用）
 get recordHistory(): boolean         // 工程文件是否写入操作记录
-serializeProject(): Promise<string>  // 文档 +（可选）操作记录
-loadProjectText(text): Promise<boolean>
+serializeProject(opts?: { cels?: "png" | "rle" }): Promise<string>
+  // 整个画布空间 + 一份共享操作记录（走 io/project.ts 的 serializeSpace；
+  // cels:"rle" 是自动保存用的纯 JSON 口径）
+loadProjectText(text, opts?: { ask?: boolean }): Promise<boolean>
+  // 走 parseSpace：v2 单文档与 v3 多画布都能读；ask:false = 不再弹「丢掉未保存改动」
 ```
 
 ### 11.9b 记忆的工具状态
@@ -1101,16 +1244,54 @@ settingValue(path): SettingValue
 setSetting(path, value): void          // 自动持久化 + 按声明刷新
 hapticTick(tag, scale = 1): boolean    // 受 gesture.haptic 开关控制，长度取 prefs.hapticLen
 savePrefs(): void
-scheduleAutosave() / flushAutosave(): Promise<void> / restoreAutosave(): Promise<Doc | null>
+scheduleAutosave()
+writeAutosave(force = false, reason: AutosaveReason = "timer"): Promise<void>   // 内部入口（写入时机见 §16.5）
+flushAutosave(reason: AutosaveReason = "hide"): Promise<void>   // 页面隐藏 / 卸载时立刻落盘
 autosaveInfo() / clearAutosave()
+restoreAutosave(): Promise<boolean>                             // 启动时恢复最新一版（不问确认）
 // 多版本自动保存（§16.5）：启动自检 + 历史版本操作
 checkBootCrash(): Promise<boolean>       // 上次没正常退出 → bootRecover 挂上版本表，App 弹恢复面板
 bootRecover: { versions: AutosaveVersion[] } | null    // 非 null 时 App 渲染 RecoverModal
 dismissBootRecover(): void
 autosaveVersions() / autosaveHistorySupported()
-restoreAutosaveVersion(seq): Promise<boolean>          // 走 loadProjectText（会先问过用户）
+restoreAutosaveVersion(seq, opts?: { ask?: boolean }): Promise<boolean>   // 走 loadProjectText；面板已问过就传 { ask: false }
 exportAutosaveVersion(seq): Promise<void>              // 导出成 .pxc
 dropAutosaveVersion(seq): Promise<void>
+```
+
+### 11.11 界面定制与快捷键绑定
+
+界面定制面板（`ui/modals.tsx` 的「界面定制」）与浮动球构建（`ui/App.tsx`）靠这一组读写；
+持久化全在 `prefs`（`layout` / `barOrder` / `barHidden` / `orbPrefs` / `barExtra` / `orbExtra` /
+`dockPos` / `pieSlotPos` / `keymap`，见 §12）。
+
+```ts
+// 动作注册表（App 启动时注册；动作搜索面板 allActions() 的数据源）
+registerActions(map: Record<string, { icon: string; label: string; run: () => void }>): void
+actionById(id): { icon; label; run } | null
+allActions(): Array<{ id; label; icon; group; run }>
+
+// 工具栏 / 浮动球之间的互搬（注册表之外的用户搬运结果）
+barExtras(section) / orbExtras(ball): string[]
+moveActionToBar(section, id, fromBall?) / removeBarExtra(section, id): void
+moveActionToOrb(ball, id, fromSection?) / removeOrbExtra(ball, id): void
+
+// 顺序与显隐
+layoutOn(k) / setLayout(k, on) / resetLayout()
+isBarHidden(id) / moveBarAction(all, id, delta) / toggleBarAction(all, id): boolean / resetBar(all)
+orbPref(ball): { order: string[]; hidden: string[] }
+isOrbItemHidden(ball, id) / moveOrbItem(all, ball, id, delta) / toggleOrbItem(all, ball, id): boolean / resetOrb(ball)
+
+// 球目录（App 注册当前有哪些动作，定制界面按它列；pal 球是空目录）
+registerOrbCatalog(ball, items: Array<{ id; label }>) / orbCatalogOf(ball): Array<{ id; label }>
+
+// 存储区 / 圆盘槽位置（null = 自动）与「全部复位」
+setDockPos(p: { x; y } | null) / setPieSlotPos(p: { x; y } | null) / resetAllUi()
+setUiEdit(on) / setRailSwap(v) / setResizeMode(on) / toggleResizeMode() / cropSmart()
+
+// 自定义快捷键的写盘（纯函数在 app/keymap.ts，见 §16.1b1a）
+bindKey(action, chord): string | null      // null = 绑定成功；非 null = 冲突提示用的文案键
+resetKey(action) / resetAllKeys() / keyOf(action): string | null
 ```
 
 ---
@@ -1121,19 +1302,23 @@ dropAutosaveVersion(seq): Promise<void>
 
 ```ts
 type SettingValue = boolean | number | string;
-type SettingKind = "bool" | "int" | "enum";
+type SettingKind = "bool" | "int" | "enum" | "color";
+type SettingText = "plain" | "password";   // 文本行的子类型（见 §26.2）
 type SettingRefresh = "none" | "changed" | "repaint" | "repaintAll";
-// 分组：general | canvas | tools | gesture | onion | history | display | data
+// 分组：general | canvas | screen | tools | gesture | onion | history | display | data | ai | chat
 
 interface SettingDef {
   path: string;                 // "onion.before"
   field?: keyof Prefs;          // 直接映射到 prefs 字段
-  kind: SettingKind;
+  kind?: SettingKind;           // 文本行不写 kind（改写成 text）
+  text?: SettingText;           // 文本输入行（端点 / 模型 / key），与 kind 二选一
   group: SettingGroupId;
   label: string; desc?: string; // i18n key
   default: SettingValue;
   options?: SettingOption[];    // enum
   min?: number; max?: number; unit?: string; reset?: SettingValue;
+  control?: "chips" | "dropdown";       // 枚举渲染：色片行 / 下拉（不写 = ≤6 项色片、更多则下拉）
+  action?: { label: string; run: (s: Session) => void };   // 控件下方额外按钮（label 是 i18n key）
   visible?: (s: Session) => boolean;
   refresh?: SettingRefresh;
   get?/set?: (s, v) => ...;     // 自定义读写
@@ -1141,7 +1326,7 @@ interface SettingDef {
 }
 
 const SETTINGS: SettingDef[]; const SETTINGS_BY_PATH: Map<string, SettingDef>;
-const SETTING_GROUPS: Array<{ id; label }>;   // general / canvas / screen / tools / gesture / onion / history / display / data
+const SETTING_GROUPS: Array<{ id; label }>;   // general / canvas / screen / tools / gesture / onion / history / display / data / ai / chat（11 组）
 settingsOfGroup(s, group): SettingDef[];      // 已按 visible 过滤
 normalizeSetting(def, raw): SettingValue | null;
 
@@ -1153,6 +1338,10 @@ importSettings(s, raw): { applied: number; skipped: number };
 ```
 
 **新增一个设置**：在 `defs` 里加一条声明 + i18n 的 `label`/`desc` 文案，设置面板会自动出现（搜索、分组、恢复默认、导入导出都自动支持）。
+
+**设置项总数口径**（别混，**运行时数**）：`SETTINGS` **88 条** + `CHAT_SETTINGS` **16 条** = `SETTINGS_BY_PATH.size` **104**
+（`CHAT_SETTINGS` 单独一张表，见 §26.2）。注意 `defs` 里有辅助函数生成的条目，
+所以**按字面 `path:` 静态数只有 96 条**（80 + 16），复核这个数请用运行时数，别用静态 grep。
 
 ---
 
@@ -1181,10 +1370,12 @@ interface GuideStep {
 
 const GUIDE: GuideStep[]; const GUIDE_MODULES;
 versionGte(a, b): boolean;
-guideStepsFor(seen: string[], fresh: boolean): GuideStep[];
+guideStepsFor(seen: readonly string[], fresh: boolean): GuideStep[];
 guideStepsOfModule(m): GuideStep[];
 guideProgress(i, n): string;
 guideActionsOf(list): GuideAction[];
+bootOverlay(todoSteps, changelogDue, canvasCount): "changelog" | "guide" | "none"
+                               // 启动先弹哪个覆盖层（更新日志 / 引导 / 都不弹）
 ```
 
 **新增一步引导**：写一条 `GuideStep` + i18n 文案 + 在 `App.tsx` 的 `guideActions` 里实现所需动作（动作要自还原）。`tests/guide-anchors.test.ts` 会静态校验每个 `[data-guide="…"]` 锚点真实存在、每个动作都有实现。
@@ -1233,13 +1424,17 @@ unionRect(a: Rect | null, b: Rect | null): Rect | null
 clampRect(r: Rect, w: number, h: number): Rect | null
 screenRectOf(r: Rect, ox: number, oy: number, zoom: number, pad = 2): Rect
 coversAll(r: Rect, w: number, h: number): boolean
-TILE_OFFSETS: ReadonlyArray<readonly [number, number]>          // 3×3 平铺偏移，中心在前
-tileRect(r, w, h, dx, dy, mirror): Rect                         // 文档矩形 → 邻格副本坐标（mirror 时按共享边翻转）
+type TileMode = "off" | "row" | "col" | "grid";
+tileOffsets(mode: TileMode): ReadonlyArray<readonly [number, number]>   // 该模式要画哪几份副本（中心在前）
+tileRect(r, w, h, dx, dy): Rect                                        // 文档矩形 → 邻格副本坐标
 ```
 
-平铺画布（`prefs.tileMode` = `off | repeat | mirror`）：`View.refresh()` 把合成结果在中心四周画 8 份只读副本
-（`repeat` 直接平移，`mirror` 按 `dx/dy` 翻转），脏矩形会同时并上 8 份副本的屏幕矩形，中心格加蓝色描边；
-输入坐标仍只在中心文档范围内生效，所以只有中心可编辑。
+平铺画布（`prefs.tileMode` = `off | row | col | grid`）：`View.drawOtherCanvases()` 按 `tileOffsets()`
+的结果把合成结果画成邻居副本（`row` = 左右各 1 份、`col` = 上下各 1 份、`grid` = 3×3 共 9 份），
+脏矩形会同时并上这些副本的屏幕矩形，中心格加蓝色描边；输入坐标仍只在中心文档范围内生效，
+所以只有中心可编辑。
+**旧值迁移**：`repeat` / `mirror` 是历史取值，载入设置时**一律折成 `grid`**（`session.ts` 的 prefs 载入分支），
+不要再按「镜像翻转」实现（现在的 `tileRect` 只做平移、没有 `mirror` 参数）。
 
 ### 15.2 合成器 `src/render/compositor.ts`
 
@@ -1247,6 +1442,8 @@ tileRect(r, w, h, dx, dy, mirror): Rect                         // 文档矩形 
 canvasToBlendMode(m: BlendMode): GlobalCompositeOperation
 celToCanvas(cel): HTMLCanvasElement            // 全量上传（缓存 canvas + ImageData）
 celToCanvasRect(cel, rect): HTMLCanvasElement  // 只上传脏矩形
+// ⚠ 两者返回的是 **同一个** 每-cel 缓存画布（`WeakMap<Cel, {canvas, img}>`），
+//   调用方拿到后要立刻画/读，**不要留引用**（下一次调用会就地改写它）。
 composeFrame(doc, fi, { bgOverride?, onlyLi? }): HTMLCanvasElement
 composeFrameWithOnion(doc, fi, onion: OnionSpec, cache?: ComposeCache): HTMLCanvasElement
 composeRectInto(doc, fi, onion, rect, target, cache?): void   // 只重合成 rect
@@ -1283,7 +1480,6 @@ PC（鼠标）输入层在 `View` 内新增：
 索引色吸附、平铺环绕）执行一次「按下 + 提交」，因此只产生一条历史记录；返回被填充的画布下标，未落在画布上返回 `-1`。
 `Session.quickFill(x, y, color)` 是同一件事的会话层包装。
 
-```ts
 **落点预览（白色笔尖轮廓）**：铅笔 / 橡皮的预览必须用**当前笔尖形状**的 `brushStamp(size, brushShape)`，
 和真正落笔（`tools/stroke.ts` 的 `paintDot/eraseDot`）同源 —— 早先预览写死了默认的圆笔尖，切到方笔尖后
 白色轮廓还是圆的、跟画出来的方块对不上，偶数尺寸下还差一格（真机反馈「预览与笔迹不符且位置偏移」）。
@@ -1304,7 +1500,10 @@ class View {
   toLogical(x, y) / toSurface(x, y)             // 真实画布坐标 ↔ 逻辑坐标（DOM 覆盖层用）
   surfaceDelta(dx, dy): { x; y }                // 屏幕位移 → 空间位移（旋转后拖拽方向仍正确）
 
-  // —— 选区自由变换（会话＝一次事务，见 §10b；下面这些都是给 UI / 测试用的公开面）——
+  // —— 选区自由变换（会话＝一次事务，见 §10b）——
+  // 覆盖层专用的这几个是 `private`（`xfScreenFrame` / `xfGrabs` / `xfPivotScreen` / `grabIconAt` /
+  // `warpHandles`）：它们每帧只给 `View.drawOverlay()` 用；**测试想读它们就走白盒**（`v.gesture.*`
+  // 那套 cast），不要为了「文档列过」把它们改回 public（ROADMAP D11）。
   transforming: boolean;                        // 会话是否开着（UI 据此显示「完成 / 还原 / 枢轴」）
   xfScreenFrame(): ScreenFrame | null;          // 当前变换框在屏幕上的四角（无选区 / 无会话 = null）
   xfGrabs(): Grab[];                            // 屏幕上要摆的 16 个固定图标抓手（两平台同一套）
@@ -1316,12 +1515,13 @@ class View {
   setXfPivotAt(lx, ly): boolean;                // 把枢轴钉到内容下标（顺手补平移补偿，画面不动）
   setPivotPreset(k: PivotPreset): boolean;      // 9 档预设（拖拽枢轴后会被判成最近的一档）
   pivotPreset(): PivotPreset | null;            // 当前枢轴落在哪一档
-  cyclePivot(step = 1): void;                   // 9 档循环（选区球的「枢轴」chip）
+  cyclePivot(): PivotPreset | null;             // 9 档循环一档；返回落点那一档（无会话 / 无可循环时 null）
   resetXfPivot(): boolean;                      // 双击枢轴：复位到内容正中（画面不动；已在中正返回 false）
   commitXf(): void;                             // 「完成」：落下一条历史并结束会话
   revertXf(): void;                             // 「还原」：会话整个丢掉，像素逐字节回滚（不进历史）
-  xfHint: string | null;                        // PC 悬停提示（"scale:br" 这类）
   hitRadii(): HitRadii;                         // 当前该用哪套命中半径（PC / 触屏 + 自动收窄）
+  // `xfHint` / `xfHover` 与其余触点会话状态都在 `view.gesture`（`GestureController`，见 §15c3）；
+  // `View` 只读它们来画覆盖层，自己不持有。
 
   // —— 四点 / 网格自由变形（会话同样是 `xf` 槽，见 §18.11）——
   beginWarp(kind: "quad" | "mesh"): boolean;    // 进入变形（不改图层）；失败原因见 `lastWarpError`
@@ -1336,8 +1536,32 @@ class View {
   invalidate(rect?: Rect | null): void;  // 标记 + rAF 合并重绘（Session.repaint 用）
   refresh(force: boolean): void;         // 立即绘制（force = 重建合成）
   flushStroke(): boolean;                // 手势未正常结束时的兜底提交（**变换会话也会在这里收尾**）
+
+  // —— 坐标与视口（ui/ 与测试直接调）——
+  vpW(): number / vpH(): number / panBy(dx, dy): void / syncCursor(): void / clampView(): void
+  fitTarget(): { z; ox; oy } / fitAnimated(ms = 220): void / animateTo(z, ox, oy, ms = 220): void
+  shiftFocus(dxSpace, dySpace): void           // 切聚焦画布时反向平移（§18.4）
+  canvasAtScreen(sx, sy) / evPt(e): Pt / samplePixel(x, y): [r, g, b, a] | null
+
+  // —— 工具动作体（控制器与 UI 都调；参数看源码，别抄进文档，会立刻过期）——
+  toolNow() / labelFor(kind) / isPathTool(t) / preciseDrag() / inXform()
+  beginTempStroke(tool, clientX, clientY) / moveTempStroke / endTempStroke()   // 橡皮小项拖到画布＝临时橡皮
+  repaintStroke() / drawOverlay(rebuildTint = false) / refreshOverlay() / quickFill(clientX, clientY, color)
+  tryStartXf(pt) / xfMove(pt) / xfEndDrag() / xfBreakDrag() / endXf() / abortXf() / warpMove(pt)
+  startSelMove(pp) / selDown(pp, pt, e) / selMove(pp) / dropSelDragToCanvas(sx, sy) / endSelDrag(commit = true)
+  outlineDown / outlineMove / endOutline / pathDown(pp) / drawPathPreview() / wireRedirect(st, tgt)
+  isoHandles() / isoHitAt(pt) / isoDragTo(pt) / isoCancelDrag() / resizeHit(pt)
+  startSpray() / stopSpray() / symLockBtn() / symHit(pt) / flashLayer(li)
+  setSnapZones(zones, animate = true) / pulseUnsnap(pairs)
+  cancelHold() / holdMoved() / armHold(n, action, tag) / cancelPickTimer() / enterPickMode(x, y) / samplePickCell(x, y, strong)
+
+  // —— 控制器入口 ——
+  readonly gesture: GestureController  // onDown / onMove / onUp / onCancel 是**一行转发**到它（§15c3）
 }
 ```
+
+> 一句口径：`View` 是**渲染 + 动作体**。手势判定与触点会话状态已经全在 `servers/gesture.ts`（§15c）：
+> `View` 侧只留四个一行转发 + 覆盖层绘制 + 各工具的动作体。
 
 **手势**：单指绘制、双指缩放/平移、三连击放大、边距双击撤销、双指双击重做、四指打开全部帧预览（≥4 指 + ≥2 指滑动 >15px）、长按取色。
 
@@ -1374,12 +1598,15 @@ otherCompositeKey(doc, fi): string                           // 额外带 pixelR
 
 class RenderServer {
   constructor(opts?: { factory?; compositor? });
+  get debugEnabled(): boolean;                 // 渲染调试开关（关掉时视图层连时间戳都不取）
+  nowMs(): number;                             // performance.now() 的薄包装（测试可注入）
   get canvas(): HTMLCanvasElement | null;      // 只读用途：取色 / 放大镜
   get needsCompose(): boolean;                 // 视图层据此决定要不要重绘
   get dirtyRect(): Rect | null;                // 调试 / 测试
   get compositeKeyNow(): string;               // 调试 / 测试
   invalidate(rect?: Rect | null): void;        // 不传 = 整幅失效；传则不传 rect 的并集
-  compose(doc, fi, onion, onionKey, force): { rebuilt: boolean; consumed: Rect | null };
+  repaintScreenRegion(dirty: Rect, o: RepaintRegionOpts): Rect | null;   // §15b.3 的薄包装
+  compose(doc, fi, onion, onionKey, force): ComposeResult;   // { rebuilt, consumed, reason, ms } —— reason/ms 给渲染调试用
   composeOther(index, doc, fi): HTMLCanvasElement;   // 多画布合成（带缓存）
   checkerPattern(ctx): CanvasPattern | null;         // 2×2 透明棋盘格（只创建一次）
   resetDoc(): void; resetFrame(): void;
@@ -1403,7 +1630,10 @@ class RenderServer {
 - **`realCompositor` 是晚绑定的箭头函数包装**，不是直接引用函数对象：`tests/view.test.ts` /
   `tests/session.test.ts` 会在运行时替换 `compositor.composeFrame*` 来数调用次数，
   提前绑定会把补丁挡在外面、那些计数断言静默失效。
-- `View` 侧只剩 11 处委托 + `markDirty()` 里"整幅失效 → `blitFull`"这一条视图层判断
+- `View` 侧只剩 **17 处委托（12 个成员**：`canvas` / `invalidate` / `compose` / `composeOther` /
+  `repaintScreenRegion` / `checkerPattern` / `needsCompose` / `debugEnabled` / `nowMs` / `noteFrame` /
+  `resetDoc` / `resetFrame`）** + `markDirty()` 里"整幅失效 → `blitFull`"这一条视图层判断
+  （口径＝`this.render.` 的**出现次数**，别用行数数——一行里可能既有 `needsCompose` 又有 `compose`）
   （视图变换 / 视口尺寸变化才会强制全量 blit，与合成是否失效是两件事）。
 
 ### 15b.2 视图数学 `src/servers/viewport.ts`
@@ -1437,7 +1667,7 @@ surfaceDelta(rot, zoom, dx, dy): { x; y }                        // 表面拖拽
 5. 适配缩放只在离整数倍 0.18 以内才吸附（否则像素画在半格相位下抖动）。
 
 **状态暂时仍由 `View` 持有**（`zoom/ox/oy/rot` 是公开字段，`ui/canvas.tsx` 直接读 `view.zoom`），
-所以这一版只搬了算术、没搬状态 —— 等 UI 改成订阅信号（§3.6）后再把字段收进 server。
+所以这一版只搬了算术、没搬状态 —— 等 UI 改成订阅信号（`docs/ARCHITECTURE.md` §3.6）后再把字段收进 server。
 
 ---
 
@@ -1450,7 +1680,8 @@ RenderServer.repaintScreenRegion(dirty, o): Rect | null            // 薄包装�
 ```
 
 把**文档空间的脏矩形**换成**要重绘的屏幕区域**：映射到屏幕（`screenRectOf` 自带 2px 余量，
-避免缩放取整露边）→ **平铺模式下把 8 个邻居副本的区域一并并进来** → 裁到视口（越界交给 canvas 裁剪是浪费）。
+避免缩放取整露边）→ **平铺模式下按 `tileOffsets(tile)` 把邻格副本的区域一并并进来
+（`row` / `col` 各 2 个、`grid` 8 个、`off` 不做）** → 裁到视口（越界交给 canvas 裁剪是浪费）。
 返回 `null` 表示这块脏区域完全在视口外。
 
 平铺那条是必须的：同样的像素在屏幕上出现 9 次，只重绘中心那一块的话，四周副本会留在旧画面上
@@ -1501,8 +1732,12 @@ RenderServer.noteFrame({ composed, rebuilt, reason, fi, docRect, screen, fullBli
 ```ts
 interface GestureMods { shift; ctrl; alt; space }
 modsOf(e, space): GestureMods
-mouseButtonIntent(button, space): "focus-fit" | "secondary" | "primary"
+type MouseIntent = "focus-fit" | "secondary" | "primary";
+mouseButtonIntent(button: number, space: boolean): MouseIntent
   // PC 鼠标：中键＝聚焦并适配当前画布；右键 / 空格+左键＝用另一个色槽（背景色）绘制
+interface PinchNow { mx: number; my: number; dist: number }     // dist 下限 1，避免除零
+interface PinchBase extends PinchNow { ox: number; oy: number; zoom: number }
+// `Pt` / `PinchNow` / `PinchBase` 都从本文件导出，手势控制器与视口共用。
 
 outsideDoc(p, docW, docH): boolean
 longPressNeedsDoc(action): boolean              // 取色 / 放大 / 缩小必须落在画布内
@@ -1512,6 +1747,7 @@ FOUR_MOVE_PX_DEFAULT = 15                        // 四指划动阈值（逻辑�
 fourFingerArmed(pointers, starts, threshold): boolean
 
 TAP_SLOP_PX = 24; withinTapSlop(a, b, slop?): boolean
+  // 口径锚点：本仓库当前只剩测试在钉它（手势序列实际用的是 §15c2 的 `TAP_SEQ_PX` / `TWO_TAP_PX`）；**不要删**。
 
 pinchNow(a, b): { mx; my; dist }                 // dist 下限 1，避免除零
 pinchBaseOf(a, b, view): PinchBase               // 起始时冻结的 { 中点, 距离, 缩放, ox, oy }
@@ -1530,6 +1766,7 @@ pinchAround(base, now, zoomMin, zoomMax): { zoom; ox; oy; zoomed }
   不要在别处兜底。
 - 长按策略：PC 不开长按；`pickColor / zoomIn / zoomOut` 必须落在画布内且允许取色
   （有选区、或当前是选区类工具时不允许）；其它长按动作只要落在画布内即可。
+  （画布外的长按菜单**不走**这条判定 —— 它由 `View` / 控制器自己处理。）
 
 ## 15c2. 手势状态机 `src/servers/gesture.ts`（轻点序列）
 
@@ -1544,19 +1781,21 @@ TWO_TAP_PX = 80           // 双指双击落点容差（中点抖动更大，所
 
 interface TapUpInput {
   now; pt; overDoc; canvasIndex; docIndex;
-  moved;                  // 手势期间画过且离开过起点 ⇒ 断掉连点串
+  moved: boolean;         // 手势期间画过（有笔迹且离开过起点）：第二次点击前拖动过就断掉连点
   hasStroke; hasSelDrag; hasXf; pinchZoomed;
   isPc; doubleTapMs; canvasDoubleMapped; midOverDoc;
 }
 
 type TapOutcome =
-  | "plain"                 // 没被手势接管：照常落笔 / 提交
-  | "skip"                  // 第二下落在画布内但取不到画布矩形：吞掉、**保留计数**（留给三击）
-  | "two-finger-skip"       // 双指中点落在画布内：整串作废
-  | "two-finger-first"      // 记下第一下双指轻点
-  | { kind:"two-finger-redo", mid }
-  | { kind:"focus-canvas", index } | "margin-double" | "canvas-double"
-  | { kind:"triple", overDoc, undoSingleDot };
+  | { kind: "plain" }                                  // 没被手势接管：照常落笔 / 提交
+  | { kind: "skip" }                                   // 第二下落在画布内但取不到画布矩形：吞掉、**保留计数**（留给三击）
+  | { kind: "two-finger-skip" }                        // 双指中点落在画布内：整串作废
+  | { kind: "two-finger-first" }                       // 记下第一下双指轻点
+  | { kind: "two-finger-redo"; mid: Pt }
+  | { kind: "focus-canvas"; index: number }
+  | { kind: "margin-double" } | { kind: "canvas-double" }
+  | { kind: "triple"; overDoc: boolean; undoSingleDot: boolean };
+// ⚠ **没有裸字符串成员**：`up()` 的返回值一律按 `out.kind` 读（`tests/gesture.test.ts` 全程这么用）。
 
 class TapMachine {
   noteSecondFinger(a, b)          // 第二根手指落下：记中点 + 标记「这次手势带双指」
@@ -1567,7 +1806,8 @@ class TapMachine {
 }
 ```
 
-口径（逐字对齐搬家前的行为，`tests/gesture.test.ts` 44 条断言钉住）：
+口径（逐字对齐搬家前的行为，`tests/gesture.test.ts` **44** 条断言钉住 —— 静态 41 处调用，
+其中 1 处在一个 4 元素的循环里 ⇒ 运行时 44；口径＝运行时 `eq/ok` 次数）：
 
 - **优先级**：双指序列（只要这次手势出现过两根手指、没缩放 / 没在画 / 没在选 / 没在变换）
   → 单指连点 → 双击**换画布**（哪怕「双击画布」映射了动作也照样聚焦适配）
@@ -1591,7 +1831,8 @@ P5 第三、四片：`View` 的四个指针事件入口（`onDown` / `onMove` / 
 `View` 侧只剩四行转发 + 覆盖层绘制 + 各工具的动作体。
 
 ```ts
-/** 控制器持有的触点会话状态（View 只读它们来画覆盖层；写入只有控制器能做） */
+/** 控制器持有的触点会话状态（View 只读它们来画覆盖层；写入只有控制器能做）
+ *  共 **37 个字段**：口径 = 实例字段数（38）减去 `private tap`（那是轻点状态机、不是触点会话状态）。 */
 class GestureController {
   // 触点：     pointers / fourStart / fourSeen / fourArmed / fourView0
   // 双指：     pinchBase / pinchZoomed
@@ -1609,7 +1850,7 @@ class GestureController {
   onCancel(e: PointerEvent): void
 }
 
-/** 控制器操作 View 的接触面：54 个成员（P5 第四片后只剩方法 + 视口 + 两个依赖） */
+/** 控制器操作 View 的接触面：56 个成员（口径＝声明数；`ox: number; oy: number; zoom: number;` 一行算 3 个） */
 interface GestureHost {
   session; host;                           // 公共依赖（host = 画布宿主元素）
   ox; oy; zoom;                            // 视口（所有权仍归 View：视图变换是渲染的事）
@@ -1628,8 +1869,10 @@ interface GestureHost {
 - 触点会话状态是**控制器的字段**，不是 `View` 的：`view.gesture.xf` / `view.gesture.selDrag` 这样的
   读取是「渲染层读输入层的会话状态」（覆盖层每帧都要画它，直接读字段比造一套信号便宜）；
   **写入只允许控制器自己做**，别处要改状态就给它加方法。
-- 这样 `GestureHost` 从 93 个成员瘦到 **54 个**（剩下的是 `session` / `host` / 视口三元组 /
-  `onFramePreview` + 各动作体方法）—— 接口小到能一眼看完，也就真的成了「契约」而不是「字段清单」。
+- 这样 `GestureHost` 从 93 个成员瘦到 **54 个**（第四片当时的口径），**现在是 56**（口径＝接口里的
+  字段/方法声明数，`ox: number; oy: number; zoom: number;` 一行算 **3** 个；按行数会数出 54，差的就是它）。
+  剩下的是 `session` / `host` / 视口三元组 / `onFramePreview` + 各动作体方法 —— 接口小到能一眼看完，
+  也就真的成了「契约」而不是「字段清单」。
 - 结构体类型（`XfSession` / `SelDragState` / …）与状态放在同一个文件里，改状态机时不用来回跳。
 
 口径（**逐字搬迁，不是重写**；分支顺序、阈值、副作用顺序与搬家前一致）：
@@ -1637,8 +1880,11 @@ interface GestureHost {
 - `View` 的四个公开入口（`onDown` / `onMove` / `onUp` / `onCancel`）保留为**一行转发** ——
   `bind()` 与 `dispatchPointer()`（临时工具笔画的合成事件）都走它们，`tests/view.test.ts` 那套
   DOM 桩驱动的回归也照旧可用。
-- 触点会话**状态仍留在 `View`**（覆盖层要读 `stroke` / `selDrag` / `xf` / `outline` 等来画），
-  控制器通过 `GestureHost` 读写它们；**想让控制器多碰一个成员，先在接口里声明**。
+- 触点会话**状态是控制器的字段**（不是 `View` 的）：覆盖层每帧要读它，读法是
+  `view.gesture.xf` / `view.gesture.selDrag`（「渲染层读输入层的会话状态」——直接读字段比造一套信号便宜）；
+  **写入只允许控制器自己做**，别处要改状态就给它加方法。`View.gesture` 是 `readonly` 公开字段
+  （`view.ts` 的 `readonly gesture = new GestureController(this)`），测试白盒窥视也走它
+  （`tests/warpui` / `tests/xformui` / `tests/view` 的 `VX` 类型已同步扩了 `gesture`）。
 - 各工具的动作体（起笔迹、开始选区拖动、变换抓手解算、等距抓手、画布调整）仍然在 `View`/`tools`，
   控制器只负责"什么时候轮到谁"。
 - 会话状态的结构体（`ResizeDragState` / `SelDragState` / `IsoDragState` / `OutlineState` /
@@ -1649,9 +1895,11 @@ interface GestureHost {
   四指期间 `onMove` 不 pinch 不 pan、`fourArmed` 需要两根手指各自离开落点超过阈值、
   pinch 以中点不动点缩放并夹在 `zoomMin..zoomMax`、单指平移与 PC `mousePan` 交还。
 
-**还没搬的（P5 收尾）**：触点会话状态本身（`pointers` / `pinchBase` / `fourSeen` …）与
-`xfDrag` / `selDrag` / `outline` / `path` / `resizeDrag` / `isoDrag` 这些**状态字段的所有权**——
-它们被覆盖层绘制读着，要先把 `View` 的绘制也拆出去才能一起挪走（见 `docs/ARCHITECTURE.md` P4/P5）。
+**P5 现状**：`onDown` / `onMove` / `onUp` / `onCancel` 与 **37 个触点会话字段**的所有权都已归控制器
+（第四片，2026-09-14；`View` 里 `this.gesture.` 162 处，`this.pointers` / `this.selDrag` / `this.xf` /
+`this.pinchBase` / `this.outline` / `this.path` / `this.resizeDrag` / `this.isoDrag` **0 命中**）；
+`View` 侧只剩四个一行转发、覆盖层绘制与各工具动作体。剩下可拆的是**覆盖层绘制**
+（`View.drawOverlay()`，约 250 行，见 `docs/ARCHITECTURE.md` P4/P5）。
 
 ---
 
@@ -1660,17 +1908,31 @@ interface GestureHost {
 ### 16.1 原生桥接 `src/io/bridge.ts`
 
 ```ts
+isNativeShell(): boolean                    // 有 window.PixelBridge 即 APK 壳（浏览器 / PWA 为 false）
+insets(): { top; bottom; left; right }      // 原生 insets 优先，退回 env(safe-area-inset-*)
+envInsets(): { top; bottom; left; right }   // 只读 CSS env()（探针元素量）
+setImmersive(on: boolean): void             // 隐藏 / 显示系统栏（浏览器里是空操作）
 toast(msg: string): void
 vibrate(ms: number, tag = "调用"): boolean   // 先走原生桥，失败再退 navigator.vibrate；tag 进诊断环
+                                             // 时长先夹到 10..200ms；hapticLog 里记的是夹过之后的时长
 canVibrate(): boolean | null                // null = 无法判断
 hapticReport(pref?: { on: boolean; len: number }): string
 hapticLog: HapticEvent[]                    // { tag, ms, ok }，最多 12 条（诊断用）
+hapticLogText(): string; lastVibrateResult: boolean | null; lastVibrateTag: string
 saveBytes(name, mime, bytes: Uint8Array, onDone?: (ok: boolean) => void): void
 openFile(mime = "*/*"): Promise<OpenedFile | null>       // { name, mime, bytes }
 b64FromBytes(bytes): string; bytesFromB64(b64): Uint8Array
+
+// C3 本地 AI 服务（android/AiServer.java；没有桥接时一律降级 "" / no-op / false）
+aiServerStart(port: number): string         // **同步**返回新 token（16 字节 hex），绑定失败回 ""
+aiServerStop(): void / aiServerStatus(): string     // 实况 JSON 原文
+aiRespond(requestId: string, json: string): boolean // 交付一条异步响应；false = 超时 / 已交付过
 ```
 
-`window.PixelBridge`（Android 注入）：`saveFile(name, mime, base64, reqId)`、`openFile(mime)`、`toast(msg)`、`vibrate(ms)`、`hasVibrator()`、`keepAwake(on)`、`insets()`、`setImmersive(on)`。
+原生 → 页面的回调是 `window.__pc_ai_call(envelopeJson, requestId)`：返回一行 JSON，**空串 = 挂起**
+（等 `aiRespond` 交付，见 §24）。
+
+`window.PixelBridge`（Android 注入，`MainActivity.java` 的 12 个 `@JavascriptInterface`）：`saveFile(name, mime, base64, reqId)`、`openFile(mime)`、`toast(msg)`、`vibrate(ms)`、`hasVibrator()`、`keepAwake(on)`、`insets()`、`setImmersive(on)`、`aiServerStart(port)`、`aiServerStop()`、`aiServerStatus()`、`aiRespond(requestId, json)`（后四个属 §24 的本地 AI 服务）。
 网页端自动降级：`saveBytes` → `<a download>`；`openFile` → `<input type="file">`。
 
 震动统一走 `Session.hapticTick(tag, scale = 1)`：受设置 `gesture.haptic` 开关控制，脉冲长度取 `prefs.hapticLen`（30 / 60 / 100ms，默认 60；部分机型 30ms 以下无感）。
@@ -1679,9 +1941,9 @@ b64FromBytes(bytes): string; bytesFromB64(b64): Uint8Array
 ### 16.1b0 PC 拖放与剪贴板
 
 - **拖放打开**：`App.tsx` 监听窗口的 `dragover/dragenter/dragleave/drop`，拖动中显示 `.drop-hint` 提示层，
-  松手后用 `File.arrayBuffer()` 取字节并交给 `modals.tsx` 新导出的 **`openFileBytes(name, bytes, mode, mime)`**
-  ——它与「打开」文件选择框走的是同一套逻辑（`.pxc` 工程 / GIF 多帧 / PNG 等静图、或导入为图层）。
-  `openFlow()` 现在只是 `bridge.openFile()` + `openFileBytes()` 的薄包装。
+  松手后用 `File.arrayBuffer()` 取字节并交给 `modals.tsx` 导出的 **`openFileBytes(name, bytes, mode = "new", mime = "")`**
+  （返回 `Promise<boolean>` = 是否真的打开成功；它按魔数分流 `.pxc` / `.aseprite` / GIF / 静图），
+  以及 **`openFlow(mode: "new" | "layer")`** —— `bridge.openFile()` + `openFileBytes()` 的薄包装。
 - **剪贴板**：`Ctrl+C` 把选区复制成 `Cel` 并写进系统剪贴板（`io/clipboard.ts` 的 `writeClipboardPng`）；
   `Ctrl+V` **优先读系统剪贴板**（`navigator.clipboard.read()` → `image/*` → `createImageBitmap` →
   `ImageData` → 合成 `Cel`），取不到再回退到应用内剪贴板（`SESSION.clip`），最后调用
@@ -1689,8 +1951,11 @@ b64FromBytes(bytes): string; bytesFromB64(b64): Uint8Array
 
 ### 16.1b1 键盘快捷键 `src/app/shortcuts.ts`
 
-PC 模式的键位映射是纯函数 `shortcutFor(key, typing)`，宿主（`App.tsx` 的一个全局 keydown 监听）把它翻译成
-Session/View 调用：
+PC 模式的键位映射是纯函数 `shortcutFor(e: ShortcutKey, typing = false, keymap?)`，返回
+`ShortcutHit | null`（`{ action, payload? }`；`null` = 这个键没有绑定），宿主（`App.tsx` 的一个全局 keydown 监听）
+把它翻译成 Session/View 调用。同文件还导出 `TOOL_KEYS`（字母 → `ToolId`，见下表末行）、
+`NUDGE_STEP = 1` / `NUDGE_STEP_FAST = 10`（方向键步长）、`SHORTCUT_SHEET`（§16.1b1b），
+以及类型 `ShortcutAction` / `ShortcutHit` / `ShortcutKey` / `SheetItem` / `SheetGroup`：
 
 | 键 | 动作 |
 |---|---|
@@ -1698,11 +1963,27 @@ Session/View 调用：
 | Ctrl+S | 保存工程 |
 | Ctrl+C / Ctrl+V | 复制选区 / 从剪贴板粘贴 |
 | Delete / Backspace | 删除选区内容 |
-| Esc | 取消选区（弹窗的 Esc 关闭由 Dialog 自己处理） |
+| Esc | 先收起展开的浮动球，再取消选区（弹窗的 Esc 关闭由 Dialog 自己处理） |
 | `+` / `-` / `0` | 放大 / 缩小 / 适配画布 |
 | Tab | 隐藏界面（专注模式，`.app-root.chrome-off`） |
 | 方向键（Shift 加速到 10px） | 平移选区框；没有选区时轻微平移视图 |
 | 字母键 | 工具切换（`TOOL_KEYS`：B 铅笔、E 橡皮、G 油漆桶、I 取色、A 喷枪、L 直线、R 矩形、O 椭圆、C 圆形、P 多边形、Y 折线、U 曲线、M 选区、W 魔棒、Q 套索、H 轮廓填充） |
+| Ctrl+X | 剪切选区 |
+| Ctrl+Shift+V | 粘贴为新图层 |
+| Ctrl+Alt+V | 粘贴为新画布 |
+| Ctrl+O | 打开 / 导入 |
+| Ctrl+N | 新建画布 |
+| Ctrl+E | 导出图片 |
+| Ctrl+← / Ctrl+→ | 上一帧 / 下一帧 |
+| Ctrl+↑ / Ctrl+↓ | 上一个 / 下一个图层 |
+| Ctrl+F1 | 快捷键一览（`SHORTCUT_SHEET`，见 §16.1b1b） |
+| Ctrl+K | 动作搜索（`Session.allActions()`，见 §11.11） |
+| Ctrl+R | 画布调整模式（`Session.toggleResizeMode()`） |
+| X | 交换前景 / 背景色 |
+| 按住 F | 快捷圆盘（`PIE_DEFAULT`，可在快捷键面板里改） |
+
+这张表是 `SHORTCUT_SHEET`（`src/app/shortcuts.ts`）的摘要；`Ctrl+F1` 打开的面板与它**同一份数据**，
+`tests/pc.test.ts` 会逐行用 `probe`/`action` 验证面板不会与 `shortcutFor` 漂移 —— **改键位时改代码，不要只改这里**。
 
 在输入框里只放行 Ctrl/Cmd 组合（不会打断打字）；Alt 组合一律不处理（留给浏览器）。
 
@@ -1722,7 +2003,7 @@ yieldToUI(): Promise<void>            // 逐帧循环里让出事件循环
 
 ```ts
 type Keymap = Record<string, string>          // action -> "ctrl+shift+z"
-REBINDABLE: readonly string[]                 // 可改键的动作（无 payload 的那些）
+REBINDABLE: readonly string[]                 // **26 条**可改键的动作（无 payload 的那些；`tool` / `nudge` 不在内）
 chordOf(e): string | null                     // 事件 -> 组合键字符串（修饰键单独按返回 null）
 chordLabel(chord): string                      // "ctrl+arrowleft" -> "Ctrl+←"
 defaultChordOf(action): string | null          // 默认键取自 SHORTCUT_SHEET 的 probe
@@ -1730,6 +2011,10 @@ chordForAction(action, keymap): string | null  // 现在生效的键（自定义
 actionForChord(chord, keymap): string | null   // 这个组合键归谁
 bindChord(action, chord, keymap)               // 成功返回新 map，冲突返回 { ok:false, clash }
 unbindChord(action, keymap) / overrides(keymap)
+const PIE_DEFAULT = "f";                      // 按住发动快捷圆盘（可在同一面板改键）
+keyName(key: string): string | null           // "arrowleft" → "←" 这类可读名
+isOverridden(action, keymap = {}): boolean    // 这个动作是否被用户改过键
+actionHitFor(e, typing, keymap): ShortcutAction | null   // 与 shortcutFor 的区别：只给动作，不给 payload
 ```
 `shortcutFor(e, typing, keymap?)` 会先查自定义绑定；**被改走的动作，它的默认键同时失效**
 （默认键只是兜底）。用户的覆盖存在 `prefs.keymap`，随设置一起持久化。
@@ -1739,8 +2024,10 @@ unbindChord(action, keymap) / overrides(keymap)
 ### 16.1b1b 快捷键一览 `SHORTCUT_SHEET`
 
 `src/app/shortcuts.ts` 里除了 `shortcutFor`，还导出面板数据 `SHORTCUT_SHEET`
-（分组 + 每行 keys/中英文案；键盘行带 `probe`/`action`，测试会逐行验证它真的能
-触发）。`Ctrl+F1` 或主菜单「快捷键一览」打开（`ui/modals.tsx` 的
+（分组 + 每行 keys/中英文案；键盘行带 `probe`/`action`，`mouse: true` 的行是鼠标 / 手势词条、
+没有键；测试会逐行验证 `probe` 真的能触发）。当前 **4 组 41 行**（编辑 13 / 视图 10 / 帧与图层 8 /
+颜色与工具 10，其中 12 行是 `mouse` 词条）—— 口径 = 各组 `items` 之和。
+`Ctrl+F1` 或主菜单「快捷键一览」打开（`ui/modals.tsx` 的
 `ShortcutHelpModal`，PC 左类别右列表、手机单列分组）。
 
 ### 16.1b2 PC 模式 `src/io/pcmode.ts`
@@ -1756,7 +2043,10 @@ unbindChord(action, keymap) / overrides(keymap)
 | `applyPcMode(mode)` / `isPc()` | 写 / 读 `<html data-pc>`；`applyPcMode` 返回解析后的状态 |
 | `watchPcCapabilities(getMode, cb?)` | 指针能力变化（插鼠标、切换平板模式）**以及第一个真实指针事件**时重算：手机 WebView 常谎报 `hover: hover`，第一次触摸把它钉在触屏模式，第一次鼠标移动又会切回桌面模式 |
 | `notePointerType(t)` / `inputHints()` | 记录 / 读取输入证据（`mouse` 粘住、`touch`·`pen` 只作否决证据） |
+| `pcModeOn(mode)` | 纯读（**不写 DOM**）：`applyPcMode` 就是 `pcModeOn` + 写 `<html data-pc>`；测试与非 React 层拿「现在算不算 PC」用这个 |
 | `pcModeOf(prefs)` | 从 `Prefs.pcMode` 取值（`session.ts` 新增字段，默认 `auto`） |
+
+`applyPcMode` 关掉时是 **`removeAttribute("data-pc")`** 而不是写 `0`（CSS 只有 `html[data-pc]` 规则）。
 
 设置项：`display.pcMode`（自动 / 强制开 / 强制关），启动时由 `main.tsx` 应用；
 改设置后 `main.tsx` 会通过 `SESSION.subscribe` 重新把结果推给界面层（`setKitPcMode`），
@@ -1784,8 +2074,9 @@ unbindChord(action, keymap) / overrides(keymap)
 
 ```ts
 interface Insets { top: number; bottom: number; left: number; right: number }
+interface SafeAreaPrefs { safeArea: boolean; safeExtra: number; immersive: boolean }
 detectInsets(): Insets                     // 原生 insets() 优先，退回 env(safe-area-inset-*)
-applySafeArea(p: { safeArea; safeExtra; immersive }): void
+applySafeArea(p: SafeAreaPrefs): void   // SafeAreaPrefs = { safeArea; safeExtra; immersive }
 watchSafeArea(get: () => SafeAreaPrefs): () => void   // resize / 旋转时重新应用
 ```
 
@@ -1803,12 +2094,18 @@ watchSafeArea(get: () => SafeAreaPrefs): () => void   // resize / 旋转时重�
 interface ExportOpts { bg?: RGBA | null; scale?: number; li?: number | null; bounds?: RectLike | null; range?: [number, number] | null }
 frameRange(o, count): { from; to; n }            // 越界裁剪 + 自动交换
 
-exportPNG(doc, fi, o): Promise<{ bytes; name } | null>
-exportGIF(doc, o): Promise<{ bytes; name }>
-exportSheet(doc, o & { cols? }): Promise<{ png; json; name; jsonName } | null>
-encodeGIF(frames, w, h, { transparent? }): Uint8Array
+exportPNG(doc, fi, o = {}): Promise<{ bytes; name } | null>
+exportGIF(doc, o = {}): Promise<{ bytes; name }>
+exportSheet(doc, o & { cols? } = {}): Promise<{ png; json; name; jsonName } | null>
+exportASE(doc): Promise<{ bytes; name }>        // 导出弹窗的第 5 个页签（§16.6）；缩放 / 背景 / 帧范围对它不适用
+encodeGIF(frames: FrameData[], w, h, { transparent? }): Uint8Array
 pngBytes(canvas): Promise<Uint8Array | null>
 sanitizeName(n): string
+exportASE(doc): Promise<{ bytes: Uint8Array; name: string }>   // Aseprite 导出（§16.6 的写入口）
+type RectLike / interface FrameData / interface GifWriterLike  // 入参形状（见源码）
+const MAX_IMAGE_PIXELS = 16 * 1024 * 1024;   // 单图上限（≈4096×4096）
+const MAX_TOTAL_PIXELS = 48 * 1024 * 1024;   // 动画/精灵表总上限
+const MAX_LAYER_FILES = 12;                  // 分图层导出超过这个数先确认
 ```
 
 ### 16.3 参考图存储 `src/io/refstore.ts`
@@ -1817,7 +2114,8 @@ sanitizeName(n): string
 interface RefImg { w: number; h: number; px: Uint8ClampedArray; name: string }
 interface RefState extends RefImg { x: number; y: number; size: number; opacity: number }
 
-saveRef(state: RefState): Promise<boolean>   // IndexedDB，上限 12MB
+const REF_MAX_BYTES = 12 * 1024 * 1024;      // 单张参考图上限（IndexedDB）
+saveRef(state: RefState): Promise<boolean>   // 超限返回 false（不抛）
 loadRef(): Promise<RefState | null>
 clearRef(): Promise<void>
 ```
@@ -1825,21 +2123,26 @@ clearRef(): Promise<void>
 ### 16.4 操作记录编解码 `src/io/historyfile.ts`
 
 ```ts
-encodeHistory(dump: HistoryDump, w: number, h: number): unknown | null   // JSON 安全（缓冲区 base64）
-decodeHistory(raw: unknown): HistoryDump | null
+encodeHistory(dump: HistoryDump): unknown | null   // JSON 安全（缓冲区 base64）；没有 entry 时返回 null
+decodeHistory(raw: unknown): HistoryDump | null    // 仍兼容 v1 payload 里的 w/h（旧工程只有一个尺寸）
 // 依赖 src/engine/b64.ts 的 bytesToB64 / b64ToBytes（纯实现，浏览器与 Node 通用）
 ```
 
 ### 16.5 工程文件 / 自动保存 / GIF 读取 / 剪贴板
 
 ```ts
-// src/io/project.ts
-serialize(doc, history?): Promise<string>   // .pxc（JSON，history 由 historyfile 编码）
-parse(text): Promise<Doc | null>
-parseProject(text): Promise<{ doc: Doc; history: unknown | null } | null>
+// src/io/project.ts —— v3「多画布空间」格式（v2 单文档仍能读，focused 画布同时填 v2 字段）
+interface SpaceEntry { id?; doc: Doc; x; y; li; fi; hist?; locked?; group? }
+type CelFormat = "png" | "rle";
+serializeSpace(entries: SpaceEntry[], focus: number, history?: unknown, fmt: CelFormat = "png"): Promise<string>
+                                    // .pxc（JSON；cel 默认内嵌 PNG，自动保存走 fmt:"rle" 省体积）
+interface ParsedSpace { entries: SpaceEntry[]; focus: number; history: unknown | null }
+parseSpace(text: string): Promise<ParsedSpace | null>   // v2 单文档 / v3 多画布都认；canvases: [] = 空工程
+rleEncodeCel(bytes): string / rleDecodeCel(s, w, h): Uint8ClampedArray | null   // 坏载荷不抛错，返回 null
+// 单文档的 serialize / parse / parseProject 已删除（见 §18.5）
 
 // src/io/autosave.ts —— 多版本（环形槽位 + 小索引）
-saveAutosave(text, meta, reason?, keep?): Promise<"idb" | "local" | "too-big" | "fail">
+saveAutosave(text, meta, reason: AutosaveReason = "timer", keep = AUTOSAVE_KEEP_DEFAULT): Promise<"idb" | "local" | "too-big" | "fail">
 loadAutosave(): Promise<AutosaveRecord | null>          // 最新一版
 autosaveMeta(): Promise<AutosaveMeta | null>
 autosaveVersions(): Promise<AutosaveVersion[]>          // 新的在前（没有 IDB 时是空数组）
@@ -1855,9 +2158,12 @@ const AUTOSAVE_KEEP_DEFAULT = 5, AUTOSAVE_KEEP_MAX = 12;
 markSessionRunning() / markCleanExit() / wasCleanExit(): boolean
 // 后端无关的版本逻辑（测试用内存后端直接驱动，见 tests/autosave.test.ts）
 hashText(s): string
-readIndex(kv) / pushVersion(kv, rec, reason, opts) / listVersions(kv) / readVersion(kv, seq) / dropVersion(kv, seq)
+async readIndex(kv) / pushVersion(kv, rec, reason, opts?) / listVersions(kv) / readVersion(kv, seq) / dropVersion(kv, seq)
 interface AutosaveKv { get(k); put(k, v); del(k) }
 interface AutosaveVersion { seq; slot; savedAt; bytes; hash; name; w; h; frames; layers; reason }
+type AutosaveReason = "start" | "timer" | "hide" | "manual";   // reason 就是它
+interface AutosaveIndex { seq: number; versions: AutosaveVersion[] }   // 新的在前
+idbKv(): Promise<AutosaveKv | null>          // 打开 IndexedDB（不可用时 null → 回落 localStorage）
 
 // src/io/gifread.ts
 interface GifData { w; h; frames: Array<{ data: Uint8ClampedArray; delayMs: number }> }
@@ -1871,7 +2177,7 @@ writeClipboardPng(canvas): Promise<boolean>
 
 | 项 | 口径 |
 |---|---|
-| 存储 | 一个 object store（`pixelcraft/autosave`）里：`index` = 版本表（新的在前，只有几十字节/条），`h0`..`h15` = 16 个**环形槽位**装工程数据 |
+| 存储 | IndexedDB `pixelcraft` 里**唯一一个** object store `autosave`：`index` = 版本表（新的在前，只有几十字节/条），`h0`..`h15` = 16 个**环形槽位**装工程数据 |
 | 写入 | 每存一次只写**一个**槽位（`seq % 16`），不搬动旧数据；淘汰 = 从索引尾部删版本 + 删它占的槽位 |
 | 为什么槽位 16 > 最大保留 12 | 新槽位序号与在册版本序号至少差 13，取模后**不可能**撞上在册版本的槽位（文件头写死的约束，改成相等就会互相覆盖） |
 | 内容没变 | 哈希（`hashText`，FNV-1a + 长度）相同 → 只更新「最近保存时间/原因」，**不占新版本、不写大对象**（否则每 5 分钟的定时保存半小时就把槽位填满同一份内容） |
@@ -1893,11 +2199,12 @@ isAseBytes(b: Uint8Array): boolean          // 看 header 里的魔数（扩展�
 parseAse(bytes): AseFile | null             // 头部 / 帧头 / 分块；不认识的块按 size 跳过
 aseToDoc(file: AseFile): Doc | null         // 转成 PixelCraft 文档（>1024² 返回 null）
 readAseDoc(bytes, name = "sprite"): AseImport  // 上面两步 + 文件名；失败给 i18n key
-                                               // { ok, doc?, reason?: "aseBad" | "aseTooBig",
-                                               //   layers?, frames?, cels?, tags? }
+interface AseImport { ok: boolean; doc?: Doc; reason?: "aseBad" | "aseTooBig";
+  layers?; frames?; cels?; tags? }
 
+interface AseFrame { durationMs: number }
 interface AseFile { w; h; bpp /* 32 RGBA / 16 灰度 / 8 索引 */; transparentIndex; speed;
-  layers: AseLayer[]; frames: { durationMs }[]; cels: AseCel[]; palette: RGBA[] | null; tags: AseTag[] }
+  layers: AseLayer[]; frames: AseFrame[]; cels: AseCel[]; palette: RGBA[] | null; tags: AseTag[] }
 interface AseLayer { name; visible; editable; background; opacity /* 0-255 */; blend; group; tilemap; reference; childLevel }
 interface AseCel { li; fi; x; y; w; h; opacity; rgba: Uint8ClampedArray }  // 已按索引色/灰度转成 RGBA
 interface AseTag { name; from; to; direction /* 0 正向 1 反向 2 乒乓 3 反向乒乓 */; repeat; color? }
@@ -1906,7 +2213,7 @@ aseBlendName(code: number): BlendMode       // ASE 0-18 → PixelCraft 混合模
 
 // ---- 写入：可被 Aseprite 直接打开（third-party 解析器交叉验证过）
 celBounds(cel): Rect | null                 // 非透明像素包围盒（空 cel 返回 null）
-writeAse(doc, { compress = true } = {}): Promise<Uint8Array>
+writeAse(doc, opts: { compress?: boolean } = {}): Promise<Uint8Array>   // 默认压缩；只有显式 false 才不压
 // 图层顺序/名称/可见性/不透明度/锁定/混合模式、逐帧时长、调色板、动画标签都会写出；
 // cel 按内容裁剪，默认 zlib 压缩（cel type 2），平台没有 CompressionStream 时自动退回未压缩（type 0）；
 // 文档底色 doc.bg 会写成一个真正的 "Background" 图层（Aseprite 没有“文档底色”这个概念），保证外观一致；
@@ -1993,7 +2300,7 @@ nextPlayFrameIn(mode, fi, dir, w): PlayStep                    // 循环/乒乓�
 | `ColorAdvancedModal` | `ui/modals.tsx` | **颜色高级模式**：一个弹窗两页（`AnalysisPane` 颜色分析 / `ShadingPane` 色彩明暗），`initialTab` 决定落在哪页；两页**按需挂载**（分析页要扫画布，不该在明暗页白跑）挂上后不再卸载。入口＝调色板面板动作行的一条 + 主菜单一条（`openColorAdv()` → `pc-color-adv`；`openShading()` → `pc-shading` 直接落明暗页），App 侧只挂一个 `Keep`。算法仍然分别在 `engine/color-analysis.ts` 与 `engine/shading.ts` |
 | `IsoBar` | `ui/iso.tsx` | 等距图形模式的**参数条**（常驻浮层，不是弹窗——模式的手感全在画布上）：形状 chips（6）/ 宽深高 / 图块 4·8·16·32 / 实时读数（尺寸·体素·越界）/ 折叠外观（颜色模式、三面颜色、明暗、阴影、描边、形状专属参数）/ 生成 / 生成到新图层 / 完成。入口＝魔法球「等距图形」+ 主菜单。动作图标走 `feature-icons.ts`（§17.5） |
 | `AutosaveHistory` / `RecoverModal` / `AutosaveModal` | `ui/modals.tsx` | 自动保存的**多版本历史**（一列：时间 / 大小 / 工程名 + 恢复·导出·删除）与两个入口：设置 → 数据 里内嵌、主菜单「自动保存历史」（`AutosaveModal`）、以及启动时「上次没正常退出」的恢复面板（`RecoverModal`，由 `SESSION.bootRecover` 驱动）。数据在 `io/autosave.ts`（§16.5），组件只负责列出来与发指令 |
-| `useBlankTap` | `ui/base.tsx` | 点容器空白处执行动作（调色板面板点击关闭） |
+| `useBlankTap` | `ui/kit/primitives.tsx`（`ui/base.tsx` 转出） | 点容器空白处执行动作（调色板面板点击关闭） |
 | 时间线分割线 | `ui/App.tsx`（`.tl-grip`） | 时间线面板顶部的拖动条：上下拖动 = `setTlHeight()`（面板总高度 140–520px，默认 200），拖动时显示 px 浮标，双击复位 200；`prefs.tlH` 是整块面板高度，矩阵 `flex:1` 填充，图层行不足时用 `.ase-fill` 单元格补底 |
 | 安全区 | `io/safearea.ts` | 把原生 insets 写成 CSS 变量 `--sat/--sab/--sal/--sar`，贴边控件统一用它们留白 |
 
@@ -2002,10 +2309,12 @@ nextPlayFrameIn(mode, fi, dir, w): PlayStep                    // 循环/乒乓�
 | 事件 | 方向 | 载荷 | 用途 |
 |---|---|---|---|
 | `pc-toast` | 任意 → UI | `string` | 显示 Toast（无原生桥接时也可用） |
-| `pc-save` / `pcopen` | 原生 → JS | `{ ok, name?, mime?, data? }` | 保存 / 打开文件回调 |
+| `pcsave` | 原生 → JS | `{ ok: boolean }` | 保存回调（`saveBytes` 的 `onDone`；**没有连字符，也没有 name/mime/data**） |
+| `pcopen` | 原生 → JS | `{ ok, name?, mime?, data? }` | 打开文件回调（`data` = base64） |
+| `pc-color-picked` | Session → UI | – | `awaitColorPick(cb)` 收到颜色后派发（App 侧据此收起调色板） |
 | `pc-guide-tools` | 引导 → 浮动球 | `"open" \| "close" \| "shape" \| "select" \| "back" \| "closeall"` | 引导控制工具环 |
 | `pc-guide-undock` / `pc-guide-redock` | 引导 → 浮动球 | – | 引导期间弹出 / 还原停靠球 |
-| `pc-guide-menu-sub` | 引导 → 菜单 | `null \| "import" \| "export"` | 切换菜单二级页 |
+| `pc-guide-menu-sub` | 引导 → 菜单 | `null \| "import"` | 切换菜单二级页（引导里的 `menuSubImport` / `menuSubBack` 两个动作发的就是这两个值；菜单打开时的初始值另走 `window.__pcGuideMenuSub`）。**监听的 `MenuModal` 还认得一个 `"ai"`（直接打开助手浮窗并收起菜单），但 `src/` 里目前没有派发者**（`GuideAction` 里也没有对应动作）—— 别以为它有人发 |
 | `pc-back` | 原生 → UI | `{ handled: boolean }` | 返回手势：监听者把 `handled` 置 true 表示已消费 |
 
 ### 17.3 引导动作实现约定
@@ -2019,7 +2328,7 @@ nextPlayFrameIn(mode, fi, dir, w): PlayStep                    // 循环/乒乓�
 
 ### 17.4 i18n
 
-`src/ui/i18n.ts` 导出 `makeT(lang)`，`Dict` 为递归结构；所有面向用户的字符串都走 key，中英各一份。新增文案 = 两个字典各加一条。
+`src/ui/i18n.ts` 只导出 `Lang` 与 `makeT(lang)`；`Dict`（`{ [key: string]: string | Dict }`）是**文件内**类型、**未导出**（`zh` / `en` 两个字典用它标注）。所有面向用户的字符串都走 key，中英各一份。新增文案 = 两个字典各加一条。
 
 ### 17.5 功能图标表 `src/ui/feature-icons.ts`
 
@@ -2030,6 +2339,7 @@ const FEATURE_ICONS = {
   fxOrb:   { iso: "i-iso", outline: "i-fx-o1", … },
   selRing: { gridSnap: "i-snap", mesh: "i-mesh", quad: "i-skew", halfSnap: "i-snap-half", … },
   isoBar:  { generate: "i-plus", newLayer: "i-layers", look: "i-palette" },
+  aiAttach: { ref: "i-ref", file: "i-import" },
 } as const;
 ```
 
@@ -2037,7 +2347,9 @@ const FEATURE_ICONS = {
   用 `fill/stroke="currentColor"` 跟随主题色）。真机反馈：新功能借用旧图标（等距图形曾用 `i-grid`、
   色彩明暗曾用 `i-dedupe`、颜色分析曾用 `i-search`）在菜单里并排出现，根本分不清哪个是哪个。
 - 一组 = **同一屏上会同时出现**的一批入口（主菜单首屏 / 调色板动作行 / 魔法球 / 选择球 /
-  等距参数条）；**组内图标不得重复**。选择球在电脑模式下四页铺成一屏，所以整组一起算。
+  等距参数条 / 助手参考图附件条）；**组内图标不得重复**。选择球在电脑模式下四页铺成一屏，
+  所以整组一起算。`aiAttach` 单独一组是因为它的两个入口（挂参考图 / 选文件）并排在附件条上，
+  而 `file` 用的就是主菜单「导入图片」的 `i-import` —— 并进 `menu` 会立刻违反组内唯一。
 - 确实属于同一个动作的入口（自由变换的「重置」与「还原」都走 `View.revertXf()`）用
   `FEATURE_ICONS.selRing.reset` 引用同一个值，不要各写一份字面量。
 - `tests/icons.test.ts` 静态校验：组内唯一、每个 id 在 sprite 里存在、`src/` 里出现的所有
@@ -2073,14 +2385,28 @@ sprayDots(cx, cy, radius, minSize, maxSize, count, rnd, fn): void
 - `sprayDots` 在圆盘内均匀采样 `count` 个随机点，每点是一个边长 `[minSize, maxSize]` 的正方形；
   `rnd` 可注入种子，便于测试。
 
+同文件还导出笔迹与笔刷的底层入口：`paintAt` / `eraseAt`（单点落笔）、`lineCells` / `polygonCells` /
+`fillPolygon`（几何栅格化）、`floodCells` / `floodErase` / `floodFill` / `globalFill` / `globalErase` /
+`buildBarrier`（填充族）、`brushStamp` + 类型 `BrushStamp` / `BrushShape` / `MaskFn` / `FillOpts`；
+调用口径见 §4（绘制算法）与 §9（工具注册表与笔迹），**别在这里再写一遍**。
+
 ### 18.3 特效 `engine/effects.ts`
 
 ```ts
 type OutlinePos = "outside" | "inside" | "center";
 outlineCel(d, w, h, width, color, pos = "outside"): void
+inlineCel(d, w, h, width, color, alpha = 255): void   // 内描边：保住最外圈原色 + 透明度混合
+type RoundMode = "outer" | "both";
+roundCornersCel(d, w, h, radius, mode = "outer"): void // 圆角化：只削「一个象限全满」的硬直角
 blurCel(d, w, h, radius): void      // 可分离 box 两遍≈高斯，alpha 预乘
+invertCel(d): void                  // RGB 取反（保留透明）
+desaturateCel(d): void              // 灰度
 dropShadowCel(d, w, h, dx, dy, color, keepOriginal = true): void
+outerGlowCel(d, w, h, R, color): void
 ```
+
+这 8 个特效就是 AI 工具面 `fx_outline` / `fx_inline` / `fx_shadow` / `fx_glow` / `fx_invert` /
+`fx_gray` / `fx_round` / `fx_blur` 的**引擎侧出处**（§22.8），别以为那些 `fx_*` 是 AI 层新造的。
 
 ### 18.4 多画布 `app/session.ts`
 
@@ -2167,14 +2493,17 @@ view.fitAnimated(ms = 220) / animateTo(z, ox, oy, ms)  // 缓动适配（双击�
 
 ### 18.6b 浮动球几何与展开锁定
 
-`ui/orb-layout.ts` 新增纯函数 **`orbMetrics(pc)`**：一张尺寸表（主球直径、菜单项直径、内/外环半径、
-调色球扇形格距与起始半径、主球避让半径）。触摸端 52/40/86/128/32/46，PC 端 62/48/103/154/38/55
-（约 1.2×，排布更散）；`palChipPos(cx, cy, w, h, floaterR?)` 可传入放大的主球半径。
+`ui/orb-layout.ts` 的纯函数 **`orbMetrics(pc)`** 返回一张尺寸表（`orb` 主球直径 / `item` 子球直径 /
+`floaterR` 主球避让半径 / `palItem` 色球直径 / `fanGap` 扇形格距 / `fanR0` 扇形起始半径 /
+`fanRMax` 扇形最大半径 / `r1`·`r2` 内外环半径）：触摸端 `52 / 40 / 26 / 32 / 38 / 48 / 280 / 86 / 128`，
+PC 端 `62 / 48 / 31 / 48 / 60 / 65 / 340 / 103 / 154`（约 1.2×，排布更散）；
+`palChipPos(cx, cy, w, h, floaterR?)` 可传入放大的主球半径。
 CSS 侧对应 `html[data-pc] .orb{62px}` 与 `html[data-pc] .orb-item{48px}`。
 
 **展开锁定**：主球环展开时右上角出现 `.orb-lock` 小按钮（仅展开时显示，叠在主球边角），
 点击后 `ringLock` 为真 —— `closeRadials()` 直接返回，外部点击与其它球的切换都不会再收起主球环；
-再点一次解锁，点主球收起时也会自动解锁。锚点 `data-guide="orb-ring-lock"`。
+再点一次解锁，点主球收起时也会自动解锁。锚点 `data-guide="orb-lock-<球 id>"`
+（五个球各一个，如 `orb-lock-main`；样式 `.orb-lock`）。
 
 ### 18.7a 颜色拖拽填充 `ui/color-drag.tsx`
 
@@ -2206,6 +2535,10 @@ orderedActions(all, order?, hidden?) // 应用用户顺序与隐藏
 fullOrder(all, order?)               // 补全成完整 id 列表（新动作自动排到末尾）
 moveId(all, order, id, delta)        // 在完整列表里上下移动（隐藏项也占位）
 toggleHidden(hidden, id) / visibleCount(all, hidden)
+type OrbKey = "main" | "sel" | "pal" | "fx" | "canv"   // 以 ORB_IDS 为准
+missingFrom(all, list)                       // 「完整列表里还缺哪些 id」（新动作自动补）
+dropIndexAt(centers, x) / stepsBetween(from, to) / nearestSlotIndex(x, y, cx, cy, n)
+                                             // 「在界面上直接拖动排序」的三个助手（见下）
 ```
 
 存储模型：`prefs.barOrder` 保存**完整** id 顺序（含隐藏项），`prefs.barHidden` 保存被
@@ -2288,12 +2621,8 @@ PC 专属的 Blender 式饼菜单：浮动球存储区边的**装备槽**里装�
 `tightenLegacyStack` 收拢一次——只动成组的、且正好卡在旧空隙上的画布，手动摆的位置不碰，幂等。
 
 叠放方向的两个「贴边」候选允许更大的容差（`touchOk`）：把两张画布**推开**的修正量可以比 `snapRange`
-多 `TITLE_EXTRA`，否则拖到邻居身边时永远够不到更大的叠放空隙。`Session.canvasesTouch` 也用
-`stackGap()` 判断，保证叠放后能正常成组。
-
-叠放方向的两个「贴边」候选允许更大的容差（`touchOk`）：把两张画布**推开**的修正量可以比 `snapRange`
-多 `TITLE_EXTRA`，否则拖到邻居身边时永远够不到更大的叠放空隙。`Session.canvasesTouch` 也用
-`stackGap()` 判断，保证叠放后能正常成组。
+多 `TITLE_EXTRA`，否则拖到邻居身边时永远够不到更大的叠放空隙。`Session.canvasesTouch`（**private**）
+也用 `stackGap()` 判断，保证叠放后能正常成组。
 
 ### 18.11 自由变换 / 网格变形（`src/tools/warp.ts`）
 
@@ -2374,13 +2703,21 @@ UI 侧：`View.beginWarp("quad"\|"mesh")` 进入变形（没有浮动选区时�
   先画，**选区框 / 16 个抓手 / 变形控制点与网格线后画**（见 `docs/UI.md` 的覆盖层顺序）——
   早先控制点画在预览之前，一拖动就被自己变出来的像素盖住，看不见抓手。
 
-入口在**选区球**：手机端分三页 —— 常用（全选 / 反选 / 清空 / 填充 / 复制 / 剪切 / 粘贴 / 粘为新图层 / 粘为新画布）
-→ 变形（`sel-more`：斜切 / 透视、网格变形、完成、还原、**半像素吸附开关**、裁切到选区）
-→ 工具（`sel-more-tools`：翻转 / 扩展 / 收缩 / 描边 / 删除）；每页最多 8 项
-（再多 `ringLayout` 会把半径撑出屏幕）。变形页那个开关就是设置项 `tools.selWarpHalfSnap`
-的快捷入口：点一下就地切换，当前状态由 `Item.active` 走 `.orb-item.on` 高亮，`desc` 说明当前是哪一档。
-PC 模式一次铺开三页的并集（去掉「返回 / 更多」这两个纯导航项），饼菜单同样过滤导航项。
-`SESSION.registerOrbCatalog("sel", …)` 登记的是三页的并集（`selCatalog`），
+入口在**选区球**：手机端分**四页**（每页最后一项是「返回 / 更多」导航项，PC 模式把四页并成一屏、
+过滤掉导航项）：
+① **常用**：全选 / 反选 / 清空 / 填充 ＋（仅手机）复制 / 剪切 / 粘贴 / 粘为新图层 / 粘为新画布
+＋「自由变换」入口（`sel-more`）；
+② **自由变换**（`sel-more`）：等比 / 角度吸附 / 网格吸附 / 拖动即复制 / 枢轴 9 档 / 还原
+＋「自由变形」入口（`sel-more-tools`）；
+③ **自由变形**（`sel-more-tools`）：斜切·透视 / 网格变形 / 完成 / 还原 / **半像素吸附开关** /
+裁切到选区 ＋「工具」入口（`sel-more-more`）；
+④ **工具**（`sel-more-more`）：翻转 h / 翻转 v / 扩展 / 收缩 / 描边 / 删除。
+手机端四页各 **10 / 8 / 8 / 7** 项（`ringLayout` 的 `fanRadius()` 按项数**扩容半径**，
+**没有「每页最多 8 项」的硬上限** —— 分页是为了手感，不是为了塞不下）。
+半像素吸附那个开关就是设置项 `tools.selWarpHalfSnap` 的快捷入口：点一下就地切换，
+当前状态由 `Item.active` 走 `.orb-item.on` 高亮，`desc` 说明当前是哪一档。
+PC 模式一次铺开四页的并集（去掉「返回 / 更多」这四类纯导航项），饼菜单同样过滤导航项。
+`SESSION.registerOrbCatalog("sel", …)` 登记的是四页的并集（`selCatalog`），
 所以界面定制面板与动作搜索能列到翻页后面的条目。收起选区球会把当前页复位回第一页。
 
 **状态机约定**（改这里之前先读）：
@@ -2518,7 +2855,7 @@ interface DialogProps {
 ### 20.4 设计令牌与主题
 
 `style.css` 顶部 `:root` 定义尺寸令牌与主题色/固定色令牌，`[data-theme="light"]` 覆盖全部主题色令牌；
-`io/theme.ts` 的 `applyTheme(mode)` / `themeMode(v)` 写 `<html data-theme>` 与 `<meta name="theme-color">`，
+`io/theme.ts` 的 `themeMode(v): ThemeMode` / `applyTheme(mode: ThemeMode)`（`type ThemeMode`）写 `<html data-theme>` 与 `<meta name="theme-color">`，
 设置项为 `display.theme`（`Prefs.theme`，默认 `dark`）。
 
 ---
@@ -2595,7 +2932,7 @@ readRegion(doc: Doc, rect: Rect, opts?: AiReadOpts): AiRegion
    —— **这是对 `docs/PLAN-ai.md` §5.1 早先「`palette: string[]; // "#rrggbb"`」的修正**（实际含 alpha），
    `alpha === 0` 一律记 `.`，不需要另开「透明度表」；
 5. `maxPixels` 默认 65536（256×256）：超出时保留**左上角、整行保留**、截断行数并置 `clipped = true`
-   —— 这是 §3.2 token 预算的落地（1024×1024 全图约 30 万 token，不可能整图发给模型）。
+   —— 这是 `docs/PLAN-ai.md` §3.2 token 预算的落地（1024×1024 全图约 30 万 token，不可能整图发给模型）。
 
 **口径 5 的例外（请求区域完全在画布外，口径①）**：请求矩形与画布**没有交集**时返回
 `w = h = 0`、`rows = []`、`palette = []`、`clipped = true`，而 `x/y` **回显请求坐标**（不是裁剪后的 0），
@@ -2657,9 +2994,11 @@ applyOps(doc: Doc, ops: AiOp[], ctx: AiApplyCtx): AiApplyResult
   **与目标图层锁没锁无关** ——「没有 op 可失败」不是失败。这条早退**必须排在锁定检查前面**，
   否则「锁定图层 + 空 ops」会给出 `ok:false` 且 `errors` 空。`ops` 不是数组时按空处理并记一条 warn。
 - 单个 op 非法 → 记进 `errors`（带 `index`）并跳过，其余照常执行；`ok = errors.length === 0`。
-- **越界坐标不钳制也不搬位置**：画到画布外就是没画（`changed` 会说真话）。只有
-  `size` / `tolerance` / rgba 通道值 / `li` / `fi` 这类「会被悄悄改小」的参数才进 `warnings`，
-  形如 `clamped: size 999 → 64`、`clamped: li 0.4 → 0`；小数与越界各报一条，**互不遮蔽**。
+- **越界坐标不钳制也不搬位置**：画到画布外就是没画（`changed` 会说真话）。会进 `warnings` 的是两类：
+  ① `size` / `tolerance` / rgba 通道值 / `li` / `fi` 这类**会被夹进范围**的参数；
+  ② **任何整数字段的小数截断**（坐标也一样：`clamped: x 3.7 → 3`）。
+  形如 `clamped: size 999.4 → 999` + `clamped: size 999 → 64`（小数与越界各报一条，**互不遮蔽**）、
+  `clamped: li 0.4 → 0`（`li` / `fi` 是「原始值 → 最终值」一条，小数与越界合并在同一行）。
 - **cel 只在真要写像素时才建**：`put` / `wipe` 先拿 `doc.w/h` 判越界、先问选区掩膜，再 `ensureCel`；
   `fill` 的种子越界先记 error（文案 `fill 起点 (x,y) 在画布外`）再决定建不建 cel。全程落在画布外的 op
   一个字节没写，就不会在 `doc.cels` 里留下一条空 Cel（空 cel 会污染 §21.1 的 `frames[].cels` 计数）。
@@ -2669,7 +3008,7 @@ applyOps(doc: Doc, ops: AiOp[], ctx: AiApplyCtx): AiApplyResult
   （那些是 §22 的工具）；`doc.pixelRev` 只在真的改到字节时前进一次。
 - `changed` 是**像素并集包围盒**，不是「有改动吗」的判据 —— 判生效一律看 `docRev`。
 
-**为什么 `ctx.session` 是结构类型而不是 `Session`**：`session.ts` 有 4.2k 行且依赖 prefs / DOM 桩，
+**为什么 `ctx.session` 是结构类型而不是 `Session`**：`session.ts` 有 4.7k 行（4700 行）且依赖 prefs / DOM 桩，
 把它拉进这一层就没法在 Node 里单测了。`applyOps` 实际只读 `fg` / `bg` / `li` / `fi` 四个字段
 （`docs/PLAN-ai.md` §5.1 早先写的是 `session: Session`，已按代码改成 `AiSessionLike`）。
 
@@ -2769,7 +3108,7 @@ idRegistrationDiff(): { missingFromTable: string[]; missingFromWhitelist: string
 ```
 
 - `listTools` 顺序**稳定**：tier 分组（`read → draw → destructive → ui`），组内按 id 字典序；
-  `opts.tiers` 只筛掉不要的档，传入的档序不影响输出顺序；**默认不含 `ui`**（§3.6）。
+  `opts.tiers` 只筛掉不要的档，传入的档序不影响输出顺序；**默认不含 `ui`**（`docs/PLAN-ai.md` §3.6）。
 - `validateArgs` 返回**新对象**，不改调用方给的那个；口径是**严格**：多给字段、类型不符、越界、
   枚举不认识、数组长度越界，一律 `{ok:false, reason}` 并带上允许范围，**不静默钳制**
   —— 宁可让模型重发一次，也不要把「画在 A 处」悄悄变成「画在 B 处」。
@@ -2797,19 +3136,19 @@ C3 的服务层（设置项 `ai.tier`，见 §24.3）。
 | `destructive` | 7 | `canvas_clear`、`erase`、`frame_delete`、`layer_delete`、`layer_merge_down`、`scale`、`transform` |
 | `ui` | 1 | `set_tool` |
 
-`destructive` 的判定理由（对照 §3.6 举的「删图层 / 帧、清空画布、缩放画布、替换文档」）：
+`destructive` 的判定理由（对照 `docs/PLAN-ai.md` §3.6 举的「删图层 / 帧、清空画布、缩放画布、替换文档」）：
 `layer_delete`（删整层）、`layer_merge_down`（一层被并入另一层后消失，层数 -1）、`frame_delete`（删整帧）、
 `canvas_clear`（清空当前帧全部图层）、`scale`（改画布尺寸 + 重采样，唯一会改 `doc.w/h` 的工具）；
 P1 新增的 `erase`（把一块内容清成透明）与 `transform`（移走像素、可能把内容推出画布、缩放 / 旋转还会重采样）
 与 `scale` 同一类，也归这一档。
 `palette_remap` 与 `color_replace`（`scope = canvas`）是**画布级批量像素改写**，但它们
-① 不改画布尺寸、② 不动图层 / 帧 / 标签结构、③ 一条历史可整条撤销，按 §3.1 的分档留在 `draw`。
+① 不改画布尺寸、② 不动图层 / 帧 / 标签结构、③ 一条历史可整条撤销，按 `docs/PLAN-ai.md` §3.1 的分档留在 `draw`。
 
 ### 22.5 两处「只加可选字段」的扩展
 
-- `AiToolResult.data`：§5.1 只留了 `ok/changed/docRev/warn/error`，读类工具的结果（摘要 / 区域对象）
+- `AiToolResult.data`：`docs/PLAN-ai.md` §5.1 只留了 `ok/changed/docRev/warn/error`，读类工具的结果（摘要 / 区域对象）
   没有地方放，所以加一个**可选** `data` —— 既有字段语义一个都没改。
-- `AiToolParam.optional`：§5.1 只有 `default`，而 `default` 会把「没说」变成「显式设成这个值」；
+- `AiToolParam.optional`：`docs/PLAN-ai.md` §5.1 只有 `default`，而 `default` 会把「没说」变成「显式设成这个值」；
   补丁类工具（`iso_set` 只改想改的参数）需要**省略 = 不动这一项**，所以加一个可选的 `optional`：
   `optional: true` 且调用方没给值时，这个键**不进** `value`，handler 靠 `a.x !== undefined` 判断。
 
@@ -2830,7 +3169,7 @@ P1 新增的 `erase`（把一块内容清成透明）与 `transform`（移走像
 
 ### 22.7 工具 id 与 `Session.allActions()` 的对齐
 
-界面按钮、快捷键、动作搜索面板、AI 工具必须指向**同一批 id**（§3.1 原则 4），否则「AI 说它撤销了」
+界面按钮、快捷键、动作搜索面板、AI 工具必须指向**同一批 id**（`docs/PLAN-ai.md` §3.1 原则 4），否则「AI 说它撤销了」
 与「用户看到的撤销按钮」会漂成两套名字。能对上的直接复用 → `AI_TOOL_ACTION_IDS`
 （`undo` / `redo` 是动作表里真的有的两条）；对不上的新 id 一律登记进 `AI_TOOL_ID_WHITELIST`。
 测试断言的是**相等**：`AI_TOOL_ACTION_IDS ∪ AI_TOOL_ID_WHITELIST === 工具表 id 集合`（两个集合互不相交），
@@ -2913,7 +3252,7 @@ P1 新增的 `erase`（把一块内容清成透明）与 `transform`（移走像
 ```ts
 interface AiTurnPreview { count: number; rect: Rect | null; steps: AiTurnStepPreview | null; docRev: number }
 interface AiTurnHandle { isOpen(): boolean; mark(): void }     // C1 的 AiToolCtx.turn 形状（定死）
-interface AiTurnStepHandle { begin(label: string): void; end(durationMs?: number): void }   // `ai-chat` 用，见 §23.4
+interface AiTurnStepHandle { begin(label: string): void; end(): void }   // `ai-chat` 用，见 §23.4；耗时走模块级 `endTurnStep(ms)`
 interface AiTurnStepInfo {                                     // 一条步骤的摘要（不含快照）
   index: number; label: string;                                // index 1 起，**就是 revertTurnStep(n) 的 n**
   docRevBefore: number; docRevAfter: number;
@@ -3047,7 +3386,7 @@ SESSION.commitAiTurn();              // 仍然只压**一条**覆盖整轮的历
 6. **只在单画布回合里可用**（明确禁用，不是默默不做）：这一步碰了别的画布 / 画布集合变了
    → `revert.ok=false`，`reason = AI_TURN_STEP_OFF_CROSS_CANVAS`。理由：一步一份快照是
    **一张画布**的量；跨画布要抓 N 张（内存 N 倍），而且跨画布回合的历史本来就只能是
-   payload-less 的闭包（§23.5）。UI 显示 `aiChatStepOff` 那句人话。
+   payload-less 的闭包（§23.6）。UI 显示 `aiChatStepOff` 那句人话。
 7. **内存阈值：32 MiB**（`AI_TURN_STEP_BUDGET_BYTES`）。依据：一步要**两份**结构快照
    （「执行前」那份留着以便撤回 + 写完当场那份用来算差值），代价 ≈ `2 × 宽 × 高 × 4 × cel 数`
    （`snapshotCost()`：与快照里 cel 字节之和取大者；注意它只算**已存在的 cel**）。
@@ -3058,7 +3397,9 @@ SESSION.commitAiTurn();              // 仍然只压**一条**覆盖整轮的历
    —— 「120 份快照」是这套代码本来就接受的口径，给一轮 AI 撤留 32 MiB 远低于它。
    **超了就整体禁用，不是少留几步**：少留几步会让「撤回第 n 步」指向一个错的过去，比禁用危险得多。
    实测口径（`tests/ai-chat.test.ts` 的 `steprevert.big.*`）：1024² · 6 图层 · 每层都有 cel 时，
-   第 2 步就触发禁用；`previewTurn().rect` 仍照旧工作（它走的是另一条路：与**回合开始**逐字节比对）。
+   **第 1 步**就触发禁用 —— 一步要两份 24 MiB 快照 = 48 MiB，已经超过 32 MiB 上限
+   （用例跑完两步才断言，所以从它的输出看不出是第几步；口径以「一步两份」为准）。
+   `previewTurn().rect` 仍照旧工作（它走的是另一条路：与**回合开始**逐字节比对）。
 8. **每步的 `changed` 在 `mark()` 里当场算完存死**（`StepSnap.deltaRect`），**不在预览里现算**。
    这不是优化，是正确性要求：`Doc.restore()` 是**就地**改同一个 `Doc` 对象（`this.cels = new Map()`），
    而每一步的 `before.doc` 都是同一个实况文档 —— 下一步的 `restore` 会把这一步「依附的那个 Doc」
@@ -3272,8 +3613,11 @@ public static final String ERR_JS_NOT_READY = "{\"ok\":false,\"error\":\"js-not-
 ### 24.7 数据安全与默认不出网
 
 - **APK 现在声明 `INTERNET` 权限**：Android 上**监听本地端口也要它**（socket 创建受该权限门控）。
-  这条权限只用于「开本机端口」；**服务默认关闭**，打开后也只绑 `127.0.0.1`（局域网访问不到），
-  应用本身**不发起任何出站请求**（`src/` 里没有 `fetch` / `XMLHttpRequest` / `WebSocket`）；
+  这条权限最直接的用途是「开本机端口」；**服务默认关闭**，打开后也只绑 `127.0.0.1`（局域网访问不到）。
+  **「不出网」只对本地服务这条线成立**：应用内助手（§26）在「手填 key + 直连」模式下会由页面 `fetch`
+  到用户自己填的端点（`src/ui/AiPanel.tsx:504` 是 `src/` 里**唯一**用 `fetch` 的地方），代理模式下由
+  桌面壳出网；`XMLHttpRequest` / `WebSocket` 在 `src/` 里仍是 0 命中。**服务默认关闭、只绑回环、
+  UI 不替用户打开服务**这三条不变。改这条只改「哪条线不出网」的限定语，不是把 §26 的直连腿当缺陷看；
 - token 每次启动重新生成、不落盘；`aiServerStop()` / 页面卸载 / 关闭设置都会收尾回合并释放端口；
 - `status` 属于诊断，token 只给诊断用（`aiServeStatusText()` 也只打印末 4 位），**别塞进对外响应**。
 
@@ -3293,7 +3637,7 @@ public static final String ERR_JS_NOT_READY = "{\"ok\":false,\"error\":\"js-not-
   cel **原始字节**（预乘值），没走 `straightHexAt()`，与 `read_region` 读同一批半透明像素时两边可能对不上
   —— 详见 §21.4 与 `AGENTS.md` §7 的已知缺口；
 - 跨画布回合的 History entry 是 payload-less、回合开着时页面隐藏的同步 flush 会早退、
-  `lastCommitError` 会带陈旧值：见 §23.5。
+  `lastCommitError` 会带陈旧值：见 §23.6。
 
 ---
 
@@ -3332,8 +3676,9 @@ node toolchain/pc-mcp.mjs --help
 命令行参数优先于环境变量。**`stdout` 只许出现协议行**（换行分隔的 JSON-RPC 2.0），日志一律走
 `stderr` —— 往 stdout 多打一行，宿主就收到一行解不开的「JSON」，表现是「一接上就断线」。
 
-它只说三件事：`initialize`（回协议版本 / `capabilities.tools` / `serverInfo` / `instructions`）、
-`tools/list`、`tools/call`；`notifications/*` 一律不回。`tools/call` 把工具自身的失败转成
+它只说三件事：`initialize`（回协议版本 / `capabilities.tools` / `serverInfo` / `instructions`；另有
+`ping` 回 `{}` 供宿主探活）、`tools/list`、`tools/call`；**没有 id** 的 `notifications/*` 一律不回
+（带 id 的如 `notifications/initialized` 也回 `{}`）。`tools/call` 把工具自身的失败转成
 **`isError: true` 且正文带原因**（不吞错）；路由层拒绝（工具不存在 / 档位不放行）同样是可读的
 MCP 错误；连不上 / 401 / 超时这类连接层问题才转 JSON-RPC error。启动时会做一次**非阻塞探活**
 （连不上也只打一句 warn，不影响 MCP 握手）。
@@ -3454,7 +3799,7 @@ curl.exe -s http://127.0.0.1:8787/provider/config
 > | `src/ui/AiPanel.tsx` | 对话面板 `AiPanel`（消息流 / 调用摘要 / 应用·放弃 / 输入框）+ 助手小球 `ChatBall` + 跨卸载的会话存储 `aiWinStore` + 通路探测 `chatTransport()` |
 > | `src/app/ai-presets.ts`（**新文件**） | 厂商预设表（DeepSeek / OpenAI / 自定义）与 `normalizePresetId`；**没有 key 字段**（切预设碰不到 key 是结构保证） |
 > | `src/app/uibar.ts` | 浮窗 / 小球的**纯几何与存储归一化**（`AI_CHAT_WIN_KEY` / `AI_CHAT_BALL_KEY` / `clampAiWinLayout` / `normalizeAiWinLayout` / `aiWinDragFrom` / `clampAiBallPos`），有单测 |
-> | `src/app/settings.ts` | `CHAT_SETTINGS`（14 条）+ `SETTINGS` 里的 5 条 AI 高级项 + `applyAiChatPreset()` + `SETTING_SECRET_PATHS` |
+> | `src/app/settings.ts` | `CHAT_SETTINGS`（**16 条**）+ `SETTINGS` 里的 **4 条**服务项（`ai.server` / `ai.port` / `ai.tier` / `ai.turnIdleSec`；`SETTINGS` 共 88 条）+ `applyAiChatPreset()` + `SETTING_SECRET_PATHS` |
 > | `toolchain/pc-shell.mjs` | 同源代理 `GET /provider/config` + `POST /provider/chat`、环境变量 key、key 擦除、错误码九档 |
 
 ### 26.1 平台门与入口
@@ -3463,7 +3808,7 @@ curl.exe -s http://127.0.0.1:8787/provider/config
   主菜单那一行（`ui/modals.tsx`）、浮窗（`AiWindow`）、助手小球（`ChatBall`）、设置行
   （`chatRowsVisible()`）四处各判一次；普通浏览器 / GitHub Pages 里
   **一个 DOM 都不挂、不连端点、不发任何请求**（面板只显示一句说明，绝不出现「点了没反应」）。
-  线上 PWA 不背 AI（§3.6 红线）。
+  线上 PWA 不背 AI（`docs/PLAN-ai.md` §3.6 红线）。
 - 入口：主菜单 → 「AI 助手」（图标见 `src/ui/feature-icons.ts`，`i-ai-chat`）→ **打开浮窗**
   （不再是 `MenuModal` 的 `setSub("ai")` 子面板；菜单项锚点 `data-guide="menu-ai-chat"` 不变）。
   打开动作也接受 `window` 上的 `pc-ai-window` 事件（引导与外部触发用同一个入口）。
@@ -3484,7 +3829,7 @@ curl.exe -s http://127.0.0.1:8787/provider/config
 | `ai.chatKey` | `text:"password"` | `""` | **否**（`SETTING_SECRET_PATHS`） | **是** | 用户手填的 key，只存本机；`action` = 一键清除（清空后自动落回环境 key） |
 | `ai.providerBase` | `text:"plain"` | `""` | 否 | 否 | **手填 key 时**的直连地址；留空 = 用 `ai.chatEndpoint`。代理模式不看它 |
 | `ai.chatMaxRounds` | `int` | `12`（`1..24`） | 否 | 否 | 一轮最多问几次模型 |
-| `ai.chatTemp` | `int` | `0`（`0..20`，单位 `×0.1`） | 否 | 否 | `temperature` = 值 × 0.1；`0` = **不发这个字段**（用端点默认）；**思考模式下不发**（见下一行） |
+| `ai.chatTemp` | `int` | `0`（`0..20`，设置页单位 `%`；发请求时 ×0.1） | 否 | 否 | `temperature` = 值 × 0.1；`0` = **不发这个字段**（用端点默认）；**思考模式下不发**（见下一行） |
 | `ai.chatThinking` | `enum` | `default` | 否 | 否 | 思考强度：`default` = **一个思考字段都不发**（对任何 OpenAI 兼容端点最安全）；`off` = `{"thinking":{"type":"disabled"}}`；`low`/`high`/`max` = `{"thinking":{"type":"enabled"},"reasoning_effort":<档位>}`（DeepSeek 口径）。⚠️ 打开思考后 **`temperature` 不生效**（官方文档明说），且**带 `tools` 时后续每一轮必须回传 `reasoning_content`**（否则 400）—— 后者由 `assistantMessage()` 把 `choices[].message.reasoning_content` 记进 assistant 消息实现 |
 | `ai.chatTimeoutSec` | `int` | `60`（`5..600`，单位秒） | 否 | 否 | **等模型回话**的秒数：发请求时 ×1000 → 请求头 `X-Provider-Timeout`（壳按它等上游，见 §26.6）；直连时由页面的 `AbortController` 按同一个值中止 |
 | `ai.chatSystemPrompt` | `text:"plain"` | `""` | 否 | 否 | 非空则**追加**在内置提示词之后 |
@@ -3494,12 +3839,12 @@ curl.exe -s http://127.0.0.1:8787/provider/config
 | `ai.chatWinMin` | `bool` | `false` | 否 | 否 | 是否已最小化成球（`visible` 恒 false） |
 | `ai.chatBall` | `bool` | `true` | 否 | 否 | 最小化后画不画助手球；**唯一可见的窗口相关开关** |
 
-**一处实现偏差（P1 §3.7.7 的清单 vs 最终实现）**：设计稿把 `ai.protectKey` / `ai.chatMaxRounds` /
+**一处实现偏差（`docs/PLAN-ai.md` §3.7.7 的 P1 清单 vs 最终实现）**：设计稿把 `ai.protectKey` / `ai.chatMaxRounds` /
 `ai.chatTemp` / `ai.chatSystemPrompt` / `ai.chatStream` 五条放在 `SETTINGS`（组 `ai`，因此**进导出**），
 实现时**五条全部落在 `CHAT_SETTINGS`（组 `chat`，**不进导出**）**，所以上表那一列全是「否」。
 理由是 `tests/ai-rpc.test.ts:950` 的 `settings.visible.on` 钉死了 `ai` 组的可见路径**恰好四条**
 （`ai.server` / `ai.port` / `ai.tier` / `ai.turnIdleSec`）—— 往 `ai` 组加任何一条都会红，
-而 P1 §3.7.8 只授权改两条既有断言（`aichat.setting.default-endpoint` / `aichat.setting.visible-on`），
+而 `docs/PLAN-ai.md` §3.7.8 的 P1 只授权改两条既有断言（`aichat.setting.default-endpoint` / `aichat.setting.visible-on`），
 不含这一条。代价：这五条**不进设置文件导出**，跨机器迁移时要重填；理由与代价都记在
 `src/app/settings.ts` 的 `CHAT_SETTINGS` 段注释里。
 
@@ -3514,7 +3859,7 @@ curl.exe -s http://127.0.0.1:8787/provider/config
 - **默认预设 = `deepseek`**，且 `ai.chatEndpoint` / `ai.chatModel` 的**声明默认值直接从它取**
   （`aiChatPresetOf(AI_CHAT_DEFAULT_PRESET).baseUrl` / `.defaultModel`，不是抄一遍字符串）：
   第一次打开助手就已经指着 DeepSeek，用户只需要「有 key」这一件事。
-- 预设里**只有公开的 base URL 与公开的模型名**，没有任何凭据（§3.6 的红线针对的是 key）。
+- 预设里**只有公开的 base URL 与公开的模型名**，没有任何凭据（`docs/PLAN-ai.md` §3.6 的红线针对的是 key）。
 - **切预设的三条语义**：① 只写 `preset` + `endpoint` + `model` 三个字段，**key 连读都不读**；
   ② 切到 `custom` **一个字段都不写**（它的 baseUrl / defaultModel 是空串，写下去会把用户手填的抹掉）；
   ③ 模型清单是**会过期的数据** —— 它只是快捷 chips，`ai.chatModel` 永远是自由文本，
@@ -3535,9 +3880,9 @@ curl.exe -s http://127.0.0.1:8787/provider/config
    键 `AI_CHAT_SETTINGS_KEY`），读不到（Node / 隐私模式 / 坏 JSON）就退回默认值、不抛异常；
    文本长度上限 `AI_CHAT_MAX_TEXT`（2048）。
    `prefs` 会随工程 / 设置导出走，而「这台机器这个屏幕上窗口开在哪」不属于工程。
-4. **归一化是「全量比较」而不是子集**：`normalizeAiChatSettings()` 现在有 **14 个字段**
+4. **归一化是「全量比较」而不是子集**：`normalizeAiChatSettings()` 现在有 **16 个字段**
    （`on` / `preset` / `endpoint` / `model` / `key` / `providerBase` / `maxRounds` / `temp` /
-   `systemPrompt` / `stream` / `protectKey` / `winOpen` / `winMin` / `ball`），
+   `thinking` / `timeoutSec` / `systemPrompt` / `stream` / `protectKey` / `winOpen` / `winMin` / `ball`），
    `aichat.setting.normalize-junk` + `aichat.setting.normalize-keys` + `...is-tight` 三条整对象钉死；
    加新字段忘了同步，断言会红。
    `endpoint` / `model` 的**空串不填默认值**（空串 = 用户主动清空）；「从没配过」那一步由
@@ -3604,7 +3949,7 @@ key 的值一个字符都不进这段文本）：
 - 端点 / 模型 / key 三项都要求非空才发请求（`chatConfigError()`），缺项时**连回合都不开**。
 
 **诚实边界（不许把它说成「任何 key 都不在页面里」）**：`ai.chatKey` 是**用户自己手填**的，
-按 §3.6 的存储模型它就在本机页面的 `localStorage` 里，同源脚本读得到 —— 这一点本轮**没有改**。
+按 `docs/PLAN-ai.md` §3.6 的存储模型它就在本机页面的 `localStorage` 里，同源脚本读得到 —— 这一点本轮**没有改**。
 所以「key 不进页面」这条**只对环境变量来源（②）成立**：那把 key 由壳持有，
 页面内存 / DOM / console / localStorage 四处都搜不到（`GET /provider/config` 的响应里也没有它，
 连尾 4 位都不给）。
@@ -3734,8 +4079,8 @@ key 的值一个字符都不进这段文本）：
 理由与代价：五球那套（dock 拖动 / 展开环 / 饼菜单 / 界面定制顺序）是全仓库回归面最密的一块，
 而助手球**没有任何子项**要被搬运或排序 —— 它就是一个开关按钮。选独立组件换零回归面：
 既有断言 `uibar.orbs`、`guide.orbs.*`、`icons.*` 一条都不用改。
-它与五球系统只共享**一条**规则：触屏下点/拖它会收起别的球已经展开的环
-（`pc-ai-ball-tap` → `closeRadials()`；PC 模式不互斥）。它不参与
+它与五球系统只共享**一条**规则：触屏下**拖**它会收起别的球已经展开的环
+（`pc-ai-ball-tap` → `closeRadials()`；PC 模式不互斥）；只点球是「还原浮窗」，不动环。它不参与
 `prefs.dockPos` / `ringSlots` / `pieEquip` / `prefs.orbPrefs`，
 外观**复用 `.orb` 类名与 `orbMetrics(pcMode).orb`** 的尺寸（不新造球样式）。
 
@@ -3765,11 +4110,12 @@ key 的值一个字符都不进这段文本）：
 ```json
 { "ok": true, "proxy": true, "baseUrl": "https://api.deepseek.com",
   "defaultModel": "deepseek-v4-pro", "models": ["deepseek-v4-pro", "deepseek-flash"],
-  "hasEnvKey": true, "keySource": "env" }
+  "hasEnvKey": true, "providerTimeoutMs": 60000, "keySource": "env" }
 ```
 
 `keySource` 取 `"env" | "cli" | "none"`；页面**只**读 `proxy` / `baseUrl` / `defaultModel` /
-`models` / `hasEnvKey`（`readHostProviderConfig()`）—— 缺 `baseUrl` 或 `defaultModel` 一律回
+`models` / `hasEnvKey`（`readHostProviderConfig()`；`providerTimeoutMs` 是壳的只读诊断，页面不需要它）
+—— 缺 `baseUrl` 或 `defaultModel` 一律回
 `null`（= 当没有代理，回落直连），**宁可当「没有代理」也不瞎猜**。
 
 **壳自己的错误码 → 页面文案**（九档；壳的 body 形状恒为
@@ -3783,7 +4129,7 @@ key 的值一个字符都不进这段文本）：
 | `413` | `body-too-large` | 请求太大（上限 1 MiB）：对话太长，清一下会话 |
 | `502` | `provider-unreachable` | 连不上端点（<detail>）：检查这台设备的网络 |
 | `504` | `provider-timeout` | 端点没在超时时间内回：<detail>（本机壳的上游超时，可用 `--provider-timeout` 调大）；**流式下同样是首字节 / 整体口径**（§26.6.1） |
-| `400` | `bad-request` | 端点返回 HTTP 400：<detail>（体不是 JSON / `no-model`） |
+| `400` | `bad-request` | 端点返回 HTTP 400：<detail>（壳这一档只有「请求体不是 JSON 对象」；`model` 缺失由壳补默认模型，不是错误） |
 | `404` | `not-found` | **页面静默回落直连**（老壳没有这个端点），不弹错 |
 | 其它 4xx/5xx | 原样透传 provider 的 | 走 `httpError()` 四档（401/403、404、429、其它） |
 
@@ -3797,8 +4143,8 @@ key 的值一个字符都不进这段文本）：
 
 **安全边界与分档**（逐条可核）：
 
-- **环境 key 只发往已知 provider 主机 + 必须是 https**：白名单是 `ENV_KEY_HOSTS =
-  api.deepseek.com / api.openai.com`；`--provider-base` 落在这两者之外、**或者协议不是 `https:`**，
+- **环境 key 只发往已知 provider 主机 + 必须是 https**：白名单是
+  `ENV_KEY_HOSTS = api.deepseek.com / api.openai.com`；`--provider-base` 落在这两者之外、**或者协议不是 `https:`**，
   都**直接关掉 `/provider/*` 转发**并在 banner 里讲明原因（`协议不是 https，key 会明文出网` /
   `主机不在白名单`）。**为什么 env 来源额外要求 https**：只判主机的话
   `--provider-base http://api.deepseek.com:8080` 会通过主机检查、然后把环境 key 明文发到那个
@@ -3932,12 +4278,12 @@ node toolchain/pc-shell.mjs --port 8915 --no-open --provider-base http://api.dee
 
 ```powershell
 node toolchain/check-bundle.mjs app2/www/js/app.js      # 期望：✓ 产物自检通过…（exit 0）
-# 更严的一条（推荐）：按 §6.4 在 %TEMP% 里用同一套 esbuild 口径重建一份，
+# 更严的一条（推荐）：按 `AGENTS.md` §6.4 在 %TEMP% 里用同一套 esbuild 口径重建一份，
 # md5 必须与 app2/www/js/app.js **逐字节相同** —— check-bundle 只证「能加载」，不证「等于 src」。
 node tests\.ts-out\tests\run-tests.js | Select-Object -Last 1   # 期望：ALL PASS（当前 8090 条）
 ```
 
-壳伺服的就是 `app2/www/js/app.js`（§5.1b）：md5 或自检不对，说明产物落后于源码，先在仓库根重建（§6.4），
+壳伺服的就是 `app2/www/js/app.js`（`AGENTS.md` §5.1b）：md5 或自检不对，说明产物落后于源码，先在仓库根重建（`AGENTS.md` §6.4），
 否则你测到的是旧包 —— **`check-bundle` 只证「能加载」，不证「等于 src」**，所以两个都看。
 
 **测法 A：零成本 + 离线（本地 OpenAI 兼容服务）** —— 不需要任何真 key，最适合先把流程跑通：
@@ -3950,7 +4296,7 @@ node toolchain/pc-shell.mjs --port 8911 --provider-key local --provider-base htt
 （Ollama 默认 `11434`、LM Studio 默认 `1234`，端点要带 `/v1`）。设置里选「自定义」，把端点填成同一个地址。
 
 **测法 B：手填 key 直连**（最快看到真回答）：起壳后进「设置 → AI 助手」，在 key 那一行粘上你的 key，
-端点保持 DeepSeek 默认值即可。这条路是**页面直连** provider（实测 DeepSeek 会回 CORS 头，§3.7.1），
+端点保持 DeepSeek 默认值即可。这条路是**页面直连** provider（实测 DeepSeek 会回 CORS 头，`docs/PLAN-ai.md` §3.7.1），
 key 存在页面 `localStorage` 里 —— 这是 §26.3 写明的那条边界。
 
 **测法 C：环境变量 key + 同源代理**（推荐，key 不进页面）：
@@ -4029,7 +4375,7 @@ node toolchain/pc-shell.mjs --port 8914 --provider-key sk-cli-probe-8888 --provi
 | 「端点没在超时时间内回：…ms」 | 上游（模型）在这段时间内没回：**先在「设置 → AI 助手 → 模型响应超时」调大**（默认 60 秒，5..600），或起壳时给 `--provider-timeout 120000`；「连不上端点」先查这台设备的网络；首字慢通常是想模式所致，把「思考强度」调低 / 关闭会快很多 |
 | 面板里出现 `端点返回 HTTP 504：{"ok":false,…}` 这种**原始信封** | 那是页面按「直连档」选文案的旧行为（已修）：壳的信封现在**无论走哪条分支**都按 `ok:false` 形状翻成人话 |
 | 请求发去奇怪地址后 `Failed to fetch` | 检查是不是把端点写成了 `<providerBase>/provider/chat`（§26.6：页面必须发**同源** `/provider/chat`） |
-| 页面白屏 | 产物坏了：在仓库根重建（§6.4 的 tsconfig 坑），再 `check-bundle` |
+| 页面白屏 | 产物坏了：在仓库根重建（`AGENTS.md` §6.4 的 tsconfig 坑），再 `check-bundle` |
 
 **清场**：Ctrl+C，或
 
@@ -4085,7 +4431,7 @@ Get-NetTCPConnection -LocalPort 8911 -State Listen   # 期望：无输出（端�
 | `visionBudgetOf(pngBytes, hard?, soft?)` | → `VisionBudget{bytes,dataUrlBytes,overHard,overSoft,ok,reason?}` |
 | `fitEncodedImage(pngBytes, size, opts?)` | → `FitStep{ok,next,reason?,budget}`：**编码之后**的收口，决定「就这样发 / 再缩一轮 / 拦下」 |
 | `visionGate(model, hasImage)` | → `VisionGate{allow,vision,reason?,note?}`：挂图 + 模型不支持视觉 → **发送前拦下** |
-| `dataUrlOfPng(pngLength, b64)` | 拼 `data:image/png;base64,` + base64（**只拼前缀**；base64 由 `src/engine/b64.ts` 的 `bytesToB64()` 产出，仓库里只有那一份） |
+| `dataUrlOfPng(b64)` | 拼 `data:image/png;base64,` + base64（**单参**：只收 base64 文本，字节数估算归 `dataUrlBytesFor()`；base64 由 `src/engine/b64.ts` 的 `bytesToB64()` 产出，仓库里只有那一份） |
 
 **为什么是「编码后再判」而不是「编码前估算」**：PNG 的体积与内容强相关（纯色 768² 只有几 KB，噪点图能到 1 MB），
 任何事前估算都会在某一头失准。所以口径是**以真实字节数为准**，下一档边长由真实比例反推
@@ -4176,8 +4522,18 @@ visionCapableModels(): string[]                       // 明确支持的那些�
 两条行为口径：
 
 - **发送后保留**：只有用户点「移除」才清，这样「换个说法再问一遍同一张图」不用重新挂一次。
-  **只要图还在附件条上，之后的每一轮都会带上它** —— 但 `thread` 里那条历史消息仍然只有纯文本，
-  也就是说「图的记忆」跟着的是**附件条的状态**，不是对话历史。
+  **只要图还在附件条上，之后的每一轮都会带上它**；而且**图也进了对话历史** —— `runChatTurn()`
+  把图并进最后一条 user 消息之后把这份 `messages` 原样返回，面板存进 `thread`（`AiPanel.tsx:875`），
+  下一轮 `[...thread, userMessage(text)]` 会把它一起发上去（`tests/ai-vision.test.ts` 的
+  `aivision.turn.multi.*` 钉着「历史是原样回传的」）。
+- **移除附件 ≠ 模型忘掉这张图**：历史里那条 user 消息仍然带着它，后面**每一轮请求都会原样再发一次**；
+  点「移除」只影响「**新一轮要不要再挂一张**」，不影响已经发出去的那些消息。
+- **同一张图可能在一份请求里出现两次**：附件条还挂着时，新一轮会在新那条 user 消息里再挂一次，
+  而历史里那条老消息也还带着它。这是**有意保留** —— 历史就是历史，不回头改已经发出去的消息
+  （与「挂一张图追问」的常见用法一致），**别当 bug 修**。
+- **已知取舍**：要改变这条行为（例如「移除附件时把历史里那些图剥掉」，即把 `AiPanel.tsx:875` 改成
+  用 `contentText()` 剥成纯文本）属于**改用户可见行为**，按仓库约定要先与用户确认，不在本轮范围。
+  `thread` 是进程内存储，刷新 / 重启才会真的清掉它。
 - **跨卸载保留**（`aiWinStore.attach`）：浮窗最小化 = DOM 真的卸载，附件若放组件本地就会「最小化一下图就没了」。
   卸载钩子只收**回合**（`aiPanelDropsTurnOnUnmount`），不碰附件 —— 与「最小化丢回合」不冲突。
 

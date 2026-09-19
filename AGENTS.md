@@ -36,7 +36,8 @@ src/ui/        React 外壳、弹窗、时间线、浮动球、i18n、样式、A
                AiWindow（助手浮窗，portal 到 body）
 android/       MainActivity（Java 层）+ AiServer（本地 AI 端口服务，纯 JDK）+ AndroidManifest
 tests/         无 DOM 的引擎/逻辑回归（**8090 条断言**，`node .ts-out/tests/run-tests.js` 末尾会打印条数）
-docs/          API.md / COMPARISON.md / PLAN-ai.md / ARCHITECTURE.md / UI.md / PC.md
+docs/          ROADMAP.md / API.md / COMPARISON.md / COMPARISON-pixelover-pixelcomposer.md / PLAN-ai.md /
+               PLAN-isobuilder.md / ARCHITECTURE.md / UI.md / PC.md
 toolchain/     自写开发脚本（devserver / make-icon / check-bundle / stress-stroke / ai-server / pc-mcp / pc-shell+pc-shell.cmd）
 ```
 

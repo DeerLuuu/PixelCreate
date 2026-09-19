@@ -72,7 +72,7 @@
 | **S0 立刻（0–2 周）** | S0-1 | 交付门禁 | **P0** | ⬜ | 一条 `verify` + 一个 CI + 锁定依赖版本，让「测试跑没跑 / 产物是不是这份源码」自动拦住交付 |
 | | S0-2 | 交付门禁 | **P0** | ⬜ | 拔掉三颗钉子：`scripts/*.sh` 全 CRLF、`run-tests.sh` 写死不存在的 `tsc.js`、测试三份手工清单 |
 | | S0-3 | 交付门禁 | **P0** | 🅿️ | 构建期注入来源戳，停止手改 `BUILD_TAG`；三端产物对齐（APK 那一半待出包） |
-| | S0-4 | 信息正确性 | **P0** | ⬜ | 一次性校正会误导排期的文档口径（§8 的 22 条），并给本蓝图装防腐钉 |
+| | S0-4 | 信息正确性 | **P0** | ⬜ | 一次性校正会误导排期的文档口径（§8 的 25 条），并给本蓝图装防腐钉 |
 | | S0-5 | 测量基线 | **P0** | ⬜ | 立「性能基线协议」：尺子不准，后面所有性能项都判不出好坏 |
 | | S0-6 | 用户可见缺陷 | **P0** | ⬜ | 电脑模式下图案笔刷整块不可达，且已开的图案关不掉 |
 | | S0-7 | AI 准确率 | P1 | ⬜ | 补 52 个参数描述 + 接通顶层 `warn`（零风险、成本一个提交，故排 S0） |
@@ -752,22 +752,24 @@ S2-4 ② 图层组 ────────> S3-4
 
 > **为什么单列**：不校正就会规划出重复工作（最典型：把已落地的流式当未来做、把已缓存的笔尖当待优化）。
 > 「核验状态」列 = 本轮（t7）是否亲手在仓库里复核过。**只改「已核」的行**；「未核」的行先别动，等复核。
+> 「位置」列写给的是**节号 + 复核那一刻的行号**（行号会随后续编辑漂移，节号不会）——
+> 定位时以节号为准，行号只当「大概在哪一带」的提示。
 
 | # | 漂移 | 位置 | 应为准 | 核验状态 | 归属 |
 |---|---|---|---|---|---|
 | D1 | 代理对 `stream:true` 直接回 `400` | [`PLAN-ai.md`](PLAN-ai.md):328、`:1000`、`:1071` | 流式**两条腿都已落地**（壳侧 SSE 转发 + 页面侧逐块解析） | **已核** | `S0-4` **P0** |
 | D2 | `ai.chatStream` 默认 `false` /「固定 false」 | [`PLAN-ai.md`](PLAN-ai.md):662 | **已核**：`src/app/settings.ts:641` `default: true` | **已核** | `S0-4` **P0** |
-| D3 | `CHAT_SETTINGS` **14 条** +「`SETTINGS` 里 5 条 AI 高级项」 | [`API.md`](API.md):3457 | **已核**：`CHAT_SETTINGS` **16** 条；`SETTINGS` 里 `group==="ai"` **4** 条，没有「5 条高级项」 | **已核** | `S0-4` P1 |
-| D4 | `normalizeAiChatSettings()` 有 **14 个字段** | [`API.md`](API.md):3538 | **已核**：16（漏 `thinking` / `timeoutSec`） | **已核** | `S0-4` P1 |
+| D3 | `CHAT_SETTINGS` **14 条** +「`SETTINGS` 里 5 条 AI 高级项」 | [`API.md`](API.md) §26 头表（复核时 L3802） | **已核**：`CHAT_SETTINGS` **16** 条；`SETTINGS` 里 `group==="ai"` **4** 条，没有「5 条高级项」 | **已核 → `API.md` 已修**（t5） | `S0-4` P1 |
+| D4 | `normalizeAiChatSettings()` 有 **14 个字段** | [`API.md`](API.md) §26.2 口径 4（复核时 L3883） | **已核**：16（漏 `thinking` / `timeoutSec`） | **已核 → `API.md` 已修**（t5） | `S0-4` P1 |
 | D5 | `CHAT_SETTINGS` 扩到 **14 条** | [`AGENTS.md`](../AGENTS.md):593 | **已核**：16 条（**该文件由项目负责人更新**，本条只登记） | **已核** | `S0-4` P1 |
 | D6 | as-built 是 **12 条**可见路径 | [`PLAN-ai.md`](PLAN-ai.md):705 | **已核**：实测 **16** 条（`CHAT_SETTINGS` 的 path 清单） | **已核** | `S0-4` P1 |
-| D7 | §10 进度表缺 4 个已落地批次；**B1/B2 标签全仓无定义** | [`PLAN-ai.md`](PLAN-ai.md) §10 | **已核**：4 个提交都存在（`e47a28c`/`ac65969`/`3157485`/`be99ff8`）；`B1`/`B2` 全仓只出现在 [`API.md`](API.md)（4 处） | **已核** | `S0-4` P1 |
+| D7 | §10 进度表缺 4 个已落地批次；**B1/B2 标签全仓无定义** | [`PLAN-ai.md`](PLAN-ai.md) §10 | **已核**：4 个提交都存在（`e47a28c`/`ac65969`/`3157485`/`be99ff8`）。**`B1`/`B2` 标签的分布已复核（原结论「全仓只在 `API.md` 4 处」不成立）**：`B1` = `docs/API.md` **2** 处（§22.6 与 §26.4）+ `src/ui/i18n.ts` 2 + `src/ui/AiPanel.tsx` 2 + `tests/ai-chat.test.ts` 2 + `src/ui/style.css` 1；**`B2` 主要在实现侧**——`src/app/ai-turn.ts` **9** 处（段落标签，见 `:68/145/195/299/433/565`…）+ `tests/ai-chat.test.ts` 5 + `src/ui/AiPanel.tsx` 3 + `docs/API.md` 2 + `src/app/ai-chat.ts` / `src/app/session.ts` 各 1 ⇒ **`B1` 是「只在文档里出现的批次标签」，`B2` 已是代码里的段落标签**。缺的仍然是 `PLAN-ai.md` §10 进度表那 4 个批次（`B1`/`B2` 的**定义**只在本文件 §8 与 `docs/API.md` 里） | **已核** | `S0-4` P1 |
 | D8 | `ai`（未实现）/「AI 已完成」并存 | [`ARCHITECTURE.md`](ARCHITECTURE.md):345、`:468`、`:506`、`:607-612` | 见 §7.2 R1 | **已核** | `S0-4` P1 |
 | D9 | 助手设置漏「思考强度」「模型响应超时」 | [`README.md`](../README.md):42 | 两条设置确实存在（`settings.ts` 的 `ai.chatThinking` / `ai.chatTimeoutSec` 在 `CHAT_SETTINGS` 的 16 条 path 里） | **已核** | `S0-4` P2 |
-| D10 | `serialize` / `parse` / **`parseProject`** 当现行接口 | [`API.md`](API.md):1837-1839（§16.5） | **已核**：`:2142`（§18.5）说已删除；代码是 `serializeSpace`（`src/io/project.ts:223`）/ `parseSpace`（`:246`）；`parseProject` 在 `src/` **0 命中** | **已核** | `S0-4` P1 |
-| D11 | §15.4 把五个成员列为公开面 | [`API.md`](API.md):1309/1310/1311/1315/1319/1330 | **已核**：`xfScreenFrame`/`xfGrabs`/`xfPivotScreen`/`grabIconAt`/`warpHandles` 现在都是 **private**（`src/render/view.ts:2148/2183/2199/2249/2579`）；`cyclePivot(step = 1): void`（文档）vs 实际 `cyclePivot(): PivotPreset \| null`（`view.ts:2881`） | **已核** | `S0-4` P1 |
-| D12 | §12 设置注册表 | [`API.md`](API.md) §12 | **已核**：`SettingKind` 多了 `"color"`、另有 `SettingText = "plain" \| "password"`（`settings.ts:24/26`）；分组实际 **11** 组（`SETTINGS` 10 组 + `CHAT_SETTINGS` 的 `chat`） | **已核** | `S0-4` P1 |
-| D13 | §16.1 原生桥 **8 个**方法 | [`API.md`](API.md) §16.1 | **已核**：`MainActivity.java` 有 **12** 个 `@JavascriptInterface`（多 `aiServerStart/Stop/Status`、`aiRespond`） | **已核** | `S0-4` P1 |
+| D10 | `serialize` / `parse` / **`parseProject`** 当现行接口 | [`API.md`](API.md) §16.5（复核时 L2142） | **已核**：§18.5（复核时 L2468）说已删除；代码是 `serializeSpace`（`src/io/project.ts:223`）/ `parseSpace`（`:246`）；`parseProject` 在 `src/` **0 命中** | **已核 → `API.md` 已修**（t5，§16.5 换成 `serializeSpace` / `parseSpace`） | `S0-4` P1 |
+| D11 | §15.4 把五个成员列为公开面 | [`API.md`](API.md) §15.4（复核时 L1504 一带；`cyclePivot` L1518、`xfHint` L1523） | **已核**：`xfScreenFrame`/`xfGrabs`/`xfPivotScreen`/`grabIconAt`/`warpHandles` 现在都是 **private**（`src/render/view.ts:2148/2183/2199/2249/2579`）；`cyclePivot(step = 1): void`（文档）vs 实际 `cyclePivot(): PivotPreset \| null`（`view.ts:2881`） | **已核 → `API.md` 已修**（t5，5 个 private 分档 + `cyclePivot()`） | `S0-4` P1 |
+| D12 | §12 设置注册表 | [`API.md`](API.md) §12（复核时 L1305） | **已核**：`SettingKind` 多了 `"color"`、另有 `SettingText = "plain" \| "password"`（`settings.ts:24/26`）；分组实际 **11** 组（`SETTINGS` 10 组 + `CHAT_SETTINGS` 的 `chat`） | **已核 → `API.md` 已修**（t5，补 `"color"` / `SettingText` / 11 组） | `S0-4` P1 |
+| D13 | §16.1 原生桥 **8 个**方法 | [`API.md`](API.md) §16.1（复核时 L1935） | **已核**：`MainActivity.java` 有 **12** 个 `@JavascriptInterface`（多 `aiServerStart/Stop/Status`、`aiRespond`） | **已核 → `API.md` 已修**（t5） | `S0-4` P1 |
 | D14 | `ARCHITECTURE.md` 头部与 §5.5 数字 | [`ARCHITECTURE.md`](ARCHITECTURE.md):43 一带、`:538-544` | **已核（本轮复测）**：`src/` **111** 文件 / **44,205** 行（LF 口径；`ReadAllLines` 44,209）；扣 `ai-*` **9 文件 7,001 行** ⇒ 102 文件 37,204 行；`style.css` 1,454；`session.ts` 4,700、`view.ts` 3,693、`App.tsx` 2,997（`ReadAllLines` 2,998）、`modals.tsx` 2,410（四个合计 **31.2%**，文档写 44%）；测试 **60** 文件 / 21,076 行 / **8,090** 断言；设置 path **104**（88+16）；`MainActivity.java` **731** 行 / 12 桥；`GestureHost` **56**（文档 :604 写 54） | **已核** | `S0-4` P1 |
 | D15 | §9 进度表 **P4 出现两次** | [`ARCHITECTURE.md`](ARCHITECTURE.md):599（🟡）/`:603`（⬜） | **已核** | **已核** | `S0-4` P1 |
 | D16 | 引导步数 **54 / 41 / 46** 三种口径 | [`COMPARISON.md`](COMPARISON.md):13（41）/`:68`（46！**同一文件自相矛盾**）、`ARCHITECTURE.md`（54） | **已核**：`src/app/guide.ts` 的 `GUIDE` = **46** 条 ⇒ 一律写 46，并把口径写成「`GUIDE` 数组条目数」 | **已核** | `S0-4` P1 |
@@ -779,7 +781,7 @@ S2-4 ② 图层组 ────────> S3-4
 | D22 | 引导里教的「三击 = 2× 放大」默认够不到 | `src/app/guide.ts` 的三击步骤；`tests/gesture.test.ts` 的 `gesture.triple.shadowed.*` | 现状被测试钉住 | **已核**（测试存在） | §10 Q12 |
 | D23 | `ARCHITECTURE.md:132` 的行号已过期 | 该行写 `session.ts:1273 quickFill()`、且写「`view_` 在 Session 中被调 **10** 处」 | **已核**：`quickFill()` 现在在 `src/app/session.ts:1301`；`view_` 调用 **56**（口径见 §0.5） | **已核** | `S0-4` P1 |
 | D24 | 助手状态行说明是中文常量而非 i18n 键 | [`AGENTS.md`](../AGENTS.md) §7；`src/ui/AiPanel.tsx` 的 `AI_CHAT_KEY_HELP_*` | 英文界面下仍显示中文 | **未核**（只从文档转述） | §11 + `S1-2` |
-| D25 | 文档里的「43 条端到端断言全绿」 | [`PLAN-ai.md`](PLAN-ai.md):1105 | **已核（脚本层面）**：`toolchain/` 与 `scripts/` 内**没有任何 e2e / CDP / headless 脚本** ⇒ 不可从仓库复现。**「43 条」这个数字本身未核**（记为待验证） | 部分 | `S0-4` + `S1-7` |
+| D25 | 文档里的「43 条端到端断言全绿」 | [`PLAN-ai.md`](PLAN-ai.md):759 | **已核（脚本层面，口径已纠正）**：`toolchain/stress-stroke.mjs` **就是**一个 CDP + 无头浏览器脚本（`--headless=new --remote-debugging-port`），所以「`toolchain/` 里没有任何 CDP / 无头脚本」**不成立**；正确口径是**端到端断言脚本不在仓库里、不可复现**，且「43 条」的出处是 `PLAN-ai.md:759`（不是 `:1105`）。**「43 条」这个数字本身仍未核**（记为待验证） | 部分 | `S0-4` + `S1-7` |
 
 ---
 

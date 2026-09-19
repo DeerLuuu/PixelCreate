@@ -57,7 +57,7 @@
 | 已有能力 | 位置 | 对 AI 接入的意义 |
 |---|---|---|
 | 引擎全是纯函数、无 DOM、无 React | `src/engine/*`（paint / shape / effects / resample / iso / shading / color-analysis / tags / ops / history） | 「工具」＝调函数，可在 Node 里直接跑与被测试 |
-| 唯一改动入口 `Session` | `src/app/session.ts`（约 4.2k 行，公开方法 **287** 个） | AI 只需要一个 `Session` 句柄，不需要 UI |
+| 唯一改动入口 `Session` | `src/app/session.ts`（**4,700 行 / 444 个成员 / 379 个公开成员**，按 LF 计数） | AI 只需要一个 `Session` 句柄，不需要 UI |
 | 动作表 + 动作目录 | `Session.allActions()` / `actionById()` / `registerOrbCatalog()`；`src/ui/App.tsx` 里注册 **54+** 条 `{id,label,icon,group,run}` | **工具 schema 的现成来源**；`ActionSearchModal` 已经是它的 UI 壳 |
 | 一切可撤销 | `engine/history.ts`：`record` / `pushPixels` / `pushStruct`；`Session.struct()` | 一轮 AI 操作可合成**一条** undo（§3.3） |
 | 无 DOM 回归套件 | `tests/`（**8090 条断言**，`node .ts-out/tests/run-tests.js`） | 工具层可以像引擎一样被回归测试，不需要模拟器 |
@@ -659,7 +659,7 @@ export const AI_CHAT_DEFAULT_PRESET = "deepseek";   // 默认预设 = DeepSeek
 | `ai.chatMaxRounds` | `int` | `12` | `1..24`（`AI_CHAT_MAX_ROUNDS`） | ~~是~~ → **否** | 否 | **新增**（组 `chat`）：整轮最多问几次模型，对应 `runChatTurn({maxRounds})` |
 | `ai.chatTemp` | `int` | `0` ×0.1 | `0..20`（= 0.0–2.0） | ~~是~~ → **否** | 否 | **新增**：`temperature`；`0` 表示"不发送这个字段"（用端点默认） |
 | `ai.chatSystemPrompt` | `text:"plain"` | `""` | ≤2048 字符 | ~~是~~ → **否** | 否 | **新增**：非空则**追加**到 `AI_CHAT_SYSTEM_PROMPT` 之后（不改内置提示词） |
-| `ai.chatStream` | `bool` | `false` | — | ~~是~~ → **否** | 否 | **新增**：本轮**固定 false**（代理回 `400`）；留着是给"以后做流式"一个口径位 |
+| `ai.chatStream` | `bool` | **`true`** | — | ~~是~~ → **否** | 否 | **新增**：默认**开**（归一化 `o.stream !== false`）。**本行原写「固定 false（代理回 400）」已作废（2026-09 流式落地）**：壳走 `forwardToProviderStream()` 按 SSE 事件边界擦 key，页面逐块渲染，非 SSE 端点自动降级为整包且不重发（口径见 `docs/API.md` §26.6.1） |
 | `ai.chatWinOpen` | `bool` | `false` | — | 否 | 否 | **新增**（见 3.7.6） |
 | `ai.chatWinMin` | `bool` | `false` | — | 否 | 否 | **新增**（见 3.7.6） |
 | `ai.chatBall` | `bool` | `true` | — | 否 | 否 | **新增**（见 3.7.6） |
@@ -702,7 +702,7 @@ export const AI_CHAT_DEFAULT_PRESET = "deepseek";   // 默认预设 = DeepSeek
 | `SettingKind` 仍只有四个字面量（文本行走 `SettingDef.text`） | `aichat.setting.kind-pinned`、`aichat.setting.no-new-kind` |
 | key 行是 `text:"password"`，端点/模型是 `text:"plain"` | `aichat.setting.key-password`、`aichat.setting.endpoint-text` |
 | 关着时 chat 组只显示 `ai.chatOn` 一行 | `aichat.setting.visible-off` |
-| 打开后 chat 组的可见路径序列 | `aichat.setting.visible-on`（**新增设置项后必须显式列全**；as-built 是 12 条：`ai.chatOn` / `ai.chatPreset` / `ai.chatEndpoint` / `ai.chatModel` / `ai.chatKey` / `ai.providerBase` / `ai.chatMaxRounds` / `ai.chatTemp` / `ai.chatSystemPrompt` / `ai.chatStream` / `ai.protectKey` / `ai.chatBall` —— 两条窗口状态项 `visible` 恒 false，**不在**这一列里） |
+| 打开后 chat 组的可见路径序列 | `aichat.setting.visible-on`（**新增设置项后必须显式列全**；as-built 是 **14 条**：`ai.chatOn` / `ai.chatPreset` / `ai.chatEndpoint` / `ai.chatModel` / `ai.chatKey` / `ai.providerBase` / `ai.chatMaxRounds` / `ai.chatTemp` / `ai.chatSystemPrompt` / `ai.chatStream` / `ai.chatThinking` / `ai.chatTimeoutSec` / `ai.protectKey` / `ai.chatBall` —— 两条窗口状态项 `visible` 恒 false，**不在**这一列里；**以 `tests/ai-chat.test.ts` 的 `aichat.setting.visible-on` 为准**） |
 | 面板文本里不出现 key、不回显 key | `aichat.panel.no-key-in-text`、`aichat.native.hides-key` |
 | 预览后应用（`commit:false` + 三个 Session 调用） | `aichat.panel.preview-then-apply`、`aichat.panel.commit-false`、`aichat.panel.unmount-rollback` |
 | 平台门：普通浏览器里没有入口、没有输入框、不发请求 | `aichat.gate.*`（`menu-no-entry` / `no-input` / `no-pending` / `no-request` / `settings-no-key`） |
@@ -997,7 +997,7 @@ isTurnOpen(): boolean
 6. **P8 留下的两个口子**（§3.7 已给可行做法，等用户拍板要不要做）：
    ①**手填 key 要不要也搬出页面**（今天 `ai.chatKey` 存在页面 `localStorage`，同源脚本读得到；
    要堵上就得把它挪进壳的存储、页面只拿哨兵 —— 会牺牲"换浏览器还在"的便利）；
-   ②**流式输出**（代理现在对 `stream:true` 直接回 400；做流式要在壳与页面各加一段 SSE 解析）。
+   ②**流式输出**：~~代理现在对 `stream:true` 直接回 400~~ → **已落地（2026-09）**：壳的 `forwardToProviderStream()` 按 SSE 事件边界擦 key，页面逐块渲染，非 SSE 端点自动降级为整包解析（不重发）。
 7. **Android 侧要不要做同源代理**：本轮**明确不做**（§3.7.5 的三条事实 + 本机没有 Android 设备可验证），
    APK 今天维持"手填 key + 直连"。**缺口口径已订正（P14）**：APK 上既没有"宿主环境变量"这条路，
    直连能不能通又取决于 WebView 对 `file://` 跨源的策略（`MainActivity` 没开
@@ -1068,7 +1068,7 @@ isTurnOpen(): boolean
 | `apply_ops` 批量入口 | 一次调用应用一串结构化操作 | C1 起就没做：工具表只做「参数适配 + 调 `Session` 既有方法」，`applyOps` 只是 C0 的纯函数 |
 | `search_tools` / 常用工具前置 | 工具面变大后的「选工具」辅助 | 61 条工具仍在模型的上下文预算内（§3.2 的 token 估算） |
 | **Android 侧的模型请求同源代理** | 把 key 收进 `MainActivity` + `EncryptedSharedPreferences`，由 Java 转发模型请求（协议照抄 §3.7.2） | **没有 Android 设备 / 模拟器可验证**（开发环境是 Windows + 桌面壳 + 无头 Edge），写完等于没测；APK 今天"手填 key + 直连"是可用的（`INTERNET` 已在，`file://` 并不拦 provider，见 §3.7.5） |
-| **流式输出** | `/provider/chat` 的 `stream:true`（shell 侧 SSE 解析 + 页面侧逐块渲染） | 本轮口径是"非流式整轮"，流式要动壳与页面两处协议，且与"预览后应用"的回合模型要重新对齐 |
+| ~~**流式输出**~~ **已落地（2026-09）** | `/provider/chat` 的 `stream:true`（壳侧 SSE 解析 + 页面逐块渲染） | 已实现，不再是未落地项：见 `docs/API.md` §26.6.1（含自动降级与按事件边界擦 key）。原判「要动壳与页面两处协议」正是这次做完的事 |
 | **把手填 key 也搬出页面** | `ai.chatKey` 从页面 `localStorage` 挪进壳的存储，页面只拿哨兵 | 属于"安全加固"而不是本轮目标；代价是"换个浏览器就没了"，见 §7 第 6 条 |
 
 ---
@@ -1105,3 +1105,4 @@ isTurnOpen(): boolean
 | P7 文档同步 + 最终全量验证（集成） | ✅ 完成 | `docs/API.md` §26 扩写成 26.1–26.6（浮窗与球 / 设置逐项清单 / key 与诚实边界 / 同源代理九档 + 安全分档）、§25.2 补 `/provider/*` 用法、§19 数字改齐；本文 §3.7 补三处偏差与两条真浏览器缺陷、§10 补本轮；`AGENTS.md` §1/§2/§7/§8 与 `README.md` 功能表同步。最终树上：`tsc`(src) 0、`tsc`(tests) 0、`run-tests` `assertions: 7639 / ALL PASS`、`check-bundle` exit 0，另加真壳 + 无头 Edge 的 43 条端到端断言全绿 |
 | **P17 参考图（vision）** | ✅ **完成**（2026-09-18） | 助手可挂**一张**参考图与文本一起发出去（`content` 变 OpenAI 兼容的 parts 数组；**无图时仍是纯字符串**、只有 `user` 消息能带图）。新增 `src/app/ai-vision.ts`：尺寸夹取（最长边 768、只缩不放）、体积判定（软 512 KiB / 硬 768 KiB，由壳的 1 MiB 请求体上限推出）、三态能力门控，全是纯函数（`tests/ai-vision.test.ts`）；`ai-chat` 侧 `userContentParts()` / `contentText()` / `ChatTurnOpts.imageDataUrl`；`AiPanel` 的附件条（用当前参考图 / 选择图片文件，发送后与跨最小化都保留）；`ai-presets` 的能力位（`deepseek-flash` yes / `deepseek-v4-pro` no / 其余 unknown = 放行 + 一句提示）。接口见 `docs/API.md` §26.8 |
 | P18 参考图缺陷修复（实测） | ✅ 完成 | 探针量出：源图任一边 > 1024 时 `engine/resample.ts` **静默返回全透明缓冲区**（全项目 1024 约定 + `dimsOk()` 兜底），于是 1200px 以上的参考图被编成**空白图**发给模型，附件条上还写着「已缩到 768×768」。改为源超契约时走自家 `downscaleOutOfContract()`（盒式平均 / 抽点），**不动 `MAX_SIZE`**；回归断言是像素级的（`aivision.ref.huge.*`：颜色数 > 2、alpha > 0）。断言 8051 → **8090**，产物 1,334,285 字节 / md5 `a15d5b1e626edfaf526c28694bed4b86` |
+| P19 补齐 §10 缺的四个批次（文档口径纠偏） | ✅ 完成（2026-09-18） | 此前这四个批次只在 `docs/API.md` 里以 **B1/B2** 标签出现、本文 §10 没有行，而 B1/B2 在任何计划文档里都没定义。四个批次是：思考强度与模型响应超时（`e47a28c`）、上游超时拆分 + 错误信封翻人话（`ac65969`）、流式输出 + 思考过程折叠（`3157485`）、调用记录细化 + 预览回合内按步撤回（`be99ff8`）。口径现已写进 `docs/API.md` §26.6.1（流式与降级）与 §23.4（按步撤回）。**以后新增批次请直接在本表加行，不要只留标签** |

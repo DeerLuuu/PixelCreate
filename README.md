@@ -94,7 +94,7 @@ toolchain/       开发辅助脚本（devserver 静态服务、make-icon 图标�
 
 ### 架构要点
 
-- **引擎层零 DOM**：`engine/`、`app/`、`tools/`、`servers/` 全部可在 Node 下测试（8090 条断言跑在纯数据上，含 UI 控件与令牌契约；`npm test` 末尾会打印条数）。
+- **引擎层零 DOM（口径要准）**：`engine/` 与 `tools/` 真的不碰 DOM，可在 Node 下直接跑；`app/`、`servers/`、`render/`、`io/` 里有真实的 DOM 用法（例如 `servers/render.ts:23` 的 `document.createElement("canvas")`），回归套件靠 `tests/session.test.ts` 的 `stubEnv()` 铺桩后跑（8090 条断言，含 UI 控件与令牌契约；`npm test` 末尾会打印条数）。
 - **服务层**：合成与缓存归 `RenderServer`、视图数学归 `ViewportServer`（`docs/API.md` §15b），手势策略归 `input.ts`、轻点序列 + 四个指针入口 + 触点会话状态归 `gesture.ts`（§15c / §15c2 / §15c3），`render/view.ts` 只做 blit、覆盖层与各工具的动作体 —— 这是 `docs/ARCHITECTURE.md` 里 Server 化的落地进度。
 - **声明式注册表**：设置项写在 `src/app/settings.ts`，引导步骤写在 `src/app/guide.ts`；新增功能 = 一条声明 + i18n 文案，界面自动生成。
 - **增量渲染**：笔迹只重合成/重绘改动区域（`Rect` + `composeRectInto` + `celToCanvasRect`），一帧一次绘制（rAF 合并）。
@@ -114,6 +114,8 @@ toolchain/       开发辅助脚本（devserver 静态服务、make-icon 图标�
 | [`docs/PLAN-isobuilder.md`](docs/PLAN-isobuilder.md) | 等距构建（三视图 → 等距像素画）方案：几何口径、引擎与 UX 设计、分期计划 |
 | [`docs/UI.md`](docs/UI.md) | UI 规范：设计令牌、`src/ui/kit` 控件 API 与 DOM 契约、迁移清单、测试与演示页约定 |
 | [`docs/COMPARISON.md`](docs/COMPARISON.md) | 与 Aseprite / Resprite 的功能对比与改进优先级 |
+| [`docs/COMPARISON-pixelover-pixelcomposer.md`](docs/COMPARISON-pixelover-pixelcomposer.md) | 与 PixelOver / PixelComposer 的节点式工作流对比（含资料出处与实测节点数） |
+| [`docs/PC.md`](docs/PC.md) | 电脑模式（PC）适配清单与后续建议：已做完的 18 项 + 建议但还没做的项，每条带实现位置 |
 | [`AGENTS.md`](AGENTS.md) | AI 代理约定：环境与命令、架构要点、工程约定（版本号/提交/文档同步）、导出 APK 完整 runbook、已知缺口 |
 
 ---

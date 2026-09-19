@@ -12,8 +12,8 @@
 
 - **现状**：一套代码、两种外壳（APK + PWA）的纯本地像素画编辑器，没有后端、账号与网络请求
   （`AndroidManifest.xml` 只有 `VIBRATE` 一个权限）。内核是"单例会话 + 命令式绘图引擎"。
-- **问题**：`Session`（4506 行 / 287 个公开方法）与 `View`（4820 行）**互相 import**，业务规则
-  （如填充落点）漏进视图层；`App.tsx` 2898 行、`modals.tsx` 2246 行。除这段之外，其余分层**是干净的**。
+- **问题**：`Session`（4,700 行 / 444 个成员 / 379 个公开成员）与 `View`（3,693 行）**互相 import**，业务规则
+  （如填充落点）漏进视图层；`App.tsx` 2,997 行、`modals.tsx` 2,410 行。除这段之外，其余分层**是干净的**。
 - **目标**：按 Godot 的 server 思路把业务层按**职责所有权**切开——每个 server 只管一件事
   （文档 / 历史 / 渲染 / 视口 / 输入 / 工具 / 选区 / 调色板 / 动画 / 画布空间 / IO / 设置 / UI 布局 /
   信号总线），前端只做"翻译输入 + 呈现状态"，算法抽成纯类。
@@ -138,7 +138,7 @@
 
 ### 2.8 规模与瓶颈
 
-- 四个大文件占全仓 44%（§2.1）；`Session` 有 **287 个公开方法**，职责覆盖文档/工具/调色板/图层/帧/画布/IO/UI 偏好。
+- 四个大文件占全仓 44%（§2.1）；`Session` 有 **379 个公开成员**（全文 4,700 行 / 444 个成员），职责覆盖文档/工具/调色板/图层/帧/画布/IO/UI 偏好。
 - 渲染只做脏矩形增量，**没有 overlay 笔迹层、没有 Worker**（大画布 + 大笔刷吃主线程）。
 - 失效通知是**全量** `changed()`：任何改动都触发整棵 React 树重算，没有分域订阅。
 - 交互层几乎测不到（无 DOM；`tests/view.test.ts` 用 DOM 桩，覆盖有限）。
@@ -342,7 +342,7 @@ server 是模块的运行时骨架，模块是 server 的可选装配。core 永
 | `refimage` | 参考图浮窗 | core | `io/refstore.ts` 91 + `ui/refimg.tsx` 152 |
 | `history-replay` | 历史面板与回放 | core.history | `ui/replay.tsx` 160 + `modals.tsx` 的 History 部分 |
 | `frame-preview` | 帧预览浮窗 | animation | `ui/preview.tsx` 168 |
-| `ai`（未实现） | 应用内助手 / 本机工具服务 | 按 `PLAN-ai.md` | — |
+| `ai`（**能力已落地、可裁剪模块未做**） | 应用内助手 / 本机工具服务 | 能力见 `PLAN-ai.md` 的 C0–P18 与 `docs/API.md` §21–§26；**模块化边界**（`modules.config.json` + 裁掉后的无悬空入口）尚未开始 | — |
 
 ### 4.3 模块契约（manifest）
 
@@ -596,11 +596,10 @@ Server 化： P0 ─ P1 ─ P2 ─ P3 ─ P4 ─ P5 ─ P6 ─ P7 ────�
 | 现状盘点 + 目标架构（本文） | ✅ 2026-09-14 |
 | 修 `engine/history.ts` 的类型反向依赖 | ⬜ |
 | P0 HistoryServer | ⬜ |
-| P4 RenderServer + ViewportServer | 🟡 部分完成（`src/servers/`：合成状态、**平铺重绘区域**、**渲染调试 HUD**、视图数学已抽出；+115 条断言） |
 | P1 PaletteServer | ⬜ |
 | P2 AnimationServer | ⬜ |
 | P3 SelectionServer | ⬜ |
-| P4 RenderServer + ViewportServer | ⬜ |
+| P4 RenderServer + ViewportServer | 🟡 部分完成（`src/servers/`：合成状态、**平铺重绘区域**、**渲染调试 HUD**、视图数学已抽出；+115 条断言） |
 | P5 InputServer | 🟢 四片完成（`servers/input.ts` 策略与算术 + 47 断言；`servers/gesture.ts`：`TapMachine` + 44 断言、`GestureController` 四个入口 + 22 断言、触点会话 37 个字段的所有权；`GestureHost` 93 → 54 个成员） |
 | P6 DocumentServer | ⬜ |
 | P7 SignalHub | ⬜ |
