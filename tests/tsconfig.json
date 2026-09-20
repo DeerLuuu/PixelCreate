@@ -24,6 +24,8 @@
     "../tests/ui-kit.test.tsx",
     "../tests/ui-fork.test.ts",
     "../tests/ui-tokens.test.ts",
+    "../tests/css-rules.ts",
+    "../tests/ui-css.test.ts",
     "../tests/fullscreen.test.ts",
     "../tests/canvas-space.test.ts",
     "../tests/color-drag.test.ts",

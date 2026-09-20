@@ -35,7 +35,7 @@ src/io/        原生桥接、工程文件（.pxc）、Aseprite 读写（aseread
 src/ui/        React 外壳、弹窗、时间线、浮动球、i18n、样式、AiPanel（应用内助手面板 + 助手小球 ChatBall）、
                AiWindow（助手浮窗，portal 到 body）
 android/       MainActivity（Java 层）+ AiServer（本地 AI 端口服务，纯 JDK）+ AndroidManifest
-tests/         无 DOM 的引擎/逻辑回归（**8090 条断言**，`node .ts-out/tests/run-tests.js` 末尾会打印条数）
+tests/         无 DOM 的引擎/逻辑回归（**8134 条断言**，`node .ts-out/tests/run-tests.js` 末尾会打印条数）
 docs/          ROADMAP.md / API.md / COMPARISON.md / COMPARISON-pixelover-pixelcomposer.md / PLAN-ai.md /
                PLAN-deer-ui.md / PLAN-isobuilder.md / ARCHITECTURE.md / UI.md / PC.md
 toolchain/     自写开发脚本（devserver / make-icon / check-bundle / stress-stroke / ai-server / pc-mcp / pc-shell+pc-shell.cmd）
@@ -46,7 +46,8 @@ toolchain/     自写开发脚本（devserver / make-icon / check-bundle / stres
 ## 2. 环境与依赖
 
 - **仓库内**：`package.json` + `tsconfig.json` + `scripts/`；`npm install` 后可用 `scripts/build-web.sh`、`scripts/run-tests.sh`。
-- **本仓库现在依赖一个外部库 `deer-ui`**（独立仓库在 `Z:\deer-ui`，宿主经 `vendor/deerui-0.1.0.tgz` 的 `file:` 依赖消费，装到 `node_modules/deer-ui`；`package-lock.json` 里的 `integrity` 是「装上的就是 `vendor/` 那份 tarball」的凭证）。**离线环境安装需要 `--legacy-peer-deps`**（库的 peer 在离线树里解不出）；容器里出包前 `/root/pcbuild/node_modules` 也要装这份 tarball 并同步 `vendor/`，否则 APK 构建解析不到 `deer-ui/kit`。
+- **本仓库依赖一个独立开源库 `deer-ui`**（自己的仓库：本机 `Z:\deer-ui`、远端 `github.com/DeerLuuu/deer-ui`，MIT —— **它是独立库，PixelCraft 只是它的第一个消费者**，不是本仓库的内部模块；库源码里没有任何指向本仓库的 import / 路径 / 回退）。宿主经 `vendor/deerui-0.1.0.tgz` 的 `file:` 依赖消费，装到 `node_modules/deer-ui`；`package-lock.json` 里的 `integrity` 与 `tests/ui-fork.test.ts` 的 bytes/md5/sha256 三条指纹是「装上的就是 `vendor/` 那份 tarball」的凭证。**离线环境安装需要 `--legacy-peer-deps`**（库的 peer 在离线树里解不出），这台机器上还要 `--install-strategy=nested`（lock 里 esbuild 的空壳版本会让 npm 直接报 `Invalid Version:`）；容器里出包前 `/root/pcbuild/node_modules` 也要装这份 tarball 并同步 `vendor/`，否则 APK 构建解析不到 `deer-ui/kit`。
+- **样式与设计令牌的唯一来源是库**：产物 `app2/www/css/style.css` = 库段 + 应用段，由 `scripts/build-css.mjs` 拼接（库段经 `require.resolve("deer-ui/styles.css")` 取，**取不到就 exit 1**，不静默降级）；库段在前、应用段在后。所以应用 `src/ui/style.css` 里**不许**再出现 `:root` / `[data-theme=...]` 令牌块（`tests/ui-css.test.ts` 会红）。改控件 / 改令牌的链路：`Z:\deer-ui` 改 → `npm run pack:vendor` → 拷到 `vendor/deerui-0.1.0.tgz` → `npm install` → 同步 `tests/ui-fork.test.ts` 三个指纹常量（细节见 §4 的 UI 两条）。
 - **容器内（实际出包环境）**：`node_modules` 在 `/root/pcbuild`（FUSE 上装不上时在容器私有区安装后回拷）；同步目录 `/root/pcbuild/app/src`、`/root/pcbuild/app/tests`。
 - `aapt2` 在本容器是 Android/x86 二进制、**跑不起来**，所以打包走「`javac` + `d8` → 往模板 APK 里塞」的路线（见 §6）。
 - 浏览器调试：`node toolchain/devserver.js`（`app2/www`，端口 8090；`app2/www/js/telemetry.js` 会把错误与布局信息 POST 到 `/log`）。
@@ -143,7 +144,7 @@ java -jar /root/pk/apksigner.jar verify --print-certs /sdcard/Download/PixelCraf
 - 调色板**唯一数据源** `src/data/palettes.ts`（`PALETTE_PACKS` + `defaultPalette`），勿在别处复制色表。
 - 横屏 ≥768px 走侧栏 grid；`src/ui/style.css` 的 `--sat/--sab/--sal/--sar` 是安全区变量（由 `src/io/safearea.ts` 写入）。
 - i18n 中英同文件 `src/ui/i18n.ts`：**每个键 zh/en 各一条**；删键前先 grep。
-- **`src/ui/kit/**` 与 `src/ui/{tooltip,tabs}.tsx` 已是「薄再导出层」**（实现搬进了独立库 `deer-ui`）。**不要在薄层里写实现** —— `tests/ui-fork.test.ts` 会红；要改控件就去 `Z:\deer-ui` 改、重打 tarball、再 `npm install`。口径、边界与后续期见 `docs/UI.md` §1.3 与 `docs/PLAN-deer-ui.md` §10（执行记录）。
+- **`src/ui/kit/**` 与 `src/ui/{tooltip,tabs}.tsx` 已是「薄再导出层」**（实现搬进了独立库 `deer-ui`；**样式与令牌也是库的**，`deer-ui/styles.css`）。**不要在薄层里写实现，也不要在 `src/ui/style.css` 里写控件规则或令牌块** —— `tests/ui-fork.test.ts` 与 `tests/ui-css.test.ts` 会红；要改控件 / 令牌就去 `Z:\deer-ui` 改、`npm run pack:vendor`、重打 tarball、再 `npm install`（链路见 §2）。口径、边界与执行记录见 `docs/UI.md` §1.3 与 `docs/PLAN-deer-ui.md` §10。
 
 ---
 
@@ -428,6 +429,20 @@ java -jar /root/pk/apksigner.jar verify --print-certs /sdcard/Download/PixelCraf
     于是 `esbuild.build()` 什么都不构建、紧接着的 `fs.statSync(outfile)` 抛 ENOENT —— **看起来像「环境坑」，
     其实是脚本没打**。判「产物里到底有没有这段代码」要用 node 数**字符串字面量**
     （`s.split("ai-attach").length - 1`）；`Select-String ... .Matches.Count` 在单行大压缩文件上**不可靠**（会数出 0）。
+- **UI 库 `deer-ui` 的令牌面是超集，这条缺口是现成的**（2026-09-20，详见 `docs/PLAN-deer-ui.md` §10.5 / §10.7）：
+  库 `:root` 定义 **143** 个令牌，但**库自己的规则只引用 34 个**；**93 个只有宿主外壳在用**
+  （`--orb-fg` / `--dock-bg` / `--sym-strong` / `--hud-*` / `--guide-shade*` / `--pie-mask` / `--set-item-*` /
+  `--railw` / `--sat…`），**16 个无人引用**。这不算 bug（宿主可以直接用这批令牌），但「库真正独立」还没到位。
+  **收敛时不能只搬令牌** —— 会同时踩红 `uicss.app.no-tokens`（禁应用里出现 `:root`）与
+  `uitoken.count`（要求库 `:root` ≥ 100 条），两条口径必须一起改。
+- **「装上的就是 vendor 那份 tarball」还缺一条直接断言**（t5 的 F1）：现在只有 lock 的 `integrity` +
+  `tests/ui-fork.test.ts` 的 tarball 指纹在**间接**保证，**没有**「`node_modules/deer-ui` 逐文件 == tarball 逐文件」
+  的断言；换包时靠人肉核（核法见库 README 末尾「给宿主的提醒」：比对 `node_modules/deer-ui/dist/styles.css`
+  与库仓库 `dist/styles.css` 的 sha256）。
+- **样式拆分的「真渲染等价」是一次性判据、不在仓库里**（2026-09-20）：`%TEMP%` 里的无头 Edge + CDP 脚本比了
+  「旧 `src/ui/style.css`（HEAD）vs 新产物」在 524 个 kit 元素 + 699 个应用外壳元素上的**全量 computed style +
+  布局矩形**（每元素 620 条属性 × 深色/浅色 + 强制 `:hover/:active/:focus`），差异 0；注入 1px 改动当场变红。
+  **这套脚本没有入库、也没接进闸门**（容器里没有浏览器，仓库也不引 puppeteer）—— 要常态化得另立任务。
 
 ---
 
@@ -602,6 +617,18 @@ AI 助手浮窗化 + DeepSeek 预设 + 环境 key 同源代理（P8，2026-09-17
 `TypeError` 又被 `catch` 静默吞掉、代理 URL 拿 provider 基地址拼前缀导致跨源）只有打真壳 + 无头 Edge 才暴露出来
 —— 单测 7500+ 条全绿也照样漏过去，这是"必须端到端跑一次"的现成例子。断言 7527 → **7639**，产物重建后
 `check-bundle` exit 0。接口见 `docs/API.md` §26（26.1–26.6），缺口见 §7。
+UI 独立成库（2026-09-20，主题：`deer-ui` 成为**真正独立的开源 UI 库**，PixelCraft 只是第一个消费者）：
+库仓库在 `Z:\deer-ui`（= `github.com/DeerLuuu/deer-ui`，PUBLIC，MIT，包名 `deer-ui@0.1.0`、`private: true`）。
+① **库能「没有 PixelCraft 在场」装 / 测 / 构建**：真 `package-lock.json` 入库、删掉所有指向 `../pixelcraft` 的隐式回退
+（`tsc-path.mjs` / `link-dev-deps.mjs` 都改成必须显式给来源）、应用侧的断言记账搬回应用、CI 恢复成真文件、
+补 `prepare` 让「从 git 装」真能编出 dist；② **样式与令牌搬进库**（`src/styles/{tokens,kit}.css` →
+`dist/styles.css` 17,790 B / 92 块 + `exports["./styles.css"]`），应用 `src/ui/style.css` 只剩自己的规则
+（91,245 B / 784 块），产物由新脚本 `scripts/build-css.mjs` 拼成「库段在前 + 应用段在后」；
+③ 应用 `src/ui/kit/**` 与 `src/ui/{tooltip,tabs}.tsx` 改为从 `deer-ui` 薄再导出，vendor tarball 换成库产物；
+④ **等价判据三层**：扁平规则多重集合 sha256 全等（876 = 92 + 784）、`app.js` 逐字节未变、
+**无头 Edge 真渲染**（524 + 699 元素的 computed style + 布局矩形，深色/浅色/强制 `:hover/:active/:focus` 三档）差异 0，
+注入 1px 当场变红；断言 8,090 → 8,119 → **8,134**（应用）/ 61 → 123 → **134**（库），一条没消失。
+缺口与待办见 §7 新增的三条，完整执行记录见 `docs/PLAN-deer-ui.md` §10。
 
 ---
 
@@ -610,7 +637,7 @@ AI 助手浮窗化 + DeepSeek 预设 + 环境 key 同源代理（P8，2026-09-17
 | 文档 | 内容 |
 |---|---|
 | [`docs/ROADMAP.md`](docs/ROADMAP.md) | **发展路线蓝图**：分期（立刻 / 近期 / 中期 / 远期）的 38 条可验收路线项（每条含目标 / 为什么现在 / 落点 / 验收口径 / 优先级 / 依赖 / 风险）、与既有计划的去重对齐与真冲突、文档漂移校正表 D1–D25、明确不做 21 条、必须先问用户 Q1–Q14、待验证清单、真机验证计划 —— **规划新工作时先读它**，再看下面这些细节文档 |
-| [`docs/PLAN-deer-ui.md`](docs/PLAN-deer-ui.md) | **把 UI 独立成 `deer-ui` 库的方案**：可抽取边界（`src/ui` 39 文件分三档取舍）、`UiHost` 适配层与接线期、包结构与构建发布与三端约束、分期迁移（A0/P0–P8）与可测验收、防分叉与风险登记（含 6 条静默失败）、13 项待用户拍板 —— **动手抽库前先读它** |
+| [`docs/PLAN-deer-ui.md`](docs/PLAN-deer-ui.md) | **UI 独立成 `deer-ui` 库的方案 + 执行记录**：可抽取边界与分档取舍、包结构与构建发布与三端约束、分期迁移（A0/P0–P8）与可测验收、防分叉与风险登记；**§10 是本轮执行记录**（库独立安装 / 样式移库 92↔784 / 应用消费与三层等价判据 / 已知缺口与待办）—— 要动样式、令牌或 kit 控件**先读 §10** |
 | [`README.md`](README.md) | 项目概览、功能清单、快速开始、目录结构与架构要点 |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | **架构现状 + Server 化 + 模块化**（盘点与目标设计）：分层与规模实测、数据模型与不变量、运行时主链路、能力域、实测依赖现状与三处硬伤、15 个 server 的职责与所有权、算法类清单、目标依赖图、信号总线；**§4 模块化**（Server 与 Module 正交、21 个可裁剪模块与 manifest 契约、`modules.config.json` → 生成静态 import → esbuild 剔除、能力位与"格式永远是超集"、四个预设、体积估算、M0–M4 分期与风险）；绞杀者迁移分期 P0–P8、红线、决策点 |
 | [`docs/API.md`](docs/API.md) | 全部模块的 API 接口文档（签名 / 参数 / 返回值 / 用法）与扩展指南（新增工具 / 设置 / 导出格式 / 引导步骤） |

@@ -1,6 +1,7 @@
 // App-facing base module: the Session-aware glue plus re-exports of the
 // SESSION-free kit primitives, so existing call sites keep importing "./base".
-// The real implementations live in src/ui/kit (see docs/UI.md §1).
+// The kit implementations live in the deer-ui library; src/ui/kit is a thin
+// re-export layer (see docs/UI.md §1.3).
 import { useSyncExternalStore } from "react";
 import { SESSION } from "./singleton";
 import { makeT } from "./i18n";

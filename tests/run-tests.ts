@@ -22,6 +22,7 @@ import { testI18n } from "./i18n.test";
 import { testUiKit } from "./ui-kit.test";
 import { testUiFork } from "./ui-fork.test";
 import { testUiTokens } from "./ui-tokens.test";
+import { testUiCss } from "./ui-css.test";
 import { testFullscreen } from "./fullscreen.test";
 import { testCanvasSpace } from "./canvas-space.test";
 import { testColorDrag } from "./color-drag.test";
@@ -123,6 +124,8 @@ async function main(): Promise<void> {
   testUiFork();
   console.log("--- ui tokens ---");
   testUiTokens();
+  console.log("--- ui css ownership (library vs app) ---");
+  testUiCss();
   console.log("--- fullscreen ---");
   testFullscreen();
   console.log("--- canvas space ---");

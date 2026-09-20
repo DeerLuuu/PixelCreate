@@ -1,18 +1,19 @@
 // Design-token contract (docs/UI.md §3).
 //
-// There is no browser here, so the tokens are checked statically against
-// src/ui/style.css:
+// There is no browser here, so the tokens are checked statically against the two
+// style sources (P2 拆样式之后有两个，口径见 tests/css-rules.ts):
+//   · 库段 `deer-ui/styles.css` —— 设计令牌（`:root` + `[data-theme="light"]`）与 kit 控件规则
+//   · 应用段 `src/ui/style.css` —— 业务规则（外壳 / 面板 / 画布 HUD）
 //   1. every size token and theme token exists in :root
 //   2. the light theme overrides *every* theme token and nothing else
 //      (a fixed token re-declared there would drift between themes)
 //   3. app-shell rules never hard-code a colour — they must use a token
 //   4. every var(--x) that rules reference is actually defined
+//
+// 本轮（t3）只换**来源**，判据一条没松：改样式的落点从「一个文件」变成「库里 + 应用里」，
+// 所以「令牌只有一份」「引用都能解」「外壳不写裸色」这三件事改成在**两段的并集**上判。
 import { eq, ok } from "./common";
-
-declare const require: (m: string) => any;
-declare const __dirname: string;
-const fs = require("fs");
-const path = require("path");
+import { flatRules, lf, readAppCss, readLibCss } from "./css-rules";
 
 /** geometry tokens: same value in both themes */
 const SIZE_TOKENS = [
@@ -62,8 +63,6 @@ const SHELL = [
   ".iso-",
 ];
 
-const BANNER = "   2/5  base";
-
 function matches(p: string, s: string): boolean {
   if (s.endsWith("-")) return p.startsWith(s);
   if (!p.startsWith(s)) return false;
@@ -75,42 +74,18 @@ const isShell = (sel: string): boolean =>
     .split(",")
     .some((part) => SHELL.some((s) => matches(part.trim(), s)));
 
-/** flat list of {sel, decls} for every declaration block (recurses into @media) */
-function rules(css: string): Array<{ sel: string; decls: string }> {
-  const out: Array<{ sel: string; decls: string }> = [];
-  const walk = (text: string): void => {
-    let i = 0;
-    while (i < text.length) {
-      const open = text.indexOf("{", i);
-      if (open < 0) return;
-      const sel = text.slice(i, open);
-      let depth = 1;
-      let k = open + 1;
-      while (depth > 0 && k < text.length) {
-        if (text[k] === "{") depth++;
-        else if (text[k] === "}") depth--;
-        k++;
-      }
-      const inner = text.slice(open + 1, k - 1);
-      if (inner.indexOf("{") >= 0) walk(inner);
-      else out.push({ sel: sel.replace(/\/\*[\s\S]*?\*\//g, " ").trim(), decls: inner });
-      i = k;
-    }
-  };
-  walk(css);
-  return out;
-}
-
 export function testUiTokens(): void {
-  const css = fs.readFileSync(path.resolve(__dirname, "../../../src/ui/style.css"), "utf8");
-  const rootStart = css.indexOf(":root{");
-  const lightStart = css.indexOf('\n[data-theme="light"]{');
-  ok("uitoken.sections", rootStart >= 0 && lightStart > rootStart, "root=" + rootStart + " light=" + lightStart);
-  const root = css.slice(rootStart, lightStart);
+  // 令牌块现在只在库里（应用侧那份已经删掉，见 tests/ui-css.test.ts 的 uicss.app.no-tokens）
+  const lib = readLibCss();
+  const app = readAppCss();
+  const rootStart = lib.indexOf(":root{");
+  const lightStart = lib.indexOf('\n[data-theme="light"]{');
+  ok("uitoken.sections", rootStart >= 0 && lightStart > rootStart, "lib root=" + rootStart + " light=" + lightStart);
+  const root = lib.slice(rootStart, lightStart);
   // the light block must be sliced up to its OWN closing brace: anything after it
-  // (e.g. the html[data-pc] desktop overrides) is not part of the theme
-  const lightEnd = css.indexOf("\n}", lightStart);
-  const light = css.slice(lightStart, lightEnd < 0 ? css.indexOf(BANNER) : lightEnd);
+  // (e.g. kit 规则) is not part of the theme
+  const lightEnd = lib.indexOf("\n}", lightStart);
+  const light = lib.slice(lightStart, lightEnd < 0 ? lib.length : lightEnd);
   const keys = (s: string): Set<string> =>
     new Set([...s.matchAll(/(--[a-z0-9-]+)\s*:/g)].map((m) => m[1]));
   const rk = keys(root);
@@ -120,9 +95,9 @@ export function testUiTokens(): void {
   eq("uitoken.light has no fixed token", [...lk].filter((k) => THEME_TOKENS.indexOf(k) < 0), []);
   ok("uitoken.count", rk.size >= 100, "tokens=" + rk.size);
 
-  // the slice starts inside the section banner comment: begin after its close
-  const body = css.slice(css.indexOf("*/", css.indexOf(BANNER)) + 2);
-  const all = rules(body);
+  // 「除令牌块以外的全部规则」= 库段里浅色块之后的部分 + 应用段全部
+  // （拆分前这等价于「2/5 base 横幅之后的全部」—— kit 规则当时也在同一个文件里）
+  const all = flatRules(lib.slice((lightEnd < 0 ? lib.length : lightEnd) + 2)).concat(flatRules(app));
   ok("uitoken.rules", all.length > 300, "rules=" + all.length);
 
   // 手机竖屏的面板整屏：默认 .panel 仍是右侧抽屉，.panel-full 才铺满（不给左边留缝）
@@ -146,8 +121,8 @@ export function testUiTokens(): void {
   }
   eq("uitoken.no-raw-colour-in-shell", raw, []);
 
-  // 4) every referenced token is defined
-  const used = new Set([...body.matchAll(/var\((--[a-z0-9-]+)\)/g)].map((m) => m[1]));
+  // 4) every referenced token is defined（引用面 = 两段之并）
+  const used = new Set([...lf(lib + "\n" + app).matchAll(/var\((--[a-z0-9-]+)\)/g)].map((m) => m[1]));
   eq("uitoken.all-referenced-defined", [...used].filter((k) => !rk.has(k)).sort(), []);
 
   // the onboarding tour is the topmost layer: nothing may sit above it, or the

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # PixelCraft web bundle build (self-contained; no host pc2 required).
-# Produces app2/www/js/app.js (IIFE bundle incl. react) and copies style.css.
+# Produces app2/www/js/app.js (IIFE bundle incl. react) and app2/www/css/style.css.
 #
 # 默认压缩（--minify，体积约 1.2MB → 500KB 上下）。调试需要可读堆栈时用
 #   MINIFY=0 sh scripts/build-web.sh
@@ -22,7 +22,9 @@ node_modules/.bin/esbuild src/main.tsx \
   --define:process.env.NODE_ENV='"production"' \
   $MIN \
   --outfile=app2/www/js/app.js --log-level=info
-cp src/ui/style.css app2/www/css/style.css
+# 样式：**不许再 cp 源文件** —— 设计令牌与 kit 规则现在由库提供（deer-ui/styles.css），
+# 产物必须是「库段 + 应用段」拼出来的那份，见 scripts/build-css.mjs（库缺失时它退出码 1）。
+node scripts/build-css.mjs
 
 # 产物自检：把打好的包装进最小 DOM 桩里跑一遍。esbuild 是按「源文件往上最近的
 # tsconfig.json」决定 JSX 变换的，一旦我在临时构建目录里留下别的 tsconfig.json，

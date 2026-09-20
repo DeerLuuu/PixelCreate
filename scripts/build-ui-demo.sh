@@ -17,7 +17,9 @@ node_modules/.bin/esbuild src/ui/kit/demo.tsx \
   --bundle --format=iife --platform=browser --target=es2019 \
   --define:process.env.NODE_ENV='"development"' \
   --outfile=app2/www/js/ui-demo.js --log-level=info
-cp src/ui/style.css app2/www/css/style.css
+# 样式：**不许 cp 源文件** —— 示范页与主页面共用同一份产物（库段 + 应用段），
+# 只拷 src/ui/style.css 会让示范页拿不到令牌（--bg / .btn 全丢）。见 scripts/build-css.mjs。
+node scripts/build-css.mjs
 
 # the demo renders the same icons as the app: reuse the sprite from index.html
 python3 - <<'PY'

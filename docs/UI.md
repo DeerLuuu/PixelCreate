@@ -48,7 +48,9 @@ src/ui/
   hold.tsx               长按调节（后续迁移，暂留原处）
   modals.tsx  App.tsx    应用弹窗与外壳（使用 kit）
   i18n.ts  singleton.ts  guide*.tsx  ...
-  style.css             唯一样式表，分区见 §3.1（**没有**拆进库，见 §1.3）
+  style.css             **只有应用自己的业务规则**（外壳 / 面板 / 画布 HUD / 覆盖层）：
+                        设计令牌与 kit 控件规则的**唯一来源是库** `deer-ui/styles.css`，
+                        产物由 `scripts/build-css.mjs` 拼（库段在前），见 §1.3 与 §3.1
 ```
 
 ### 1.1 kit 纯度规则（测试强制）
@@ -72,28 +74,31 @@ src/ui/
 
 ### 1.3 库边界：deer-ui 0.1.0（2026-09-20 落地）
 
-> 方案与决策依据见 [`docs/PLAN-deer-ui.md`](PLAN-deer-ui.md)（**执行记录在该文 §10**）。这一节只写**现状口径**。
+> 方案与决策依据见 [`docs/PLAN-deer-ui.md`](PLAN-deer-ui.md)（**执行记录在该文 §10**：第一轮 §10.1–§10.6、第二轮 §10.7、第三轮 §10.8）。这一节只写**现状口径**。
 
 | 项 | 现状 |
 |---|---|
 | **实现住在哪** | 独立仓库 `Z:\deer-ui`（与 `Z:\pixelcraft` **平级**、自己的 git 仓库）。包名 `deer-ui`、版本 `0.1.0`、`private: true`、MIT；**不发 npm**，只以 tarball 交付 |
-| **宿主怎么消费** | `Z:\pixelcraft\vendor\deerui-0.1.0.tgz`（**提交进仓库**，26,932 B / md5 `1e9c0d79952e7a3ac5cb82a4ecd1af98`）+ `package.json` 的 `"deer-ui": "file:vendor/deerui-0.1.0.tgz"`；`node_modules/deer-ui` 是 `npm install` 装出来的**真目录**（不是 junction / symlink —— `uifork.install.*` 三条断言钉住这点） |
+| **宿主怎么消费** | `Z:\pixelcraft\vendor\deerui-0.1.0.tgz`（**提交进仓库**，**40,278 B / md5 `0102c0631caacf357751e31e807cecc3` / sha256 `0e2e8ee130ffaeb88ba547082bf285ef16f1b6770f4aa7027b6f3f0e3199d444`** —— 2026-09-20 第三轮重打后的指纹；上一轮那份 36,234 B / `d0e943ff…` 是**旧值**）+ `package.json` 的 `"deer-ui": "file:vendor/deerui-0.1.0.tgz"`；`node_modules/deer-ui` 是 `npm install` 装出来的**真目录**（不是 junction / symlink —— `uifork.install.*` 三条断言钉住这点），解包后与 tarball **28/28 逐文件 sha256 相同**。重打 tarball 时**必须**同步 `tests/ui-fork.test.ts` 的 `VENDOR_BYTES` / `VENDOR_MD5` / `VENDOR_SHA256` 三个常量与 lock 的 `integrity` |
 | **公开路径为什么保持不变** | 9 个公开路径（`src/ui/kit/{index,primitives,scrub,Dialog,Form,HoverTip,pcmode}`、`src/ui/tabs.tsx`、`src/ui/tooltip.ts`）**全部保留**，每个文件只剩一行 `export * from "deer-ui/<入口>";` → 既有 import、测试里的路径、引导锚点、样式类名**一个字都不用改**。这就是「行为零变化」的实现方式（也是选薄再导出而不是删文件的原因） |
-| **入口与依赖** | 库 `exports` 四个子路径 `.` / `./kit` / `./tabs` / `./tooltip`（`types` 条件排在 `import` 前）；`peerDependencies` 只有 `react` / `react-dom` `^18.3.0` → **React 单实例**（`uifork.react.*` 三条断言钉住） |
-| **哪些东西没进库** | `style.css`（**整份留在应用**，库一行 CSS 都没有）、i18n 字典、图标数据与分组、`App.tsx`/`modals.tsx`/`timeline.tsx`/`AiPanel.tsx`、`hold`/`color-drag`/`HsvWheel`/`fxparam`/`scale-preview`、`src/render/view.ts` |
-| **测试怎么跑** | 应用侧 `node tests/.ts-out/tests/run-tests.js` → **8119** 条；库侧 `cd Z:\deer-ui && npm test` → **123** 条（下限写在库仓 `tests/budget.test.ts`：123 = 搬入 62 + 库自身基建 61） |
-| **双跑窗口** | `ui kit` 小节里那 62 条与库侧同名同义的断言**没有删**：它们现在经薄再导出层**直接跑库里的实现**（删掉会让应用侧总数掉到 8028，与「≥ 8090」冲突）。「库侧 == 应用侧 − 8」**只在 `ui kit` 小节口径下成立**（那 8 条 = `ui.demo.*` 6 + `ui.overlay-full-wiring` + `ui.dropmenu.pop-css`）；按 `ui.` **前缀**核是 50，别再用前缀口径 |
+| **入口与依赖** | 库 `exports` 五个子路径 `.` / `./kit` / `./tabs` / `./tooltip` / `./styles.css`（`types` 条件排在 `import` 前）；`peerDependencies` 只有 `react` / `react-dom` `^18.3.0` → **React 单实例**（`uifork.react.*` 三条断言钉住） |
+| **样式与令牌的唯一来源是库**（2026-09-20 第二轮，P2/P6） | 库自带 `deer-ui/styles.css`（= `dist/styles.css`，17,790 B / 92 个顶层块 = 85 条规则 + 7 个 `@keyframes`），由库 `src/styles/{tokens,kit}.css` 逐字节拼接。**应用 `src/ui/style.css` 只剩业务规则**（`:root` / `[data-theme="light"]` 与 kit 控件规则已整条删除）；产物 `app2/www/css/style.css` = **库段在前 + 应用段在后**，由 `scripts/build-css.mjs` 拼（`build-web.sh` 与 `build-ui-demo.sh` 都走它，**不再 `cp` 源文件**）。**要改 kit 样式或令牌就去 `Z:\deer-ui` 改**：改库 → 重打 tarball → 覆盖 `vendor/` → 刷 lock → `npm install`（漏一步的症状是「改了库的样式，页面却不变」） |
+| **哪些东西没进库** | i18n 字典、图标数据与分组、`App.tsx`/`modals.tsx`/`timeline.tsx`/`AiPanel.tsx`、`hold`/`color-drag`/`HsvWheel`/`fxparam`/`scale-preview`、`src/render/view.ts`、**PC 密度覆写**（`html[data-pc] …`）、`@media` 块、选择器列表里混着应用类的规则（整条原子，见库 README「归属与对账」的 R2） |
+| **测试怎么跑** | 应用侧 `node tests/.ts-out/tests/run-tests.js` → **8134** 条；库侧 `cd Z:\deer-ui && npm test` → **134** 条（下限写在库仓 `tests/budget.test.ts`：`ui.*` ≥ 62 与 `kit.*`+`lib.*` ≥ 72，分开判 —— 第二轮的样式判据把基建从 61 抬到 72、总闸门从 123 抬到 134） |
+| **双跑窗口** | `ui kit` 小节里那 62 条与库侧同名同义的断言**没有删**：它们现在经薄再导出层**直接跑库里的实现**。「库侧 == 应用侧 − 8」**只在 `ui kit` 小节口径下成立**（那 8 条 = `ui.demo.*` 6 + `ui.overlay-full-wiring` + `ui.dropmenu.pop-css`）；按 `ui.` **前缀**核是 50，别再用前缀口径 |
 
-**后续期要做什么**（**都还没做**，别当成已完成）：
+**后续期要做什么**：
 
 | 期 | 内容 |
 |---|---|
-| P1 / P2 | 给 `style.css` 划物理边界、把令牌与控件规则拆进库（现在库**一行 CSS 都没有**；`uifork.css.not-shipped` / `uifork.css.app-only` 两条断言钉住的正是这个现状） |
+| ~~P1 / P2~~ | **已完成（2026-09-20 第二轮）**：令牌 + kit 规则整条进库、`dist/styles.css` + `exports["./styles.css"]`、应用改为拼接消费（库段在前），见上面「样式与令牌的唯一来源是库」与库 README「库自带样式」 |
+| 令牌收敛 | 库 `:root` / `[data-theme="light"]` 现在定义 **143** 个令牌，而**库自己的规则只引用 34 个**：未引用的 109 个里 **93 个只有应用在用**（`--orb-fg` / `--dock-bg` / `--sym-strong` / `--hud-*` / `--guide-shade` / `--pie-mask` / `--set-item-*` / `--railw` / 安全区 `--sat…`），另 **16 个谁都不用**。建议后续把库的令牌收敛到它真正引用的那批、其余回到应用 `:root`，再做一轮等价验证 —— **注意**：「库段 ∪ 应用段的多重集合等价」这类判据**抓不到**这个问题（整体搬走、并集不变）。见 `docs/PLAN-deer-ui.md` §10.5 |
 | P3 | 图标契约（`Icon` / `IconSprite` / `assertIconIds`）+ i18n 注入（`I18nProvider` / `useT`）+ 分叉门禁脚本 `scripts/check-ui-fork.mjs` |
 | P4a / P4b | 4 个 0-import 纯几何文件、`app/uibar.ts` 的算法段 |
 | P6.5 | `UiHost` 落地接线（`main.tsx` 建 `PixelCraftHost` + provider + ≥2 个真实消费者） |
-| P7 | 删应用侧残留：`src/ui/kit/demo.tsx` 的应用侧副本（那 6 条 `ui.demo.*` 才跟着走）、`src/ui/base.tsx:3` 那句过时注释 |
+| P7 | 删应用侧残留：`src/ui/kit/demo.tsx` 的应用侧副本（那 6 条 `ui.demo.*` 才跟着走）、`src/ui/base.tsx:3` 那句过时注释、库 `src/kit/primitives.tsx` 与 `dist/kit/primitives.js` 里同一句 |
 | P8 | 第二宿主验证（库仓 `examples/`） |
+| 供应链 | **`vendor/deerui-0.1.0.tgz` 没有「重打」提醒**：库改两轮后应用那份还是旧的（没有 `dist/styles.css`、`exports` 里没有 `./styles.css`），**没有任何机制会提醒重打**。本轮是人工发现并补的；待建：同步/校验脚本 + 两层断言（`node_modules/deer-ui` == `vendor/*.tgz`；`vendor/*.tgz` 对应库的哪个提交）。见 `docs/PLAN-deer-ui.md` §10.5 |
 
 **剩余风险（不许写成「已覆盖」）**：公开组件 `Keep` 至今**零直接断言**；`ScrubNum` 的键盘 / 指针路径、`tabs` 的滚动 / portal 行为**没有黄金 md5 兜底**。
 本轮的行为保证来自「库源码与应用 HEAD 逐字节同一 + 库 `dist` 是库 `src` 的忠实产物 + 注入负例（把库产物里一个 class 名改掉 → `ui.dialog.foot` 当场红）」，
@@ -265,17 +270,24 @@ const hover = useHoverTip({ title: t("brushSize"), desc: bd(snap.lang, "brush"),
 
 ## 3. 设计令牌
 
-### 3.1 style.css 分区
+### 3.1 样式分区与两个来源（P2 拆样式之后）
 
-```
-/* ===== 1/5 tokens ===== */   :root 尺寸令牌 + 主题色令牌 + 固定色令牌；[data-theme="light"] 覆盖
-/* ===== 2/5 base ===== */     重置、html/body、通用 input
-/* ===== 3/5 kit ===== */      .btn .dlg .rowlabel .chip .tabs .sw .dropmenu .tabbar .panel …
-/* ===== 4/5 shell ===== */    .app-root .topbar .ctrlbar .tline .set-* .clg-* …
-/* ===== 5/5 canvas hud ===== */ .orb .cv-title .prevbox .bdock .sym-chiprow .guide-* + 动画
-```
+样式现在有**两个来源**，产物是拼出来的（`scripts/build-css.mjs`，**库段在前、应用段在后**）：
 
-`style.css` 是**唯一**样式表（构建脚本直接拷贝，无 CSS 打包）：新增控件样式写进对应分区，不要新建 css 文件。
+| 来源 | 位置 | 内容 |
+|---|---|---|
+| **库段** | 库 `Z:\deer-ui` 的 `src/styles/tokens.css` + `src/styles/kit.css` → `deer-ui/styles.css`（17,790 B / 92 块） | 原来的 `1/5 tokens` 与 `3/5 kit`：`:root` 尺寸/主题色/固定色令牌 + `[data-theme="light"]` 覆盖（77 个主题色令牌）+ `.btn .dlg .rowlabel .chip .tabs .sw .dropmenu .tabbar .panel .cp-* .htip* .set-color .set-hex` 等 83 条 kit 规则 + 7 个 `@keyframes` |
+| **应用段** | `src/ui/style.css` | 原来的 `2/5 base`（重置、`html`/`body`/`#root`、通用 `input`）+ `1b/5 PC 模式` + `4/5 shell`（`.app-root .topbar .ctrlbar .tline .set-* .clg-* …`）+ `5/5 canvas hud`（`.orb .cv-title .prevbox .bdock .sym-chiprow .guide-* …`）+ 应用自己的 27 个 `@keyframes` 与全部 `@media` |
+| **产物** | `app2/www/css/style.css` | 上面两段拼接（`build-web.sh` / `build-ui-demo.sh` 都走 `build-css.mjs`，**不再 `cp` 源文件**） |
+
+**新增样式的落点**：
+
+- **控件（kit）样式 / 设计令牌 → 去 `Z:\deer-ui` 的 `src/styles/kit.css` / `src/styles/tokens.css` 改**，
+  然后重打 tarball、覆盖 `vendor/`、刷 lock、`npm install`（见 §1.3）。不要在本仓库新建 CSS 文件。
+- **应用外壳 / 业务面板 / 画布 HUD / 覆盖层 → 写在 `src/ui/style.css`**，分区按上面的 `2/5` ~ `5/5`。
+- **`@media` 与 `html[data-pc]` 覆写留在应用**：PC 模式由宿主判定（§3.7b），库不自判。
+- **`src/ui/style.css` 里不要再出现 `:root` / `[data-theme="light"]`**：那会盖住库那份令牌，
+  症状是「改了库的令牌，页面不变」—— `tests/ui-css.test.ts` 的 `uicss.app.no-tokens` 钉住这条。
 
 ### 3.2 命名规则
 
@@ -488,13 +500,18 @@ PC 模式下不只改颜色/令牌，还会整体桌面化：`--barh` 48px、`.b
 
 ### 5.2 令牌规范测试（`tests/ui-tokens.test.ts`）
 
-静态解析 `src/ui/style.css`（与 `tests/i18n.test.ts` 同样的读文件方式）：
+**读数对象是两段的并集**（P2 之后令牌在库段、业务规则在应用段；解析口径统一在 `tests/css-rules.ts`）：
+库段 `deer-ui/styles.css`（走 `exports` 解析，装的是旧 tarball 时**大声失败**，不静默跳过）+ 应用段 `src/ui/style.css`。
 
-1. `:root` 必须定义全部尺寸令牌与主题色令牌（§3.3、§3.4 列表硬编码在测试里）；
-2. `[data-theme="light"]` 必须覆盖**每一个**主题色令牌；
+1. `:root`（**库段**）必须定义全部尺寸令牌与主题色令牌（§3.3、§3.4 列表硬编码在测试里；实测 143 个）；
+2. `[data-theme="light"]` 必须覆盖**每一个**主题色令牌（77 个）；
 3. 固定色令牌**不得**出现在浅色块；
-4. `kit` 分区（`.btn`、`.dlg*`、`.rowlabel`、`.row-note`、`.row-actions`、`.chips`、`.chip`、`.tabs`、`.tab`、`.sw`、`.dropmenu*`、`.tabbar*`、`.panel*`、`.set-*`）中不得出现裸色值（`#rrggbb`、`rgb()`、`rgba()`）；
+4. shell 选择器（`.viewport`、`.set-`、`.hist-`、`.guide-*`、`.ca-`、`.sh-`、`.iso-` … 见测试里的 `SHELL` 名单）
+   中不得出现裸色值（`#rrggbb`、`rgb()`、`rgba()`）；
 5. `var(--x)` 引用的每个 `--x` 都必须已定义（防拼写错）。
+
+> 样式归属、产物顺序、「库段 ∪ 应用段 == 拆分前」的多重集合等价，另由 `tests/ui-css.test.ts` 判
+> （见 `docs/PLAN-deer-ui.md` §10 与 `tests/css-rules.ts` 的文件头）。
 
 ### 5.3 kit 纯度测试（**已一分为二**）
 
@@ -522,7 +539,8 @@ node toolchain/devserver.js          # 端口 8090
 cd /root/pcbuild/buildsrc && cp -r /root/pcbuild/app/src/. .
 ../node_modules/.bin/esbuild ui/kit/demo.tsx --bundle --format=iife --platform=browser \
   --target=es2019 --define:process.env.NODE_ENV='"development"' --outfile=ui-demo.js --log-level=warning
-cp ui-demo.js "<repo>/app2/www/js/ui-demo.js" && cp ui/style.css "<repo>/app2/www/css/style.css"
+cp ui-demo.js "<repo>/app2/www/js/ui-demo.js"
+node scripts/build-css.mjs            # 样式：产物 = 库段 + 应用段（**不许 cp 源文件**，见 §3.1）
 python3 "<按 scripts/build-ui-demo.sh 里的片段生成 app2/www/ui-demo.html>"
 ```
 

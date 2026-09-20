@@ -7,6 +7,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "sh scripts/run-tests.sh",
     "build": "sh scripts/build-web.sh",
+    "build:css": "node scripts/build-css.mjs",
+    "count:ui-assertions": "node scripts/count-ui-assertions.mjs",
     "demo": "sh scripts/build-ui-demo.sh"
   },
   "dependencies": {

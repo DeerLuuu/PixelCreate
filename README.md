@@ -50,7 +50,7 @@
 npm install            # 安装开发依赖（React / TypeScript / esbuild）
 
 npm run typecheck      # tsc 严格检查
-npm test               # 引擎 / 逻辑回归测试（8090 条断言，无 DOM 依赖；跑完末尾会打印总数）
+npm test               # 引擎 / 逻辑回归测试（8134 条断言，无 DOM 依赖；跑完末尾会打印总数）
 npm run build          # 产出 app2/www/js/app.js + css/style.css
 sh scripts/sync-web.sh # 或者：不自己构建，直接取部署分支 main 上那一份产物（见 AGENTS.md §5.1b）
 ```
@@ -84,8 +84,9 @@ src/
 ├─ servers/     服务层：render（RenderServer：合成缓冲 / 合成键 / 失效区域 / 多画布缓存）、viewport（缩放平移与坐标数学，纯函数）、
 │               input（手势策略与算术）、gesture（TapMachine 轻点序列 + GestureController 指针事件入口）
 ├─ io/          bridge（原生桥接）、exporters、gifread、project（.pxc）、aseread/asewrite（Aseprite .ase/.aseprite）、zlib（自写 inflate + CompressionStream 压缩）、autosave、clipboard
-└─ ui/          React 界面：App、timeline、modals、changelog、guide(+demo/layout)、hold、preview、i18n、style.css、AiPanel（应用内助手面板 + 助手浮动球 ChatBall）、AiWindow（助手浮窗，portal 到 body）
-   └─ ui/kit/    UI 控件库：Dialog、Form（Row/ChipGroup/Segmented/Switch/NumberField/ColorField）、primitives、scrub、令牌与演示页
+└─ ui/          React 界面：App、timeline、modals、changelog、guide(+demo/layout)、hold、preview、i18n、AiPanel（应用内助手面板 + 助手浮动球 ChatBall）、AiWindow（助手浮窗，portal 到 body）
+   │            style.css 只剩**应用自己的业务规则**（外壳 / 面板 / 画布 HUD）；设计令牌与 kit 控件规则的**唯一来源是独立库 deer-ui**
+   └─ ui/kit/    UI 控件库（**薄再导出层** → 独立库 `deer-ui`）：Dialog、Form（Row/ChipGroup/Segmented/Switch/NumberField/ColorField）、primitives、scrub
 tests/          引擎与逻辑测试（无 DOM 依赖，node 直接跑）
 android/        自研 APK 工程（AndroidManifest + MainActivity + 图标）
 app2/www/       PWA 产物（index.html + 构建后的 app.js/style.css）
@@ -94,7 +95,7 @@ toolchain/       开发辅助脚本（devserver 静态服务、make-icon 图标�
 
 ### 架构要点
 
-- **引擎层零 DOM（口径要准）**：`engine/` 与 `tools/` 真的不碰 DOM，可在 Node 下直接跑；`app/`、`servers/`、`render/`、`io/` 里有真实的 DOM 用法（例如 `servers/render.ts:23` 的 `document.createElement("canvas")`），回归套件靠 `tests/session.test.ts` 的 `stubEnv()` 铺桩后跑（8090 条断言，含 UI 控件与令牌契约；`npm test` 末尾会打印条数）。
+- **引擎层零 DOM（口径要准）**：`engine/` 与 `tools/` 真的不碰 DOM，可在 Node 下直接跑；`app/`、`servers/`、`render/`、`io/` 里有真实的 DOM 用法（例如 `servers/render.ts:23` 的 `document.createElement("canvas")`），回归套件靠 `tests/session.test.ts` 的 `stubEnv()` 铺桩后跑（8134 条断言，含 UI 控件、令牌契约与样式归属；`npm test` 末尾会打印条数）。
 - **服务层**：合成与缓存归 `RenderServer`、视图数学归 `ViewportServer`（`docs/API.md` §15b），手势策略归 `input.ts`、轻点序列 + 四个指针入口 + 触点会话状态归 `gesture.ts`（§15c / §15c2 / §15c3），`render/view.ts` 只做 blit、覆盖层与各工具的动作体 —— 这是 `docs/ARCHITECTURE.md` 里 Server 化的落地进度。
 - **声明式注册表**：设置项写在 `src/app/settings.ts`，引导步骤写在 `src/app/guide.ts`；新增功能 = 一条声明 + i18n 文案，界面自动生成。
 - **增量渲染**：笔迹只重合成/重绘改动区域（`Rect` + `composeRectInto` + `celToCanvasRect`），一帧一次绘制（rAF 合并）。
@@ -112,8 +113,8 @@ toolchain/       开发辅助脚本（devserver 静态服务、make-icon 图标�
 | [`docs/ROADMAP.md`](docs/ROADMAP.md) | **发展路线蓝图**：分期（立刻 / 近期 / 中期 / 远期）与可验收条目、与既有计划的去重对齐、明确不做、必须先问用户 |
 | [`docs/PLAN-ai.md`](docs/PLAN-ai.md) | AI 接入方案稿（应用内助手 / 本机工具服务 / 先做地基、工具面与权限分级、回合事务、安全模型） |
 | [`docs/PLAN-isobuilder.md`](docs/PLAN-isobuilder.md) | 等距构建（三视图 → 等距像素画）方案：几何口径、引擎与 UX 设计、分期计划 |
-| [`docs/PLAN-deer-ui.md`](docs/PLAN-deer-ui.md) | 把 UI 表现层独立成 `deer-ui` 库的方案：可抽取边界、`UiHost` 适配层、包与构建、分期迁移 P0–P8 与验收、风险与待拍板项 |
-| **`Z:\deer-ui`（独立库仓库）** | UI 控件库 **`deer-ui` 0.1.0** 的源码真相（控件 / 表单 / 纯数学；只把 `react`+`react-dom` 当 peer，**不发 npm**）：应用侧 `src/ui/kit/**`、`tabs.tsx`、`tooltip.ts` 自 2026-09-20 起只是**薄再导出层**，宿主用 `vendor/deerui-0.1.0.tgz` 的 `file:` 依赖消费（口径见 [`docs/UI.md`](docs/UI.md) §1.3 与 [`docs/API.md`](docs/API.md) §20.0） |
+| [`docs/PLAN-deer-ui.md`](docs/PLAN-deer-ui.md) | **独立 UI 库 `deer-ui`（PixelCraft 是它的第一个消费者）**：定位、可抽取边界、`UiHost` 适配层、包与构建、分期迁移 P0–P8 与验收、风险与待拍板项，以及两轮**执行记录**（§10.1–§10.6 第一轮、**§10.7 库独立化 + 样式抽进库**） |
+| **`Z:\deer-ui`（独立库仓库）** | UI 控件库 **`deer-ui` 0.1.0** 的源码真相（控件 / 表单 / 纯数学 / **自带样式** `deer-ui/styles.css`；只把 `react`+`react-dom` 当 peer，**不发 npm**）：应用侧 `src/ui/kit/**`、`tabs.tsx`、`tooltip.ts` 自 2026-09-20 起只是**薄再导出层**，设计令牌与 kit 样式也只来自库 —— 宿主用 `vendor/deerui-0.1.0.tgz` 的 `file:` 依赖消费（口径见 [`docs/UI.md`](docs/UI.md) §1.3 / §3.1 与 [`docs/API.md`](docs/API.md) §20.0 / §20.4） |
 | [`docs/UI.md`](docs/UI.md) | UI 规范：设计令牌、`src/ui/kit` 控件 API 与 DOM 契约、迁移清单、测试与演示页约定 |
 | [`docs/COMPARISON.md`](docs/COMPARISON.md) | 与 Aseprite / Resprite 的功能对比与改进优先级 |
 | [`docs/COMPARISON-pixelover-pixelcomposer.md`](docs/COMPARISON-pixelover-pixelcomposer.md) | 与 PixelOver / PixelComposer 的节点式工作流对比（含资料出处与实测节点数） |

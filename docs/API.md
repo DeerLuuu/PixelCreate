@@ -2307,6 +2307,10 @@ nextPlayFrameIn(mode, fi, dir, w): PlayStep                    // 循环/乒乓�
 > **控件实现自 2026-09-20 起不在本仓库**：`ui/kit/**`、`ui/tabs.tsx`、`ui/tooltip.ts` 都是**薄再导出层**（一行 `export * from "deer-ui/<入口>"`），
 > 实现住在独立库 `deer-ui`，由宿主通过 `vendor/deerui-0.1.0.tgz` 的 `file:` 依赖消费。**公开路径与组件签名一个都没改**，
 > 所以上表里的文件路径仍然成立 —— 位置变更、消费方式、依赖边界与后续期见 **§20.0**。
+>
+> **样式与令牌的唯一来源也是库**（2026-09-20 第二轮起）：设计令牌与 kit 控件规则住在 `deer-ui/styles.css`，
+> 应用 `src/ui/style.css` 只剩业务规则，产物 `app2/www/css/style.css` = 库段在前 + 应用段在后
+> （`scripts/build-css.mjs`）。**要改控件样式或令牌去 `Z:\deer-ui` 改**，口径见 **§20.4**。
 
 ### 17.2 自定义事件
 
@@ -2794,7 +2798,7 @@ Stroke 侧：`BrushState.pattern` 一填，落笔统一走 `paintOne()`——图
 ### 测试
 
 ```bash
-npm test        # 8090 条断言：引擎 / 选区 / 历史 / 播放 / 设置 / 引导 / 渲染 / 导出 / Aseprite 读写 / 返回手势 / UI 控件与令牌 / AI（ai-doc / tools / draw / turn / rpc / chat / presets / 浮窗与球）（末尾打印 assertions: N）
+npm test        # 8134 条断言：引擎 / 选区 / 历史 / 播放 / 设置 / 引导 / 渲染 / 导出 / Aseprite 读写 / 返回手势 / UI 控件与令牌 / 样式归属 / AI（ai-doc / tools / draw / turn / rpc / chat / presets / 浮窗与球）（末尾打印 assertions: N）
 ```
 
 新增纯逻辑（算法、布局、解析、决策）时，优先抽成无 DOM 依赖的函数再补一条 `tests/*.test.ts` 断言——这是本项目保持可回归的主要手段。
@@ -2802,22 +2806,24 @@ npm test        # 8090 条断言：引擎 / 选区 / 历史 / 播放 / 设置 / 
 
 ---
 
-## 20. UI 控件库 `ui/kit/`（实现已迁进独立库 `deer-ui`）
+## 20. UI 控件库 `ui/kit/`（实现在独立库 `deer-ui`，样式也自带）
 
 > 规范见 [`docs/UI.md`](UI.md)：令牌表、控件 DOM 契约、迁移与测试约定。本节只列接口。
-> 方案、决策依据与**执行记录**见 [`docs/PLAN-deer-ui.md`](PLAN-deer-ui.md)（执行记录在该文 §10）。
+> 方案、决策依据与**执行记录**见 [`docs/PLAN-deer-ui.md`](PLAN-deer-ui.md)（第一轮 §10.1–§10.6、第二轮 §10.7、**第三轮 §10.8**）。
 
 ### 20.0 实现位置、消费方式与「公开路径为什么不变」（2026-09-20 落地）
 
 | 项 | 口径 |
 |---|---|
-| **实现位置** | 独立库仓库 `Z:\deer-ui`（与 `Z:\pixelcraft` **平级**）：`src/kit/*`（7 个文件）+ `src/tabs.tsx` + `src/tooltip.ts` + `src/internal/{expr,scrub}.ts`（**内联**自 `engine/{expr,scrub}` 的两个纯函数）+ `src/index.ts`（barrel）。包名 `deer-ui@0.1.0`、`private: true`、MIT、**不发 npm**，只以 tarball 交付 |
-| **宿主怎么消费** | `package.json` 的 `"deer-ui": "file:vendor/deerui-0.1.0.tgz"` —— tarball **提交在应用仓** `vendor/`（26,932 B / md5 `1e9c0d79952e7a3ac5cb82a4ecd1af98`），`node_modules/deer-ui` 是 `npm install` 装出来的**真目录**（不是 junction/symlink）。esbuild 按库的 `exports` map 解析 `deer-ui/kit` / `deer-ui/tabs` / `deer-ui/tooltip` 三个入口（`types` 条件排在 `import` 前） |
+| **实现位置** | 独立库仓库 `Z:\deer-ui`（与 `Z:\pixelcraft` **平级**）：`src/kit/*`（7 个文件）+ `src/tabs.tsx` + `src/tooltip.ts` + `src/internal/{expr,scrub}.ts`（**内联**自 `engine/{expr,scrub}` 的两个纯函数）+ `src/index.ts`（barrel）+ `src/styles/{tokens,kit}.css`（**库自带样式**）。包名 `deer-ui@0.1.0`、`private: true`、MIT、**不发 npm**，只以 tarball 交付 |
+| **宿主怎么消费** | `package.json` 的 `"deer-ui": "file:vendor/deerui-0.1.0.tgz"` —— tarball **提交在应用仓** `vendor/`，现在的指纹是 **40,278 B / md5 `0102c0631caacf357751e31e807cecc3` / sha256 `0e2e8ee130ffaeb88ba547082bf285ef16f1b6770f4aa7027b6f3f0e3199d444`**（2026-09-20 第三轮重打后；第二轮那份是 36,234 B / `d0e943ff…`，**旧值不要在别处引用**），与库仓 `deerui-0.1.0.tgz` **逐字节相同**；`node_modules/deer-ui` 是 `npm install` 装出来的**真目录**（不是 junction/symlink），解包后与 tarball **28/28 逐文件 sha256 相同**。esbuild 按库的 `exports` 解析 `deer-ui/kit` / `deer-ui/tabs` / `deer-ui/tooltip` 三个 JS 入口（`types` 条件排在 `import` 前） |
 | **公开路径为什么不变** | 本节里的 `ui/kit/*`、`ui/tabs.tsx`、`ui/tooltip.ts` 路径**全部保留**，每个文件只剩一行 `export * from "deer-ui/<入口>";`（**薄再导出层**）。于是调用点的 import、`tests/` 里的路径、DOM class 名、`data-guide` 锚点**一个字都不用改** —— 这是「行为零变化」与「调用点几乎不改」两条同时成立的实现方式，也是**不删实现文件**的原因 |
-| **依赖边界（库侧）** | 库 `src/**` 只许 `react` / `react-dom` / `react-dom/*` / `react/*` + **库内相对路径**（且不得越出库的 `src/`）；**不得** import 宿主的 `engine/{expr,scrub}`（已内联）、`singleton`(Session)、`i18n`、`app/`、`io/`。由库仓 `tests/a0-purity.test.ts` 强制（**带自检段**，判据不是恒真） |
-| **应用侧分叉门禁** | `tests/ui-fork.test.ts` 共 **29 条** `uifork.*`：`uifork.thin.*`（9 条 —— 薄层只许剩一行 `export *`）/ `uifork.no-fork.{kit,tabs,tooltip}`（按符号白名单扫全 `src/**` 找第二份实现）/ `uifork.adapter.base-scrubnum` / `uifork.surface.*` + `uifork.exports.map`（公开面与入口形状）/ `uifork.react.*`（**React 单实例**）/ `uifork.install.*` + `uifork.vendor.*`（安装形态与 tarball 指纹）/ `uifork.tooltip.single-source`（`tooltip` 是**模块级可变单例**（订阅表）：两份 → 长按提示静默消失）/ `uifork.css.*` |
-| **测试怎么跑** | 应用侧 `node tests/.ts-out/tests/run-tests.js` → **8119** 条（其中 `ui kit` 小节 **70** 条）；库侧 `cd Z:\deer-ui && npm test` → **123** 条。CJS 测试进程经 `tests/deerui-bridge.ts` 把库 `dist/**.js` 转成 CJS 再加载（库是 **bundler-only ESM**，`exports` 里只有 `import` 条件） |
-| **后续期要做什么** | P1/P2 样式拆库（现在库**一行 CSS 都没有**）、P3 图标契约 + i18n 注入、P4a/P4b 几何与 `uibar` 算法段、P6.5 `UiHost` 接线、P7 删应用侧残留（`src/ui/kit/demo.tsx` 副本）、P8 第二宿主 —— **都还没做**，见 [`docs/UI.md`](UI.md) §1.3 |
+| **样式与令牌的唯一来源是库**（2026-09-20 第二轮，P2/P6） | 库自带 `deer-ui/styles.css` = `dist/styles.css`（**17,790 B / 92 个顶层块** = 85 条规则 + 7 个 `@keyframes`；由库 `src/styles/tokens.css` + `src/styles/kit.css` 逐字节拼接，行尾归一成 LF）。**应用 `src/ui/style.css` 只剩业务规则**（`:root` / `[data-theme="light"]` 与 kit 控件规则已整条删除）；产物 `app2/www/css/style.css` = **库段在前 + 应用段在后**，由 `scripts/build-css.mjs` 拼（`build-web.sh` / `build-ui-demo.sh` 都走它，**都不再 `cp` 源文件**）。**要改 kit 样式或令牌就去 `Z:\deer-ui` 改**（改库 → 重打 tarball → 覆盖 `vendor/` → 刷 lock → `npm install`） |
+| **依赖边界（库侧）** | 库 `src/**` 只许 `react` / `react-dom` / `react-dom/*` / `react/*` + **库内相对路径**（且不得越出库的 `src/`）；**不得** import 宿主的 `engine/{expr,scrub}`（已内联）、`singleton`(Session)、`i18n`、`app/`、`io/`。由库仓 `tests/a0-purity.test.ts` 强制（**带自检段**，判据不是恒真）。库还**不得自判 PC / 主题 / 安全区**（库仓 `tests/a0-host-boundaries.test.ts`） |
+| **应用侧分叉门禁** | `tests/ui-fork.test.ts` 共 **30 条** `uifork.*`：`uifork.thin.*`（9 条 —— 薄层只许剩一行 `export *`）/ `uifork.no-fork.{kit,tabs,tooltip}`（按符号白名单扫全 `src/**` 找第二份实现）/ `uifork.adapter.base-scrubnum` / `uifork.surface.*` + `uifork.exports.map`（公开面与入口形状）/ `uifork.react.*`（**React 单实例**）/ `uifork.vendor.{exists,bytes,md5,sha256}` + `uifork.install.*`（4 条，锁 tarball 指纹与安装形态；`sha256` 那条是 2026-09-20 第三轮新加的）/ `uifork.tooltip.single-source`（`tooltip` 是**模块级可变单例**（订阅表）：两份 → 长按提示静默消失）/ `uifork.css.{shipped,app-only}` |
+| **样式的契约断言** | `tests/ui-css.test.ts`（**10 条** `uicss.*`）：两段各自的顶层块账（库 85 + 7、应用 746 + 27 + 11）、应用侧不再有令牌块与库选择器、「库段 ∪ 应用段」的扁平规则**多重集合 sha256** == 拆分前那份（**视觉零变化的机器判据**）、产物里库段在前且产物 == 两段之并；解析口径与指纹常量在 `tests/css-rules.ts`。`tests/ui-tokens.test.ts` 改成在**两段的并集**上判（令牌齐 / 引用都能解 / shell 不写裸色） |
+| **测试怎么跑** | 应用侧 `node tests/.ts-out/tests/run-tests.js` → **8134** 条（其中 `ui kit` 小节 **70** 条）；库侧 `cd Z:\deer-ui && npm test` → **134** 条。CJS 测试进程经 `tests/deerui-bridge.ts` 把库 `dist/**.js` 转成 CJS 再加载（库是 **bundler-only ESM**，`exports` 里只有 `import` 条件） |
+| **后续期要做什么** | 库的**令牌收敛**（库定义 143 个、自己只用 34 个，93 个只有应用在用 —— 建议收敛后其余回到应用 `:root`）、P3 图标契约 + i18n 注入、P4a/P4b 几何与 `uibar` 算法段、P6.5 `UiHost` 接线、P7 删应用侧残留（`src/ui/kit/demo.tsx` 副本）、P8 第二宿主；另加**供应链**：`vendor/*.tgz` 的重打提醒与「安装树 == tarball」断言（现在只有人工核对，见 [`docs/PLAN-deer-ui.md`](PLAN-deer-ui.md) §10.8-7）—— 见 [`docs/UI.md`](UI.md) §1.3 |
 
 > **`ui/base.tsx` 不在薄层之列**：它继续持有 `useSession()`，只把 `ScrubNum` 包一层译文转发给库实现（`uifork.adapter.base-scrubnum` 钉住）。
 > **`UiHost` 尚未落地**（属 P6.5）：当前库那 9 个文件对宿主能力的依赖是 **0**（PC 判定 / 主题 / 安全区全由宿主推入）。
@@ -2872,13 +2878,25 @@ interface DialogProps {
 
 ### 20.4 设计令牌与主题
 
-> **令牌与控件规则仍在应用侧**：`src/ui/style.css` 是唯一的样式源与产物（构建时纯 `cp` 到 `app2/www/css/style.css`），
-> **库一行 CSS 都没有** —— 这由 `uifork.css.not-shipped`（库不发布 CSS）与 `uifork.css.app-only`（样式只由应用提供）两条断言钉住。
-> 把令牌与 kit 规则拆进库是 **P1/P2**（尚未开工），届时拼接口径见 `docs/PLAN-deer-ui.md` §8 的 Q5。
+> **样式与令牌的唯一来源是库 deer-ui**（2026-09-20 第二轮起）：
+> 设计令牌（`:root` 尺寸/主题色/固定色 + `[data-theme="light"]` 覆盖）与 kit 控件规则都住在库仓库
+> `Z:\deer-ui` 的 `src/styles/{tokens,kit}.css`，打成一条子路径 `deer-ui/styles.css`（= 库 `dist/styles.css`，
+> **17,790 B / 92 个顶层块 = 85 条规则 + 7 个 `@keyframes`**，行尾统一 LF）。
+> **应用 `src/ui/style.css` 只留业务规则**（外壳 / 业务面板 / 画布 HUD / 覆盖层 / PC 密度覆写 / `@media`）；
+> 产物 `app2/www/css/style.css` = **库段在前 + 应用段在后**，由 `scripts/build-css.mjs` 拼接
+> （写完自检顺序，不满足就退出码 1）。**要改 kit 样式或令牌就去 `Z:\deer-ui` 改** —— 在本仓库改只会被库段覆盖。
+>
+> 机器判据：`tests/ui-css.test.ts` 的 10 条 `uicss.*`（其中 `uicss.app.no-tokens` 禁止应用侧再出现
+> `:root` / `[data-theme="light"]`，`uicss.rules-hash` 比「库段 ∪ 应用段 == 拆分前」的规则多重集合指纹）
+> 与 `tests/ui-tokens.test.ts`（令牌齐 / 浅色逐个覆盖 / 引用都能解 / shell 不写裸色，读数对象是两段的并集）。
+> 口径与指纹常量见 `tests/css-rules.ts`；归属规则、两份清单与对账见库 `README.md`「库自带样式」。
+> **已知缺口**：库 `:root` 定义 **143** 个令牌而库规则只引用 **34** 个（93 个只有应用在用、16 个谁都不用）——
+> 令牌收敛是后续任务，见 [`docs/PLAN-deer-ui.md`](PLAN-deer-ui.md) §10.7。
 
-`style.css` 顶部 `:root` 定义尺寸令牌与主题色/固定色令牌，`[data-theme="light"]` 覆盖全部主题色令牌；
-`io/theme.ts` 的 `themeMode(v): ThemeMode` / `applyTheme(mode: ThemeMode)`（`type ThemeMode`）写 `<html data-theme>` 与 `<meta name="theme-color">`，
-设置项为 `display.theme`（`Prefs.theme`，默认 `dark`）。
+`style.css`（现在只有应用段）里 `:root` / `[data-theme="light"]` **已经不在了**；主题仍由宿主切换：
+`io/theme.ts` 的 `themeMode(v): ThemeMode` / `applyTheme(mode: ThemeMode)`（`type ThemeMode`）写
+`<html data-theme>` 与 `<meta name="theme-color">`，设置项为 `display.theme`（`Prefs.theme`，默认 `dark`）。
+库**不参与主题判定**（`a0-host-boundaries` 的 `kit.theme.host-owned` 钉住这条），它只提供两套令牌块。
 
 ---
 
@@ -4302,7 +4320,7 @@ node toolchain/pc-shell.mjs --port 8915 --no-open --provider-base http://api.dee
 node toolchain/check-bundle.mjs app2/www/js/app.js      # 期望：✓ 产物自检通过…（exit 0）
 # 更严的一条（推荐）：按 `AGENTS.md` §6.4 在 %TEMP% 里用同一套 esbuild 口径重建一份，
 # md5 必须与 app2/www/js/app.js **逐字节相同** —— check-bundle 只证「能加载」，不证「等于 src」。
-node tests\.ts-out\tests\run-tests.js | Select-Object -Last 1   # 期望：ALL PASS（当前 8090 条）
+node tests\.ts-out\tests\run-tests.js | Select-Object -Last 1   # 期望：ALL PASS（当前 8134 条）
 ```
 
 壳伺服的就是 `app2/www/js/app.js`（`AGENTS.md` §5.1b）：md5 或自检不对，说明产物落后于源码，先在仓库根重建（`AGENTS.md` §6.4），

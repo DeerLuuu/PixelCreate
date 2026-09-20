@@ -12,6 +12,7 @@
 // class names, aria attributes and the head → top → body → extra → foot order.
 import { renderToStaticMarkup } from "react-dom/server";
 import { eq, ok } from "./common";
+import { readLibCss } from "./css-rules";
 import { Dialog } from "../src/ui/kit/Dialog";
 import { Row, RowActions, ChipGroup, Segmented, Switch, NumberField, ColorField } from "../src/ui/kit/Form";
 import { Icon, Btn } from "../src/ui/kit/primitives";
@@ -172,8 +173,9 @@ export function testUiKit(): void {
     const tabs = kitSrc("tabs.js");
     ok("ui.dropmenu.portal", tabs.includes("createPortal") && tabs.includes("document.body"));
     ok("ui.dropmenu.fixed-pos", tabs.includes("dropmenu-pop") && tabs.includes("getBoundingClientRect"));
-    const css = fs.readFileSync(path.resolve(__dirname, "../../../src/ui/style.css"), "utf8");
-    ok("ui.dropmenu.pop-css", /\.dropmenu-list\.dropmenu-pop\{[^}]*position:fixed/.test(css));
+    const css = readLibCss();
+    ok("ui.dropmenu.pop-css", /\.dropmenu-list\.dropmenu-pop\{[^}]*position:fixed/.test(css),
+      "读库段（P2 之后 .dropmenu-* 是库的规则：唯一来源 deer-ui/styles.css，应用侧的副本已删）");
   }
 
   // ------------------------------------------------------------- demo page

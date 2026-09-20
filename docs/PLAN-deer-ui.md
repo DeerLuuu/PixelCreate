@@ -1,4 +1,16 @@
-# deer-ui 方案：把 PixelCraft 的 UI 表现层独立成 UI 库
+# deer-ui：独立 UI 库（PixelCraft 是它的第一个消费者）
+
+> **定位（2026-09-20 第二轮起）**：`deer-ui` 是一个**独立的 React 18 控件库** —— 控件与自己的样式
+> 住在库仓库 `Z:\deer-ui`（**与 `Z:\pixelcraft` 平级、各是一个 git 仓库**），库有自己的 README、
+> `package.json`、lockfile、CI 与断言台账，**不依赖任何应用在场**就能 `npm ci` + `npm test` + `npm run build`。
+> **PixelCraft（像素工坊）是它的第一个消费者**，也是目前唯一的消费者：它经 committed tarball 消费库，
+> 并把「库不认识 PixelCraft」当成一条机器判据在守。
+>
+> 库自己的口径（怎么装、怎么用、组件清单、主题与令牌、开发调试）见**库仓库的 `README.md`**
+> （`Z:\deer-ui\README.md` —— 它不在本仓库里，所以这里不给相对链接）—— **那个文件是库的说明书的唯一来源**，
+> 本文只写**方案、决策与两仓之间的执行记录**。
+> 本文原稿是「把 PixelCraft 的 UI 表现层切出去」的迁移方案，**像素画应用侧的那套叙事已降为附录与执行记录**：
+> `§1`–`§9` 保留为**设计与决策依据**（读的时候把「宿主」理解成「消费者」），`§10` 是执行记录（含本轮）。
 
 > 目标：把 `src/ui/` 里的**表现层原语**（控件、设计令牌、图标机制、i18n 注入点）独立成新仓库 `deer-ui`，
 > 让 PixelCraft 从包里消费它，同时**应用行为与视觉零变化**。
@@ -10,7 +22,8 @@
 >
 > ⚠️ **断言数口径与三处更正（2026-09-20）**：本文凡写「某小节 N 条断言」，数法都是
 > **跑 `node tests/.ts-out/tests/run-tests.js`，按输出里的 `--- 小节名 ---` 分段数 `ok ` 行**，
-> 且**总数必须与末尾的 `assertions:` 一致**（迁移前 = **8090**；宿主改为消费 deer-ui 之后 = **8119**）。
+> 且**总数必须与末尾的 `assertions:` 一致**（迁移前 = **8090** → 宿主改为消费 deer-ui 之后 = **8119**
+> → **第二轮样式抽进库之后 = 8134**，见 §10.7-3）。
 > 原稿按 `ui.` / `uibar.` 这类**前缀**计数，跨小节的前缀会被算错，于是三个数字是错数，已按队长 2026-09 实测裁定更正：
 >
 > | 处 | 原值 | 实测 | 为什么会错 |
@@ -20,7 +33,8 @@
 > | 宿主 `uibar` 小节 | 97 | **104** | 97 只是 `uibar.*` 前缀那一部分；同小节里另有 **7 条 `act.list.*`** |
 >
 > **行号里的数字不是断言数**（例：`timeline.tsx:70,112,166,237`、`style.css:5-97`），一律没动。
-> **库侧运行合计实测 123**（= 从宿主搬入 62 + 库自身 A0/基建 61，见 §10 执行记录），
+> **库侧运行合计实测 123**（= 从宿主搬入 62 + 库自身 A0/基建 61，见 §10 执行记录）——
+> **第二轮把它改成 134**（库自带样式带来 +10 条样式判据、+1 条预算闸门；口径见 §10.7-3），
 > 所以文中「库测试 ≥ 70」这类下限只是**保守**，没有任何闸门被放宽。
 
 ---
@@ -678,7 +692,13 @@ node tests/.ts-out/tests/run-tests.js | Select-String '^ok\s+ui\.'   # 库侧相
 | 闸门阈值 | **≤ 基线 + 2 KB** |
 | **真约束是「防重复」不是「省体积」** | React+ReactDOM 地板 = **142,547 B（10.7%）**，`kit/` 全部源码 = **36,493 B** ⇒ **一次 React 重复抵消四次抽库** |
 | 体积闸门的第二价值 | **架构违规的自动探针**：抽库后若涨 30 KB+，基本只有一个解释 —— **有代码同时存在于宿主与库里**（`tooltip` / `engine/{expr,scrub}` / 令牌 CSS 各留一份） |
-| 产物级断言 | ① `:root{` 与 `.dlg{` 在产物里**各恰好一次**；② **拼接产物里「库段」必须出现在「应用段」之前**（用 P1 的机器锚点判位置） |
+| 产物级断言 | ① `:root{` 与 `[data-theme="light"]{` 在**库段**里各恰好一次（`check-dist.mjs`，**这是库自身的产物判据，不是「数子串」**）；② **拼接产物里「库段」必须出现在「应用段」之前**（`scripts/build-css.mjs` 写完就自检偏移量，`tests/ui-css.test.ts` 的 `uicss.artifact.order` 再判一次） |
+
+> ⚠️ **不能按子串出现次数判「某选择器在产物里出现了几次」**（初稿这里写过「`:root{` 与 `.dlg{` 各恰好一次」）：
+> 库 CSS 里 `.dlg` / `.panel` / `.rowlabel` / `.btn.off` / `.panel-mask,.dlg-mask` 都是「基础规则 + 变体 / 动画」的
+> **合法重复**，`grep -c ".dlg{"` 会数出「多了」的假红，而真正的重复（同一「选择器 + 声明」出现两次）反而漏掉。
+> **正确口径是按「选择器 + 声明」的扁平规则多重集合比**（相等 = 视觉零变化，允许改顺序），实现见
+> `tests/css-rules.ts`（`rulesBag` / `bagHash` / `bagDiff`）。产物必须等于 `库段 ∪ 应用段`，**不许有第三种来源**。
 
 > **必须写下这条**（免得后面有人「顺手优化」）：**抽库的目标不是变小，是「不变大 + 边界变清」**。`docs/ARCHITECTURE.md` §4.8 已写死「不要为了省 50 KB 做这件事」。
 
@@ -1077,11 +1097,20 @@ node tests/.ts-out/tests/run-tests.js | Select-String '^ok\s+ui\.'   # 库侧相
 
 ---
 
-## 10. 执行记录（2026-09-20）
+## 10. 执行记录
 
-> **本节是事实记录，不是计划。** 所有数字都在 `Z:\pixelcraft`（HEAD `189ef94` + 未提交的工作区改动）与
+> **本节是事实记录，不是计划。**
+> **§10.1–§10.6 = 第一轮（2026-09-20，P0a–P6）**：所有数字都在 `Z:\pixelcraft`（HEAD `189ef94` + 未提交的工作区改动）与
 > `Z:\deer-ui`（库仓 HEAD `f2244f5`）上**亲手复跑**过；凡没复现的一律标 `[待验证]`。
 > 三步都在**同一个工作区**里做完；**应用侧一个提交都没做**（提交由队长处理）。
+> **§10.7 = 第二轮（同日，库独立化 + 样式抽进库）**：库侧走 `b0f259a` → `a5cefbb` 两个本地提交（**未 push**），
+> 应用侧仍是未提交的工作区改动。**第二轮把 §10.3-⑥（P1/P2 没做）、§10.5-1（库 CI 跑不起来）、
+> §10.5-2（没有「安装树 == vendor tarball」断言的一半）收掉了**，同时带出三个新的真问题（见 §10.7-4）。
+>
+> **§10.8 = 第三轮（同日，收尾两轮 + 终检缺陷）**：库侧 `b5d7c51` → `e2bc5d4` → `9fa9de3`（README 收尾 /
+> 让「从 git 装」为真 / `.gitattributes`），宿主侧 `vendor/deerui-0.1.0.tgz` 重打到 **40,278 B**并同步三条指纹常量
+> 与 lock 的 `integrity`。**这一轮的产出主要是「承诺变真 + 把上两轮蒙住的地方补上判据」**：
+> **数字自己查的话看 §10.8-4 那张表**；「为什么前两轮验收没抓住那四处缺陷」看 §10.8-5（本轮最有价值的一节）。
 
 ### 10.1 三步各自的实际结果
 
@@ -1097,6 +1126,10 @@ node tests/.ts-out/tests/run-tests.js | Select-String '^ok\s+ui\.'   # 库侧相
 且相对路径必须**解析得到**、**不得越出库的 `src/`**。原始「3 处越界」的等价证据落在库仓 `tests/a0-purity.test.ts` 的自检段里。
 
 ### 10.2 实测数字（本节所有数都是本轮复跑出来的）
+
+> ⚠️ **本节是第一轮的数字，第二轮之后已经变了**（权威值见 **§10.7**）：宿主断言 **8119 → 8134**、
+> 库侧 **123 → 134**、`vendor/deerui-0.1.0.tgz` **26,932 B → 36,234 B**（md5 `1e9c0d79…` → `d0e943ff…`）、
+> 库 `dist` 多了 `styles.css`。本节保留第一轮的原值与核法 —— **引用时请连第二轮一起读**，别把 8119 / 123 当现值。
 
 **断言数** —— 数法：`node tests/.ts-out/tests/run-tests.js`，按输出里的 `--- 小节名 ---` 分段数 `ok ` 行，总数与末尾 `assertions:` 一致。
 
@@ -1174,7 +1207,11 @@ node tests/.ts-out/tests/run-tests.js | Select-String '^ok\s+ui\.'   # 库侧相
 
 ### 10.5 已知缺口与后续待办（**不是本轮缺陷，但别让它们消失**）
 
-1. **（缺口）库仓的 CI 目前跑不起来**：`Z:\deer-ui\.github\workflows\ci.yml` 写的是 `npm install`，但库仓**没有 lockfile**（我核过），
+> **第二轮（§10.7）的收卷情况**：**第 1 条已收**（库补了 lockfile、CI 恢复成真文件，且在无宿主目录里跑绿了四步）；
+> **第 2 条仍开着**（「安装树 == vendor tarball」没有断言，第二轮只做了人工逐字节核对）；
+> 第 3 / 4 / 5 / 6 / 7 / 8 条**原样仍在**（第二轮没有碰它们）。
+
+1. **（缺口，第二轮已收）库仓的 CI 当时跑不起来**：`Z:\deer-ui\.github\workflows\ci.yml` 写的是 `npm install`，但库仓**没有 lockfile**（我核过），
    本机**离线装不上依赖**（库 README 记的实测：`npm error … cache mode is 'only-if-cached'` / `ENOTCACHED`）；
    库的实际开发姿势是 `scripts/link-dev-deps.mjs` 把平级 PixelCraft 的 `node_modules` 以 **junction** 链进来
    （我核过：库 `node_modules/` 下 8 个条目**全是 junction**，指向 `Z:\pixelcraft\node_modules\*`）。
@@ -1213,9 +1250,343 @@ node tests/.ts-out/tests/run-tests.js | Select-String '^ok\s+ui\.'   # 库侧相
   ⑥ 改库产物一个 class 名 → `FAIL ui.dialog.foot`（**证明宿主行为断言真跑在库 dist 上**）；
   ⑦ `ui.kit.purity` 的非空核查：扫 **12 个 dist `.js` / 32 条 import 说明符**，offenders=0，越界样例会红（不是恒真断言）。
   > **③ 的措辞不要再写回「改名 tarball 就会构建失败」** —— 照抄会让人得出「判据不咬人」的错误结论。
+  > **§4.5 的产物级断言也已按「选择器 + 声明」重写**：数 `:root{` / `.dlg{` 这类**子串**不算判据 ——
+  > 库 CSS 里 `.dlg` / `.panel` / `.rowlabel` / `.btn.off` / `.panel-mask,.dlg-mask` 都是「基础规则 + 变体 / 动画」的
+  > **合法重复**，数子串会把合法重复报成「出现多次」，却对「同一条（选择器 + 声明）真出现两次」无感。
+  > 正确口径见 `tests/css-rules.ts`（`rulesBag` 多重集合 + `bagHash`）。
 - **双跑窗口与 62/8 账目**：`ui kit` 小节的 **70** = 搬进库的 **62** + 留在宿主的 **8**（`ui.demo.*` 6 + `ui.overlay-full-wiring` + `ui.dropmenu.pop-css`）。
   「库侧 == 应用侧 − 8」**只在小节口径下成立**；**按 `ui.` 前缀核是 50**（`ui.i18n.*` 28 / `ui.scale-*` 13 / `ui.icon-*` 2 … 属别的小节却共享前缀）—— 别再用前缀口径。
   另有 **17 条**（不是 12 条）断言的**读数对象**从应用副本换成库产物，逐条见 `tests/ui-kit.test.tsx` 的 diff；其中 `ui.kit.purity` 由 8 项白名单**收紧**为「react/react-dom + 必须解析到包内相对路径」。
+
+---
+
+## 10.7 第二轮执行记录：库独立化 + 样式抽进库（2026-09-20）
+
+> ⚠️ **本节是第二轮的实测记录，第三轮（收尾两轮 + 终检）的权威值见 §10.8**。容易被当现值引用的两处**数值不改**
+> （改了就把第二轮的实测抹掉了），但要连着 §10.8 读：
+> · 应用侧断言 **8119**（§10.7-3 表里那个数 = **第二轮结束时**的数；第三轮之后仍是 **8134**，见 §10.8-4）；
+> · `vendor/deerui-0.1.0.tgz` 指纹 **36,234 B / `d0e943ff…` / `718c5b7b…`**（§10.7-4-②，**已被 §10.8-2 取代**）。
+> 引用「当前是多少」时，一律以 **§10.8-4 的数字自查表**为准。
+
+> **这一轮的定位变化比改动本身更重要**：前一轮的成果是「控件实现搬进库、应用留薄层」，
+> 库仍然**只有跟 PixelCraft 的检出放在一起才能装、才能测、才能构建**；样式与令牌**整份留在应用**。
+> 这一轮把这两件事都收掉 —— 库**不依赖任何应用在场**，且**样式与令牌的唯一来源变成库**。
+>
+> 库侧两个本地提交（**未 push**，推送由队长做）：`b0f259a`（独立化第一步，13 文件）→ `a5cefbb`（库自带样式，14 文件）；
+> 两轮提交后库仓工作区都是干净的。应用侧**一个提交都没做**（全在工作区）。
+
+### 10.7-1 库独立安装与运行（收掉 §10.5-1「库 CI 跑不起来」）
+
+| 改动 | 内容 |
+|---|---|
+| `+package-lock.json` | 联网 `npm install` 生成并入库：`lockfileVersion 3` / **11 个包** / `resolved` 指向腾讯镜像 / `integrity` 齐。`node_modules/react` 从此是**真目录**，不再是指向 `Z:\pixelcraft\node_modules` 的 junction |
+| `scripts/tsc-path.mjs` | **删掉 `../pixelcraft/.../lib/tsc.js` 那条隐式回退** → 只剩 ① 本仓库 `node_modules` ② `$DEERUI_TSC` |
+| `scripts/link-dev-deps.mjs` | **默认来源删除**：必须显式给 `$DEERUI_DEPS_SOURCE`（不设就退出码 1），降级为「离线应急」 |
+| `-scripts/count-host-assertions.mjs`、`-npm run count:host-assertions` | 「宿主 `ui kit` 70 = 搬入 62 + 留宿主 8」是**应用侧的账**（要读宿主 `tests/ui-kit.test.tsx`、还要链宿主的安装树）→ 移出库，应用侧自己收（本轮应用侧新增 `scripts/count-ui-assertions.mjs`，见 10.7-3） |
+| `tests/budget.test.ts` | 门槛换成**库自己的口径**：`ui.*` 控件契约 **≥ 62** + `kit.*`/`lib.*` 判据与基建（当时）**≥ 61**，**分开判**，总 **≥ 123**；删掉 `MIN_HOST_MOVED` 这类应用侧概念（`common.ts` / `run-tests.ts` / `globals.d.ts` / `tsc.mjs` 注释同步）。<br>**注意这块此后又动过一次**：第二轮的样式判据让基建涨到 **72**、总闸门变成 **134**（见 §10.7-3 表与 §10.8-1 —— t7 之前文档里写「≥ 61」是把这一轮的中间值当成了现值） |
+| `.github/workflows/ci.yml` | 恢复成**真文件**（`npm ci` → `typecheck` → `build` → `test` → `check:dist`），删掉 `.github/ci.yml.example` |
+
+**验证（都是真跑，不是推断）**：
+
+| 环境 | 结果 |
+|---|---|
+| 仓库内 `npm ci`（10 包） | `npm test` **123 / ALL PASS** → `npm run build` → `check:dist` OK → `typecheck` 退出码 0 |
+| `%TEMP%\deerui-standalone`（robocopy 排除 `node_modules`/`.git`/`dist`/`.ts-out`，**旁边没有 pixelcraft**） | `npm install`（`--cache` 指向全新缓存，真下载 5.55 MB / 22 项）→ `test` 123 / ALL PASS → `build` → `check:dist` **24 文件** OK → `typecheck` 0 |
+| **更强一条**：`git clone Z:\deer-ui %TEMP%\deerui-clone`（无 `node_modules`） | `npm ci` → 四条闸门全绿 ⇒ **提交进去的那份是可独立跑的**（不是「靠工作区里没提交的东西跑起来的」） |
+| 负例 | `%TEMP%` 副本里 `npm run link:devdeps` **不设来源** → 退出码 1 |
+
+### 10.7-2 样式与令牌抽进库（收掉 §10.3-⑥「P1/P2 整期没做」）
+
+- 库 `src/styles/tokens.css`（`:root` + `[data-theme="light"]`，**逐条原样**从应用 `src/ui/style.css` 搬来，
+  只把行尾从应用工作区的 CRLF 归一成 LF）+ `src/styles/kit.css`（**83 条**只属于 kit 的控件规则 + **7 个** `@keyframes`）；
+  `scripts/build-styles.mjs` 逐字节拼成 `dist/styles.css`，`exports` 加 `"./styles.css": "./dist/styles.css"`。
+- **判定规则**：按「组件真的渲染出哪个 class」判，不按名字像不像（R1 令牌块 → 库；R2 普通规则**整条原子**，
+  选择器里的类名有一个只有应用在用就留应用；R3 纯元素选择器分页面外壳 / 库组件；R4 `html[data-pc] …` 留应用；
+  R5 `@keyframes` 按被谁引用；`@media` 整块留应用）。完整规则与两份清单见库 `README.md`「库自带样式」。
+- **对账（不重不漏）**：应用 `src/ui/style.css` 拆分前 **876 个顶层块 = 831 规则 + 34 `@keyframes` + 11 `@media`/其它**；
+  **进库 92 项（85 规则 + 7 `@keyframes`）+ 留应用 784 项（746 + 27 + 11）= 876**；85 + 746 = 831 账平；
+  两边规则键多重集合**无交集**；产物里 92 条规则的**原文**全部命中原样式表（0 处不符）。
+
+### 10.7-3 应用改为消费库的样式（P6）
+
+| 项 | 实测 |
+|---|---|
+| 应用 `src/ui/style.css` | **删掉** `:root` / `[data-theme="light"]` 与全部 kit 规则（**只剩业务规则**：外壳 / 业务面板 / 画布 HUD / 覆盖层 / PC 密度覆写 / `@media`） |
+| 产物拼接 | 新增 `scripts/build-css.mjs`：`deer-ui/styles.css`（库段）+ `src/ui/style.css`（应用段）→ `app2/www/css/style.css`，**库段在前、应用段在后**，写完**再读回来验一遍顺序**（不满足退出码 1、不留半成品），库段解析不到就**大声失败**（不给自己留「找不到就用别处副本」的退路）。`build-web.sh` / `build-ui-demo.sh` 都改成走它，**都不再 `cp` 源文件** |
+| 视觉零变化的机器判据 | 新增 `tests/css-rules.ts`（解析口径：**按「选择器 + 声明」的扁平规则多重集合**，不按子串出现次数）+ `tests/ui-css.test.ts`（**+10 条**）：库段 ∪ 应用段的多重集合 `sha256` **等于拆分前那份**（`98e94d6cbe535281…`，差异 **0**）、应用侧不再有令牌块、应用侧不再有库的选择器、产物两段顺序与「不许有第三种来源」。`tests/ui-tokens.test.ts` 改成在**两段的并集**上判（令牌齐 / 引用都能解 / shell 不写裸色），判据一条没松 |
+| 应用侧记账收回 | 新增 `scripts/count-ui-assertions.mjs` + `npm run count:ui-assertions`（`ui kit` 小节 70 = 搬入 62 + 留宿主 8，交叉校验 + 可从运行日志复核）；`package.json` 另加 `build:css` |
+| 断言数 | **8119 → 8134**（+15，含 `uicss.*` 10 条；**名字级「基线有、现在没有」= 0**，一条没消失、没有放宽） |
+| 产物 | `app2/www/js/app.js` **逐字节不变**（本次只动样式来源，JS 依赖图未变） |
+
+### 10.7-4 本轮暴露的**四个真问题**（写进档案，别只活在任务记录里）
+
+**① `vendor/deerui-0.1.0.tgz` 的静默落后（本轮的导火索）**：库已经改了两轮，而应用的 vendor tarball
+**还是第一轮那份**（`26932 B`：没有 `dist/styles.css`、`exports` 里没有 `"./styles.css"`）——
+**没有任何机制会提醒重打**，构建脚本、测试、CI 都不会红（`uifork.vendor.*` 只锁 tarball 自己的指纹，
+而指纹是「照当时那份」记下来的）。
+**本轮补救**：库 `npm run pack:vendor` 重打 → 覆盖 `vendor/deerui-0.1.0.tgz` → 把 lock 里 `deer-ui` 的
+`integrity` 换成新值 → 删掉 `node_modules/deer-ui` 再 `npm install --legacy-peer-deps`。
+**待建的后续**：同步 / 校验脚本 + **两层断言** —— ⑴ `node_modules/deer-ui` == `vendor/*.tgz`（逐字节），
+⑵ `vendor/*.tgz` 对应**库的哪个提交**（把库的 sha 写进一个随包的清单，或干脆让 vendor 文件名带 sha）。
+
+**② 同一个版本号 `0.1.0`、tarball 内容却变了**（三处指纹 + lock 的 integrity，全记在这里）：
+> ⚠️ **下表是第二轮的指纹，已被 §10.8-2 取代**（第三轮把 `README.md` / `package.json` /
+> `dist/kit/primitives.js` 又改了一次，重新 pack 后指纹变成 40,278 B / `0102c063…` / `0e2e8ee1…`）。
+> 把这张表当现值引用会得到「照 README 重打却对不上数」的错误结论 —— **现值见 §10.8-2**。
+
+| 位置 | 值 |
+|---|---|
+| 库侧 tarball `Z:\deer-ui\deerui-0.1.0.tgz` | **36,234 B** / md5 `d0e943ff79298a8851c6a4ccf465623d` / sha256 `718c5b7bb5d0800315af033d63d7401007dda3e2adf53081a91c23a5198ef309` |
+| 应用侧 `vendor/deerui-0.1.0.tgz` | **与上面逐字节相同**（同 bytes / md5 / sha256） |
+| `node_modules/deer-ui/dist/styles.css` | **17,790 B** / sha256 `f078e80a04fbe4926f08cacab3524c26e2fc9dedd86aef94a42acc8f18f7b1b3`（= 库内 `dist/styles.css`，**逐字节相同**）；安装树 `dist/**.js` **12 个**、`exports` 五个子路径齐全 |
+| `package-lock.json` 里 `node_modules/deer-ui` | `integrity: sha512-hLDmVYKs0z1t2MCXM6DU2vT8oicY6FqWxkLG5+WNQLdInXr4JA3y8gshh3SYohHkLYgaJ0Fl+myhW/Lmpn5YMg==`、`resolved: file:vendor/deerui-0.1.0.tgz` |
+
+> **同版本换包的陷阱（实测）**：直接 `npm install` 会**从缓存**拿出旧包 —— 装完 `node_modules/deer-ui` 里
+> 仍然没有 `styles.css`、lock 也没变。破解：**先在 lock 里把 `deer-ui` 的 integrity 换成新值**（或删掉
+> `node_modules/deer-ui`），再装；装完必须**逐字节核对**安装树的 `dist/styles.css`。
+
+**③ 库把「应用外壳域」的令牌整块吞了进去（队长独立发现，本轮最值得记的一条）**：
+库 `:root` / `[data-theme="light"]` 一共定义 **143 个**令牌，而**库自己的规则只引用 34 个**；
+未引用的 **109 个**里 **93 个只有应用在用**（`--orb-fg` / `--dock-bg` / `--sym-strong` / `--hud-*` /
+`--guide-shade` / `--pie-mask` / `--set-item-*` / `--railw` / 安全区 `--sat…`），另 **16 个谁都不用**。
+⇒ 库的样式里有**一件并不属于它**的东西（应用外壳 / 画布 HUD / 引导层的令牌），这与「库要独立」相抵：
+库替一个它不认识的宿主维护了一批它不用的变量。
+❗ **「多重集合等价」这类判据抓不到这个问题**：整体搬走、并集不变，`bagHash` 照样相等 —— 它证的是
+「视觉零变化」，不是「归属正确」。**建议的后续**：把库的令牌收敛到它真正引用的那批（34 个 + 少数几处
+应用**必须**从库拿的基础令牌），其余**回到应用 `:root`**，再做一轮等价验证。
+**本轮不做**：改令牌归属要同时改两边的 `:root` 与令牌断言，属独立一轮。
+
+**④ 两个会咬人的坑（别只活在任务记录里）**：
+
+| 坑 | 症状 | 正确做法 |
+|---|---|---|
+| 删 junction **不能**用 `Remove-Item -Recurse` | 会**跟进目标**把宿主 `node_modules` 里的真目录删掉（库侧 8 个条目全是指向 `Z:\pixelcraft\node_modules\*` 的 junction） | 逐个 `cmd /c rmdir <路径>` |
+| PowerShell 的 `>` 重定向是 **UTF-16** | 用它写出的 `package-lock.json` 让 node 报 `SyntaxError`（`ConvertFrom-Json` 也会报 name 无效） | 用 `cmd /c` 重定向，或 `Out-File -Encoding utf8` / node 自己写 |
+| 行尾 | 应用工作区是 **CRLF**、库仓库一律 **LF**：直接比字节会假红 | 比之前 `lf()` 归一；库生成的样式产物**统一 LF**（跨平台可复现），逻辑见库 `scripts/build-styles.mjs` |
+
+### 10.7-5 与方案的逐条偏差（第二轮）
+
+| # | 方案怎么说 | 实际怎么做 | 影响 |
+|---|---|---|---|
+| ① | §4.5 产物级断言：`:root{` 与 `.dlg{` 在产物里**各恰好一次**；用 P1 的机器锚点 `/* deer-ui:kit-controls:start */` 判库段位置 | 锚点**没做**；位置判据改成**按内容**（两段原文都要在产物里逐字出现、且库段偏移更小，`build-css.mjs` + `uicss.artifact.order` 各判一次）。**「各恰好一次」按子串数**这条**判据本身是错的**（库 CSS 里 `.dlg` / `.panel` / `.rowlabel` / `.btn.off` 都是合法重复），已按「选择器 + 声明」重写 | 判据更严也更准；`§4.5` 与 `§10.6` 的旧措辞已就地更正 |
+| ② | Q5 默认 **方案 (C)**：保留应用 `:root` 与 `2/5 base` 锚点不动、**库 CSS 只做尾部注入**、测试一行不改 | 走的是**方案 (B) 的变体**：库段**在前**、应用段在后；应用那份 `:root` / kit 规则**整条删除**（不是「留个空锚点」）；`tests/ui-tokens.test.ts` 改成读**两段的并集** | 顺序与 Q5-(C) **相反**（(C) 是「应用在前、库在后」）。理由：同优先级下**后写的赢**，库段在后会让库的基础规则盖住应用的外壳覆写；现在应用在后 ⇒ 应用仍能覆写库。代价：`ui-tokens` 的读数对象变了（判据一条没松） |
+| ③ | §7.1 R12-6：P2 验收要「新增产物级断言：拼接产物里库段必须在应用段之前」 | **做了**，但落点不是新断言名，而是 `build-css.mjs` 的**写后自检**（构建期，硬失败）+ `tests/ui-css.test.ts` 的 `uicss.artifact.order`（测试期） | 比方案的「只加一条断言」更强：**构建期就不产出顺序错的产物** |
+| ④ | §5.2 P1：先给 `style.css` 划物理边界（重排 + 机器锚点，声明零改动） | **P1 整期跳过**：直接做 P2（拆样式） | 少了一轮「只重排不改声明」的纯机械步骤；代价是没有「拆分前先划清边界」的中间态可核对 —— 等于用**多重集合等价**（库 ∪ 应用 == 拆分前）替代了物理锚点。缺口：**归属正确性没有机器判据**（见 10.7-4-③） |
+| ⑤ | §5.2 P7：删应用侧残留（`src/ui/kit/demo.tsx` 副本、薄层末行换行） | **没做**（`ui.demo.*` 6 条仍读应用副本；8 个薄层文件仍缺结尾换行） | 与第一轮同欠；本轮新增一条注释级残留（库 `src/kit/primitives.tsx` 与 `dist/kit/primitives.js` 里那句「实现住在宿主 `src/ui/kit`」） |
+| ⑥ | §4.3 / N17：CI 不要应用在场 | **成立**，且从「示例文件」变成**真文件**：`b0f259a` 把 `.github/ci.yml.example` 改回 `.github/workflows/ci.yml`（库已有 lockfile，不再有「跑不起来」的理由） | 本机**没有**真跑过 GitHub Actions；「CI 能跑」的证据是**在无宿主目录里把四步逐条跑绿** + YAML 语法自检，属 `[待验证]`（与 §10.5-1 的旧缺口同性质，弱化成「未在 CI 服务上跑过」） |
+| ⑦ | 迁移期「应用侧断言恒 ≥ 8090」 | 成立：**8119 → 8134**，`ui kit` 小节仍 **70**、无删除、无改名、无放宽 | 本轮新增的 10 条 `uicss.*` 是**新判据**，不是替换 |
+
+### 10.7-6 仍存缺口（**不是本轮缺陷，但别让它们消失**）
+
+1. **没有断言钉住「安装树 == vendor tarball」**（§10.5-2 的旧缺口仍在，medium）：就地改
+   `node_modules/deer-ui/dist` 里不影响导出面与渲染标记的东西，8134 会全绿，而 `app.js` 打的就是被改那份。
+   现在只有 `uifork.vendor.{exists,bytes,md5}`（锁 tarball 自己）与 `uifork.install.*`（锁安装形态）。
+   **本轮的「逐字节核对」是人工做的**（见 10.7-4-②），没有进断言。
+2. **令牌归属错误没有机器判据**（10.7-4-③，medium）：多重集合等价证不到「这东西该不该在库里」。
+   需要一个新判据（例如「库 `:root` 里每个令牌都至少被库规则引用一次」+ 一份显式的「允许留在库里的令牌」清单）。
+3. **`.github/workflows/ci.yml` 未在真 CI 服务上跑过**（§10.7-5-⑥，low-med）：本机是「无宿主目录里跑四步」。
+4. **库测试的 134 是下限不是精确值**（low）：`budget.test.ts` 判的是 ≥ 62 / ≥ 61，总数随判据增加而涨；
+   写文档时请以 `npm test` 输出的 `assertions:` 为准。
+5. **P3 / P4a / P4b / P6.5 / P7 / P8 仍全部顺延**（与第一轮同）：图标契约、i18n 注入、纯几何、`uibar` 算法段、
+   `UiHost` 接线、删应用侧残留、第二宿主。
+6. **`src/ui/kit/demo.tsx` 的应用侧副本还在**（P7 才删）：`ui.demo.*` 6 条断言仍读它，因此它**不能**先删。
+7. **R6 的三处行为细节仍无兜底**（`Keep` 零直接断言、`ScrubNum` 键盘 / 指针、`tabs` 滚动 / portal）——
+   与本轮「样式零变化 + 库独立」两条判据**都无关**，别把它们记成已覆盖。
+8. **模板里的 `:hover` / 移动端 `@media` 覆写顺序没被验过**：库段在前保证了「应用能覆盖库」，
+   但**反过来**（库的 `@media` 或 `html[data-pc]` 规则去覆盖应用的外壳）本轮没有用例 —— 因为库不自判 PC / 主题，
+   这类规则按 R4 全留在应用（属有意设计，不是缺口，记在这里免得下次有人「顺手挪一条进库」）。
+
+---
+
+## 10.8 第三轮执行记录：收尾两轮 + 终检缺陷（2026-09-20）
+
+> **这一轮没有新功能，只有「把承诺变成真的」与「把上一轮蒙住的地方补上判据」。**
+> 两轮收尾：**t7 库侧**（让 README 的安装承诺为真）与 **t8 宿主侧**（vendor tarball 重打 + 三条指纹同步），
+> 之后队长做了一遍终检，抓出 **4 处缺陷**（§10.8-3）。这一节的价值主要在**§10.8-3 与 §10.8-5**：
+> 记清「这些缺陷是怎么混过前两轮验收的」——那 4 条都不是实现错，而是**承诺没人验**。
+
+### 10.8-1 t7：库侧收尾（提交 `e2bc5d4`，未 push）
+
+| 项 | 改前 | 改后 |
+|---|---|---|
+| `package.json` 的 `scripts` | 只有 `prepack`（= `build` + `check:dist`） | 加 **`"prepare": "npm run build"`** —— npm 从 git 装时**只有 `prepare` 会跑**，`prepack` 不跑；`dist/` 又被 `.gitignore` 忽略、从未入库 ⇒ 改前 `npm i github:DeerLuuu/deer-ui` 装出来**只有 `README.md` + `LICENSE` 两个文件**（没有一行 JS/CSS） |
+| 库 `README.md` 的预算下限 | `kit.*`+`lib.*` **≥ 61** | **≥ 72**（对齐 `tests/budget.test.ts` 的 `MIN_INFRA = 72`；`MIN_CONTRACT = 62`、`MIN_TOTAL = 134`） |
+| `src/kit/primitives.tsx:3` 的注释 | `// Lives in src/ui/kit so the whole library can be moved out later…`（说的是**宿主**的路径） | `// The implementation lives **here**, in this repository's `src/kit/` … Consumers import it as `deer-ui/kit`; a second copy … is a fork, not a re-export.` |
+
+**t7 的实测（干净克隆模拟，全部在 `e2bc5d4` 上跑）**：
+
+| 情形 | 命令 | 结果 |
+|---|---|---|
+| 克隆后装 | `git clone Z:\deer-ui <tmp>` → `npm install` | install 前**没有** `dist/`；`prepare` 自动跑 build（`[deer-ui] dist/styles.css：17790 B / 92 条规则 / 326 行`），`added 10 packages`，exit 0 → `dist/` **25 个文件**，`dist/styles.css` sha256 = `f078e80a…`（与库仓库一致） |
+| 克隆内打包 | 接上一步 `npm pack` | `deer-ui-0.1.0.tgz` **28 个条目**，`package/dist/index.js`、`package/dist/styles.css`、`package/README.md`、`package/LICENSE` 全在；tgz 内 `dist/styles.css` sha256 = `f078e80a…`（17790 B） |
+| 消费者（默认 / `--omit=dev`） | 消费者项目里 `npm i git+file:///Z:/deer-ui`（两档） | **两档都成功**（added 6 packages）：`node_modules/deer-ui/dist/index.js` + `dist/styles.css` 都在、sha256 一致、`exports["./styles.css"] = "./dist/styles.css"` |
+| 反例 | 库仓库自己的树 `npm ci --omit=dev` | **退出码 2**（`[deer-ui] 找不到可用的 tsc…`）：`prepare` 要 devDependencies 里的 `typescript` |
+
+> ⚠️ **口径**：以上是**本地克隆模拟**（`git clone Z:\deer-ui` / `git+file:///Z:/deer-ui`）—— 库仓库**尚未 push**，
+> 远端默认分支 HEAD 还是 `bce2647`，所以**不是**对真 GitHub 远端的验证。库 README 的「从 git 装」一栏已写明这条。
+
+### 10.8-2 t8：宿主侧收尾（重打 tarball + 三条指纹）
+
+对齐的库 HEAD = **`9fa9de3`**（= t7 的 `e2bc5d4` + t10 的 `.gitattributes`），`git status --short` 为空。
+
+| 指纹 | bytes | md5 | sha256 |
+|---|---:|---|---|
+| **新 `vendor/deerui-0.1.0.tgz`**（= 库树 pack = 干净克隆 pack，**三者逐字节相同**） | **40278** | **`0102c0631caacf357751e31e807cecc3`** | **`0e2e8ee130ffaeb88ba547082bf285ef16f1b6770f4aa7027b6f3f0e3199d444`** |
+| 第二轮的 vendor（§10.7-4-② 记的那份，**改前**） | 36234 | `d0e943ff79298a8851c6a4ccf465623d` | `718c5b7bb5d0800315af033d63d7401007dda3e2adf53081a91c23a5198ef309` |
+| 第一轮的 vendor（`git show HEAD:vendor/…`，只作归属参考） | 26932 | `1e9c0d79952e7a3ac5cb82a4ecd1af98` | `c991ab50ea2d2618b9d13160d7cf606a430064423adb2e01538e8ebf6881d1c2` |
+
+`package-lock.json` 里 `node_modules/deer-ui` 的 `integrity`（SRI）改成
+**`sha512-ZGFy01rDqDW5rMUi1OjiTMKxqqhKafVOWmsyQ/i3ehnNjFTDosB+ZIqPJEuVyaZxxedip0Ua4eAFKNB2+s3Dpw==`**，
+`resolved` 仍是 `file:vendor/deerui-0.1.0.tgz`。
+
+**`tests/ui-fork.test.ts` 的三个常量（改前 → 改后）** —— `HEAD` 里只有前两个，第三个是 t8 新加的
+（同一个 tarball 的 md5 不够用时用 sha256 兜底）：
+
+| 常量 | `HEAD`（第一轮值） | t3 之后到 t8 之前的磁盘值 | **现在** |
+|---|---|---|---|
+| `VENDOR_BYTES` | `26932` | `36234` | **`40278`** |
+| `VENDOR_MD5` | `"1e9c0d79952e7a3ac5cb82a4ecd1af98"` | `"d0e943ff79298a8851c6a4ccf465623d"` | **`"0102c0631caacf357751e31e807cecc3"`** |
+| `VENDOR_SHA256` | **（不存在）** | `"718c5b7bb5d0800315af033d63d7401007dda3e2adf53081a91c23a5198ef309"` | **`"0e2e8ee130ffaeb88ba547082bf285ef16f1b6770f4aa7027b6f3f0e3199d444"`** |
+
+**逐条目差异（相对第二轮那份 36234 B 的 tarball）**：28 条 → **相同 25、变了 3**，全部落在允许的文档 / 注释级：
+
+| tarball 内条目 | sha256 改前 → 改后 | 字节 | 首异行 |
+|---|---|---:|---|
+| `package/dist/kit/primitives.js` | `46f82472a498…` → `b6846a2e72fe…` | 6026 → **6183** | 第 4 行（那句「实现住在宿主」的注释，见 §10.8-1） |
+| `package/package.json` | `ac8b7a9dc1a0…` → `cfc4edd06607…` | 1869 → **2021** | 第 5 行（`description` 改成库自身定位） |
+| `package/README.md` | `90c1754d1566…` → `5d15d9de25c5…` | 23495 → **32189** | 第 3 行（宿主视角 → 库视角，见 §10.7 与 §10.8-1） |
+
+**不变式（t8 的硬约束，本轮独立复核过）**：`package/dist/styles.css` 仍是
+**17790 B / sha256 `f078e80a04fbe4926f08cacab3524c26e2fc9dedd86aef94a42acc8f18f7b1b3`**，
+另外 24 个 JS/`.d.ts` 条目逐条 sha 未变 ⇒ **第二轮的样式等价判据没有被重打包推翻**。
+`app2/www/js/app.js` 也**没变**：**1,334,394 B / md5 `3f9db8acbfb76fe38ffaa6c33f875940`**（与 §10.2 一致）。
+
+**本轮新增的人工核对（把 §10.5-2 那条「安装树 == tarball」缺口先手工补上一次）**：
+`tar -xzf vendor/deerui-0.1.0.tgz` 解出的 **28 个文件** 与 `node_modules/deer-ui` 下的 **28 个文件**
+**文件名面相同、逐文件 sha256 全相同（28/28）**；`dist/styles.css` 三处（库 `dist/`、tgz 内、安装树）
+sha256 都是 `f078e80a…`。**注意这仍是人工核对，不是断言** —— 断言待建。
+
+### 10.8-3 四处终检缺陷（每条：症状 / 根因 / 修法 / 落在哪个提交）
+
+> 这四条**没有一条是「实现写错了」**，全部是**承诺与实现脱节**：文档（或注释）描述了一个没人验的状态。
+> 更值钱的是下面 §10.8-5 那张表：**为什么前两轮的验收都没抓住它们**。
+
+**① 库 README 的 `npm i github:DeerLuuu/deer-ui` 装出来是空包**
+
+- **症状**：照库 README 装出来只有 `README.md` + `LICENSE`，`node_modules/deer-ui` 里**没有一行 JS/CSS**，`deer-ui/kit` 解析不到。
+- **根因**：`dist/` 在库 `.gitignore` 里（从未入库），而 `package.json` 只有 `prepack`（`npm pack`/`publish` 前跑）——
+  **npm 从 git 装时不跑 `prepack`，只跑 `prepare`**。README 却把这条写成「三种方式任选一种」。
+- **修法**：`package.json` 加 `"prepare": "npm run build"`；README 的安装段补一张「三条路各自谁负责构建」表，
+  并把两个反例（库仓库自己的树上 `--omit=dev` 会红；消费者项目里 `--omit=dev` 没问题）写进前提。
+- **落地**：库提交 **`e2bc5d4`**。
+
+**② 库 README 的预算下限写 61、常量是 72**
+
+- **症状**：库 README「断言台账与预算闸门」写 `kit.*`+`lib.*` **≥ 61**，与 `tests/budget.test.ts` 的 `MIN_INFRA = 72` 不符。
+- **根因**：**把一个中间值留在了文档里**。第二轮加样式判据时，基建从 61 涨到 **72**、总闸门从 123 涨到 **134**：
+  同一段的表里写对了（72 / 134），只有正文那句下限没跟着改 —— 而且我（docs-integrator，t6）在**同一句里**
+  一边写「≥ 61」一边写「62 + 72 = 134」，**自相矛盾**却没被任何断言抓住（文档里的数字**没有判据**）。
+- **修法**：改成 **≥ 72**（t7）；本任务在宿主侧的 §10.7-1 那一行同时补了「此后基建涨到 72、总闸门 134」的说明，
+  免得后来人再把第二轮的中间值当现值。
+- **落地**：库提交 **`e2bc5d4`**（宿主侧说明见本节）。
+
+**③ `src/kit/primitives.tsx:3` 仍说「实现住在宿主的 `src/ui/kit`」**
+
+- **症状**：库源码与 `dist/kit/primitives.js` 的头注释写着 `Lives in src/ui/kit so the whole library can be moved out later`——
+  与「库是源码真相、宿主是消费者」正好相反。
+- **根因**：P0b 从宿主**逐字节复制**时原样带过来的注释（见 §10.7 附的 P0b 落地记录：那次只改 import 路径）；
+  t6 已在库 README 的「有意偏离与已知缺口」里**登记**过它（当时判断「改注释要重出 tarball，本轮不做」），
+  但**登记不等于修**，而它恰好是「库的自我描述」里最容易被外部人读到的两行。
+- **修法**：改写成库视角（`The implementation lives **here** … a second copy … is a fork, not a re-export`）；
+  同时**必须重打包**才能进 `dist`（这正是它拖到 t8 才落地的原因）。
+- **落地**：库提交 **`e2bc5d4`**；进产物由 **`t8`**（重打 tarball）完成。
+
+**④ 宿主 `vendor/deerui-0.1.0.tgz` 里嵌的 README 是改版前的宿主视角**
+
+- **症状**：库 README 已按库视角改写（`b5d7c51`），但宿主 vendor 里的 tarball **还是改版前那份**：
+  内嵌 `README.md` 是 23,495 B 的宿主视角版本、`package.json` 的 `description` 还是「PixelCraft 的 UI 表现层」。
+- **根因**：**vendor tarball 的重打没有任何提醒机制**（§10.7-4-① 已把它登记为「静默落后」），
+  而这一次的落后面是**文档**：源码级行为一个字节没变，所以测试、构建、`check:dist` **全绿**。
+  发现方式是 t6 顺手 `tar -xzf` 看了一眼内嵌 `README.md` 的行数——**纯属巧合，不是判据**。
+- **修法**：库侧改完（t7）后由 **t8** 重打：`vendor/` 换成 40,278 B 的新包（内嵌 README 32,189 B / 库视角，
+  `package.json` 带 `prepare`）、刷安装树与 lock 的 `integrity`、同步三条指纹常量。
+- **落地**：宿主侧（**未提交**，提交由队长统一做）；库侧对应提交 `e2bc5d4` + `9fa9de3`。
+
+**另外一处同性质的缺陷（第五处，队长在终检里单独测出来的，记在这里以免丢）**：
+
+**⑤ 库的打包产物跨检出不可复现**
+
+- **症状**：同一个 commit `a5cefbb`，库**工作区** pack 出来是 **36,234 B / md5 `d0e943ff…`**，
+  而**干净克隆**里 pack 出来是 **36,329 B / md5 `c4073bf4…`** —— 28 个条目里只有 3 条不同，差异**全是 `\r`**。
+- **根因**：库仓库**没有 `.gitattributes`**，而本机（与多数 Windows 环境）`core.autocrlf=true` 会把文本检出成 CRLF；
+  `npm pack` 打的是**工作区文件**。宿主把 bytes/md5/sha256 钉进了 `tests/ui-fork.test.ts`、
+  把 sha512 钉进了 lock 的 `integrity` ⇒ **照 README 重打一遍的人必然对不上数**，还会误以为是自己操作错了。
+- **修法**：库根加 **`.gitattributes`**（`* text=auto eol=lf`）让检出统一 LF；`pack-vendor.mjs` 打印三条指纹。
+- **落地**：库提交 **`9fa9de3`**（t10）。实测生效：干净克隆（HEAD `9fa9de3`）里 `install` + `npm pack`
+  得到**同样 40,278 B / `0102c063…` / `0e2e8ee1…`** ⇒ 「同一提交、两种检出、两套指纹」这条已作废。
+- **对文档的影响**：`tests/ui-fork.test.ts` 里那段「同一提交换个克隆就变一套指纹」的注意事项已按实测改写；
+  本任务在宿主文档里**不再复述**那条旧结论。
+
+### 10.8-4 数字自查表（每个数字 → 去哪儿核 → 实测值）
+
+> 这张表是本轮所有文档数字的**唯一权威来源**；§2 / §4 / §6 / §7 / §10 里凡与它冲突的，以它为准。
+
+| 数字 | 怎么核 | 实测值 |
+|---|---|---|
+| 应用侧断言数 | `node tests/.ts-out/tests/run-tests.js`（末行） | **8134** / `ALL PASS` / exit 0（`hans.clean` 也在其中） |
+| 库侧断言数 | `cd Z:\deer-ui && npm test` | **134** / `ALL PASS`；构成 `ui.*` 62 + `kit.*`+`lib.*` 72 |
+| `dist/styles.css` | `wc -c` / 顶层块计数 | **17,790 B / 92 个顶层块**（85 条规则 + 7 个 `@keyframes`）/ 326 行 |
+| 令牌账 | 解析库 `src/styles/{tokens,kit}.css` | `:root`/light 定义 **143**；库规则引用 **34**；只有宿主在用 **93**；无人引用 **16**；浅色覆盖 **77** |
+| `vendor/deerui-0.1.0.tgz` | `node` 读字节 + md5/sha256 | **40,278 B / `0102c063…` / `0e2e8ee1…`**（已提交进 HEAD 的那份 blob 仍是第一轮的 26,932 B —— **应用侧不提交，等队长**） |
+| 库侧同一次 pack | 库根 `deerui-0.1.0.tgz` | 与 vendor **逐字节相同** |
+| lock 的 `integrity` | `package-lock.json` 的 `packages["node_modules/deer-ui"]` | `sha512-ZGFy01rDqDW5…`（= 实测 sha512 的 base64，逐字相同） |
+| 安装树 | `node_modules/deer-ui` | **真目录**（非 junction）；**28 个文件**，与 tarball **28/28 逐文件 sha256 相同**；`exports` 五个子路径齐全 |
+| `app2/www/js/app.js` | 读字节 + md5 | **1,334,394 B / md5 `3f9db8acbfb76fe38ffaa6c33f875940`**（与 §10.2 一致，**重打包没动它**） |
+| 库 HEAD | `git -C Z:\deer-ui log` | **`9fa9de3`**（`b0f259a` → `a5cefbb` → `b5d7c51` → `e2bc5d4` → `9fa9de3`），工作区干净，**未 push** |
+
+### 10.8-5 为什么前两轮的验收没抓住这四处（本轮最有价值的记录）
+
+| 缺陷 | 哪条验收本该抓它 | 为什么没抓住 |
+|---|---|---|
+| ① `npm i github:` 空包 | 「库能独立安装与运行」那条（t1 的四条闸门） | 验的全是**本地目录**：库工作区 `npm ci` / `npm install`，以及 `git clone` + `npm ci`。这两条都装了 devDependencies（`npm ci` 对自己这个包装的是**全量**依赖）并跑 `prepare`，`dist/` 要么已在、要么被建出来 —— **「从 git 装」（npm 只跑克隆、`prepare`、打包，不跑 `prepack`）这条路径从来没被走过**。而 CI 里跑的也是 `npm ci`，所以**将来 CI 真跑起来，这条 bug 仍然是绿的** |
+| ② 预算下限 61 vs 72 | 库侧 `lib.budget.assertions` | 那条断言判的是**运行期断言数**（`>= MIN_INFRA`），**不判文档里写的数字**。文档里的数字**没有任何判据**（这是本仓库反复踩的坑：§10.4 的「按前缀计数」、§4.5 的「数子串」都是同一类） |
+| ③ primitives 的过时注释 | 「逐字节复制」+「`dist` 忠实于 `src`」两条 | 两条都**只保证复制得忠实**，不保证**内容本身是对的**：注释是从宿主**逐字节**搬来的，`dist` 又是 `src` 的忠实产物，两条判据同时通过 —— **没有任何一条在问「这句注释是不是还成立」**（§10.7 的 P0b 记录里登记过它，但「登记」不是判据） |
+| ④ tarball 里嵌旧 README | `uifork.vendor.{exists,bytes,md5,sha256}` | 这四条**只锁「tarball 还是那个 tarball」**：只要**没重打**，指纹当然一直是旧值、断言一直绿。「tarball 里的内容**是不是最新的文档**」没人问 —— 这正是 §10.7-4-① 登记的「静默落后」，而它的第一次真实发作就是这次 |
+| ⑤ 跨检出不可复现 | 「tarball 指纹」那四条 + lock 的 integrity | 指纹**只在一台机器的一个检出里核过**（同一份文件、同一个 md5）。**换检出（clone）打一遍**才暴露 —— 属于「同一个判据在另一个环境里没人重跑」 |
+
+**共同特征（写下来，下次照这条查）**：
+
+1. **判据只覆盖「实现的正确性」，不覆盖「承诺的真实性」。** ①④ 都是文档承诺了一条没人验证过的路；
+   ② 是文档数字与常量脱节；③ 是注释描述的架构与真实架构相反。**四条都不是代码 bug**。
+2. **每个判据都只在「已经准备好的环境」里跑。** 工作区、`node_modules` 就绪的目录、单一检出 ——
+   **换一个入口（git 安装 / 干净克隆 / 全新检出）就换一套结论**。t8 的克隆对照与 t10 的 `.gitattributes`
+   就是「换入口重跑」抓出来的。
+3. **文档里的数字没有判据。** 本仓库已经开始用脚本核对源码里的常量（`scripts/count-ui-assertions.mjs`），
+   但**文档正文里的数字**仍然靠人眼。**建议的后续**（登记，不在本轮）：给几处高频数字（断言数 / 样式字节数 /
+   tarball 指纹）加一条静态扫描断言 —— 扫 `docs/*.md` 与 `README.md`，把「断言数」这类数字与运行期实测对齐。
+
+### 10.8-6 现实约束：GitHub 上的 CI 现在**没有在跑**（不许写成已完成）
+
+- 库的 `.github/workflows/ci.yml` 已经是**真文件**（`npm ci` → `typecheck` → `build` → `test` → `check:dist`），
+  **在库 HEAD 里**（`git ls-tree HEAD .github` → `.github/workflows/ci.yml`）。
+- **但它还没被推上去**：库仓 **`master` 领先 `origin/master` 5 个提交**（`9fa9de3` vs `bce2647`），
+  `origin/master` 上连 `ci.yml` 都不存在 —— 远端那个提交里它还是 `.github/ci.yml.example`。
+- **而且还卡着一道 token 闸门**：本机 gh 的 OAuth token **没有 `workflow` scope**，GitHub 会**拒绝**推送
+  `.github/workflows/**`（先例：提交 **`bce2647`** 就是为此把它降级成 `.github/ci.yml.example`）。
+  队长推送时若再撞上，同一手法（改名 `.example` 先推、换凭据后再推回去）仍然有效。
+- ⇒ 所以本仓库所有文档里，关于 CI 的**准确说法**只有两种：
+  ① 「workflow 文件已在库仓库的提交里，**未推送**」；② 「**在无宿主仓库的目录里把四步逐条跑绿**（t1/t7 都真跑过）」。
+  **不许**出现「GitHub 上 CI 已经在跑 / CI 会拦这条」这类完成态表述（§10.7-5-⑥ 与附 A 已按这条改准）。
+
+### 10.8-7 本轮之后仍存缺口（**新增/更新，不含 §10.7-6 里那 8 条**）
+
+1. **「安装树 == vendor tarball」仍只有人工核对**（本轮做了 28/28 那次），**没有断言**（§10.5-2 未收）。
+2. **文档里的数字没有判据**（§10.8-5-3）：建议加一条扫文档数字的静态断言。
+3. **真 GitHub 远端的 git 安装 / CI 都没验过**：t7 的「从 git 装」是本地克隆模拟（`git+file:///`），
+   CI 是「本地跑四步」。**「换个入口就换一套结论」**这条教训的直接后果 —— 要收它必须真 push 一次。
+4. **库的令牌面仍是超集**（143 / 34 / 93 / 16，§10.7-4-③），且**收敛时会同时踩两条断言**
+   （`uicss.app.no-tokens` 禁应用里出现 `:root`；`uitoken.count` 要求库 `:root` ≥ 100）—— 两条口径必须一起改。
+5. **样式拆分的「真渲染等价」判据仍是一次性的**（`%TEMP%` 里的无头浏览器脚本，没入库、没进闸门）。
 
 ---
 
@@ -1225,9 +1596,17 @@ node tests/.ts-out/tests/run-tests.js | Select-String '^ok\s+ui\.'   # 库侧相
 |---|---|
 | (2026-09-20 复核后已变动的行标了 ✅；其余仍是原状) | |
 | 真机 / Android 设备 / WebView | **未验证**（本机没有设备，与 R2 的自陈一致） |
-| `npm pack` → `file:…tgz` 的路线 D 字节数 | ✅ **已复现**：tarball 26,932 B / md5 `1e9c0d79…`，宿主产物 +109 B（§10.2） |
+| `npm pack` → `file:…tgz` 的路线 D 字节数 | ✅ **已复现**（**第一轮**的数，现值见 §10.8-2）：tarball 26,932 B / md5 `1e9c0d79…`，宿主产物 +109 B（§10.2） |
 | npm registry 的 `deer-ui` / `@deerluu/deer-ui` 占用情况 | 同上，**未联网复现** |
 | 容器出包环境（`/root/pcbuild`）里能否解析 `vendor/*.tgz` | **未验证**（验法见 P5 坑③；本机走的是「仓库根 + `node_modules`」这条路） |
 | P0b 的「逐字节相等」脚本与 P1 的 `{sel→decls}` 等价脚本 | 库侧**逐字节比对已做过**（12 个文件 `git hash-object` 相等，见库仓 README）；**P1 的等价脚本仍不存在**（P1 未开工） |
 | 库拆分后的实际构建产物字节数 | ✅ **已存在**：库 `dist/`（tarball 里 27 文件）+ 宿主 `app.js` **1,334,394 B** / md5 `3f9db8ac…`（§10.2） |
 | `./geometry` / `./bundle.css` / `./host` / `./tabs` 四条子路径的解析 | ✅ **`./tabs` 已落地**（进 `exports`，宿主真实消费）；`./geometry` / `./bundle.css` / `./host` **仍 [待验证]**（对应期未开工） |
+| （第二轮追加）库能否**在没有 PixelCraft 在场**的目录里装 / 测 / 构建 | ✅ **已复现三遍**：`%TEMP%\deerui-standalone`（robocopy 排除 `node_modules`/`.git`/`dist`/`.ts-out`，旁边无 `pixelcraft`）走 `npm install`（全新缓存，真下载 5.55 MB / 22 项）→ `test` 123 / ALL PASS → `build` → `check:dist` 24 文件 → `typecheck` 0；更严的一条是 `git clone Z:\deer-ui %TEMP%\deerui-clone` 后 `npm ci`，四条闸门全绿（§10.7-1） |
+| （第二轮追加）库自带样式 ↔ 应用样式的**等效**（视觉零变化） | ✅ **已做成机器判据**：`uicss.rules-hash` 比「库段 ∪ 应用段」的**扁平规则多重集合 sha256** == 拆分前那份（`98e94d6cbe535281…`，差异 0）；产物两段顺序、两段各自账、应用侧无令牌块/无库选择器另有 10 条（§10.7-3） |
+| （第二轮追加）**令牌归属**是否正确（该不该在库里） | ❌ **没有判据**：库定义 143 个令牌、自己只用 34 个（93 个只有应用在用、16 个谁都不用）。多重集合等价**证不到**这件事（整体搬走并集不变）—— 缺口登记在 §10.7-4-③ |
+| （第二轮追加）`.github/workflows/ci.yml` 在**真 CI 服务**上跑过 | ❌ **仍未验证**：本机只做到「无宿主目录里把四步逐条跑绿」+ YAML 语法自检；**库仓领先 `origin/master` 5 个提交、还没 push**，远端那个提交里它还是 `.github/ci.yml.example`（本机 gh token 没有 `workflow` scope）。准确说法见 §10.8-6 |
+| （第三轮追加）`npm i github:DeerLuuu/deer-ui` 这条**真 git 安装** | ⚠️ **本地克隆模拟已验**（`git+file:///Z:/deer-ui`；默认与 `--omit=dev` 两档都成功），**真 GitHub 远端未验**（库未 push）。见 §10.8-1 |
+| （第三轮追加）`node_modules/deer-ui` 与 `vendor/*.tgz` 是否**同一份** | ✅ **本轮人工核过**：解包 28 个文件 vs 安装树 28 个文件，**逐文件 sha256 全相同（28/28）**；`dist/styles.css` 三处（库 `dist/`、tgz 内、安装树）都是 `f078e80a…`。**但不是断言** —— 缺口见 §10.8-7-1 |
+| （第三轮追加）tarball 指纹的**跨检出可复现** | ✅ **已修并实测**：库加 `.gitattributes`（`* text=auto eol=lf`，提交 `9fa9de3`）后，干净克隆里 `install` + `npm pack` 得到与工作区**逐字节相同**的 40,278 B / `0102c063…` / `0e2e8ee1…`（修前同一 commit 两种检出会差出几十个 `\r`，见 §10.8-3-⑤） |
+| （第三轮追加）**文档里的数字**与仓库实际是否一致 | ❌ **没有判据**（本轮靠人眼扫全仓，改了 4 处过期断言数）：文档正文里的数字没有静态断言盯着 —— 建议见 §10.8-5-3 / §10.8-7-2 |

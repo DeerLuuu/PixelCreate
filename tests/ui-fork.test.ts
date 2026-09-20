@@ -17,9 +17,14 @@ const REPO = path.resolve(__dirname, "../../..");
 const PKG = path.join(REPO, "node_modules/deer-ui");
 const DIST = path.join(PKG, "dist");
 const VENDOR = path.join(REPO, "vendor/deerui-0.1.0.tgz");
-// 库侧 `npm pack` 的产物指纹（t2 回执）：换包必须同时改这里，改不动就说明有人在偷换。
-const VENDOR_MD5 = "1e9c0d79952e7a3ac5cb82a4ecd1af98";
-const VENDOR_BYTES = 26932;
+// 库侧 `npm pack` 的产物指纹（t8 对齐到库 HEAD `9fa9de3`：README 独立化 + `.gitattributes` 全 LF 闸门之后重打）。
+// **版本号没变，指纹就是唯一能区分两份 0.1.0 的东西** —— 换包必须同时改这三行，改不动
+// 就说明有人在偷换（或者忘了把库的新 tarball 拷进 vendor/）。
+// 现在这份**与检出平台无关**：库仓库加了 `.gitattributes`（`* text=auto eol=lf`）+ `pack-vendor.mjs` 的
+// 「进包文件全 LF」闸门之后，库工作树打的那份与 `git clone` 里打的那份**逐字节相同**（40278 B，两端各打一次实测）。
+const VENDOR_MD5 = "0102c0631caacf357751e31e807cecc3";
+const VENDOR_BYTES = 40278;
+const VENDOR_SHA256 = "0e2e8ee130ffaeb88ba547082bf285ef16f1b6770f4aa7027b6f3f0e3199d444";
 
 /** 库公开面上的值（kit barrel 25 + tabs 2 + tooltip 3）。 */
 const KIT_VALUES = [
@@ -52,6 +57,7 @@ const ADAPTERS: Array<[string, string]> = [["src/ui/base.tsx", "ScrubNum"]];
 
 const read = (p: string): string => fs.readFileSync(p, "utf8");
 const md5 = (p: string): string => crypto.createHash("md5").update(fs.readFileSync(p)).digest("hex");
+const sha256 = (p: string): string => crypto.createHash("sha256").update(fs.readFileSync(p)).digest("hex");
 
 export function testUiFork(): void {
   // ---------------------------------------------------- vendor 与安装形态
@@ -59,9 +65,11 @@ export function testUiFork(): void {
   if (fs.existsSync(VENDOR)) {
     eq("uifork.vendor.bytes", fs.statSync(VENDOR).size, VENDOR_BYTES);
     eq("uifork.vendor.md5", md5(VENDOR), VENDOR_MD5);
+    eq("uifork.vendor.sha256", sha256(VENDOR), VENDOR_SHA256);
   } else {
     eq("uifork.vendor.bytes", "missing", VENDOR_BYTES);
     eq("uifork.vendor.md5", "missing", VENDOR_MD5);
+    eq("uifork.vendor.sha256", "missing", VENDOR_SHA256);
   }
   // file: 装出来的必须是**真目录**：junction / symlink 下 React 会解析到库自己的 node_modules，
   // 那就是两个 React 实例（方案 §4.6 的路线 A/B 失败、路线 D 成立，就是这条）。
@@ -166,21 +174,19 @@ export function testUiFork(): void {
   // 库里只有一份 tooltip 的实现（宿主那份已改成再导出），模块级订阅表因此只有一张。
   eq("uifork.tooltip.single-source", fs.existsSync(path.join(REPO, "src/ui/tooltip.ts")) && read(path.join(REPO, "src/ui/tooltip.ts")).indexOf('export * from "deer-ui/tooltip";') >= 0, true);
 
-  // ------------------------------------------------- P0 不发 CSS：顺序断言 N/A
-  // 方案 §4.5 的产物级断言「拼接产物里库段必须在应用段之前」需要库提供 CSS；P0 的 tarball
-  // 只有 dist（JS + d.ts），没有 .css，所以那条断言**不适用**。
-  // 把它落成机器判据：库里一旦出现 .css，这条会红，提醒补上顺序断言。
-  const cssFiles: string[] = [];
+  // ------------------------------------------------- P2 之后：库**自带**样式，顺序断言在 ui-css.test.ts
+  // 早先这里是一条「P0 不发 CSS」的闸门（库里一旦出现 .css 就红，提醒补顺序断言）——
+  // P2 真的发了 CSS，所以它按约定变成了**正向**断言：库必须带 styles.css，且经 exports 暴露。
+  // 「库段在应用段之前」的产物级断言落在 tests/ui-css.test.ts（uicss.artifact.order），
+  // 因为那条要读拼出来的 app2/www/css/style.css，与本节「供应 / 防分叉」的关注点不同。
   {
-    const walk = (dir: string): void => {
-      for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
-        const p = path.join(dir, e.name);
-        if (e.isDirectory()) walk(p);
-        else if (/\.css$/.test(e.name)) cssFiles.push(path.relative(DIST, p));
-      }
-    };
-    walk(DIST);
+    const cssFile = path.join(DIST, "styles.css");
+    const pj = JSON.parse(read(path.join(PKG, "package.json")));
+    ok("uifork.css.shipped",
+      fs.existsSync(cssFile) && fs.statSync(cssFile).size > 10000
+      && pj.exports && pj.exports["./styles.css"] === "./dist/styles.css",
+      "size=" + (fs.existsSync(cssFile) ? fs.statSync(cssFile).size : "missing")
+      + " exports=" + JSON.stringify(pj.exports && pj.exports["./styles.css"]));
   }
-  eq("uifork.css.not-shipped", cssFiles, []);
   ok("uifork.css.app-only", fs.existsSync(path.join(REPO, "src/ui/style.css")));
 }

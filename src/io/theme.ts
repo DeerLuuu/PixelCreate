@@ -1,9 +1,11 @@
 // UI theme switch (dark = default, light = opt-in).
 //
-// The whole palette lives in src/ui/style.css: :root holds the dark values and
-// [data-theme="light"] overrides the theme tokens. This module only writes the
-// attribute (plus <meta name="theme-color">, which cannot read CSS variables)
-// so it can be called from main.tsx at boot and from the settings `after` hook.
+// The palette lives in the deer-ui library (`deer-ui/styles.css`, built from its
+// src/styles/tokens.css): :root holds the dark values and [data-theme="light"]
+// overrides the theme tokens. This app's src/ui/style.css holds only its own rules.
+// This module only writes the attribute (plus <meta name="theme-color">, which
+// cannot read CSS variables) so it can be called from main.tsx at boot and from
+// the settings `after` hook.
 export type ThemeMode = "dark" | "light";
 
 /** window/status-bar colour mirroring --bg for each theme */
