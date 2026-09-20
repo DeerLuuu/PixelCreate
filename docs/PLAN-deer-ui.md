@@ -1578,12 +1578,28 @@ sha256 都是 `f078e80a…`。**注意这仍是人工核对，不是断言** —
   ① 「workflow 文件已在库仓库的提交里，**未推送**」；② 「**在无宿主仓库的目录里把四步逐条跑绿**（t1/t7 都真跑过）」。
   **不许**出现「GitHub 上 CI 已经在跑 / CI 会拦这条」这类完成态表述（§10.7-5-⑥ 与附 A 已按这条改准）。
 
+**推送后记（同日，队长执行 —— 上面三条是推送前的事实，保留作史）**：
+
+- 本机 gh 的 OAuth token 补上 `workflow` scope 后，5 个提交已推到 `origin/master`（`bce2647..9fa9de3`）：
+  远端 `.github/workflows/ci.yml` 现在是**真文件**，`.github/ci.yml.example` 已不在树里。
+- **GitHub Actions 首次运行 = `completed / success`**（run **`35517019763`**，job `build-test` 在 `ubuntu-latest` 上 24s），
+  跑的就是 `npm ci` → `typecheck` → `build` → `test` → `check:dist`。
+- ⇒ 「**在没有宿主仓库在场的干净 Linux runner 上能装完 / 测完 / 构建完**」这条地基，**已经在真 CI 上验过一次**，
+  不再只是本地克隆模拟。**现在的准确说法**是「workflow 在远端默认分支上，首次运行绿」。
+- 一次踩坑（值得记）：推送第一次仍被 GitHub 以「缺 `workflow` scope」拒绝，**不是 token 没授权，而是
+  `git push` 用的凭据来自系统的 Git Credential Manager（`credential.helper=manager`），它存着另一份旧凭据**，
+  而我加的 `-c credential.helper=!gh auth git-credential` 只是**追加**在它后面、永远轮不到。
+  修法是先把 helper 链清空：`git -c "credential.helper=" -c "credential.helper=!gh auth git-credential" push <https-url> master`。
+- 信息级告警（不影响结论）：GitHub 提示 `actions/checkout@v4` / `actions/setup-node@v4` 已被强制跑在 Node 24 上，将来可升 v5。
+
 ### 10.8-7 本轮之后仍存缺口（**新增/更新，不含 §10.7-6 里那 8 条**）
 
 1. **「安装树 == vendor tarball」仍只有人工核对**（本轮做了 28/28 那次），**没有断言**（§10.5-2 未收）。
 2. **文档里的数字没有判据**（§10.8-5-3）：建议加一条扫文档数字的静态断言。
-3. **真 GitHub 远端的 git 安装 / CI 都没验过**：t7 的「从 git 装」是本地克隆模拟（`git+file:///`），
-   CI 是「本地跑四步」。**「换个入口就换一套结论」**这条教训的直接后果 —— 要收它必须真 push 一次。
+3. **真 GitHub 远端的 git 安装仍未验**（CI 这一半已收，见 §10.8-6 推送后记）：t7 的「从 git 装」是本地克隆模拟
+   （`git+file:///`）；而 CI 已随 `9fa9de3` 推送并在真 runner 上 **success**。要收「从 git 装」这条，
+   得真跑一次 `npm i github:DeerLuuu/deer-ui` —— 远端现在已经有 `prepare`，这条命令**具备**成功的前提，
+   但**在本轮仍未实测**（不许写成已验）。
 4. **库的令牌面仍是超集**（143 / 34 / 93 / 16，§10.7-4-③），且**收敛时会同时踩两条断言**
    （`uicss.app.no-tokens` 禁应用里出现 `:root`；`uitoken.count` 要求库 `:root` ≥ 100）—— 两条口径必须一起改。
 5. **样式拆分的「真渲染等价」判据仍是一次性的**（`%TEMP%` 里的无头浏览器脚本，没入库、没进闸门）。

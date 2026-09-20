@@ -629,6 +629,11 @@ UI 独立成库（2026-09-20，主题：`deer-ui` 成为**真正独立的开源 
 **无头 Edge 真渲染**（524 + 699 元素的 computed style + 布局矩形，深色/浅色/强制 `:hover/:active/:focus` 三档）差异 0，
 注入 1px 当场变红；断言 8,090 → 8,119 → **8,134**（应用）/ 61 → 123 → **134**（库），一条没消失。
 缺口与待办见 §7 新增的三条，完整执行记录见 `docs/PLAN-deer-ui.md` §10。
+**推送状态**：应用 `7080933`、库 `9fa9de3` 都已在 `origin/master` 上；库 CI（`.github/workflows/ci.yml`）
+首次运行 **success**（run `35517019763`，`ubuntu-latest` 上 `npm ci → typecheck → build → test → check:dist`）。
+两条环境坑记在这里：① 推 `.github/workflows/**` 需要 token 带 **`workflow`** scope（`gh auth refresh -s workflow`）；
+② 光加 `-c credential.helper=!gh auth git-credential` **不够** —— 系统 `credential.helper=manager`（GCM）排在前面、
+存着另一份旧凭据，必须先清空：`git -c "credential.helper=" -c "credential.helper=!gh auth git-credential" push <https-url> master`。
 
 ---
 
