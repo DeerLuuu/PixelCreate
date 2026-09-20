@@ -1,13 +1,4 @@
-// Public entry of the UI kit (docs/UI.md). Everything exported here is
-// SESSION-free, so the demo page and, later, a standalone package can import
-// it without booting the app.
-export { Icon, Btn, TipHost, Overlay, Keep, useBlankTap, useLandscape } from "./primitives";
-export { ScrubNum } from "./scrub";
-export type { ScrubNumProps } from "./scrub";
-export { Dialog } from "./Dialog";
-export { HoverTip, hoverTipPos, useHoverTip, setHoverTipsEnabled, useHoverTipsEnabled, hoverTipsEnabled } from "./HoverTip";
-export { setKitPcMode, kitPcOn, useKitPcMode } from "./pcmode";
-export type { HoverTipProps, HoverTipApi } from "./HoverTip";
-export type { DialogProps } from "./Dialog";
-export { Row, RowActions, ChipGroup, Segmented, Switch, NumberField, ColorField } from "./Form";
-export type { RowProps, ChipOption } from "./Form";
+// 实现已迁进独立库 deer-ui（docs/PLAN-deer-ui.md P0b 甲案）：
+// 本文件只剩薄再导出层，公开路径保持不变 —— 应用侧 import 与测试路径一字不改。
+// 库的 exports 只暴露 `./kit` 一个控件入口，所以 kit 的 7 个子路径都指向它。
+export * from "deer-ui/kit";

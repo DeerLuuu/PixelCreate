@@ -3,6 +3,8 @@
 > 本文是 `src/ui/` 的**唯一 UI 规范来源**。新增/修改界面时必须先读本文；代码与本文冲突时，以本文为准并同步修正代码。
 > 配套文档：[`AGENTS.md`](../AGENTS.md)（工程约定）、[`docs/API.md`](API.md)（模块接口）。
 > 适用范围：`src/ui/**`、`src/ui/style.css`、`tests/ui-*.test.tsx`。
+> **实现层**（控件 / 表单 / 令牌机制的源码）自 2026-09-20 起住在**独立库仓库** `Z:\deer-ui`（包名 `deer-ui@0.1.0`），
+> 应用侧的 `src/ui/kit/**`、`src/ui/tabs.tsx`、`src/ui/tooltip.ts` 只剩**薄再导出层** —— 见 §1.3。
 
 ---
 
@@ -31,35 +33,71 @@
 
 ```
 src/ui/
-  kit/                   ← 控件库（目标：可整体搬走）
-    primitives.tsx       Icon / Btn / Keep / Overlay / TipHost / useBlankTap / useLandscape
-    scrub.tsx            ScrubNum（数字输入 + 拖动 + 算式键盘）
-    Dialog.tsx           Dialog（遮罩 + 头 + 体 + 脚）
-    Form.tsx             Row / RowActions / ChipGroup / Segmented / Switch / NumberField / ColorField
-    index.ts             统一出口（演示页与外部只从 barrel 引入）
-    demo.tsx             演示页入口（不进主包）
+  kit/                   ← 薄再导出层（实现已搬进独立库 deer-ui，见 §1.3）
+    index.ts             ┐
+    primitives.tsx       │ 每个文件只有一行 `export * from "deer-ui/kit";`
+    scrub.tsx            │ 公开路径保持不变 → 调用点零改动
+    Dialog.tsx           │ （库仓 `Z:\deer-ui` 里是 `src/kit/*`）
+    Form.tsx             │
+    HoverTip.tsx         │
+    pcmode.ts            ┘
+    demo.tsx             演示页入口 —— **应用侧副本**（P7 才删）；库里有份只读的 examples/demo.tsx
+  tooltip.ts             薄再导出层 `export * from "deer-ui/tooltip";`（**库独占**，见 R10）
+  tabs.tsx               薄再导出层 `export * from "deer-ui/tabs";`（TabBar / DropMenu）
   base.tsx               useSession + ScrubNum 的 i18n 包装 + 对 kit/primitives 的再导出（兼容层）
-  hold.tsx  tabs.tsx     长按调节 / 标签条 + 下拉（后续迁移，暂留原处）
+  hold.tsx               长按调节（后续迁移，暂留原处）
   modals.tsx  App.tsx    应用弹窗与外壳（使用 kit）
   i18n.ts  singleton.ts  guide*.tsx  ...
-  style.css             唯一样式表，分区见 §3.1
+  style.css             唯一样式表，分区见 §3.1（**没有**拆进库，见 §1.3）
 ```
 
 ### 1.1 kit 纯度规则（测试强制）
 
-`src/ui/kit/**` 只允许 import：
+搬家之后这条规则**一分为二**：
 
-- `react`、`react-dom`；
-- `../engine/expr`（纯函数，算式求值）；
-- 其它 kit 模块。
+| 谁 | 规则 | 现在由谁盯着 |
+|---|---|---|
+| **库**（`deer-ui` 的 `src/**`） | 白名单 = `react` / `react-dom` / `react-dom/*` / `react/*` + **库内相对路径**；相对路径必须**解析得到**、且**不得越出库的 `src/`** | 库仓 `tests/a0-purity.test.ts`（`kit.purity.offenders`，带自检段：合成样本该抓的抓住、该放过的放过） |
+| **应用**（`src/ui/kit/**`） | **只允许一行** `export * from "deer-ui/kit";` —— 不许写回实现 | `tests/ui-fork.test.ts` 的 `uifork.thin.*`（9 条，覆盖 7 个 kit 文件 + `tabs.tsx` + `tooltip.ts`） |
 
-**禁止**：`singleton`（Session）、`i18n`、`../app/*`、`../io/*`、`../render/*`、`../tools/*`。
+**两家都禁止**：`singleton`（Session）、`i18n`、`app/*`、`io/*`、`render/*`、`tools/*`。
+库**也不得**反向 import 宿主的 `engine/{expr,scrub}` —— 那两个纯函数已**内联**进库的 `src/internal/`（见 §1.3）。
 文案一律通过 props 传入；需要 i18n 的调用方在应用层包装（示例：`base.tsx` 的 `ScrubNum` 包装器注入 `padTitle`）。
 
 ### 1.2 兼容层
 
 `base.tsx` 继续导出 `Icon / Btn / Keep / Overlay / TipHost / useBlankTap / useLandscape / ScrubNum`，
 实现改为「再导出 kit 实现」或「薄包装」。**已有 97 处 `Btn`、18 处 `Icon` 等调用点不需要改 import。**
+（2026-09-20 起 `base.tsx` **不在薄再导出层之列**：它继续持有 `useSession()`，只把 `ScrubNum` 包一层译文转发给库实现。）
+
+### 1.3 库边界：deer-ui 0.1.0（2026-09-20 落地）
+
+> 方案与决策依据见 [`docs/PLAN-deer-ui.md`](PLAN-deer-ui.md)（**执行记录在该文 §10**）。这一节只写**现状口径**。
+
+| 项 | 现状 |
+|---|---|
+| **实现住在哪** | 独立仓库 `Z:\deer-ui`（与 `Z:\pixelcraft` **平级**、自己的 git 仓库）。包名 `deer-ui`、版本 `0.1.0`、`private: true`、MIT；**不发 npm**，只以 tarball 交付 |
+| **宿主怎么消费** | `Z:\pixelcraft\vendor\deerui-0.1.0.tgz`（**提交进仓库**，26,932 B / md5 `1e9c0d79952e7a3ac5cb82a4ecd1af98`）+ `package.json` 的 `"deer-ui": "file:vendor/deerui-0.1.0.tgz"`；`node_modules/deer-ui` 是 `npm install` 装出来的**真目录**（不是 junction / symlink —— `uifork.install.*` 三条断言钉住这点） |
+| **公开路径为什么保持不变** | 9 个公开路径（`src/ui/kit/{index,primitives,scrub,Dialog,Form,HoverTip,pcmode}`、`src/ui/tabs.tsx`、`src/ui/tooltip.ts`）**全部保留**，每个文件只剩一行 `export * from "deer-ui/<入口>";` → 既有 import、测试里的路径、引导锚点、样式类名**一个字都不用改**。这就是「行为零变化」的实现方式（也是选薄再导出而不是删文件的原因） |
+| **入口与依赖** | 库 `exports` 四个子路径 `.` / `./kit` / `./tabs` / `./tooltip`（`types` 条件排在 `import` 前）；`peerDependencies` 只有 `react` / `react-dom` `^18.3.0` → **React 单实例**（`uifork.react.*` 三条断言钉住） |
+| **哪些东西没进库** | `style.css`（**整份留在应用**，库一行 CSS 都没有）、i18n 字典、图标数据与分组、`App.tsx`/`modals.tsx`/`timeline.tsx`/`AiPanel.tsx`、`hold`/`color-drag`/`HsvWheel`/`fxparam`/`scale-preview`、`src/render/view.ts` |
+| **测试怎么跑** | 应用侧 `node tests/.ts-out/tests/run-tests.js` → **8119** 条；库侧 `cd Z:\deer-ui && npm test` → **123** 条（下限写在库仓 `tests/budget.test.ts`：123 = 搬入 62 + 库自身基建 61） |
+| **双跑窗口** | `ui kit` 小节里那 62 条与库侧同名同义的断言**没有删**：它们现在经薄再导出层**直接跑库里的实现**（删掉会让应用侧总数掉到 8028，与「≥ 8090」冲突）。「库侧 == 应用侧 − 8」**只在 `ui kit` 小节口径下成立**（那 8 条 = `ui.demo.*` 6 + `ui.overlay-full-wiring` + `ui.dropmenu.pop-css`）；按 `ui.` **前缀**核是 50，别再用前缀口径 |
+
+**后续期要做什么**（**都还没做**，别当成已完成）：
+
+| 期 | 内容 |
+|---|---|
+| P1 / P2 | 给 `style.css` 划物理边界、把令牌与控件规则拆进库（现在库**一行 CSS 都没有**；`uifork.css.not-shipped` / `uifork.css.app-only` 两条断言钉住的正是这个现状） |
+| P3 | 图标契约（`Icon` / `IconSprite` / `assertIconIds`）+ i18n 注入（`I18nProvider` / `useT`）+ 分叉门禁脚本 `scripts/check-ui-fork.mjs` |
+| P4a / P4b | 4 个 0-import 纯几何文件、`app/uibar.ts` 的算法段 |
+| P6.5 | `UiHost` 落地接线（`main.tsx` 建 `PixelCraftHost` + provider + ≥2 个真实消费者） |
+| P7 | 删应用侧残留：`src/ui/kit/demo.tsx` 的应用侧副本（那 6 条 `ui.demo.*` 才跟着走）、`src/ui/base.tsx:3` 那句过时注释 |
+| P8 | 第二宿主验证（库仓 `examples/`） |
+
+**剩余风险（不许写成「已覆盖」）**：公开组件 `Keep` 至今**零直接断言**；`ScrubNum` 的键盘 / 指针路径、`tabs` 的滚动 / portal 行为**没有黄金 md5 兜底**。
+本轮的行为保证来自「库源码与应用 HEAD 逐字节同一 + 库 `dist` 是库 `src` 的忠实产物 + 注入负例（把库产物里一个 class 名改掉 → `ui.dialog.foot` 当场红）」，
+它证不到上面那三处细节 —— 那三条要在库侧单独立验收项。
 
 ---
 
@@ -458,9 +496,11 @@ PC 模式下不只改颜色/令牌，还会整体桌面化：`--barh` 48px、`.b
 4. `kit` 分区（`.btn`、`.dlg*`、`.rowlabel`、`.row-note`、`.row-actions`、`.chips`、`.chip`、`.tabs`、`.tab`、`.sw`、`.dropmenu*`、`.tabbar*`、`.panel*`、`.set-*`）中不得出现裸色值（`#rrggbb`、`rgb()`、`rgba()`）；
 5. `var(--x)` 引用的每个 `--x` 都必须已定义（防拼写错）。
 
-### 5.3 kit 纯度测试
+### 5.3 kit 纯度测试（**已一分为二**）
 
-`tests/ui-kit.test.tsx` 内附带：扫描 `src/ui/kit/**` 的 import，禁止 §1.1 的黑名单模块。
+- **库侧**：`Z:\deer-ui` 的 `tests/a0-purity.test.ts` 扫库 `src/**` 的 import 说明符 —— 白名单 = `react` / `react-dom` / `react-dom/*` / `react/*` + **库内相对路径**（越界即红）；另带**自检段**（合成样本喂进扫描函数），所以判据不是恒真。
+- **应用侧**：`tests/ui-fork.test.ts` 里 —— `uifork.thin.*`（9 条）要求 9 个公开路径**只剩一行 `export * from "deer-ui/<入口>"`**；`uifork.no-fork.{kit,tabs,tooltip}`（3 条）按符号白名单扫全 `src/**` 找**第二份实现**；`uifork.adapter.base-scrubnum` 钉住 `base.tsx` 的 `ScrubNum` 只是转发。
+- `tests/ui-kit.test.tsx` 里那条 `ui.kit.purity` **保留、但读数对象换了**：扫的是**装进来的库产物**（`node_modules/deer-ui/dist/**.js`，实测 12 个 `.js` / 32 条 import 说明符），并要求每个说明符要么是 `react`/`react-dom`，要么**解析到包内的相对路径** —— 比搬家前那份 8 项白名单**更严**（负例：写 `../../engine/expr` → 红）。
 
 ### 5.4 回归
 
@@ -486,7 +526,7 @@ cp ui-demo.js "<repo>/app2/www/js/ui-demo.js" && cp ui/style.css "<repo>/app2/ww
 python3 "<按 scripts/build-ui-demo.sh 里的片段生成 app2/www/ui-demo.html>"
 ```
 
-- 入口 `src/ui/kit/demo.tsx`：一屏展示全部控件与变体、令牌色板、暗/浅主题切换按钮。
+- 入口 `src/ui/kit/demo.tsx`（**应用侧副本**，P7 才删）：一屏展示全部控件与变体、令牌色板、暗/浅主题切换按钮。库仓另有一份 `examples/demo.tsx`（dev-only，只做类型检查，**库测试不渲染它**）。
 - 演示页**不依赖 Session**（验证 kit 纯度）；图标用构建脚本从 `app2/www/index.html` 提取的 sprite。
 - 产物不入库：`.gitignore` 已包含 `app2/www/ui-demo.html`、`app2/www/js/ui-demo.js`。
 - **打包 APK 前删掉这两个产物**：`make-apk.sh` 会把整个 `app2/www` 塞进 `assets/www`，
@@ -506,7 +546,7 @@ python3 "<按 scripts/build-ui-demo.sh 里的片段生成 app2/www/ui-demo.html>
 | 4 | `UIProvider` 注入 `lang/t/toast/haptic`，彻底移除控件对 Session 的间接依赖 |
 | 5 | Toast 组件化（现在是 `main.tsx` 的命令式 DOM） |
 | 6 | 键盘导航、焦点陷阱、`aria-live`、桌面快捷键 |
-| — | 把 `src/ui/kit` 提成独立 workspace 包并对外发布 |
+| — | ~~把 `src/ui/kit` 提成独立 workspace 包并对外发布~~ —— **2026-09-20 已落地第一步**：实现搬进独立仓库 `Z:\deer-ui`（包 `deer-ui@0.1.0`，**不发 npm**），宿主以 `file:vendor/deerui-0.1.0.tgz` 消费，公开路径改成薄再导出层。**剩下的期**（样式拆分 / 图标与 i18n 注入 / `UiHost` 接线 / 删应用侧残留 / 第二宿主）见 §1.3 |
 
 ---
 

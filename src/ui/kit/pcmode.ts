@@ -1,29 +1,4 @@
-// Kit-local PC flag.
-//
-// The kit never imports the app (docs/UI.md §1.1), so the app pushes the
-// resolved PC-mode state in here (main.tsx). Controls that change shape on a
-// desktop — hover tooltips, the bigger floating orb — subscribe through
-// useKitPcMode().
-import { useSyncExternalStore } from "react";
-
-let pcOn = false;
-const subs = new Set<() => void>();
-
-export function setKitPcMode(on: boolean): void {
-  if (pcOn === on) return;
-  pcOn = on;
-  for (const f of subs) f();
-}
-
-export function kitPcOn(): boolean {
-  return pcOn;
-}
-
-function subscribe(cb: () => void): () => void {
-  subs.add(cb);
-  return () => { subs.delete(cb); };
-}
-
-export function useKitPcMode(): boolean {
-  return useSyncExternalStore(subscribe, kitPcOn, kitPcOn);
-}
+// 实现已迁进独立库 deer-ui（docs/PLAN-deer-ui.md P0b 甲案）：
+// 本文件只剩薄再导出层，公开路径保持不变 —— 应用侧 import 与测试路径一字不改。
+// 库的 exports 只暴露 `./kit` 一个控件入口，所以 kit 的 7 个子路径都指向它。
+export * from "deer-ui/kit";

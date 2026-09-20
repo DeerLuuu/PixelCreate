@@ -6,7 +6,22 @@
 > 基准：仓库 HEAD **`636d9fd`**，`assertions: 8090 / ALL PASS`。
 > 输入：四路盘点（t1 UI 边界 / t2 硬耦合与适配层 / t3 包与构建 / t4 分期与验收）+ 对抗式复核（t6）。
 > 本文中所有数字都由本轮在 `HEAD 636d9fd` 上**亲手复现**；凡未复现的一律标 `[待验证]` 并写明验法。
-> 口径：行数用 `[System.IO.File]::ReadAllLines()`；断言数用 `node tests/.ts-out/tests/run-tests.js` 的**真实输出**按前缀计数（不按行数估）。
+> 口径：行数用 `[System.IO.File]::ReadAllLines()`；断言数用 `node tests/.ts-out/tests/run-tests.js` 的**真实输出**按**小节**计数（不按行数估）。
+>
+> ⚠️ **断言数口径与三处更正（2026-09-20）**：本文凡写「某小节 N 条断言」，数法都是
+> **跑 `node tests/.ts-out/tests/run-tests.js`，按输出里的 `--- 小节名 ---` 分段数 `ok ` 行**，
+> 且**总数必须与末尾的 `assertions:` 一致**（迁移前 = **8090**；宿主改为消费 deer-ui 之后 = **8119**）。
+> 原稿按 `ui.` / `uibar.` 这类**前缀**计数，跨小节的前缀会被算错，于是三个数字是错数，已按队长 2026-09 实测裁定更正：
+>
+> | 处 | 原值 | 实测 | 为什么会错 |
+> |---|---|---:|---:|---|
+> | 宿主 `ui kit` 小节（`tests/ui-kit.test.tsx`） | 112 | **70** | 「112」无出处；同小节里还有 `ui.htip.*` 13 条等非 `ui.dialog.*` 名字 |
+> | 宿主 `i18n` 小节 | 34 | **8** | **34 其实是 `expr` 小节**的条数（`tests/expr.test.ts`），前缀相近被串了行 |
+> | 宿主 `uibar` 小节 | 97 | **104** | 97 只是 `uibar.*` 前缀那一部分；同小节里另有 **7 条 `act.list.*`** |
+>
+> **行号里的数字不是断言数**（例：`timeline.tsx:70,112,166,237`、`style.css:5-97`），一律没动。
+> **库侧运行合计实测 123**（= 从宿主搬入 62 + 库自身 A0/基建 61，见 §10 执行记录），
+> 所以文中「库测试 ≥ 70」这类下限只是**保守**，没有任何闸门被放宽。
 
 ---
 
@@ -23,7 +38,7 @@
 | 期 | 目标 | 代价 | 应用改动 |
 |---|---|---|---|
 | **P0a（A0）** | **零复制**：在 `src/ui/kit` 原地加 3 条机器判据（纯度白名单收紧 / barrel 导出面快照 / 库内不得自判 PC·主题·安全区） | S | **0**（只加测试） |
-| **P0b（甲案）** | 把 10 个文件复制成能独立编译、独立跑 **112 条**断言的 `packages/deer-ui/` | S–M | **0** |
+| **P0b（甲案）** | 把 10 个文件复制成能独立编译、独立跑 **70 条**断言的 `packages/deer-ui/` | S–M | **0** |
 | **P1** | 给 `style.css` 划物理边界（仅重排 + 机器锚点，**声明零改动**） | M | 只动 `style.css` |
 | **P2** | 拆样式：令牌 + kit 规则进库，构建时拼接为单一 `css/style.css` | M | `style.css` + 构建脚本 + 1 个测试 |
 | **P3** | 图标契约 + i18n 注入契约 + 防分叉门禁上线 | S–M | 0（只加测试/脚本） |
@@ -62,7 +77,7 @@
 | # | 目标 | 验收判据（可执行） |
 |---|---|---|
 | **G1** | `deer-ui` 能**独立编译** | `node node_modules/typescript/lib/tsc.js -p packages/deer-ui/tsconfig.json --noEmit` → 退出码 0 |
-| **G2** | 库能**独立跑 DOM 契约测试** | `cd packages/deer-ui && node node_modules/typescript/lib/tsc.js -p tests/tsconfig.json && node tests/.ts-out/tests/run-tests.js` → 末两行 `assertions: ≥ 112` / `ALL PASS` |
+| **G2** | 库能**独立跑 DOM 契约测试** | `cd packages/deer-ui && node node_modules/typescript/lib/tsc.js -p tests/tsconfig.json && node tests/.ts-out/tests/run-tests.js` → 末两行 `assertions: ≥ 70` / `ALL PASS`（库侧运行合计实测 **123**，见 §10） |
 | **G3** | 应用的**行为与视觉零变化**，断言只增不减 | `node tests/.ts-out/tests/run-tests.js` → `assertions: ≥ 8090` / `ALL PASS` |
 | **G4** | 库**不认识 PixelCraft** | `node scripts/check-ui-fork.mjs` → 退出码 0（反向段：库内不得出现应用 import / `SESSION`） |
 | **G5** | 应用侧**调用点几乎不改** | `src/ui/kit/index.ts` 保持为**唯一再导出边**；`grep -rn 'from "./kit/' src/` 只命中它一条 |
@@ -75,7 +90,7 @@
 
 | # | 非目标 | 为什么 |
 |---|---|---|
-| **N1** | **不是重写组件内部** | 迁移期唯一资产是「行为不变」。`Dialog` 的 DOM 契约被 112 条断言 + 引导锚点 + `style.css` 三类东西同时依赖，重写内部等于同时动三份契约。新特性一律另开功能期 |
+| **N1** | **不是重写组件内部** | 迁移期唯一资产是「行为不变」。`Dialog` 的 DOM 契约被 70 条断言 + 引导锚点 + `style.css` 三类东西同时依赖，重写内部等于同时动三份契约。新特性一律另开功能期 |
 | **N2** | **不做主题市场 / 不改主题机制** | `src/ui` 里 **0 处** import `io/theme`。主题只经 `document.documentElement.dataset.theme` + CSS 令牌块——**这是已经零耦合的一条，加进适配层反而是退步** |
 | **N3** | **不搬业务 UI** | `App.tsx`(2,998) / `modals.tsx`(2,410) / `AiPanel.tsx`(1,172) / `timeline.tsx`(609) / `changelog.tsx`(811) / `iso.tsx` / `canvas.tsx` / `preview.tsx` / `refimg.tsx` / `replay.tsx` / `guide*.tsx` / `paste.ts` / `renderdebug.tsx` —— 已被 `docs/ARCHITECTURE.md` §4.2 **逐行指派给具体可选模块**，该跟**模块**走 |
 | **N4** | **不搬 `src/render/view.ts`** | 3,693 行、import 38 个模块横跨 7 个目录、直触 `Session` 约 50 个成员、**真的在写数据**、且与 `Session` 是**双向环**（`session.ts` 持有 `view_`，56 处直调）。它是**渲染器**不是 UI 库；库只从它抽 `ViewHost` 接口与纯绘制原语 |
@@ -84,11 +99,11 @@
 | **N7** | **不搬 `src/ui/back.ts` 作为「UI 控件」** | 它服务 Android 返回键，属**平台适配**而非控件。进库时按「平台无关的纯状态机」归类 |
 | **N8** | **不引构建框架** | 不引 vite / rollup / tsup / turborepo / monorepo 工具链 / changesets。构建 = `tsc` 一次出 ESM + `.d.ts` |
 | **N9** | **不引 jsdom / vitest / happy-dom** | jsdom **没有布局**，而本仓库历史 UI bug **全是布局类**（`DropMenu` 被 `overflow-x:auto` 裁掉、变形抓手命中区、浮动球几何）。引它换来「能跑事件」的错觉却抓不到真 bug |
-| **N10** | **不改 DOM class 名、不删 `data-guide` 透传** | `tests/guide-anchors.test.ts`(10) + `tests/ui-kit.test.tsx`(112) + `tests/ui-tokens.test.ts`(17) 静态盯住这些名字；改名 = 引导与样式**同时静默失效** |
+| **N10** | **不改 DOM class 名、不删 `data-guide` 透传** | `tests/guide-anchors.test.ts`(10) + `tests/ui-kit.test.tsx`(70) + `tests/ui-tokens.test.ts`(17) 静态盯住这些名字；改名 = 引导与样式**同时静默失效** |
 | **N11** | **不做「为了抽库顺手修既有缺陷」** | 见 §7.2 的 10 项待办，每一项都**单独小提交 + 单独验**，不混进迁移提交 |
 | **N12** | **不碰 `android/` 与 `app2/www/`** | `AGENTS.md` §5.1b：这两个是**产物**，由 `build-web.sh` 生成。`docs/ARCHITECTURE.md` §8 决策 8 已裁：Java 层保持最小且通用 |
 | **N13** | **不把库版本号接进 `APP_VERSION` / 更新日志 / `AndroidManifest`** | 两条版本线。接了会让 `tests/changelog.test.ts`(20) 红，且用户在更新日志里看到「deer-ui 0.2.1」这类无关条目 |
-| **N15** | **不得在迁移中削弱无障碍属性**（**红线**） | `Dialog` 的 `role` / `aria-modal` / `aria-label`、`Switch` / `ChipGroup` / `Segmented` 的 `role` / `aria-*`、以及键盘可达性（`Esc` 关闭、`Tab` 聚焦）现在是**被 112 条断言隐式钉住的**（`ui.dialog.role`、`ui.dialog.aria-label`、`ui.chips.*`…）。**库的无障碍契约 = DOM 契约的一部分**：迁移**只做「不退化」承诺，不新增**。库测试必须**逐条保留** `role` / `aria-*` / 键盘可达断言，**禁止**以「简化 markup」为由删掉任何一条。判据：`ui.*` 断言数 ≥ 112 且其中 `role`/`aria` 相关断言逐条在位 |
+| **N15** | **不得在迁移中削弱无障碍属性**（**红线**） | `Dialog` 的 `role` / `aria-modal` / `aria-label`、`Switch` / `ChipGroup` / `Segmented` 的 `role` / `aria-*`、以及键盘可达性（`Esc` 关闭、`Tab` 聚焦）现在是**被 70 条断言隐式钉住的**（`ui.dialog.role`、`ui.dialog.aria-label`、`ui.chips.*`…）。**库的无障碍契约 = DOM 契约的一部分**：迁移**只做「不退化」承诺，不新增**。库测试必须**逐条保留** `role` / `aria-*` / 键盘可达断言，**禁止**以「简化 markup」为由删掉任何一条。判据：`ui kit` 小节断言数 ≥ 70 且其中 `role`/`aria` 相关断言逐条在位 |
 | **N16** | **不承诺 SSR** | `renderToStaticMarkup` 是**测试手段**，不是 SSR 支持。库里有 `window.matchMedia` / `window.innerWidth`（`kit/primitives.tsx:12,14`、`kit/HoverTip.tsx:55-56`、`kit/scrub.tsx:100-101`），它们只是**测试渲染时的兜底**（`typeof window === "undefined" ? 默认值`）。第三方**不要**把它当 `renderToString` 上线的库 |
 | **N17** | **P0 不产出发布面** | P0 **不 emit `dist`**、不写 CI、不做 `exports` 全集、不发 npm。P0 只承诺「能独立编译 + 能独立跑测试」。发布面属 P5 |
 
@@ -218,7 +233,7 @@
 **接受已知的双副本窗口**：P0b 起应用侧 `src/ui/kit/demo.tsx` **仍有第二份**（`scripts/build-ui-demo.sh:16` 的 esbuild 入口就是 `src/ui/kit/demo.tsx`）。
 这是**有截止日期的**：P5 把它搬到库仓库 `examples/`，P7 删应用侧副本。窗口期内由 §6.4 的防分叉门禁 + R7 同步纪律收口。
 
-**为什么不是「P0b 少搬 6 条」**：那会让「库测试 = 112 条」这条**唯一可量化的验收**变成 106 条，
+**为什么不是「P0b 少搬 6 条」**：那会让「库测试 = 70 条」这条**唯一可量化的验收**变成 64 条，
 且要在未来的某一期再把 6 条补回来——**等于把不确定性推后**，与本方案的排期原则相反。
 
 ### 2.6 首刀切哪里（**A0 + 甲案**）
@@ -248,7 +263,7 @@
 | 内容 | `kit/{primitives,scrub,Dialog,Form,HoverTip,pcmode,index}`（7）+ `tabs.tsx` + `tooltip.ts` + `demo.tsx` = **10 文件 / 1,074 行** |
 | 应用改动 | **0**（纯复制；应用继续从 `src/ui/kit` 引） |
 | 外部依赖 | `react` / `react-dom` + `../tooltip`（复制进库）+ `engine/{expr,scrub}`（内联） |
-| 验证力 | **高**：112 条 DOM 契约断言 + 纯度扫描 + 独立 tsc，一次把「库能否成立」证掉 |
+| 验证力 | **高**：70 条 DOM 契约断言 + 纯度扫描 + 独立 tsc，一次把「库能否成立」证掉 |
 | 代价 | S–M |
 
 #### 乙案（拆成 P4a / P4b）
@@ -275,7 +290,7 @@
 | **C. 纯函数直接 import** | **5** | `orb.test.ts` / `pie.test.ts` / `guide-layout.test.ts` / `pc.test.ts` / `scale.test.ts` | 与位置无关，只要模块还在。**P4a 搬前三个（整体跟着走），后两个只搬与几何有关那段** |
 
 > **「分类」比「总数」重要**：真正跟着库走的只有 `ui-kit` 的组件契约 + `ui-tokens` 的库部分；
-> 留应用的静态扫描类（`icons` 86 / `i18n` 34 / `guide-anchors` 10 / `pc` 31 / `scale` 23 / `changelog` 20 …）**一条都不需要改**。
+> 留应用的静态扫描类（`icons` 86 / `i18n` 8 / `guide-anchors` 10 / `pc` 31 / `scale` 23 / `changelog` 20 …）**一条都不需要改**。
 
 ---
 
@@ -411,7 +426,7 @@ Z:\pixelcraft\                        ← 应用仓库
 node node_modules/typescript/lib/tsc.js -p packages/deer-ui/tsconfig.json --noEmit
 # 库测试（G2）—— 产物路径由 rootDir/outDir 决定
 cd packages/deer-ui && node node_modules/typescript/lib/tsc.js -p tests/tsconfig.json
-node tests/.ts-out/tests/run-tests.js     # 期望末两行 assertions: ≥112 / ALL PASS
+node tests/.ts-out/tests/run-tests.js     # 期望末两行 assertions: ≥70 / ALL PASS（库侧实测 123）
 ```
 
 **P6 的连带修改**：应用侧测试要读 `packages/deer-ui/src/**`（`ui-kit.test.tsx` 改读库目录），
@@ -633,7 +648,7 @@ export function setHostSingleton(h: UiHost | null): void
 | **契约层** | `renderToStaticMarkup` 断言 markup/class/aria + 自写 `common.ts`（`ok`/`eq`）+ 汇总 runner | **必须有** |
 | **规范层** | 静态扫描：①kit 纯度 ②令牌契约 ③图标 id 组内唯一 ④**barrel 导出面快照** ⑤**库内不得自判 PC/主题/安全区** | **必须有** |
 | **浏览器冒烟** | CDP 无头 Chromium 打开示范页 → 「无 console 错误 + `#root` 有子节点 + 每个控件 `getBoundingClientRect()` 非零」。照抄 `toolchain/stress-stroke.mjs` 的形态 | 建议有 |
-| **库测试自带 DOM 桩** | 库的 runner **不得**依赖应用 `session.test` 的 `stubEnv()`（**实测**：`uibar.test` 单跑报 `window is not defined`，全套里能过）。输出里要打 `assertions: N / ALL PASS`，CI 断言 **N ≥ 112**，**不只看「没报错」** | 必须有（R9） |
+| **库测试自带 DOM 桩** | 库的 runner **不得**依赖应用 `session.test` 的 `stubEnv()`（**实测**：`uibar.test` 单跑报 `window is not defined`，全套里能过）。输出里要打 `assertions: N / ALL PASS`，CI 断言 **N ≥ 70**（库侧运行合计实测 **123**），**不只看「没报错」** | 必须有（R9） |
 
 **计数纪律**：
 
@@ -752,7 +767,7 @@ node tests/.ts-out/tests/run-tests.js | Select-String '^ok\s+ui\.'   # 库侧相
 | **第一期要动的文件** | **只新增**（应用侧 **0 个文件改动**）：<br>`packages/deer-ui/src/{primitives.tsx, scrub.tsx, Dialog.tsx, Form.tsx, HoverTip.tsx, pcmode.ts, index.ts}`（= 今天 `src/ui/kit/` 的 7 个源文件，**逐字节复制**）<br>`packages/deer-ui/src/tabs.tsx`（从 `src/ui/tabs.tsx`）<br>`packages/deer-ui/src/tooltip.ts`（从 `src/ui/tooltip.ts`）<br>`packages/deer-ui/src/demo.tsx`（从 `src/ui/kit/demo.tsx`，**测试夹具**，见 §2.5）<br>`packages/deer-ui/src/internal/{expr.ts,scrub.ts}`（从 `engine/{expr,scrub}` 复制纯函数）<br>`packages/deer-ui/src/index.ts`（barrel；**必须新增 `export * from "./tabs"`**）<br>`packages/deer-ui/package.json`（`private: true`、peerDeps）<br>`packages/deer-ui/LICENSE`<br>`packages/deer-ui/tsconfig.json`、`packages/deer-ui/tests/tsconfig.json`、`tests/common.ts`、`tests/run-tests.ts`、`tests/ui-kit.test.tsx`（副本，改路径） |
 | **要改的 import（只在副本内）** | `primitives.tsx` 的 `../tooltip` → `./tooltip`；`scrub.tsx` 的 `../../engine/expr` → `./internal/expr`、`../../engine/scrub` → `./internal/scrub`。**这一步就是「库成立」的判据**：副本内任何 `../..` 都是失败 |
 | **验收 ①（独立编译）** | `node node_modules/typescript/lib/tsc.js -p packages/deer-ui/tsconfig.json --noEmit` → **退出码 0**（⚠️ **不是** `node_modules/typescript/bin/tsc.js`，那在本机不存在） |
-| **验收 ②（独立跑测试）** | `cd packages/deer-ui && node node_modules/typescript/lib/tsc.js -p tests/tsconfig.json && node tests/.ts-out/tests/run-tests.js` → 末两行 `assertions: ≥ 112` / `ALL PASS`。**112 条的实测分布**（本轮数过）：`ui.dialog.*` 13 / 表单行（`ui.row*`+`ui.chips*`+`ui.segmented*`+`ui.switch*`+`ui.numberfield`+`ui.colorfield`）19 / `ui.btn`+`ui.icon` 2 / `ui.htip.*` 6 / **`ui.demo.*` 6** / `ui.kit.*` 12 / `ui.dropmenu.*` 3 / `ui.overlay.*` 2 / 其余 `ui.primp*` 等。**排除 `ui.demo.*` 是 106** —— 本方案**不排除**它（见 §2.5）。<br>**建议把「按前缀报数」做成库 CI 的一行命令**，否则「达标」靠拍脑袋 |
+| **验收 ②（独立跑测试）** | `cd packages/deer-ui && node node_modules/typescript/lib/tsc.js -p tests/tsconfig.json && node tests/.ts-out/tests/run-tests.js` → 末两行 `assertions: ≥ 70` / `ALL PASS`（库侧运行合计实测 **123** = 搬入 62 + 库自身 A0/基建 61，见 §10）。**70 条的实测分布**（按运行期断言名重数）：`ui.dialog.*` 13 / `ui.htip.*` 13 / `ui.kit.*` 12 / **`ui.demo.*` 6** / 表单行（`ui.row*` 5 + `ui.chips*` 5 + `ui.switch*` 3 + `ui.segmented*` 2 + `ui.numberfield` 1 + `ui.colorfield*` 2 + `ui.rowactions` 1）19 / `ui.dropmenu.*` 3 / `ui.overlay*`（含 `-wiring`）2 / `ui.btn` + `ui.icon` 2。**排除 `ui.demo.*` 是 64** —— 本方案**不排除**它（见 §2.5）。<br>**建议把「按小节报数」做成库 CI 的一行命令**，否则「达标」靠拍脑袋 |
 | **验收 ③（纯度收紧）** | 库内 `src/**` 的 import 白名单 = `react` / `react-dom` / `react-dom/*` / `./*` / `../*`（库内部）。**不再有 `../tooltip`、不再有 `../../engine/*`** —— 这正是 P0b 要证的 |
 | **验收 ④（应用不动）** | `node tests/.ts-out/tests/run-tests.js` → **`assertions: 8090` / ALL PASS**（P0b 不改应用，必须一条不差） |
 | **验收 ⑤（逐字节相等）** | 副本与应用原件**逐字节相等**。**覆盖 9 个文件**（`kit/` 7 + `tabs.tsx` + `tooltip.ts`）；`demo.tsx` 同样比对 = **共 10 个**。用 `git hash-object` 或哈希比对，差异必须为空 |
@@ -795,7 +810,7 @@ node tests/.ts-out/tests/run-tests.js | Select-String '^ok\s+ui\.'   # 库侧相
 | **应用侧** | **零改动**：`feature-icons.ts` 继续留应用；`app2/www/index.html` 的 122 个 symbol 继续由应用提供；`src/ui/i18n.ts` 继续留应用 |
 | **门禁（本期上线）** | `scripts/check-ui-fork.mjs` + `tests/ui-fork.test.ts` 四条断言：`nofork.local-implementations` / `nofork.kit-reexport-only` / `nofork.kitdir-file-count` / `nofork.library-no-app-imports` |
 | **验收 ①** | 库测试新增：`kit.icon.snippet-has-i-x`、**`kit.icon.contract-ids`**（库源码里每个 `#i-…` 都在 `SPRITE_SNIPPET` 里；**清单见 §3.6，本轮实测 15 个 id**）、`kit.i18n.default-lang`、`kit.i18n.override` |
-| **验收 ②** | 应用侧 `icons.test.ts` **≥ 86 条一条不少**；`i18n.test.ts` **≥ 34 条一条不少**（**注意：不是 8 条** —— 实测 `i18n.*` = 34） |
+| **验收 ②** | 应用侧 `icons.test.ts` **≥ 86 条一条不少**；`i18n.test.ts` **≥ 8 条一条不少**（**修正**：原写「≥ 34」是错数 —— **34 其实是 `expr` 小节的条数**；实测 `i18n` 小节 = **8**，见文首口径说明与 §10） |
 | **验收 ③（对账）** | **跨库对账断言** `kit.i18n.keys ⊆ 应用字典`：库的每个键在 `src/ui/i18n.ts` 里 zh/en 各一条。**必须走求值口径**（见 §3.6 的数法坑），不许写成行计数版 |
 | **验收 ④（门禁负例）** | 故意在 `src/ui/` 下新建一个 `Dialog.tsx` → `node scripts/check-ui-fork.mjs` 退出码 **1** |
 | **验收 ⑤（扫描面）** | `tests/i18n.test.ts` 与 `tests/guide-anchors.test.ts` 的**扫描根必须覆盖库源码**，并**在断言名里写清扫描根**（例：`i18n.sources.covers-kit`）。理由见 R12-3 / R12-4 |
@@ -835,7 +850,10 @@ node tests/.ts-out/tests/run-tests.js | Select-String '^ok\s+ui\.'   # 库侧相
 |---|---|
 | `uibar.layout.*`(9) / `uibar.order.*`(5) / `uibar.full-order`(1) / `uibar.move.*`(15) / `uibar.hidden.*`(2) / `uibar.visible-count`(1) / `uibar.drop.*`(5) / `uibar.ring.*`(6) / `uibar.steps`(1) = **45** | `uibar.top.*`(18) / `uibar.cbar.*`(13) / `uibar.orbs`(1) / `uibar.registry.*`(3) / `uibar.pos.*`(2) / `uibar.reset.extras`(1) / `uibar.session.*`(14) = **52** |
 
-> **总数实测 = 97**。**两侧之和必须 ≥ 97**。
+> **总数实测 = 104**（运行期小节口径）。**两侧之和必须 ≥ 104**。
+> **这张前缀表的数字也已经漂移**：实测该小节 104 条 = `uibar.*` 前缀 **97** 条 + **`act.list.*` 7 条**（同小节、不同前缀）；
+> 而 `uibar.*` 内部也不是表里那 45 + 52：进库侧实测 `uibar.layout` **7**（不是 9）、`uibar.move` **13**（不是 15），
+> 留宿主侧实测 `uibar.top` **17**（不是 18）、`uibar.session` **19**（不是 14）。**P4b 开工时按运行期断言名重算，别照抄这张表。**
 > **`uibar.test.ts` 的真实小节边界**（实测）：`:12` 注册表完整性 / `:28` layout normalisation / `:36` ordering·hiding / `:62` 动作注册表 + 互搬 + 位置（`:64` 起 `new Session()`）/ `:104` 直接拖动落点判定 / `:122` Session wrappers。
 > **不要照抄 `:11-119` / `:70-165`** —— 两个区间与真实小节边界**都不重合**，照它搬会**把 `:12-27` 那批依赖业务注册表的断言误判成「纯函数部分」搬进库**（那正是 N6 禁止的）。
 
@@ -845,7 +863,7 @@ node tests/.ts-out/tests/run-tests.js | Select-String '^ok\s+ui\.'   # 库侧相
 |---|---|
 | **库仓库文件清单** | `package.json`（peerDeps / `files` / `sideEffects` / `publishConfig`）、`tsconfig.json` + `tsconfig.build.json`、`LICENSE`、`README.md`（**契约章**）、`CHANGELOG.md`、**`CONTRIBUTING.md`**（双仓协作与红线）、`.github/workflows/{ci.yml,pages.yml}`、`scripts/{build.sh,build-css.mjs,build-demo.sh,check-exports.mjs,check-size.mjs,check-no-cdn.mjs,run-tests.sh}`、`examples/demo.tsx`（从 `src/ui/kit/demo.tsx` 搬入；**不进 barrel / 不进 `files`**） |
 | **本仓库** | `vendor/deerui-<ver>.tgz`（committed）、`package.json` 的 `devDependencies` 加一行 `"@deerluu/deer-ui": "file:vendor/deerui-<ver>.tgz"`、`scripts/deer-ui-vendor.sh`（**换版本的唯一入口**）、`scripts/build-css.mjs` |
-| **验收 ①** | 库 CI 绿：`tsc --noEmit` 0 错误、库测试 `ALL PASS`（`assertions ≥ 112` + `geometry` 那批）、`dist/*.{js,d.ts,css}` 存在且能被 10 行第三方冒烟脚本 import；`npm pack --dry-run` 的文件清单**不含** `src/` / `tests/` / `examples/` |
+| **验收 ①** | 库 CI 绿：`tsc --noEmit` 0 错误、库测试 `ALL PASS`（`assertions ≥ 70`，实测 123 + `geometry` 那批）、`dist/*.{js,d.ts,css}` 存在且能被 10 行第三方冒烟脚本 import；`npm pack --dry-run` 的文件清单**不含** `src/` / `tests/` / `examples/` |
 | **验收 ②** | **路线 D 可复现**：`npm i file:vendor/….tgz` 后宿主 esbuild 默认参数打包成功、React 输入**全部来自宿主**、lockfile 带 `integrity: sha512-…` |
 | **验收 ③** | 应用 `assertions ≥ 8090 / ALL PASS` + `check-bundle.mjs` 通过 + 体积 ≤ 基线 + 2 KB |
 | **验收 ④（许可与供应链）** | `npm ls --prod` 为空（零运行时依赖）+ 生成许可清单 + `LICENSE` 与 `package.json` 的 `license` 字段按 Q14 的裁决落地 |
@@ -857,9 +875,9 @@ node tests/.ts-out/tests/run-tests.js | Select-String '^ok\s+ui\.'   # 库侧相
 | 项 | 内容 |
 |---|---|
 | **落点** | `src/ui/kit/index.ts` → 改成**静态再导出**（保证 esbuild 静态可达）；`src/ui/kit/` 下 7 个实现文件删除；`src/ui/base.tsx` **保留**（`useSession()` 与 `ScrubNum` 的 i18n 包装继续在应用侧 —— `useSession` **必须留应用**）；`src/ui/tooltip.ts` 删除（改从库 re-export，或让 4 处调用点改 import）；`tabs.tsx` 的应用侧 import 改为库（**不许留两份实现**） |
-| **要改的测试** | `tests/ui-kit.test.tsx`：`kitDir` 改成库目录；`ui.kit.purity` 白名单**收紧**；`ui.overlay-full` / `ui.dropmenu.*` 保留并改读库副本；`ui.overlay-full-wiring`（读 `App.tsx`）**留应用**；**`ui.demo.*` 6 条改读库的 `src/demo.tsx`**。**`ui.*` 必须 ≥ 112，只增不减** |
+| **要改的测试** | `tests/ui-kit.test.tsx`：`kitDir` 改成库目录；`ui.kit.purity` 白名单**收紧**；`ui.overlay-full` / `ui.dropmenu.*` 保留并改读库副本；`ui.overlay-full-wiring`（读 `App.tsx`）**留应用**；**`ui.demo.*` 6 条改读库的 `src/demo.tsx`**。**`ui kit` 小节必须 ≥ 70，只增不减** |
 | **要改的配置** | **`tests/tsconfig.json` 的 `include` 必须加库的 `src/`**（否则应用侧测试读库源码 → 编译产物里没有 → 运行期读不到；**不是红，是 throw/静默空文件**）。**负例**：故意在库源码里写类型错误 → 应用侧 `tsc -p tests/tsconfig.json` **必须红** |
-| **验收 ①** | `assertions ≥ 8090 / ALL PASS`，且 `ui.*` ≥ 112、`ui.kit.purity` 白名单里已无 `../tooltip` / `../../engine/*` |
+| **验收 ①** | `assertions ≥ 8090 / ALL PASS`，且 `ui kit` 小节 ≥ 70、`ui.kit.purity` 白名单里已无 `../tooltip` / `../../engine/*` |
 | **验收 ②** | `grep -rn 'from "./kit' src/` 与 `grep -rn 'src/ui/kit' tests/ src/ scripts/` 里**没有任何一条指向已删除的实现文件**（只剩 `index.ts` 这条再导出边） |
 | **验收 ③** | `sh scripts/build-web.sh` 出包 + `check-bundle.mjs` 通过 + `app2/www/css/style.css` 拼接正确 |
 | **验收 ④（首屏）** | `node toolchain/devserver.js` 起 8090，控制台无错、五球与主菜单可用（人工项） |
@@ -955,12 +973,12 @@ node tests/.ts-out/tests/run-tests.js | Select-String '^ok\s+ui\.'   # 库侧相
 | **R1** | **包体变大 / React 重复实例**（**最高**） | ①库产物被重复打进；②为库化引入运行时依赖；③**两份同名组件同时在依赖图里**（P0b→P7 窗口期）；④**React 被装两份** | ①库**零运行时依赖**；②库**只以源码/单份产物内联**；③两边 CI 各一道体积闸门；④走 **tarball** 路线保证 React 单实例 | 基线 1,334,285 B + md5；阈值 **≤ +2 KB**；**「一份 React = 142,547 B」**说明闸门要盯**重复** |
 | **R2** | **三端兼容（`file://` / 旧 WebView）**（高） | ①库 target 比宿主更现代；②新运行时 API（`structuredClone`/`.at(`/`ResizeObserver`/`:has()`）；③依赖 `fetch`/ESM 加载；④`file://` 下资源引用方式变化 | ①库与宿主**同一个 target 常量**；②库**不引入跨文档资源引用**（`<use href="#id">` 同文档 sprite 不变）；③新 API 在 `app.js` 里数**字符串出现次数** | `check-bundle.mjs` + esbuild 反解语法检查 + 库 CI 断言产物不含 `??=`/`.at(`/`structuredClone` + 三端各跑一次。**⚠️ 本机没有 Android 设备 → 真机项只能静态守，不许以「已核」口吻写进度** |
 | **R3** | **PC 模式与安全区变量**（中） | ①库自己探测 PC（**媒体查询 / 屏幕宽度 / `dataset.pc`**）→ 与 `resolvePcMode()`（按**输入证据**判定）打架；②库自己写 `--sat/--sab/--sal/--sar`；③库自己切 `data-theme`；④`1b/5 PC 模式` 的覆写与库控件规则**两边都改同一类名** → 静默双改 | ①契约写死两边文档：**PC 判定 / 主题 / 安全区 / 密度覆写全部是宿主职责，库只消费**；②库保留「被推入」形态并**修掉今天那条断线**（`setKitPcMode` 0 调用点，**单独小提交**）；③四个变量唯一写入者 | `tests/pc.test.ts`(31) + `fullscreen.test.ts`(11) 保持全绿；**判据措辞见下** |
-| **R4** | **i18n 文案漂移**（中） | 库需要一句文案时自带一份；库自带默认值后宿主忘了注入 | ①库只收**键名 + 英文默认值**；②应用侧加**对账断言** `kit.i18n.keys ⊆ 应用字典`（**求值口径**）；③**组件内部一律不写死文案** | `tests/i18n.test.ts` **≥ 34 条**全绿 + 新增对账断言；人工项：切英文界面看一遍库控件 |
+| **R4** | **i18n 文案漂移**（中） | 库需要一句文案时自带一份；库自带默认值后宿主忘了注入 | ①库只收**键名 + 英文默认值**；②应用侧加**对账断言** `kit.i18n.keys ⊆ 应用字典`（**求值口径**）；③**组件内部一律不写死文案** | `tests/i18n.test.ts` **≥ 8 条**全绿 + 新增对账断言；人工项：切英文界面看一遍库控件 |
 | **R5** | **React 版本钉死**（中） | **仓库没有任何 lockfile**，`package.json` 写 `^18.3.1`（装出恰好 18.3.1）。库作为 peer 发布后可能装到 18.4.x / 19.x | ①库 `peerDependencies` 写 **`^18.3.0`**，README 写明「只测过 18.3.1」；②应用侧按 `ROADMAP` S0-1 补锁；③库 CI 把 React 版本**矩阵化**（18.2/18.3） | 库 CI 版本矩阵；`npm ls react` |
-| **R6** | **379 个提交的回归面**（高） | kit 上累积多批 UI 改造，其中**只被人工验证覆盖、没被 112 条断言覆盖**的，会在「复制 + 改路径」时静默丢掉 | ①**先补行为断言再搬**：把 `docs/UI.md` §4「必须保持」那串逐条落成断言（`ui.dialog.guide`/`ui.dialog.classes`/`ui.dialog.foot` 有，**`Keep` 与 `.cfm-layer` 没有**）；②每期报数；③关键路径留**黄金 md5** | 新增 **≥ 8 条**断言（`ui.dialog.golden-md5`、`ui.keep.wraps`、`ui.cfm-layer.present`…）；**负例**：故意改一个 class 名 → md5 断言必须红 |
+| **R6** | **379 个提交的回归面**（高） | kit 上累积多批 UI 改造，其中**只被人工验证覆盖、没被 70 条断言覆盖**的，会在「复制 + 改路径」时静默丢掉 | ①**先补行为断言再搬**：把 `docs/UI.md` §4「必须保持」那串逐条落成断言（`ui.dialog.guide`/`ui.dialog.classes`/`ui.dialog.foot` 有，**`Keep` 与 `.cfm-layer` 没有**）；②每期报数；③关键路径留**黄金 md5** | 新增 **≥ 8 条**断言（`ui.dialog.golden-md5`、`ui.keep.wraps`、`ui.cfm-layer.present`…）；**负例**：故意改一个 class 名 → md5 断言必须红 |
 | **R7** | **双仓同步成本 / 漂移**（中） | 库改一处应用不知道；或应用为赶功能**直接改副本** | ①`packages/deer-ui/CHECKSUMS.txt` + `scripts/sync-deer-ui.sh --check`（**只比对不写入**）进 verify 门禁；②库的每次发布在应用侧产生**一个独立提交**；③分叉检测脚本**每期都跑**；④文档写死「**改库必须走库仓库**」 | `--check` 的**负例**（改一个字节 → 退出码 1）必须**当场验一次** |
 | **R8** | **changelog / 版本号两处维护**（中） | 库有自己的 `version` 与 `CHANGELOG.md`，应用有 `APP_VERSION` / `BUILD_TAG` / `AndroidManifest` 的 `versionName`/`versionCode` | ①**两条线**：库版本只在库仓库维护（**不写中文用户文案**）；②写死「**不要**把库版本写进 `changelog.tsx`」；③提交信息带「源 <库 sha>」而不是库版本号 | `tests/changelog.test.ts`(20) 保持绿 |
-| **R9** | **测试基建的隐式顺序依赖**（低） | 库测试**单独跑**时，应用侧某些模块依赖前序测试装的 DOM 桩（**实测**：`uibar.test` 单跑报 `window is not defined`，全套里能过） | ①库 runner **自带 DOM 桩**；②输出打 `assertions: N / ALL PASS`，CI 断言 **N ≥ 112** | 单独跑一次库测试，N 必须落在预期区间 |
+| **R9** | **测试基建的隐式顺序依赖**（低） | 库测试**单独跑**时，应用侧某些模块依赖前序测试装的 DOM 桩（**实测**：`uibar.test` 单跑报 `window is not defined`，全套里能过） | ①库 runner **自带 DOM 桩**；②输出打 `assertions: N / ALL PASS`，CI 断言 **N ≥ 70**（实测 123） | 单独跑一次库测试，N 必须落在预期区间 |
 | **R10** | **`tooltip` 双实例 → 长按提示静默消失**（**中高**） | `primitives.tsx:6` 是 kit 唯一的库外引用，而它是**模块级可变单例**（`subs` 是模块级 `Set`）。库一份 + 宿主一份 = **两个订阅表**：kit 控件调 `showTip` 写进库的表，宿主 `TipHost` 订阅的是宿主那份 | ①**库独占** `tooltip`，宿主 `src/ui/tooltip.ts` 改为 re-export 或删除；②加一条静态断言：宿主 `src/ui/tooltip.ts` 必须是 re-export 或已删除 | 断言本身；**负例**：宿主保留独立实现 → 断言红。**注意 `tooltip.ts` 有 4 处宿主调用点**（`primitives.tsx` + `App.tsx` / `canvas.tsx` / `color-drag.tsx` / `hold.tsx`） |
 | **R11** | **`engine/{expr,scrub}` 两份字节**（低） | 两个纯函数被内联进库，宿主仍保留原版 | **接受重复、登记在案**（5,640 B 源码 ≈ minify 后 < 2 KB，不共享状态、无行为风险）。要消掉就让宿主也改成 import 包的入口 —— **不建议**（engine 不是 deer-ui 的边界） | 体积闸门（在 +2 KB 容差内） |
 | **R12** | **「不红但更危险」的静默失效**（中） | 见下表 **6 条**。共同特征：**测试继续绿，但扫描/校验面在缩水** | 逐条给判据（见下） | 逐条给负例 |
@@ -1033,7 +1051,7 @@ node tests/.ts-out/tests/run-tests.js | Select-String '^ok\s+ui\.'   # 库侧相
 
 | # | 不做的事 | 理由 |
 |---|---|---|
-| 1 | **为了抽库顺手重写组件内部** | 迁移期唯一资产是「行为不变」。`Dialog` 的 DOM 契约被 112 条断言 + 引导锚点 + `style.css` 三方同时依赖 |
+| 1 | **为了抽库顺手重写组件内部** | 迁移期唯一资产是「行为不变」。`Dialog` 的 DOM 契约被 70 条断言 + 引导锚点 + `style.css` 三方同时依赖 |
 | 2 | **改库组件的 DOM class 名 / 删 `data-guide` 透传** | 静态断言盯住这些名字；改名 = 引导与样式**同时静默失效** |
 | 3 | **削弱无障碍属性（`role` / `aria-*` / 键盘可达）** | **N15 红线**：库的无障碍契约 = DOM 契约的一部分，只做「不退化」承诺 |
 | 4 | **把 `App.tsx` / `modals.tsx` / `timeline.tsx` / `AiPanel.tsx` 拆了再搬** | §4.9 明说模块化必须排在 Server 化之后；这四个是业务外壳不是控件 |
@@ -1059,14 +1077,157 @@ node tests/.ts-out/tests/run-tests.js | Select-String '^ok\s+ui\.'   # 库侧相
 
 ---
 
+## 10. 执行记录（2026-09-20）
+
+> **本节是事实记录，不是计划。** 所有数字都在 `Z:\pixelcraft`（HEAD `189ef94` + 未提交的工作区改动）与
+> `Z:\deer-ui`（库仓 HEAD `f2244f5`）上**亲手复跑**过；凡没复现的一律标 `[待验证]`。
+> 三步都在**同一个工作区**里做完；**应用侧一个提交都没做**（提交由队长处理）。
+
+### 10.1 三步各自的实际结果
+
+| 步 | 方案位置 | 实际做了什么 | 实测判据 | 结果 |
+|---|---|---|---|---|
+| **① A0 三条机器判据** | §2.6 A0 / P0a | **不在 `src/ui/kit` 原地加**，而是直接落进新仓库 `Z:\deer-ui\tests\`：`a0-purity`（纯度白名单）/ `a0-barrel`（导出面 JSON 快照 + 入口只许 re-export）/ `a0-host-boundaries`（不得自判 PC / 主题 / 安全区），**三条各带自检段**（合成样本喂给扫描函数，证判据不是恒真） | 库测试 `assertions: 123 / ALL PASS`（exit 0）；A0-1 **13** + A0-2 **9** + A0-3 **28** = **50** 条 | ✅ 落地（判据比方案**更严**，见 10.3-④） |
+| **② P0b 复制进库** | §5.2 P0b 甲案 | 库 `src/` 复制 **9 个文件 / 899 行**（HEAD 行数实测：`kit/` 7 个 = index 13 + primitives 166 + scrub 198 + Dialog 86 + Form 143 + HoverTip 91 + pcmode 29，加 `tabs.tsx` 140 + `tooltip.ts` 33），只改 2 行 import（`scrub.tsx` 的 `../../engine/{expr,scrub}` → `../internal/*`；`internal/*` 是从 `engine/*` 内联的副本，各多 5 行出处注释）；示范页 `examples/demo.tsx` 只作 dev-only 文件（逐字节复制 + 1 行 import 改动），**不进 `src/`、不进 barrel、不进 `files`、不进 `dist`，库测试不渲染它** | 库测试 `123 / ALL PASS`；应用侧 `8090 / ALL PASS`（P0b 期应用一行没改） | ✅ 落地（文件面与方案差 1 个，见 10.3-②） |
+| **③ 宿主改为消费** | §4.6 路线 D + P6 | `vendor/deerui-0.1.0.tgz` 进应用仓 + `package.json` 加 `"deer-ui": "file:vendor/deerui-0.1.0.tgz"`；**9 个公开路径全部改成薄再导出层**（一行 `export * from "deer-ui/<入口>"`），**没有删任何实现文件**；`tests/ui-kit.test.tsx` 里 **17 条**断言的读数对象换成装进来的**库产物**；新增 `tests/ui-fork.test.ts`（29 条）+ `tests/deerui-bridge.ts`（CJS 测试进程的 ESM 加载桥） | 四道闸门全绿（见 10.2）；`ui kit` 小节仍 **70** 条、一条没删；新增 29 条全是 `uifork.*` | ✅ 落地（**未删文件**，见 10.3-③） |
+
+**A0 的「已知 3 处越界」怎么收口的**：方案 §2.6 要求 A0-1 对**当时的** `src/ui/kit` 给出「3 处越界」的明确输出
+（`primitives.tsx:6 → ../tooltip`、`scrub.tsx:7,8 → ../../engine/*`）并把白名单收成 4 项。
+实际做法是**跳过「先红后收」那一步**：库侧一落地就是收紧后的规则 —— 白名单 = `react` / `react-dom` / `react-dom/*` / `react/*` 与**库内相对路径**，
+且相对路径必须**解析得到**、**不得越出库的 `src/`**。原始「3 处越界」的等价证据落在库仓 `tests/a0-purity.test.ts` 的自检段里。
+
+### 10.2 实测数字（本节所有数都是本轮复跑出来的）
+
+**断言数** —— 数法：`node tests/.ts-out/tests/run-tests.js`，按输出里的 `--- 小节名 ---` 分段数 `ok ` 行，总数与末尾 `assertions:` 一致。
+
+| 项 | 值 | 怎么核的 |
+|---|---:|---|
+| 应用侧基线（迁移前） | **8090 / ALL PASS**（exit 0） | 我自建基线：`git -c core.autocrlf=false archive HEAD` 出 **221/221** 个文件到 `%TEMP%\t6-base`（逐个 `git hash-object` 等于对应的 `HEAD:<path>` blob，0 处不符）+ junction `node_modules`，再 `tsc -p tests/tsconfig.json` + `node .ts-out/tests/run-tests.js`。**行尾陷阱**：`git archive` 默认按 `core.autocrlf=true` 写出 **CRLF**，会让 `f1.detect-get-has-no-body` 这类**按 `\n` 字面比源码**的断言**假红**（我第一次就是这么跑的：1 条 FAIL，`sanitized` 后 0 条）⇒ **必须带 `-c core.autocrlf=false`** |
+| 应用侧现在 | **8119 / ALL PASS**（FAIL 0） | 直接跑；`8119 − 8090 = 29`，**全是**新增的 `uifork.*` |
+| `ui kit` 小节 | **70**（基线也是 70） | 我按 `--- 小节名 ---` 两侧各切 **62** 个小节逐节比对：**只有新增的 `ui fork / react single instance` 变了（0 → 29）**，其余 **61 个小节条数完全相同**；名字级「基线有、现在没有」= **0**，新出现的 **29** 个名字全是 `uifork.*`（无删除、无改名） |
+| `ui fork / react single instance` 小节 | **29**（新增） | 同上 |
+| `i18n` / `uibar` / `icons` / `ui tokens` / `guide anchors` / `expr` 小节 | **8 / 104 / 86 / 17 / 10 / 34** | 同上（前三个就是本方案的三个更正数；**34 属 `expr`**） |
+| 库侧（`Z:\deer-ui`） | **123 / ALL PASS** | 跑 `node scripts/tsc.mjs -p tests/tsconfig.json` + `node tests/.ts-out/tests/run-tests.js`（= 库的 `npm test`）；分节：基建 10 + A0-1 13 + A0-2 9 + A0-3 28 + 控件契约 62 + 预算闸门 1 = 123；闸门是 `lib.budget.assertions`（下限 123 = 搬入 62 + 基建 61） |
+
+**产物与供应链**
+
+| 项 | 值 |
+|---|---|
+| 四道闸门 | ① `tsc -p tsconfig.json --noEmit` exit 0；② `tsc -p tests/tsconfig.json` exit 0；③ `run-tests` → `assertions: 8119 / ALL PASS` exit 0；④ `check-bundle app2/www/js/app.js` → `✓ 产物自检通过：bundle 能加载并渲染出 1 个根节点` exit 0 |
+| `app2/www/js/app.js`（现在） | **1,334,394 B** / md5 **`3f9db8acbfb76fe38ffaa6c33f875940`**（我独立重建得到同一 md5） |
+| 同上（迁移前基线） | **1,334,285 B** / md5 `a15d5b1e626edfaf526c28694bed4b86` ⇒ **+109 B**。闸门是 §4.5 的 **≤ 基线 + 2 KB**（**不是**任务书里曾写的 +4 KB），两种口径都过 |
+| 重建可复现性 | 同一份 esbuild 参数（`absWorkingDir` = 仓库根、`entryPoints:["src/main.tsx"]`、bundle/iife/browser/es2019/minify）分别重建「现在」与「HEAD 基线」→ 两个 md5 与上表逐字节相同；metafile：现在 **11 个 `node_modules/deer-ui/dist/*`** 输入，基线 **0 个**；基线输入里有 `src/engine/expr.ts`，现在没有（= D 项的宿主死代码证据） |
+| `vendor/deerui-0.1.0.tgz` | **26,932 B** / md5 **`1e9c0d79952e7a3ac5cb82a4ecd1af98`**；与库仓 `Z:\deer-ui\deerui-0.1.0.tgz` **同一 md5**（两边解包 **27/27 文件逐字节相同** —— 引自 t4/t5 的解包比对，本轮只复核了 md5 与字节数） |
+| `node_modules/deer-ui` | **真目录**（`Attributes=Directory`、`IsReparsePoint=False` —— 我核过），与 tarball **27/27 逐字节相同、无多余文件**（引自 t4/t5）；`package-lock.json` 记的 `integrity` 与实际 sha512 一致（引自 t4） |
+| 库侧 A0 判据 | A0-1 / A0-2 / A0-3 各带自检段；库 `dist` 是库 `src` 的忠实产物（24/24 逐字节 —— 引自 t5 的重编比对） |
+
+**工作区变更面（`git status --short` 原文，收工时）**
+
+```
+ M docs/API.md
+ M docs/PLAN-deer-ui.md
+ M docs/UI.md
+ M README.md
+ M package.json
+ M src/ui/kit/Dialog.tsx
+ M src/ui/kit/Form.tsx
+ M src/ui/kit/HoverTip.tsx
+ M src/ui/kit/index.ts
+ M src/ui/kit/pcmode.ts
+ M src/ui/kit/primitives.tsx
+ M src/ui/kit/scrub.tsx
+ M src/ui/tabs.tsx
+ M src/ui/tooltip.ts
+ M tests/run-tests.ts
+ M tests/tsconfig.json
+ M tests/ui-kit.test.tsx
+?? package-lock.json
+?? tests/deerui-bridge.ts
+?? tests/ui-fork.test.ts
+?? vendor/
+```
+
+> 前 13 个 ` M` + 4 个 `??` 是 t3 的消费改动（本轮开工前就是这些，t4/t5 复核过逐字一致）；
+> **本轮文档同步只加了前 4 个 `docs/`+`README` 的 ` M`**。**应用侧一个提交都没做。**
+
+### 10.3 与本方案的逐条偏差
+
+| # | 方案怎么写 | 实际怎么做 | 影响 |
+|---|---|---|---|
+| ① | Q2 默认：**P0–P4 单仓 `packages/deer-ui/`**，**P5 再拆仓**；Q3 默认包名 **`@deerluu/deer-ui`** | 直接建**独立仓库 `Z:\deer-ui`**（与 `Z:\pixelcraft` 平级 = Q1 的默认位置）；包名用的是**裸 `deer-ui`** | 等于提前采用了 Q2 的「从 P0 就建独立仓库」那一支；本仓**没有** `packages/` 目录。好处是双仓漂移（R7）从第一天就有物理边界，代价是 P5 的「`npm pack` 消费链」被提前做掉一部分（`deerui-0.1.0.tgz` + `file:` 安装）。**包名**：`private: true` + 不发 npm ⇒ 裸名被占用不构成冲突（库 README 写清了「真要 `npm publish` 必须换名，候选 `@deerluu/deer-ui`」），所以 Q3 的 scope 名没用上 |
+| ② | P0b 复制 **10 个文件 / 1,074 行**（含 `demo.tsx` → 库 `src/demo.tsx`，Q8） | 库 `src/` **9 个文件**；示范页只以 `examples/demo.tsx` 存在（逐字节复制 + 1 行 import 改动），**不进 `src/`、不进 barrel、不进 `files`、不进 `dist`**，库测试**不渲染它** | Q8 的「双副本窗口」实际**没有开**（比方案更干净）；代价是库侧没有「控件演示级」回归，那 6 条 `ui.demo.*` 仍留宿主读 `src/ui/kit/demo.tsx`（P7 才删）。**注意：库仓确实有 `examples/demo.tsx`（tracked，`kit.examples.*` 四条判据要求它存在），别写成「库内没有 demo」** |
+| ③ | P6：`src/ui/kit/` 下 **7 个实现文件删除**、`tooltip.ts` 删除、`tabs` 改 import | **一个文件都没删**：9 个公开路径（7 个 kit + `tabs.tsx` + `tooltip.ts`）**全部保留为薄再导出层** | 「删文件」不是本轮验收项，而且删了就要动 import 路径与测试路径；代价是 P7 的「删目录」仍欠着，且「薄层里偷偷写回实现」只能靠 `uifork.thin.*`（要求文件里只剩一行 `export *`）抓 |
+| ④ | A0-1：先按现状写 **8 项白名单** + 一条 TODO 断言记录 3 处越界，P0b 再收到 4 项 | 库侧一次到位：白名单 = `react` / `react-dom` / `react-dom/*` / `react/*` + **库内相对路径**（必须解析得到、不得越出 `src/`），并带自检段 | 更严（`../*` 只许库内、且要求可解析）；「先红后收」那一步被跳过，等价的越界证据在库仓 `a0-purity.test.ts` 的自检段 |
+| ⑤ | P5：`CHECKSUMS.txt` + `scripts/sync-deer-ui.sh --check` 进 verify 门禁；`scripts/deerui-vendor.sh` 是换版本唯一入口 | **都没做**。换版本目前是「库仓 `npm run pack:vendor` → `cp` 进 `vendor/` → `npm i file:...`」的人工三步 | R7 的机器判据暂缺（见 10.5-3） |
+| ⑥ | §4.5 的产物级断言「`:root{` 与 `.dlg{` 各恰好一次」「库段在应用段之前」（P2 的拼接） | **P1 / P2 整期没做**：`src/ui/style.css` 仍是唯一样式表、产物 `app2/www/css/style.css` 一个字节没动 | 库**不发 CSS**（`uifork.css.not-shipped` / `uifork.css.app-only` 两条断言钉住）；`sideEffects: ["*.css"]` 留在库 `package.json` 里占位 |
+| ⑦ | P3（图标契约 / i18n 注入 / 防分叉门禁脚本）、P4a / P4b（几何 / `uibar` 算法段）、P6.5（`UiHost` 接线）、P8（第二宿主） | **全部顺延**，一条没做 | 防分叉**门禁的等价物**已经落地，但落点不同：不是 `scripts/check-ui-fork.mjs` + 四条，而是 `tests/ui-fork.test.ts` 的 **29 条** `uifork.*`（薄层 / 同名实现 / 公开面 / React 单实例 / 安装形态 / tarball 指纹 / tooltip 单源 / CSS 归属） |
+| ⑧ | R6：**先补行为断言再搬**，关键路径留**黄金 md5**（`ui.dialog.golden-md5` / `ui.keep.wraps` / `ui.cfm-layer.present`） | **一条都没落地**（全仓 grep `golden-md5|keep.wraps|cfm-layer` = 0 命中） | 本轮改用三件**更强**的事替代：库源码与应用 HEAD **逐字节同一**（9/9）、库 `dist` 是库 `src` 的**忠实产物**（24/24 逐字节）、**注入负例**（改库产物一个 class 名 → `ui.dialog.foot` 当场红）。但 R6 点名的**剩余风险**仍在，见 10.5-7 —— **不许写成「已覆盖」** |
+| ⑨ | 计数纪律（Q13）：应用侧 **≥ 8090**、`ui.*` 只增不减 | 成立：8090 → **8119**，`ui kit` 仍 **70**、无删除、无改名、无放宽 | 62 条与库侧同名的断言**没有删**（照 P6 的删法会掉到 8028）；它们现在经薄再导出层**直接跑库里的实现**（双跑窗口按 Q8/§2.5 继续） |
+| ⑩ | §7.1 R7 的负例口径 | 「改一个字节 → `--check` 退出码 1」 | 脚本还没写，负例换成「改 tarball 指纹 / 移开安装树 → 断言必红」（见 10.6）。**另一条口径更正**：任务书里曾写体积阈值 **+4 KB**，方案 §4.5 的原文是 **≤ 基线 + 2 KB**，以方案为准 |
+| ⑪ | 采纳 Q8 的「库复制 `demo.tsx`、库测试渲染它」 | 示范页留 `examples/`、库测试不碰它 | t4 的 F5 曾据此判「Q8 没执行」——**事实更正见本条 ②**：库内**确实有** `examples/demo.tsx`（tracked，`kit.examples.*` 四条判据要求它存在），只是不进 `src/`、不进 barrel、不进 `files`、不进 `dist`，且库测试不渲染它 |
+
+### 10.4 三条口径更正（正文已按此改，见文首口径说明）
+
+`ui kit` **112 → 70**、`i18n` **34 → 8**（34 其实是 `expr` 小节的条数）、`uibar` **97 → 104**（97 只是 `uibar.*` 前缀那部分，同小节另有 7 条 `act.list.*`）。
+根因是原稿**按前缀计数**，而断言名会跨小节；现在文首写死了「按 `--- 小节名 ---` 分段数 `ok ` 行 + 总数与 `assertions:` 一致」这条数法。
+`uibar` 那张进库/留宿主的前缀表**逐项数也已漂移**（`layout` 9→7、`move` 15→13、`top` 18→17、`session` 14→19），P4b 开工时必须按运行期断言名重算。
+
+### 10.5 已知缺口与后续待办（**不是本轮缺陷，但别让它们消失**）
+
+1. **（缺口）库仓的 CI 目前跑不起来**：`Z:\deer-ui\.github\workflows\ci.yml` 写的是 `npm install`，但库仓**没有 lockfile**（我核过），
+   本机**离线装不上依赖**（库 README 记的实测：`npm error … cache mode is 'only-if-cached'` / `ENOTCACHED`）；
+   库的实际开发姿势是 `scripts/link-dev-deps.mjs` 把平级 PixelCraft 的 `node_modules` 以 **junction** 链进来
+   （我核过：库 `node_modules/` 下 8 个条目**全是 junction**，指向 `Z:\pixelcraft\node_modules\*`）。
+   这与本仓库审计出的「**门禁其实跑不起来**」**同类**（本仓 `scripts/run-tests.sh` 里的 `node_modules/typescript/bin/tsc.js` 在本机不存在，见 §7.2 D5）——
+   **不得在新仓库重演**：库侧 CI 要么补 lockfile 后在有网络的环境真跑一次，要么把「本机怎么跑」固化成脚本（tsc 那一段已由 `scripts/tsc.mjs` 三级查找解决）。
+2. **（缺口）没有断言钉住「安装树 == vendor tarball」**（medium）：就地改 `node_modules/deer-ui/dist` 里**不影响导出面与渲染标记**的东西，8119 会全绿，而 `app.js` 打的就是被改那份。
+   现在只有 `uifork.vendor.{exists,bytes,md5}`（锁 tarball 自己）与 `uifork.install.*`（锁安装形态）。建议后续在 `ui-fork.test.ts` 加**逐字节比对**。
+3. **（缺口）应用侧的 R1 / R7 机器判据仍是人工的**（medium）：应用仓**没有 `.github/`**（`Test-Path .github` = False，我核过）、
+   没有 `app.js` **体积断言**、也没有 `deerui-vendor` 同步脚本 / `CHECKSUMS.txt`。
+4. **（缺口）`src/engine/expr.ts` 已成宿主死代码**（low-med）：产物里没有它（我的 metafile 基线/现在对比可直接看到），全仓只剩 `tests/expr.test.ts` 引用
+   （`tests/ui-kit.test.tsx:192` 那处是纯度黑名单**字符串**，不是 import）。
+   ⇒ **R11 对 `expr` 的「双份内联、接受重复」登记前提已失效**，后续期要决定「删宿主那份」还是「把断言迁进库」。
+5. **（缺口）文档 / 注释的过时残留**（low）：`docs/UI.md` 的 §1 目录树 / §1.1 白名单 / §5.3 / §7 最后一行**本轮已同步**；
+   但 `src/ui/base.tsx:3` 与库 `dist/kit/primitives.js` 里**各留着一句「实现住在 `src/ui/kit`」的过时注释**（库源码那份在 P0b 时就带着）——
+   属**注释级**、不影响行为，改它要重出一次 tarball，本轮不做（登记给 P7）。另 `docs/UI.md` §3.1 的「5 分区」与 `style.css` 的漂移（D6）**仍未修**。
+6. **（登记不修）8 个薄层文件缺结尾换行**（low）：`src/ui/kit/{index,primitives,scrub,Dialog,Form,HoverTip,pcmode}` + `src/ui/tooltip.ts`
+   的末字节是 `;`（59），而对应 HEAD blob 的末字节是 `\n`（10）—— 我逐个读过两侧字节，且 **7 个 kit 薄层现在都恰好 325 B**（`tabs.tsx` 153 B、`tooltip.ts` 347 B）。
+   `git diff` 因此多出 `\ No newline at end of file`。`uifork.thin.*` 会过滤空行，所以**不影响任何断言**，但既然后面还有集成轮，顺手收掉更好。
+7. **（R6 的剩余风险 → 库侧 P1 的验收项，不许写成「已覆盖」）**：公开组件 `Keep` 至今**零直接断言**；`ScrubNum` 的**键盘 / 指针**路径、`tabs` 的**滚动 / portal** 行为**没有黄金 md5 兜底**。
+   本轮的「逐字节同一 + `dist` 忠实 + 注入证明行为断言真跑库实现」三条**证不到**上面这三处细节 —— 它们要在库侧单独立验收项。
+8. **（供应链与版本）** `package-lock.json` 是本轮 `npm install file:vendor/…` 的副产物，出现在应用仓根（`?? package-lock.json`）、**未提交**，
+   与 D4 的「仓库没有任何 lockfile」既有口径冲突 → 处置（提交 / 加 `.gitignore` / 删除）留给队长。另：`npm ls react` 与「干净 checkout + 真 `npm install` 走一遍」**都没跑**，`[待验证]`。
+
+### 10.6 公开面差异与负例（评审留档）
+
+- **公开面差异 1 项：`TipPoint`** —— 库的类型导出里多了一个 `TipPoint`，**全仓 0 引用**
+  （我核过：`src/` / `tests/` / `scripts/` / `toolchain/` 一处都没有），**不影响行为**，t5 判 pass。
+  它是「**待登记的公开面差异**」，后续期决定保留还是删 —— **不要写成「公开面完全守恒」**。
+- **负例（七组，就地恢复，每组恢复后 8119 ALL PASS；①–⑥ 由 t4 做、t5 复核并加做 ⑦ —— 引自两份报告，本轮未重跑故障注入）**：
+  ① 薄层写回实现 **+** 别处放同名实现 → `FAIL uifork.thin.kit/primitives.tsx` + `uifork.no-fork.kit`；
+  ② 真第二份 React → `FAIL uifork.react.single-instance-react`（打印 got/want 两条解析路径）+ `no-nested-install`；
+  ③ **只把 `vendor/deerui-0.1.0.tgz` 改名 → 构建不会失败**（产物仍逐字节等于发货产物，因为构建读的是**已安装**的 `node_modules/deer-ui`），红的是 `uifork.vendor.{exists,bytes,md5}`；
+  ③b **再**把 `node_modules/deer-ui` 移开 → 重建才红在 `✘ [ERROR] Could not resolve "deer-ui/kit"`（指 `src/ui/kit/index.ts:4`，`tabs` / `tooltip` 同）；
+  > ⚠️ **两个名字差一个连字符，别记混**：`package.json` 里的**包名/安装目录**是 `deer-ui`，而 vendor 里的 **tarball 文件名**是 `deerui-0.1.0.tgz`。
+  ④ 越界 import → `FAIL ui.kit.purity`；⑤ junction 安装 → `FAIL uifork.install.real-dir`（`isDir=false link=true`）+ `path-stable`；
+  ⑥ 改库产物一个 class 名 → `FAIL ui.dialog.foot`（**证明宿主行为断言真跑在库 dist 上**）；
+  ⑦ `ui.kit.purity` 的非空核查：扫 **12 个 dist `.js` / 32 条 import 说明符**，offenders=0，越界样例会红（不是恒真断言）。
+  > **③ 的措辞不要再写回「改名 tarball 就会构建失败」** —— 照抄会让人得出「判据不咬人」的错误结论。
+- **双跑窗口与 62/8 账目**：`ui kit` 小节的 **70** = 搬进库的 **62** + 留在宿主的 **8**（`ui.demo.*` 6 + `ui.overlay-full-wiring` + `ui.dropmenu.pop-css`）。
+  「库侧 == 应用侧 − 8」**只在小节口径下成立**；**按 `ui.` 前缀核是 50**（`ui.i18n.*` 28 / `ui.scale-*` 13 / `ui.icon-*` 2 … 属别的小节却共享前缀）—— 别再用前缀口径。
+  另有 **17 条**（不是 12 条）断言的**读数对象**从应用副本换成库产物，逐条见 `tests/ui-kit.test.tsx` 的 diff；其中 `ui.kit.purity` 由 8 项白名单**收紧**为「react/react-dom + 必须解析到包内相对路径」。
+
+---
+
 ## 附 A：本文的证据边界（**不要当已核引用**）
 
 | 项 | 状态 |
 |---|---|
+| (2026-09-20 复核后已变动的行标了 ✅；其余仍是原状) | |
 | 真机 / Android 设备 / WebView | **未验证**（本机没有设备，与 R2 的自陈一致） |
-| `npm pack` → `file:…tgz` 的路线 D 字节数 | 引自 t3 的 `[实测]`，**本文未复现** |
+| `npm pack` → `file:…tgz` 的路线 D 字节数 | ✅ **已复现**：tarball 26,932 B / md5 `1e9c0d79…`，宿主产物 +109 B（§10.2） |
 | npm registry 的 `deer-ui` / `@deerluu/deer-ui` 占用情况 | 同上，**未联网复现** |
-| 容器出包环境（`/root/pcbuild`）里能否解析 `vendor/*.tgz` | **未验证**（验法见 P5 坑③） |
-| P0b 的「逐字节相等」脚本与 P1 的 `{sel→decls}` 等价脚本 | **尚不存在**（对应期才写） |
-| 库拆分后的实际构建产物字节数 | **尚不存在**（P0b 不 emit `dist`） |
-| `./geometry` / `./bundle.css` / `./host` / `./tabs` 四条子路径的解析 | **[待验证]**（t3 只验证了 `./kit` 与 `./tokens.css` 形态） |
+| 容器出包环境（`/root/pcbuild`）里能否解析 `vendor/*.tgz` | **未验证**（验法见 P5 坑③；本机走的是「仓库根 + `node_modules`」这条路） |
+| P0b 的「逐字节相等」脚本与 P1 的 `{sel→decls}` 等价脚本 | 库侧**逐字节比对已做过**（12 个文件 `git hash-object` 相等，见库仓 README）；**P1 的等价脚本仍不存在**（P1 未开工） |
+| 库拆分后的实际构建产物字节数 | ✅ **已存在**：库 `dist/`（tarball 里 27 文件）+ 宿主 `app.js` **1,334,394 B** / md5 `3f9db8ac…`（§10.2） |
+| `./geometry` / `./bundle.css` / `./host` / `./tabs` 四条子路径的解析 | ✅ **`./tabs` 已落地**（进 `exports`，宿主真实消费）；`./geometry` / `./bundle.css` / `./host` **仍 [待验证]**（对应期未开工） |

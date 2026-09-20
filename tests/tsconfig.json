@@ -7,6 +7,11 @@
       "dom"
     ],
     "moduleResolution": "node",
+    "paths": {
+      "deer-ui/kit": ["../node_modules/deer-ui/dist/kit/index.d.ts"],
+      "deer-ui/tabs": ["../node_modules/deer-ui/dist/tabs.d.ts"],
+      "deer-ui/tooltip": ["../node_modules/deer-ui/dist/tooltip.d.ts"]
+    },
     "jsx": "react-jsx",
     "esModuleInterop": true,
     "skipLibCheck": true,
@@ -17,6 +22,7 @@
   "include": [
     "../tests/run-tests.ts",
     "../tests/ui-kit.test.tsx",
+    "../tests/ui-fork.test.ts",
     "../tests/ui-tokens.test.ts",
     "../tests/fullscreen.test.ts",
     "../tests/canvas-space.test.ts",

@@ -46,6 +46,7 @@ toolchain/     自写开发脚本（devserver / make-icon / check-bundle / stres
 ## 2. 环境与依赖
 
 - **仓库内**：`package.json` + `tsconfig.json` + `scripts/`；`npm install` 后可用 `scripts/build-web.sh`、`scripts/run-tests.sh`。
+- **本仓库现在依赖一个外部库 `deer-ui`**（独立仓库在 `Z:\deer-ui`，宿主经 `vendor/deerui-0.1.0.tgz` 的 `file:` 依赖消费，装到 `node_modules/deer-ui`；`package-lock.json` 里的 `integrity` 是「装上的就是 `vendor/` 那份 tarball」的凭证）。**离线环境安装需要 `--legacy-peer-deps`**（库的 peer 在离线树里解不出）；容器里出包前 `/root/pcbuild/node_modules` 也要装这份 tarball 并同步 `vendor/`，否则 APK 构建解析不到 `deer-ui/kit`。
 - **容器内（实际出包环境）**：`node_modules` 在 `/root/pcbuild`（FUSE 上装不上时在容器私有区安装后回拷）；同步目录 `/root/pcbuild/app/src`、`/root/pcbuild/app/tests`。
 - `aapt2` 在本容器是 Android/x86 二进制、**跑不起来**，所以打包走「`javac` + `d8` → 往模板 APK 里塞」的路线（见 §6）。
 - 浏览器调试：`node toolchain/devserver.js`（`app2/www`，端口 8090；`app2/www/js/telemetry.js` 会把错误与布局信息 POST 到 `/log`）。
@@ -142,6 +143,7 @@ java -jar /root/pk/apksigner.jar verify --print-certs /sdcard/Download/PixelCraf
 - 调色板**唯一数据源** `src/data/palettes.ts`（`PALETTE_PACKS` + `defaultPalette`），勿在别处复制色表。
 - 横屏 ≥768px 走侧栏 grid；`src/ui/style.css` 的 `--sat/--sab/--sal/--sar` 是安全区变量（由 `src/io/safearea.ts` 写入）。
 - i18n 中英同文件 `src/ui/i18n.ts`：**每个键 zh/en 各一条**；删键前先 grep。
+- **`src/ui/kit/**` 与 `src/ui/{tooltip,tabs}.tsx` 已是「薄再导出层」**（实现搬进了独立库 `deer-ui`）。**不要在薄层里写实现** —— `tests/ui-fork.test.ts` 会红；要改控件就去 `Z:\deer-ui` 改、重打 tarball、再 `npm install`。口径、边界与后续期见 `docs/UI.md` §1.3 与 `docs/PLAN-deer-ui.md` §10（执行记录）。
 
 ---
 

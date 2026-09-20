@@ -2295,14 +2295,18 @@ nextPlayFrameIn(mode, fi, dir, w): PlayStep                    // 循环/乒乓�
 | `GuideDemo` | `ui/guide-demo.tsx` | 虚拟触点动画 |
 | `View` | `render/view.ts` | 画布视口（非 React 组件） |
 | `HsvWheel` / `HoldAdjust` / `PreviewBox` / `RefImageBox` / `ReplayOverlay` | 各自文件 | 色轮、长按拖动数值、预览浮窗（右上角按钮 = 二级菜单：白底/黑底/格子底 + 灰度预览，灰度只作用于画面本身）、参考图、历史回放 |
-| `TabBar` / `DropMenu` | `ui/tabs.tsx` | 共用选项卡与可展开下拉（色板 / 导出 / 更新日志 / 播放速度）。**下拉列表用 `createPortal` 挂到 `document.body` 并 `position:fixed`**（坐标按按钮的视口位置算）：时间轴控制条是 `overflow-x:auto` 的滚动容器，绝对定位的列表会被它整块裁掉——「播放速度色片点了没反应」就是这么来的；任何放在滚动容器里的下拉都靠这条活着 |
+| `TabBar` / `DropMenu` | `ui/tabs.tsx`（薄再导出 → `deer-ui/tabs`，见 §20） | 共用选项卡与可展开下拉（色板 / 导出 / 更新日志 / 播放速度）。**下拉列表用 `createPortal` 挂到 `document.body` 并 `position:fixed`**（坐标按按钮的视口位置算）：时间轴控制条是 `overflow-x:auto` 的滚动容器，绝对定位的列表会被它整块裁掉——「播放速度色片点了没反应」就是这么来的；任何放在滚动容器里的下拉都靠这条活着 |
 | `ChangelogModal` | `ui/changelog.tsx` | 更新日志：`CHANGELOG`（`ClgVersion[]`，每项 `it(kind, zh, en)`）+ `APP_VERSION` / `BUILD_TAG`；PC 竖排版本列表、触屏横向标签条，分类（add/imp/fix）可折叠。**条目文案是纯文本渲染**（`<li>{x.zh}</li>`，没有 Markdown 解析）——`**加粗**` 与反引号会原样显示，所以文案里不许出现它们，测试 `tests/changelog.test.ts` 会拦（同时校验 `APP_VERSION` 与 `AndroidManifest.xml` 的 `versionName` 一致、条目单行格式、中英一一对应） |
 | `ColorAdvancedModal` | `ui/modals.tsx` | **颜色高级模式**：一个弹窗两页（`AnalysisPane` 颜色分析 / `ShadingPane` 色彩明暗），`initialTab` 决定落在哪页；两页**按需挂载**（分析页要扫画布，不该在明暗页白跑）挂上后不再卸载。入口＝调色板面板动作行的一条 + 主菜单一条（`openColorAdv()` → `pc-color-adv`；`openShading()` → `pc-shading` 直接落明暗页），App 侧只挂一个 `Keep`。算法仍然分别在 `engine/color-analysis.ts` 与 `engine/shading.ts` |
 | `IsoBar` | `ui/iso.tsx` | 等距图形模式的**参数条**（常驻浮层，不是弹窗——模式的手感全在画布上）：形状 chips（6）/ 宽深高 / 图块 4·8·16·32 / 实时读数（尺寸·体素·越界）/ 折叠外观（颜色模式、三面颜色、明暗、阴影、描边、形状专属参数）/ 生成 / 生成到新图层 / 完成。入口＝魔法球「等距图形」+ 主菜单。动作图标走 `feature-icons.ts`（§17.5） |
 | `AutosaveHistory` / `RecoverModal` / `AutosaveModal` | `ui/modals.tsx` | 自动保存的**多版本历史**（一列：时间 / 大小 / 工程名 + 恢复·导出·删除）与两个入口：设置 → 数据 里内嵌、主菜单「自动保存历史」（`AutosaveModal`）、以及启动时「上次没正常退出」的恢复面板（`RecoverModal`，由 `SESSION.bootRecover` 驱动）。数据在 `io/autosave.ts`（§16.5），组件只负责列出来与发指令 |
-| `useBlankTap` | `ui/kit/primitives.tsx`（`ui/base.tsx` 转出） | 点容器空白处执行动作（调色板面板点击关闭） |
+| `useBlankTap` | `ui/kit/primitives.tsx`（薄再导出 → `deer-ui/kit`；`ui/base.tsx` 转出） | 点容器空白处执行动作（调色板面板点击关闭） |
 | 时间线分割线 | `ui/App.tsx`（`.tl-grip`） | 时间线面板顶部的拖动条：上下拖动 = `setTlHeight()`（面板总高度 140–520px，默认 200），拖动时显示 px 浮标，双击复位 200；`prefs.tlH` 是整块面板高度，矩阵 `flex:1` 填充，图层行不足时用 `.ase-fill` 单元格补底 |
 | 安全区 | `io/safearea.ts` | 把原生 insets 写成 CSS 变量 `--sat/--sab/--sal/--sar`，贴边控件统一用它们留白 |
+
+> **控件实现自 2026-09-20 起不在本仓库**：`ui/kit/**`、`ui/tabs.tsx`、`ui/tooltip.ts` 都是**薄再导出层**（一行 `export * from "deer-ui/<入口>"`），
+> 实现住在独立库 `deer-ui`，由宿主通过 `vendor/deerui-0.1.0.tgz` 的 `file:` 依赖消费。**公开路径与组件签名一个都没改**，
+> 所以上表里的文件路径仍然成立 —— 位置变更、消费方式、依赖边界与后续期见 **§20.0**。
 
 ### 17.2 自定义事件
 
@@ -2798,11 +2802,25 @@ npm test        # 8090 条断言：引擎 / 选区 / 历史 / 播放 / 设置 / 
 
 ---
 
-## 20. UI 控件库 `ui/kit/`
+## 20. UI 控件库 `ui/kit/`（实现已迁进独立库 `deer-ui`）
 
 > 规范见 [`docs/UI.md`](UI.md)：令牌表、控件 DOM 契约、迁移与测试约定。本节只列接口。
-> 依赖边界：`ui/kit/**` 只允许 import `react` / `react-dom` / `../tooltip` / `../../engine/expr` 与同目录模块，
-> **不得**引用 `singleton`(Session)、`i18n`、`app/`、`io/`（由 `tests/ui-kit.test.tsx` 强制）。
+> 方案、决策依据与**执行记录**见 [`docs/PLAN-deer-ui.md`](PLAN-deer-ui.md)（执行记录在该文 §10）。
+
+### 20.0 实现位置、消费方式与「公开路径为什么不变」（2026-09-20 落地）
+
+| 项 | 口径 |
+|---|---|
+| **实现位置** | 独立库仓库 `Z:\deer-ui`（与 `Z:\pixelcraft` **平级**）：`src/kit/*`（7 个文件）+ `src/tabs.tsx` + `src/tooltip.ts` + `src/internal/{expr,scrub}.ts`（**内联**自 `engine/{expr,scrub}` 的两个纯函数）+ `src/index.ts`（barrel）。包名 `deer-ui@0.1.0`、`private: true`、MIT、**不发 npm**，只以 tarball 交付 |
+| **宿主怎么消费** | `package.json` 的 `"deer-ui": "file:vendor/deerui-0.1.0.tgz"` —— tarball **提交在应用仓** `vendor/`（26,932 B / md5 `1e9c0d79952e7a3ac5cb82a4ecd1af98`），`node_modules/deer-ui` 是 `npm install` 装出来的**真目录**（不是 junction/symlink）。esbuild 按库的 `exports` map 解析 `deer-ui/kit` / `deer-ui/tabs` / `deer-ui/tooltip` 三个入口（`types` 条件排在 `import` 前） |
+| **公开路径为什么不变** | 本节里的 `ui/kit/*`、`ui/tabs.tsx`、`ui/tooltip.ts` 路径**全部保留**，每个文件只剩一行 `export * from "deer-ui/<入口>";`（**薄再导出层**）。于是调用点的 import、`tests/` 里的路径、DOM class 名、`data-guide` 锚点**一个字都不用改** —— 这是「行为零变化」与「调用点几乎不改」两条同时成立的实现方式，也是**不删实现文件**的原因 |
+| **依赖边界（库侧）** | 库 `src/**` 只许 `react` / `react-dom` / `react-dom/*` / `react/*` + **库内相对路径**（且不得越出库的 `src/`）；**不得** import 宿主的 `engine/{expr,scrub}`（已内联）、`singleton`(Session)、`i18n`、`app/`、`io/`。由库仓 `tests/a0-purity.test.ts` 强制（**带自检段**，判据不是恒真） |
+| **应用侧分叉门禁** | `tests/ui-fork.test.ts` 共 **29 条** `uifork.*`：`uifork.thin.*`（9 条 —— 薄层只许剩一行 `export *`）/ `uifork.no-fork.{kit,tabs,tooltip}`（按符号白名单扫全 `src/**` 找第二份实现）/ `uifork.adapter.base-scrubnum` / `uifork.surface.*` + `uifork.exports.map`（公开面与入口形状）/ `uifork.react.*`（**React 单实例**）/ `uifork.install.*` + `uifork.vendor.*`（安装形态与 tarball 指纹）/ `uifork.tooltip.single-source`（`tooltip` 是**模块级可变单例**（订阅表）：两份 → 长按提示静默消失）/ `uifork.css.*` |
+| **测试怎么跑** | 应用侧 `node tests/.ts-out/tests/run-tests.js` → **8119** 条（其中 `ui kit` 小节 **70** 条）；库侧 `cd Z:\deer-ui && npm test` → **123** 条。CJS 测试进程经 `tests/deerui-bridge.ts` 把库 `dist/**.js` 转成 CJS 再加载（库是 **bundler-only ESM**，`exports` 里只有 `import` 条件） |
+| **后续期要做什么** | P1/P2 样式拆库（现在库**一行 CSS 都没有**）、P3 图标契约 + i18n 注入、P4a/P4b 几何与 `uibar` 算法段、P6.5 `UiHost` 接线、P7 删应用侧残留（`src/ui/kit/demo.tsx` 副本）、P8 第二宿主 —— **都还没做**，见 [`docs/UI.md`](UI.md) §1.3 |
+
+> **`ui/base.tsx` 不在薄层之列**：它继续持有 `useSession()`，只把 `ScrubNum` 包一层译文转发给库实现（`uifork.adapter.base-scrubnum` 钉住）。
+> **`UiHost` 尚未落地**（属 P6.5）：当前库那 9 个文件对宿主能力的依赖是 **0**（PC 判定 / 主题 / 安全区全由宿主推入）。
 
 ### 20.1 `ui/kit/Dialog.tsx`
 
@@ -2853,6 +2871,10 @@ interface DialogProps {
 `ui/base.tsx` 继续导出全部这些名字，并额外提供 `useSession()` 与带译文的 `ScrubNum` 包装。
 
 ### 20.4 设计令牌与主题
+
+> **令牌与控件规则仍在应用侧**：`src/ui/style.css` 是唯一的样式源与产物（构建时纯 `cp` 到 `app2/www/css/style.css`），
+> **库一行 CSS 都没有** —— 这由 `uifork.css.not-shipped`（库不发布 CSS）与 `uifork.css.app-only`（样式只由应用提供）两条断言钉住。
+> 把令牌与 kit 规则拆进库是 **P1/P2**（尚未开工），届时拼接口径见 `docs/PLAN-deer-ui.md` §8 的 Q5。
 
 `style.css` 顶部 `:root` 定义尺寸令牌与主题色/固定色令牌，`[data-theme="light"]` 覆盖全部主题色令牌；
 `io/theme.ts` 的 `themeMode(v): ThemeMode` / `applyTheme(mode: ThemeMode)`（`type ThemeMode`）写 `<html data-theme>` 与 `<meta name="theme-color">`，

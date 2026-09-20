@@ -1,33 +1,4 @@
-// Global long-press tooltip: one host renders at the bottom-centre of the
-// screen; any control (buttons, floating orbs, radial items, draggables) can
-// show a {title, desc} bubble by holding still ~450ms.
-export interface Tip {
-  title: string;
-  desc?: string;
-}
-
-let current: Tip | null = null;
-let hideTimer: number | null = null;
-const subs = new Set<(t: Tip | null) => void>();
-
-export function showTip(tip: Tip, autoHideMs = 0): void {
-  current = tip;
-  if (hideTimer !== null) { window.clearTimeout(hideTimer); hideTimer = null; }
-  if (autoHideMs > 0) hideTimer = window.setTimeout(() => { current = null; emit(); }, autoHideMs);
-  emit();
-}
-
-export function hideTip(): void {
-  if (hideTimer !== null) { window.clearTimeout(hideTimer); hideTimer = null; }
-  if (current) { current = null; emit(); }
-}
-
-function emit(): void {
-  for (const f of subs) { try { f(current); } catch { /* ignore */ } }
-}
-
-export function subscribeTip(fn: (t: Tip | null) => void): () => void {
-  subs.add(fn);
-  fn(current);
-  return () => { subs.delete(fn); };
-}
+// `tooltip` 是模块级可变单例（订阅表 subs）：库一份 + 宿主一份 = 两个订阅表，
+// 控件的长按提示会写进库的表而宿主 TipHost 订阅宿主那份，提示静默消失（docs/PLAN-deer-ui.md R10）。
+// 所以实现只留在 deer-ui 里，宿主这一层只做再导出。
+export * from "deer-ui/tooltip";

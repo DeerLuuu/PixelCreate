@@ -113,6 +113,7 @@ toolchain/       开发辅助脚本（devserver 静态服务、make-icon 图标�
 | [`docs/PLAN-ai.md`](docs/PLAN-ai.md) | AI 接入方案稿（应用内助手 / 本机工具服务 / 先做地基、工具面与权限分级、回合事务、安全模型） |
 | [`docs/PLAN-isobuilder.md`](docs/PLAN-isobuilder.md) | 等距构建（三视图 → 等距像素画）方案：几何口径、引擎与 UX 设计、分期计划 |
 | [`docs/PLAN-deer-ui.md`](docs/PLAN-deer-ui.md) | 把 UI 表现层独立成 `deer-ui` 库的方案：可抽取边界、`UiHost` 适配层、包与构建、分期迁移 P0–P8 与验收、风险与待拍板项 |
+| **`Z:\deer-ui`（独立库仓库）** | UI 控件库 **`deer-ui` 0.1.0** 的源码真相（控件 / 表单 / 纯数学；只把 `react`+`react-dom` 当 peer，**不发 npm**）：应用侧 `src/ui/kit/**`、`tabs.tsx`、`tooltip.ts` 自 2026-09-20 起只是**薄再导出层**，宿主用 `vendor/deerui-0.1.0.tgz` 的 `file:` 依赖消费（口径见 [`docs/UI.md`](docs/UI.md) §1.3 与 [`docs/API.md`](docs/API.md) §20.0） |
 | [`docs/UI.md`](docs/UI.md) | UI 规范：设计令牌、`src/ui/kit` 控件 API 与 DOM 契约、迁移清单、测试与演示页约定 |
 | [`docs/COMPARISON.md`](docs/COMPARISON.md) | 与 Aseprite / Resprite 的功能对比与改进优先级 |
 | [`docs/COMPARISON-pixelover-pixelcomposer.md`](docs/COMPARISON-pixelover-pixelcomposer.md) | 与 PixelOver / PixelComposer 的节点式工作流对比（含资料出处与实测节点数） |

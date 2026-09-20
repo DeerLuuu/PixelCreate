@@ -1,3 +1,6 @@
+// 必须排在最前：它给 CJS 测试进程装上 deer-ui（bundler-only ESM）的加载桥，
+// 后面的测试模块一被 require 就会走到 `deer-ui/kit` 等说明符。
+import "./deerui-bridge";
 import { finish } from "./common";
 import { testHistory } from "./history.test";
 import { testOps } from "./ops.test";
@@ -17,6 +20,7 @@ import { testBack } from "./back.test";
 import { testUiBack } from "./uiback.test";
 import { testI18n } from "./i18n.test";
 import { testUiKit } from "./ui-kit.test";
+import { testUiFork } from "./ui-fork.test";
 import { testUiTokens } from "./ui-tokens.test";
 import { testFullscreen } from "./fullscreen.test";
 import { testCanvasSpace } from "./canvas-space.test";
@@ -115,6 +119,8 @@ async function main(): Promise<void> {
   testI18n();
   console.log("--- ui kit ---");
   testUiKit();
+  console.log("--- ui fork / react single instance ---");
+  testUiFork();
   console.log("--- ui tokens ---");
   testUiTokens();
   console.log("--- fullscreen ---");

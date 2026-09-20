@@ -1,4 +1,10 @@
-// Component contract tests for src/ui/kit (docs/UI.md §5).
+// Component contract tests for the UI kit (docs/UI.md §5).
+//
+// The kit implementation moved into the deer-ui library (docs/PLAN-deer-ui.md P0b);
+// src/ui/kit/* are thin re-exports of it. The import paths above are unchanged, so the
+// rendered assertions below now exercise **the installed library**, and the blocks that
+// used to read an app-side copy now read the installed dist instead — same claim, but
+// about the artifact the app really bundles (no second implementation can hide there).
 //
 // The container has no jsdom, so instead of mounting into a DOM the kit is
 // rendered with react-dom/server and asserted on its markup. Every claim here
@@ -18,6 +24,10 @@ const fs = require("fs");
 const path = require("path");
 
 const html = (el: unknown): string => renderToStaticMarkup(el as never);
+
+// node_modules/deer-ui/dist — same depth as the old "../../../src/ui/kit" below.
+const KIT_DIST = path.resolve(__dirname, "../../../node_modules/deer-ui/dist");
+const kitSrc = (rel: string): string => fs.readFileSync(path.join(KIT_DIST, rel), "utf8");
 
 export function testUiKit(): void {
   // ---------------------------------------------------------------- Dialog
@@ -145,14 +155,13 @@ export function testUiKit(): void {
   // Btn must be wired to it (the hover tip is the desktop substitute for the
   // long-press tip, so it has to live inside Btn and not at the call sites)
   {
-    const kitDir = path.resolve(__dirname, "../../../src/ui/kit");
-    const prim = fs.readFileSync(path.join(kitDir, "primitives.tsx"), "utf8");
+    const prim = kitSrc("kit/primitives.js");
     ok("ui.htip.btn-wired", prim.indexOf("useHoverTip") >= 0 && prim.indexOf("hover.node") >= 0);
     ok("ui.htip.mouse-not-longpress", prim.indexOf('e.pointerType === "mouse"') >= 0);
   }
   // 手机竖屏的面板整屏铺开（由 App 决定 full，kit 只负责加类名）
   {
-    const prim = fs.readFileSync(path.resolve(__dirname, "../../../src/ui/kit/primitives.tsx"), "utf8");
+    const prim = kitSrc("kit/primitives.js");
     ok("ui.overlay-full", /full = false/.test(prim) && prim.includes('full ? " panel-full" : ""'));
     const app = fs.readFileSync(path.resolve(__dirname, "../../../src/ui/App.tsx"), "utf8");
     ok("ui.overlay-full-wiring", app.includes("<Overlay full={!land && !pcMode}"));
@@ -160,7 +169,7 @@ export function testUiKit(): void {
   // 下拉列表必须 portal 出去：时间轴控制条是 `overflow-x:auto` 的滚动容器，
   // 绝对定位的列表会被它整块裁掉 —— 播放速度色片「点了没反应」就是这么来的
   {
-    const tabs = fs.readFileSync(path.resolve(__dirname, "../../../src/ui/tabs.tsx"), "utf8");
+    const tabs = kitSrc("tabs.js");
     ok("ui.dropmenu.portal", tabs.includes("createPortal") && tabs.includes("document.body"));
     ok("ui.dropmenu.fixed-pos", tabs.includes("dropmenu-pop") && tabs.includes("getBoundingClientRect"));
     const css = fs.readFileSync(path.resolve(__dirname, "../../../src/ui/style.css"), "utf8");
@@ -177,27 +186,52 @@ export function testUiKit(): void {
   ok("ui.demo.sections", (demo.match(/demo-h/g) || []).length >= 6);
 
   // --------------------------------------------------------- kit purity
-  // docs/UI.md §1.1: kit files may only import react / react-dom / pure engine/*
-  const kitDir = path.resolve(__dirname, "../../../src/ui/kit");
-  const kitFiles = fs.readdirSync(kitDir).filter((f: string) => /\.(ts|tsx)$/.test(f));
-  ok("ui.kit.sources", kitFiles.length >= 5, "files=" + kitFiles.length);
+  // docs/UI.md §1.1：库内只许 import react / react-dom 及其子路径 + **库内**相对路径。
+  // 迁移后主体换成**装进来的库产物**（dist 里 ESM 的 import 说明符原样保留），白名单从 8 项
+  // 收紧到「react/react-dom + 相对路径」——而且相对路径必须**解析到包内已存在的文件**，
+  // 所以 `../../engine/expr` 这种越出包边界的写法会红（这正是 P0b 要证的那条：
+  // 越界的东西现在根本装不进来）。
+  const distFiles: string[] = [];
+  {
+    const walk = (dir: string): void => {
+      for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+        const p = path.join(dir, e.name);
+        if (e.isDirectory()) walk(p);
+        else if (/\.js$/.test(e.name)) distFiles.push(p);
+      }
+    };
+    walk(KIT_DIST);
+  }
+  ok("ui.kit.sources", distFiles.length >= 5, "dist files=" + distFiles.length);
   const banned = /from\s+["'](\.\.\/(singleton|i18n|app|io|render|tools)|\.\/singleton)/;
   const offenders: string[] = [];
-  for (const f of kitFiles) {
-    const src = fs.readFileSync(path.join(kitDir, f), "utf8");
+  const bareOk = (mod: string): boolean =>
+    mod === "react" || mod.indexOf("react/") === 0
+    || mod === "react-dom" || mod.indexOf("react-dom/") === 0;
+  // 相对 import 必须落在包内、且目标文件真的存在（dist 是编译产物，无扩展名相对路径）
+  const insidePackage = (fromFile: string, mod: string): boolean => {
+    const base = path.resolve(path.dirname(fromFile), mod);
+    const hit = [base, base + ".js", path.join(base, "index.js")]
+      .find((c) => fs.existsSync(c) && fs.statSync(c).isFile());
+    if (!hit) return false;
+    const rel = path.relative(KIT_DIST, hit);
+    return rel.length > 0 && rel.indexOf("..") !== 0 && !path.isAbsolute(rel);
+  };
+  for (const f of distFiles) {
+    const src = fs.readFileSync(f, "utf8");
     for (const m of src.matchAll(/from\s+["']([^"']+)["']/g)) {
       const mod = m[1];
-      const okMod = mod === "react" || mod === "react-dom" || mod === "react-dom/server"
-        || mod === "react-dom/client"
-        || mod.indexOf("./") === 0 || mod === "../../engine/expr" || mod === "../../engine/scrub"
-        || mod === "../tooltip";
-      if (!okMod || banned.test('from "' + mod + '"')) offenders.push(f + " -> " + mod);
+      const isRel = mod.indexOf("./") === 0 || mod.indexOf("../") === 0;
+      const bad = isRel ? !insidePackage(f, mod) : !bareOk(mod);
+      if (bad || banned.test('from "' + mod + '"')) {
+        offenders.push(path.relative(KIT_DIST, f).replace(/\\/g, "/") + " -> " + mod);
+      }
     }
   }
   eq("ui.kit.purity", offenders, []);
 
   // the barrel is what the demo page and, later, an external consumer import
-  const barrel = fs.readFileSync(path.join(kitDir, "index.ts"), "utf8");
+  const barrel = kitSrc("kit/index.js");
   for (const sym of ["Dialog", "Row", "ChipGroup", "Segmented", "Switch", "NumberField", "ColorField", "Btn", "Icon", "ScrubNum"]) {
     ok("ui.kit.export." + sym, new RegExp("\\b" + sym + "\\b").test(barrel));
   }
